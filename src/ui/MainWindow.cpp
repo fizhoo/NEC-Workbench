@@ -515,6 +515,24 @@ void MainWindow::createWorkspace()
             [this](std::size_t sourceLine) { showExcitationInSetup(sourceLine); });
         connect(view, &GeometryView::deleteExcitationRequested, this,
             [this](std::size_t sourceLine) { deleteExcitation(sourceLine); });
+        connect(view, &GeometryView::loadSelected, this,
+            [this](std::size_t sourceLine) { selectLoad(sourceLine); });
+        connect(view, &GeometryView::transmissionLineSelected, this,
+            [this](std::size_t sourceLine) { selectTransmissionLine(sourceLine); });
+        connect(view, &GeometryView::addLoadRequested, this,
+            [this](int wireTag, int segment) { addLoadAt(wireTag, segment); });
+        connect(view, &GeometryView::transmissionLineEndpointRequested, this,
+            [this](int wireTag, int segment) { chooseTransmissionLineEndpoint(wireTag, segment); });
+        connect(view, &GeometryView::cancelTransmissionLineRequested, this,
+            [this] { setPendingTransmissionLineEndpoint(std::nullopt); });
+        connect(view, &GeometryView::editLoadRequested, this,
+            [this](std::size_t sourceLine) { showLoadInEditor(sourceLine); });
+        connect(view, &GeometryView::editTransmissionLineRequested, this,
+            [this](std::size_t sourceLine) { showTransmissionLineInEditor(sourceLine); });
+        connect(view, &GeometryView::deleteLoadRequested, this,
+            [this](std::size_t sourceLine) { deleteSetupCard(tr("Delete load"), sourceLine); });
+        connect(view, &GeometryView::deleteTransmissionLineRequested, this,
+            [this](std::size_t sourceLine) { deleteSetupCard(tr("Delete transmission line"), sourceLine); });
     };
     connectEndpointEditing(xyView_);
     connectEndpointEditing(xzView_);
@@ -554,6 +572,24 @@ void MainWindow::createWorkspace()
         [this](std::size_t sourceLine) { showExcitationInSetup(sourceLine); });
     connect(geometry3DView_, &Geometry3DView::deleteExcitationRequested, this,
         [this](std::size_t sourceLine) { deleteExcitation(sourceLine); });
+    connect(geometry3DView_, &Geometry3DView::loadSelected, this,
+        [this](std::size_t sourceLine) { selectLoad(sourceLine); });
+    connect(geometry3DView_, &Geometry3DView::transmissionLineSelected, this,
+        [this](std::size_t sourceLine) { selectTransmissionLine(sourceLine); });
+    connect(geometry3DView_, &Geometry3DView::addLoadRequested, this,
+        [this](int wireTag, int segment) { addLoadAt(wireTag, segment); });
+    connect(geometry3DView_, &Geometry3DView::transmissionLineEndpointRequested, this,
+        [this](int wireTag, int segment) { chooseTransmissionLineEndpoint(wireTag, segment); });
+    connect(geometry3DView_, &Geometry3DView::cancelTransmissionLineRequested, this,
+        [this] { setPendingTransmissionLineEndpoint(std::nullopt); });
+    connect(geometry3DView_, &Geometry3DView::editLoadRequested, this,
+        [this](std::size_t sourceLine) { showLoadInEditor(sourceLine); });
+    connect(geometry3DView_, &Geometry3DView::editTransmissionLineRequested, this,
+        [this](std::size_t sourceLine) { showTransmissionLineInEditor(sourceLine); });
+    connect(geometry3DView_, &Geometry3DView::deleteLoadRequested, this,
+        [this](std::size_t sourceLine) { deleteSetupCard(tr("Delete load"), sourceLine); });
+    connect(geometry3DView_, &Geometry3DView::deleteTransmissionLineRequested, this,
+        [this](std::size_t sourceLine) { deleteSetupCard(tr("Delete transmission line"), sourceLine); });
     workspace_->addTab(geometry3DPage, tr("3D Geometry"));
     modelModuleIndex_ = moduleStack_->addWidget(workspace_);
     sourceModuleIndex_ = moduleStack_->addWidget(sourceWorkspace_);
@@ -586,7 +622,11 @@ void MainWindow::createWorkspace()
         [this](model::TransmissionLineDefinition line) { changeTransmissionLine(line); });
     connect(loadNetworkEditor_, &LoadNetworkEditor::transmissionLineDeleteRequested, this,
         [this](std::size_t sourceLine) { deleteSetupCard(tr("Delete transmission line"), sourceLine); });
-    analysisWorkspace_->addTab(loadNetworkEditor_, tr("Loads && Lines"));
+    connect(loadNetworkEditor_, &LoadNetworkEditor::loadSelected, this,
+        [this](std::size_t sourceLine) { selectLoad(sourceLine); });
+    connect(loadNetworkEditor_, &LoadNetworkEditor::transmissionLineSelected, this,
+        [this](std::size_t sourceLine) { selectTransmissionLine(sourceLine); });
+    loadNetworkTabIndex_ = analysisWorkspace_->addTab(loadNetworkEditor_, tr("Loads && Lines"));
 
     analysisSetupEditor_ = new AnalysisSetupEditor(analysisWorkspace_);
     connect(analysisSetupEditor_, &AnalysisSetupEditor::settingsChanged, this,
@@ -1079,6 +1119,11 @@ void MainWindow::checkModel()
     const auto result = nec::NecModelChecker{}.check(document);
     currentModel_ = result.model;
     currentSetup_ = nec::NecSetupConverter{}.convert(document);
+    if (pendingTransmissionLineEndpoint_
+        && !model::wireSegmentPosition(currentModel_, pendingTransmissionLineEndpoint_->first,
+            pendingTransmissionLineEndpoint_->second)) {
+        setPendingTransmissionLineEndpoint(std::nullopt);
+    }
     modelErrorCount_ = result.errorCount();
     modelWarningCount_ = result.warningCount();
     modelChecked_ = true;
@@ -1108,6 +1153,10 @@ void MainWindow::checkModel()
     xzView_->setExcitations(currentSetup_.excitations);
     yzView_->setExcitations(currentSetup_.excitations);
     geometry3DView_->setExcitations(currentSetup_.excitations);
+    xyView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines);
+    xzView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines);
+    yzView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines);
+    geometry3DView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines);
     setupEditor_->setData(currentModel_, currentSetup_);
     loadNetworkEditor_->setData(currentModel_, currentSetup_);
     analysisRequestEditor_->setData(currentSetup_);
@@ -1165,6 +1214,14 @@ void MainWindow::activateProjectItem(QTreeWidgetItem* item)
         setupEditor_->selectExcitation(item->data(0, SourceLineRole).toULongLong());
         return;
     }
+    if (kind == QStringLiteral("load")) {
+        showLoadInEditor(item->data(0, SourceLineRole).toULongLong());
+        return;
+    }
+    if (kind == QStringLiteral("transmissionLine")) {
+        showTransmissionLineInEditor(item->data(0, SourceLineRole).toULongLong());
+        return;
+    }
     if (kind == QStringLiteral("source") || kind == QStringLiteral("wire")) {
         showModelTab(sourceTabIndex_);
         const auto lineNumber = item->data(0, SourceLineRole).toULongLong();
@@ -1216,6 +1273,62 @@ void MainWindow::selectExcitation(std::size_t sourceLine)
             projectTree_->setCurrentItem(item);
             showProjectItemProperties(item);
             propertiesDock_->show();
+            return;
+        }
+        ++iterator;
+    }
+}
+
+void MainWindow::selectLoad(std::size_t sourceLine)
+{
+    xyView_->selectLoad(sourceLine);
+    xzView_->selectLoad(sourceLine);
+    yzView_->selectLoad(sourceLine);
+    geometry3DView_->selectLoad(sourceLine);
+    wireCardEditor_->selectWire(-1);
+    setupEditor_->selectExcitation(0);
+    loadNetworkEditor_->selectLoad(sourceLine);
+    const auto found = std::ranges::find(currentSetup_.loads, sourceLine,
+        &model::LoadDefinition::sourceLine);
+    if (found == currentSetup_.loads.end()) return;
+    properties_->setRowCount(0);
+    populateLoadProperties(*found);
+    properties_->resizeColumnToContents(0);
+    propertiesDock_->show();
+    QTreeWidgetItemIterator iterator(projectTree_);
+    while (*iterator != nullptr) {
+        auto* item = *iterator;
+        if (item->data(0, ItemKindRole).toString() == QStringLiteral("load")
+            && item->data(0, SourceLineRole).toULongLong() == sourceLine) {
+            projectTree_->setCurrentItem(item);
+            return;
+        }
+        ++iterator;
+    }
+}
+
+void MainWindow::selectTransmissionLine(std::size_t sourceLine)
+{
+    xyView_->selectTransmissionLine(sourceLine);
+    xzView_->selectTransmissionLine(sourceLine);
+    yzView_->selectTransmissionLine(sourceLine);
+    geometry3DView_->selectTransmissionLine(sourceLine);
+    wireCardEditor_->selectWire(-1);
+    setupEditor_->selectExcitation(0);
+    loadNetworkEditor_->selectTransmissionLine(sourceLine);
+    const auto found = std::ranges::find(currentSetup_.transmissionLines, sourceLine,
+        &model::TransmissionLineDefinition::sourceLine);
+    if (found == currentSetup_.transmissionLines.end()) return;
+    properties_->setRowCount(0);
+    populateTransmissionLineProperties(*found);
+    properties_->resizeColumnToContents(0);
+    propertiesDock_->show();
+    QTreeWidgetItemIterator iterator(projectTree_);
+    while (*iterator != nullptr) {
+        auto* item = *iterator;
+        if (item->data(0, ItemKindRole).toString() == QStringLiteral("transmissionLine")
+            && item->data(0, SourceLineRole).toULongLong() == sourceLine) {
+            projectTree_->setCurrentItem(item);
             return;
         }
         ++iterator;
@@ -1546,6 +1659,68 @@ void MainWindow::deleteExcitation(std::size_t sourceLine)
 {
     deleteSetupCard(tr("Delete voltage source"), sourceLine);
     selectWireInProject(-1);
+}
+
+void MainWindow::addLoadAt(int wireTag, int segment)
+{
+    if (!model::wireSegmentPosition(currentModel_, wireTag, segment)) return;
+    changeLoad({4, wireTag, segment, segment, 50.0, 0.0, 0.0, 0});
+    const auto found = std::ranges::find_if(currentSetup_.loads.rbegin(), currentSetup_.loads.rend(),
+        [wireTag, segment](const model::LoadDefinition& load) {
+            return load.wireTag == wireTag && load.firstSegment == segment
+                && load.lastSegment == segment;
+        });
+    if (found != currentSetup_.loads.rend()) selectLoad(found->sourceLine);
+}
+
+void MainWindow::chooseTransmissionLineEndpoint(int wireTag, int segment)
+{
+    if (!model::wireSegmentPosition(currentModel_, wireTag, segment)) return;
+    const auto endpoint = std::pair{wireTag, segment};
+    if (!pendingTransmissionLineEndpoint_) {
+        setPendingTransmissionLineEndpoint(endpoint);
+        checkStatus_->setText(tr("Transmission line start: wire %1, segment %2 — right-click the second endpoint")
+            .arg(wireTag).arg(segment));
+        return;
+    }
+    if (*pendingTransmissionLineEndpoint_ == endpoint) {
+        checkStatus_->setText(tr("Choose a different segment for the second transmission-line endpoint"));
+        return;
+    }
+    const auto first = *pendingTransmissionLineEndpoint_;
+    setPendingTransmissionLineEndpoint(std::nullopt);
+    changeTransmissionLine({first.first, first.second, wireTag, segment,
+        50.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0});
+    const auto found = std::ranges::find_if(currentSetup_.transmissionLines.rbegin(),
+        currentSetup_.transmissionLines.rend(), [first, endpoint](const auto& line) {
+            return line.wireTag1 == first.first && line.segment1 == first.second
+                && line.wireTag2 == endpoint.first && line.segment2 == endpoint.second;
+        });
+    if (found != currentSetup_.transmissionLines.rend()) selectTransmissionLine(found->sourceLine);
+}
+
+void MainWindow::setPendingTransmissionLineEndpoint(
+    std::optional<std::pair<int, int>> endpoint)
+{
+    pendingTransmissionLineEndpoint_ = endpoint;
+    xyView_->setPendingTransmissionLineEndpoint(endpoint);
+    xzView_->setPendingTransmissionLineEndpoint(endpoint);
+    yzView_->setPendingTransmissionLineEndpoint(endpoint);
+    geometry3DView_->setPendingTransmissionLineEndpoint(endpoint);
+}
+
+void MainWindow::showLoadInEditor(std::size_t sourceLine)
+{
+    showModule(analysisModuleIndex_);
+    analysisWorkspace_->setCurrentIndex(loadNetworkTabIndex_);
+    selectLoad(sourceLine);
+}
+
+void MainWindow::showTransmissionLineInEditor(std::size_t sourceLine)
+{
+    showModule(analysisModuleIndex_);
+    analysisWorkspace_->setCurrentIndex(loadNetworkTabIndex_);
+    selectTransmissionLine(sourceLine);
 }
 
 void MainWindow::upsertSetupCard(const QString& description, std::size_t sourceLine,
@@ -2211,9 +2386,29 @@ void MainWindow::updateProjectTree(const model::AntennaModel& model, std::size_t
         item->setData(0, WireTagRole, excitation.wireTag);
         item->setData(0, SourceLineRole, static_cast<qulonglong>(excitation.sourceLine));
     }
+    auto* attachments = new QTreeWidgetItem(root, {
+        tr("Loads && Lines (%1)").arg(static_cast<qulonglong>(
+            currentSetup_.loads.size() + currentSetup_.transmissionLines.size()))});
+    attachments->setData(0, ItemKindRole, QStringLiteral("attachments"));
+    for (const auto& load : currentSetup_.loads) {
+        auto* item = new QTreeWidgetItem(attachments, {
+            tr("LD: Wire %1, segments %2–%3")
+                .arg(load.wireTag).arg(load.firstSegment).arg(load.lastSegment)});
+        item->setData(0, ItemKindRole, QStringLiteral("load"));
+        item->setData(0, WireTagRole, load.wireTag);
+        item->setData(0, SourceLineRole, static_cast<qulonglong>(load.sourceLine));
+    }
+    for (const auto& line : currentSetup_.transmissionLines) {
+        auto* item = new QTreeWidgetItem(attachments, {
+            tr("TL: W%1/S%2 → W%3/S%4")
+                .arg(line.wireTag1).arg(line.segment1).arg(line.wireTag2).arg(line.segment2)});
+        item->setData(0, ItemKindRole, QStringLiteral("transmissionLine"));
+        item->setData(0, SourceLineRole, static_cast<qulonglong>(line.sourceLine));
+    }
     projectTree_->expandItem(root);
     projectTree_->expandItem(geometry);
     projectTree_->expandItem(sources);
+    projectTree_->expandItem(attachments);
 }
 
 void MainWindow::showProjectItemProperties(QTreeWidgetItem* item)
@@ -2242,6 +2437,26 @@ void MainWindow::showProjectItemProperties(QTreeWidgetItem* item)
             addPropertyRow(properties_, tr("Magnitude"), QString::number(found->magnitude, 'g', 10));
             addPropertyRow(properties_, tr("Phase"), tr("%1°").arg(found->phaseDegrees, 0, 'g', 10));
             addPropertyRow(properties_, tr("Source Line"), QString::number(found->sourceLine));
+        }
+    } else if (kind == QStringLiteral("load")) {
+        const auto sourceLine = item->data(0, SourceLineRole).toULongLong();
+        const auto found = std::ranges::find(currentSetup_.loads, sourceLine,
+            &model::LoadDefinition::sourceLine);
+        if (found != currentSetup_.loads.end()) {
+            xyView_->selectLoad(sourceLine); xzView_->selectLoad(sourceLine);
+            yzView_->selectLoad(sourceLine); geometry3DView_->selectLoad(sourceLine);
+            loadNetworkEditor_->selectLoad(sourceLine);
+            populateLoadProperties(*found);
+        }
+    } else if (kind == QStringLiteral("transmissionLine")) {
+        const auto sourceLine = item->data(0, SourceLineRole).toULongLong();
+        const auto found = std::ranges::find(currentSetup_.transmissionLines, sourceLine,
+            &model::TransmissionLineDefinition::sourceLine);
+        if (found != currentSetup_.transmissionLines.end()) {
+            xyView_->selectTransmissionLine(sourceLine); xzView_->selectTransmissionLine(sourceLine);
+            yzView_->selectTransmissionLine(sourceLine); geometry3DView_->selectTransmissionLine(sourceLine);
+            loadNetworkEditor_->selectTransmissionLine(sourceLine);
+            populateTransmissionLineProperties(*found);
         }
     } else {
         addPropertyRow(properties_, tr("Selection"), item->text(0));
@@ -2336,6 +2551,41 @@ void MainWindow::populateWireProperties(const model::Wire& wire)
     gaugeControl->setToolTip(tr("Nominal bare-conductor American Wire Gauge; selection updates radius"));
     addPropertyWidgetRow(properties_, tr("Wire Gauge"), gaugeControl);
     addPropertyRow(properties_, tr("Source Line"), QString::number(wire.sourceLine));
+}
+
+void MainWindow::populateLoadProperties(const model::LoadDefinition& load)
+{
+    static const QStringList typeNames{
+        tr("Series RLC"), tr("Parallel RLC"), tr("Distributed series RLC"),
+        tr("Distributed parallel RLC"), tr("Fixed complex impedance"),
+        tr("Wire conductivity")};
+    addPropertyRow(properties_, tr("Object"), tr("Load (LD)"));
+    addPropertyRow(properties_, tr("Type"), load.type >= 0 && load.type < typeNames.size()
+        ? tr("%1 — %2").arg(load.type).arg(typeNames[load.type]) : QString::number(load.type));
+    addPropertyRow(properties_, tr("Wire Tag"), QString::number(load.wireTag));
+    addPropertyRow(properties_, tr("Segment Range"), tr("%1–%2").arg(load.firstSegment).arg(load.lastSegment));
+    addPropertyRow(properties_, tr("Value 1"), QString::number(load.value1, 'g', 10));
+    addPropertyRow(properties_, tr("Value 2"), QString::number(load.value2, 'g', 10));
+    addPropertyRow(properties_, tr("Value 3"), QString::number(load.value3, 'g', 10));
+    addPropertyRow(properties_, tr("Source Line"), QString::number(load.sourceLine));
+}
+
+void MainWindow::populateTransmissionLineProperties(
+    const model::TransmissionLineDefinition& line)
+{
+    addPropertyRow(properties_, tr("Object"), tr("Transmission Line (TL)"));
+    addPropertyRow(properties_, tr("Endpoint 1"), tr("Wire %1, segment %2")
+        .arg(line.wireTag1).arg(line.segment1));
+    addPropertyRow(properties_, tr("Endpoint 2"), tr("Wire %1, segment %2")
+        .arg(line.wireTag2).arg(line.segment2));
+    addPropertyRow(properties_, tr("Characteristic Z0"), tr("%1 Ω")
+        .arg(line.characteristicImpedance, 0, 'g', 10));
+    addPropertyRow(properties_, tr("Length"), formatLength(line.lengthMeters));
+    addPropertyRow(properties_, tr("Shunt 1"), tr("%1 + j%2")
+        .arg(line.shuntReal1, 0, 'g', 10).arg(line.shuntImaginary1, 0, 'g', 10));
+    addPropertyRow(properties_, tr("Shunt 2"), tr("%1 + j%2")
+        .arg(line.shuntReal2, 0, 'g', 10).arg(line.shuntImaginary2, 0, 'g', 10));
+    addPropertyRow(properties_, tr("Source Line"), QString::number(line.sourceLine));
 }
 
 void MainWindow::setCurrentFile(QString path)

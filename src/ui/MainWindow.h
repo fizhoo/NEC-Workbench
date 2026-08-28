@@ -12,6 +12,7 @@
 #include <QString>
 
 #include <optional>
+#include <utility>
 
 class QAction;
 class QCloseEvent;
@@ -79,6 +80,8 @@ private:
     void activateProjectItem(QTreeWidgetItem* item);
     void selectWireInProject(int tag);
     void selectExcitation(std::size_t sourceLine);
+    void selectLoad(std::size_t sourceLine);
+    void selectTransmissionLine(std::size_t sourceLine);
     void synchronizeGeometrySelection(int tag);
     void fitAllGeometryViews();
     void previewEndpointMove(int tag, model::WireEndpoint endpoint, const model::Point3D& position);
@@ -106,6 +109,11 @@ private:
     void showExcitationEditor(std::size_t sourceLine);
     void showExcitationInSetup(std::size_t sourceLine);
     void deleteExcitation(std::size_t sourceLine);
+    void addLoadAt(int wireTag, int segment);
+    void chooseTransmissionLineEndpoint(int wireTag, int segment);
+    void setPendingTransmissionLineEndpoint(std::optional<std::pair<int, int>> endpoint);
+    void showLoadInEditor(std::size_t sourceLine);
+    void showTransmissionLineInEditor(std::size_t sourceLine);
     void upsertSetupCard(const QString& description, std::size_t sourceLine,
         const QString& cardText, bool frequencyCard);
     void deleteSetupCard(const QString& description, std::size_t sourceLine);
@@ -136,6 +144,8 @@ private:
     void showProjectItemProperties(QTreeWidgetItem* item);
     void showCardProperties(std::size_t sourceLine);
     void populateWireProperties(const model::Wire& wire);
+    void populateLoadProperties(const model::LoadDefinition& load);
+    void populateTransmissionLineProperties(const model::TransmissionLineDefinition& line);
     void setCurrentFile(QString path);
     void restoreWorkspaceLayout();
     void saveWorkspaceLayout();
@@ -223,6 +233,7 @@ private:
     int geometryTabIndex_{};
     int structuredSourceTabIndex_{1};
     int setupTabIndex_{};
+    int loadNetworkTabIndex_{};
     int homeModuleIndex_{};
     int modelModuleIndex_{};
     int sourceModuleIndex_{};
@@ -238,6 +249,7 @@ private:
     bool modelChecked_{};
     bool hasNecModel_{};
     bool resultsAvailable_{};
+    std::optional<std::pair<int, int>> pendingTransmissionLineEndpoint_;
 };
 
 }

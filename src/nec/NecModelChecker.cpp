@@ -200,8 +200,13 @@ void checkTransmissionLine(const NecCard& card, ModelCheckResult& result)
     if (!validEnd(tag1, segment1) || !validEnd(tag2, segment2))
         addError(result, card, "TL endpoint references an invalid wire or segment");
     if (!std::ranges::all_of(card.fields.begin() + 4, card.fields.end(),
-            [](const auto& field) { return isNumber<double>(field); }))
+            [](const auto& field) { return isNumber<double>(field); })) {
         addError(result, card, "TL values must be numeric");
+        return;
+    }
+    double impedance{};
+    std::from_chars(card.fields[4].data(), card.fields[4].data() + card.fields[4].size(), impedance);
+    if (impedance == 0.0) addError(result, card, "TL characteristic impedance must be nonzero");
 }
 
 void checkCardOrdering(const NecDocument& document, ModelCheckResult& result)

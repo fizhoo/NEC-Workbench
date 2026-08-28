@@ -132,6 +132,12 @@ if(NECWB_BUILD_TESTS)
             src/ui/cards/WireCardEditor.h
             src/ui/geometry/WirePropertiesDialog.cpp
             src/ui/geometry/WirePropertiesDialog.h
+            src/ui/geometry/GeometryView.cpp
+            src/ui/geometry/GeometryView.h
+            src/ui/geometry/Geometry3DView.cpp
+            src/ui/geometry/Geometry3DView.h
+            src/ui/setup/LoadNetworkEditor.cpp
+            src/ui/setup/LoadNetworkEditor.h
         )
         target_link_libraries(necwb_plot_tests PRIVATE necwb_core Qt6::Widgets)
         add_test(NAME necwb_plot_tests COMMAND necwb_plot_tests)

@@ -6,6 +6,9 @@
 #include "ui/cards/StructuredCardEditor.h"
 #include "ui/cards/WireCardEditor.h"
 #include "ui/geometry/WirePropertiesDialog.h"
+#include "ui/geometry/GeometryView.h"
+#include "ui/geometry/Geometry3DView.h"
+#include "ui/setup/LoadNetworkEditor.h"
 #include "nec/NecParser.h"
 #include "model/WireGauge.h"
 
@@ -217,6 +220,49 @@ auto main(int argc, char* argv[]) -> int
     auto* gaugeEditor = wireProperties.findChild<QComboBox*>(QStringLiteral("wireGaugeDialogEditor"));
     const auto gaugeDropdownValid = gaugeEditor != nullptr
         && gaugeEditor->currentData().toInt() == 12;
+    necwb::model::AntennaModel attachmentModel;
+    attachmentModel.addWire({1, {-1.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, 11, 0.001, 1});
+    attachmentModel.addWire({2, {-1.0, 1.0, 0.0}, {1.0, 1.0, 0.0}, 11, 0.001, 2});
+    necwb::model::ModelSetup attachmentSetup;
+    attachmentSetup.loads.push_back({4, 1, 6, 6, 50.0, 0.0, 0.0, 7});
+    attachmentSetup.transmissionLines.push_back({1, 3, 2, 9, 50.0, 0.0,
+        0.0, 0.0, 0.0, 0.0, 8});
+    necwb::ui::GeometryView attachment2D(necwb::geometry::ProjectionPlane::XY);
+    necwb::ui::Geometry3DView attachment3D;
+    attachment2D.resize(700, 450); attachment3D.resize(700, 450);
+    attachment2D.setModel(attachmentModel); attachment3D.setModel(attachmentModel);
+    attachment2D.setAttachments(attachmentSetup.loads, attachmentSetup.transmissionLines);
+    attachment3D.setAttachments(attachmentSetup.loads, attachmentSetup.transmissionLines);
+    attachment2D.setPendingTransmissionLineEndpoint(std::pair{1, 2});
+    attachment3D.setPendingTransmissionLineEndpoint(std::pair{1, 2});
+    attachment2D.selectLoad(7); attachment3D.selectTransmissionLine(8);
+    attachment2D.show(); attachment3D.show(); application.processEvents();
+    QImage attachmentImage(700, 450, QImage::Format_ARGB32_Premultiplied);
+    attachmentImage.fill(Qt::transparent); QPainter attachmentPainter(&attachmentImage);
+    attachment2D.render(&attachmentPainter); attachment3D.render(&attachmentPainter);
+    attachmentPainter.end();
+    necwb::ui::LoadNetworkEditor loadNetwork;
+    loadNetwork.setData(attachmentModel, attachmentSetup);
+    loadNetwork.show(); application.processEvents();
+    auto* loadTable = loadNetwork.findChild<QTableWidget*>(QStringLiteral("loadNetworkLoadsTable"));
+    auto* lineTable = loadNetwork.findChild<QTableWidget*>(QStringLiteral("loadNetworkLinesTable"));
+    auto* applyLoad = loadNetwork.findChild<QPushButton*>(QStringLiteral("applySelectedLoadButton"));
+    auto* applyLine = loadNetwork.findChild<QPushButton*>(QStringLiteral("applySelectedLineButton"));
+    auto* loadValidation = loadNetwork.findChild<QLabel*>(QStringLiteral("loadNetworkValidation"));
+    if (loadTable == nullptr || lineTable == nullptr || applyLoad == nullptr || applyLine == nullptr
+        || loadValidation == nullptr) return EXIT_FAILURE;
+    auto validLoadEmitted = false;
+    auto validLineEmitted = false;
+    QObject::connect(&loadNetwork, &necwb::ui::LoadNetworkEditor::loadChanged,
+        [&validLoadEmitted](const auto&) { validLoadEmitted = true; });
+    QObject::connect(&loadNetwork, &necwb::ui::LoadNetworkEditor::transmissionLineChanged,
+        [&validLineEmitted](const auto&) { validLineEmitted = true; });
+    loadTable->selectRow(0); loadTable->item(0, 1)->setText(QStringLiteral("99")); applyLoad->click();
+    const auto invalidLoadBlocked = !validLoadEmitted && loadValidation->isVisibleTo(&loadNetwork);
+    loadTable->item(0, 1)->setText(QStringLiteral("1")); applyLoad->click();
+    lineTable->selectRow(0); lineTable->item(0, 4)->setText(QStringLiteral("0")); applyLine->click();
+    const auto invalidLineBlocked = !validLineEmitted;
+    lineTable->item(0, 4)->setText(QStringLiteral("75")); applyLine->click();
     QTemporaryDir directory;
     necwb::ui::AnalysisRunStore store(directory.path());
     auto run = store.create(QStringLiteral("nec2"), QStringLiteral("/tmp/test-dipole.nec"));
@@ -239,7 +285,9 @@ auto main(int argc, char* argv[]) -> int
         && editedCard == QStringLiteral("EX 0 1 7 0 1 0 2.5")
         && addedCard == QStringLiteral("LD 0 1 1 11 0 0 0") && deletedLine == 3
         && !wireImage.isNull() && wireEditCommitted && gaugeDropdownValid
-        && radiationControlsSynchronized && radiationMetricsVisible;
+        && radiationControlsSynchronized && radiationMetricsVisible
+        && !attachmentImage.isNull() && invalidLoadBlocked && validLoadEmitted
+        && invalidLineBlocked && validLineEmitted;
     if (!passed) qWarning() << "structured smoke state" << invalidEditBlocked << editedCard
         << addedCard << deletedLine << "wire committed" << wireEditCommitted;
     return passed ? EXIT_SUCCESS : EXIT_FAILURE;

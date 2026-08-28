@@ -111,5 +111,9 @@ struct ModelSetup {
 
 [[nodiscard]] auto excitationPosition(const AntennaModel& model, const Excitation& excitation)
     -> std::optional<Point3D>;
+[[nodiscard]] auto wireSegmentPosition(const AntennaModel& model, int wireTag, int segment)
+    -> std::optional<Point3D>;
+[[nodiscard]] auto loadPosition(const AntennaModel& model, const LoadDefinition& load)
+    -> std::optional<Point3D>;
 
 }

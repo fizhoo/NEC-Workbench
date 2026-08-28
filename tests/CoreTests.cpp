@@ -407,6 +407,18 @@ void testLoadsAndTransmissionLines()
         "transmission line definitions write canonical TL cards");
     expect(necwb::nec::NecModelChecker{}.check(document).errorCount() == 0,
         "valid LD and TL cards pass model checking");
+    const auto model = necwb::nec::NecModelConverter{}.convert(document).model;
+    const auto loadPosition = necwb::model::loadPosition(model, setup.loads[0]);
+    const auto lineEndpoint = necwb::model::wireSegmentPosition(model, 2, 5);
+    expect(loadPosition && std::abs(loadPosition->z - 3.5 / 9.0) < 1.0e-12,
+        "load markers use the center of their segment range");
+    expect(lineEndpoint && lineEndpoint->x == 1.0
+            && std::abs(lineEndpoint->z - 0.5) < 1.0e-12,
+        "transmission-line endpoints use segment centers");
+    const auto invalidLine = necwb::nec::NecParser{}.parse(
+        "GW 1 9 0 0 0 0 0 1 .001\nGE 0\nTL 1 1 1 9 0 0 0 0 0 0\nEN\n");
+    expect(necwb::nec::NecModelChecker{}.check(invalidLine).errorCount() == 1,
+        "zero-impedance transmission lines are rejected");
 }
 
 void testSolverCommand()

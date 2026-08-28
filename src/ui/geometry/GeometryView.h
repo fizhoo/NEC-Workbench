@@ -36,7 +36,12 @@ public:
     void setSnapSpacing(double meters);
     void setSettings(const GeometrySettings& settings);
     void setExcitations(const std::vector<model::Excitation>& excitations);
+    void setAttachments(const std::vector<model::LoadDefinition>& loads,
+        const std::vector<model::TransmissionLineDefinition>& transmissionLines);
+    void setPendingTransmissionLineEndpoint(std::optional<std::pair<int, int>> endpoint);
     void selectExcitation(std::size_t sourceLine);
+    void selectLoad(std::size_t sourceLine);
+    void selectTransmissionLine(std::size_t sourceLine);
 
 signals:
     void wireSelected(int tag);
@@ -55,6 +60,15 @@ signals:
     void editExcitationRequested(std::size_t sourceLine);
     void openExcitationSetupRequested(std::size_t sourceLine);
     void deleteExcitationRequested(std::size_t sourceLine);
+    void loadSelected(std::size_t sourceLine);
+    void transmissionLineSelected(std::size_t sourceLine);
+    void addLoadRequested(int wireTag, int segment);
+    void transmissionLineEndpointRequested(int wireTag, int segment);
+    void cancelTransmissionLineRequested();
+    void editLoadRequested(std::size_t sourceLine);
+    void editTransmissionLineRequested(std::size_t sourceLine);
+    void deleteLoadRequested(std::size_t sourceLine);
+    void deleteTransmissionLineRequested(std::size_t sourceLine);
 
 protected:
     void mouseDoubleClickEvent(QMouseEvent* event) override;
@@ -74,12 +88,15 @@ private:
     void drawGrid(QPainter& painter) const;
     void drawWires(QPainter& painter) const;
     void drawExcitations(QPainter& painter) const;
+    void drawAttachments(QPainter& painter) const;
     void drawOverlay(QPainter& painter) const;
     void selectAt(const QPointF& position);
     [[nodiscard]] auto endpointAt(const QPointF& position) const
         -> std::optional<std::pair<int, model::WireEndpoint>>;
     [[nodiscard]] auto wireAt(const QPointF& position) const -> std::optional<int>;
     [[nodiscard]] auto excitationAt(const QPointF& position) const -> std::optional<std::size_t>;
+    [[nodiscard]] auto loadAt(const QPointF& position) const -> std::optional<std::size_t>;
+    [[nodiscard]] auto transmissionLineAt(const QPointF& position) const -> std::optional<std::size_t>;
     [[nodiscard]] auto segmentAt(int wireTag, const QPointF& position) const -> int;
     [[nodiscard]] auto snappedPoint(const geometry::Point2D& point, int excludedTag) const
         -> geometry::Point2D;
@@ -97,8 +114,13 @@ private:
     double pixelsPerMeter_{50.0};
     GeometrySettings settings_;
     std::vector<model::Excitation> excitations_;
+    std::vector<model::LoadDefinition> loads_;
+    std::vector<model::TransmissionLineDefinition> transmissionLines_;
     std::optional<int> selectedWireTag_;
     std::optional<std::size_t> selectedExcitationLine_;
+    std::optional<std::size_t> selectedLoadLine_;
+    std::optional<std::size_t> selectedTransmissionLine_;
+    std::optional<std::pair<int, int>> pendingTransmissionLineEndpoint_;
     std::optional<geometry::Point2D> cursorWorld_;
     std::optional<model::WireEndpoint> draggedEndpoint_;
     model::Point3D dragOriginal_;

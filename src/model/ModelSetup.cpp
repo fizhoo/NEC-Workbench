@@ -44,11 +44,33 @@ auto frequencyPointCount(int steppingMode, double startMHz, double endMHz, doubl
 auto excitationPosition(const AntennaModel& model, const Excitation& excitation)
     -> std::optional<Point3D>
 {
-    const auto* wire = model.wireByTag(excitation.wireTag);
-    if (wire == nullptr || excitation.segment < 1 || excitation.segment > wire->segments) {
+    return wireSegmentPosition(model, excitation.wireTag, excitation.segment);
+}
+
+auto wireSegmentPosition(const AntennaModel& model, int wireTag, int segment)
+    -> std::optional<Point3D>
+{
+    const auto* wire = model.wireByTag(wireTag);
+    if (wire == nullptr || segment < 1 || segment > wire->segments) {
         return std::nullopt;
     }
-    const auto parameter = (static_cast<double>(excitation.segment) - 0.5) / wire->segments;
+    const auto parameter = (static_cast<double>(segment) - 0.5) / wire->segments;
+    return Point3D{
+        wire->start.x + (wire->end.x - wire->start.x) * parameter,
+        wire->start.y + (wire->end.y - wire->start.y) * parameter,
+        wire->start.z + (wire->end.z - wire->start.z) * parameter};
+}
+
+auto loadPosition(const AntennaModel& model, const LoadDefinition& load)
+    -> std::optional<Point3D>
+{
+    const auto* wire = model.wireByTag(load.wireTag);
+    if (wire == nullptr) return std::nullopt;
+    const auto first = load.firstSegment == 0 ? 1 : load.firstSegment;
+    const auto last = load.lastSegment == 0 ? wire->segments : load.lastSegment;
+    if (first < 1 || last < first || last > wire->segments) return std::nullopt;
+    const auto centerSegment = (static_cast<double>(first) + last) / 2.0;
+    const auto parameter = (centerSegment - 0.5) / wire->segments;
     return Point3D{
         wire->start.x + (wire->end.x - wire->start.x) * parameter,
         wire->start.y + (wire->end.y - wire->start.y) * parameter,

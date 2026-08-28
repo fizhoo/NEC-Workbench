@@ -8,6 +8,7 @@
 #include <QWidget>
 
 #include <optional>
+#include <utility>
 
 class QContextMenuEvent;
 class QMouseEvent;
@@ -27,7 +28,12 @@ public:
     void selectWire(int tag);
     void setLengthUnit(model::LengthUnit unit);
     void setExcitations(const std::vector<model::Excitation>& excitations);
+    void setAttachments(const std::vector<model::LoadDefinition>& loads,
+        const std::vector<model::TransmissionLineDefinition>& transmissionLines);
+    void setPendingTransmissionLineEndpoint(std::optional<std::pair<int, int>> endpoint);
     void selectExcitation(std::size_t sourceLine);
+    void selectLoad(std::size_t sourceLine);
+    void selectTransmissionLine(std::size_t sourceLine);
     void fitToView();
     void setIsometricView();
 
@@ -39,6 +45,15 @@ signals:
     void editExcitationRequested(std::size_t sourceLine);
     void openExcitationSetupRequested(std::size_t sourceLine);
     void deleteExcitationRequested(std::size_t sourceLine);
+    void loadSelected(std::size_t sourceLine);
+    void transmissionLineSelected(std::size_t sourceLine);
+    void addLoadRequested(int wireTag, int segment);
+    void transmissionLineEndpointRequested(int wireTag, int segment);
+    void cancelTransmissionLineRequested();
+    void editLoadRequested(std::size_t sourceLine);
+    void editTransmissionLineRequested(std::size_t sourceLine);
+    void deleteLoadRequested(std::size_t sourceLine);
+    void deleteTransmissionLineRequested(std::size_t sourceLine);
 
 protected:
     void contextMenuEvent(QContextMenuEvent* event) override;
@@ -59,6 +74,8 @@ private:
     [[nodiscard]] auto cameraCoordinates(const model::Point3D& point) const -> model::Point3D;
     [[nodiscard]] auto wireAt(const QPointF& position) const -> std::optional<int>;
     [[nodiscard]] auto excitationAt(const QPointF& position) const -> std::optional<std::size_t>;
+    [[nodiscard]] auto loadAt(const QPointF& position) const -> std::optional<std::size_t>;
+    [[nodiscard]] auto transmissionLineAt(const QPointF& position) const -> std::optional<std::size_t>;
     [[nodiscard]] auto segmentAt(int wireTag, const QPointF& position) const -> int;
     [[nodiscard]] auto formattedLength(double meters) const -> QString;
     void updateModelCenter();
@@ -67,6 +84,8 @@ private:
     model::LengthUnit lengthUnit_{model::LengthUnit::Meter};
     model::Point3D modelCenter_;
     std::vector<model::Excitation> excitations_;
+    std::vector<model::LoadDefinition> loads_;
+    std::vector<model::TransmissionLineDefinition> transmissionLines_;
     QPointF panOffset_;
     QPointF lastMousePosition_;
     QPointF pressPosition_;
@@ -76,6 +95,9 @@ private:
     double modelExtent_{1.0};
     std::optional<int> selectedWireTag_;
     std::optional<std::size_t> selectedExcitationLine_;
+    std::optional<std::size_t> selectedLoadLine_;
+    std::optional<std::size_t> selectedTransmissionLine_;
+    std::optional<std::pair<int, int>> pendingTransmissionLineEndpoint_;
     bool orbiting_{};
     bool panning_{};
     bool dragMoved_{};

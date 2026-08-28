@@ -15,11 +15,15 @@ class LoadNetworkEditor final : public QWidget {
 public:
     explicit LoadNetworkEditor(QWidget* parent = nullptr);
     void setData(const model::AntennaModel& model, const model::ModelSetup& setup);
+    void selectLoad(std::size_t sourceLine);
+    void selectTransmissionLine(std::size_t sourceLine);
 signals:
     void loadChanged(model::LoadDefinition load);
     void loadDeleteRequested(std::size_t sourceLine);
     void transmissionLineChanged(model::TransmissionLineDefinition line);
     void transmissionLineDeleteRequested(std::size_t sourceLine);
+    void loadSelected(std::size_t sourceLine);
+    void transmissionLineSelected(std::size_t sourceLine);
 private:
     void applySelectedLoad();
     void applySelectedLine();

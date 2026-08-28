@@ -59,6 +59,8 @@ void Geometry3DView::selectWire(int tag)
 {
     selectedWireTag_ = model_.wireByTag(tag) == nullptr ? std::nullopt : std::optional<int>{tag};
     selectedExcitationLine_.reset();
+    selectedLoadLine_.reset();
+    selectedTransmissionLine_.reset();
     update();
 }
 
@@ -79,11 +81,57 @@ void Geometry3DView::setExcitations(const std::vector<model::Excitation>& excita
     update();
 }
 
+void Geometry3DView::setAttachments(const std::vector<model::LoadDefinition>& loads,
+    const std::vector<model::TransmissionLineDefinition>& transmissionLines)
+{
+    loads_ = loads;
+    transmissionLines_ = transmissionLines;
+    if (selectedLoadLine_
+        && std::ranges::find(loads_, *selectedLoadLine_, &model::LoadDefinition::sourceLine)
+            == loads_.end()) selectedLoadLine_.reset();
+    if (selectedTransmissionLine_
+        && std::ranges::find(transmissionLines_, *selectedTransmissionLine_,
+            &model::TransmissionLineDefinition::sourceLine) == transmissionLines_.end())
+        selectedTransmissionLine_.reset();
+    update();
+}
+
+void Geometry3DView::setPendingTransmissionLineEndpoint(
+    std::optional<std::pair<int, int>> endpoint)
+{
+    pendingTransmissionLineEndpoint_ = endpoint;
+    update();
+}
+
 void Geometry3DView::selectExcitation(std::size_t sourceLine)
 {
     const auto found = std::ranges::find(excitations_, sourceLine, &model::Excitation::sourceLine);
     selectedExcitationLine_ = found == excitations_.end()
         ? std::nullopt : std::optional<std::size_t>{sourceLine};
+    selectedWireTag_.reset();
+    selectedLoadLine_.reset();
+    selectedTransmissionLine_.reset();
+    update();
+}
+
+void Geometry3DView::selectLoad(std::size_t sourceLine)
+{
+    const auto found = std::ranges::find(loads_, sourceLine, &model::LoadDefinition::sourceLine);
+    selectedLoadLine_ = found == loads_.end() ? std::nullopt : std::optional{sourceLine};
+    selectedExcitationLine_.reset();
+    selectedTransmissionLine_.reset();
+    selectedWireTag_.reset();
+    update();
+}
+
+void Geometry3DView::selectTransmissionLine(std::size_t sourceLine)
+{
+    const auto found = std::ranges::find(transmissionLines_, sourceLine,
+        &model::TransmissionLineDefinition::sourceLine);
+    selectedTransmissionLine_ = found == transmissionLines_.end()
+        ? std::nullopt : std::optional{sourceLine};
+    selectedExcitationLine_.reset();
+    selectedLoadLine_.reset();
     selectedWireTag_.reset();
     update();
 }
@@ -127,7 +175,25 @@ void Geometry3DView::setIsometricView()
 void Geometry3DView::contextMenuEvent(QContextMenuEvent* event)
 {
     QMenu menu(this);
-    if (const auto sourceLine = excitationAt(event->pos())) {
+    if (const auto sourceLine = loadAt(event->pos())) {
+        selectLoad(*sourceLine);
+        emit loadSelected(*sourceLine);
+        auto* editAction = menu.addAction(tr("Edit in Loads && Lines"));
+        menu.addSeparator();
+        auto* deleteAction = menu.addAction(tr("Delete Load"));
+        const auto* selectedAction = menu.exec(event->globalPos());
+        if (selectedAction == editAction) emit editLoadRequested(*sourceLine);
+        else if (selectedAction == deleteAction) emit deleteLoadRequested(*sourceLine);
+    } else if (const auto sourceLine = transmissionLineAt(event->pos())) {
+        selectTransmissionLine(*sourceLine);
+        emit transmissionLineSelected(*sourceLine);
+        auto* editAction = menu.addAction(tr("Edit in Loads && Lines"));
+        menu.addSeparator();
+        auto* deleteAction = menu.addAction(tr("Delete Transmission Line"));
+        const auto* selectedAction = menu.exec(event->globalPos());
+        if (selectedAction == editAction) emit editTransmissionLineRequested(*sourceLine);
+        else if (selectedAction == deleteAction) emit deleteTransmissionLineRequested(*sourceLine);
+    } else if (const auto sourceLine = excitationAt(event->pos())) {
         selectExcitation(*sourceLine);
         emit excitationSelected(*sourceLine);
         auto* propertiesAction = menu.addAction(tr("Properties…"));
@@ -145,27 +211,44 @@ void Geometry3DView::contextMenuEvent(QContextMenuEvent* event)
     } else if (const auto tag = wireAt(event->pos())) {
         selectedWireTag_ = *tag;
         selectedExcitationLine_.reset();
+        selectedLoadLine_.reset();
+        selectedTransmissionLine_.reset();
         emit wireSelected(*tag);
         auto* propertiesAction = menu.addAction(tr("Properties…"));
         menu.addSeparator();
         auto* addSourceAction = menu.addAction(tr("Add Voltage Source Here"));
+        auto* addLoadAction = menu.addAction(tr("Add Load Here"));
+        auto* lineEndpointAction = menu.addAction(pendingTransmissionLineEndpoint_
+            ? tr("Complete Transmission Line Here") : tr("Start Transmission Line Here"));
+        auto* cancelLineAction = pendingTransmissionLineEndpoint_
+            ? menu.addAction(tr("Cancel Transmission Line")) : nullptr;
         auto* fitAction = menu.addAction(tr("Fit 3D View"));
         const auto* selectedAction = menu.exec(event->globalPos());
         if (selectedAction == propertiesAction) {
             emit wirePropertiesRequested(*tag);
         } else if (selectedAction == addSourceAction) {
             emit addExcitationRequested(*tag, segmentAt(*tag, event->pos()));
+        } else if (selectedAction == addLoadAction) {
+            emit addLoadRequested(*tag, segmentAt(*tag, event->pos()));
+        } else if (selectedAction == lineEndpointAction) {
+            emit transmissionLineEndpointRequested(*tag, segmentAt(*tag, event->pos()));
+        } else if (cancelLineAction != nullptr && selectedAction == cancelLineAction) {
+            emit cancelTransmissionLineRequested();
         } else if (selectedAction == fitAction) {
             fitToView();
         }
     } else {
         auto* fitAction = menu.addAction(tr("Fit 3D View"));
         auto* isometricAction = menu.addAction(tr("Isometric View"));
+        auto* cancelLineAction = pendingTransmissionLineEndpoint_
+            ? menu.addAction(tr("Cancel Transmission Line")) : nullptr;
         const auto* selectedAction = menu.exec(event->globalPos());
         if (selectedAction == fitAction) {
             fitToView();
         } else if (selectedAction == isometricAction) {
             setIsometricView();
+        } else if (cancelLineAction != nullptr && selectedAction == cancelLineAction) {
+            emit cancelTransmissionLineRequested();
         }
     }
     event->accept();
@@ -229,13 +312,21 @@ void Geometry3DView::mouseReleaseEvent(QMouseEvent* event)
         panning_ = false;
         setCursor(Qt::OpenHandCursor);
         if (selectClick) {
-            if (const auto sourceLine = excitationAt(event->position())) {
+            if (const auto sourceLine = loadAt(event->position())) {
+                selectLoad(*sourceLine);
+                emit loadSelected(*sourceLine);
+            } else if (const auto sourceLine = transmissionLineAt(event->position())) {
+                selectTransmissionLine(*sourceLine);
+                emit transmissionLineSelected(*sourceLine);
+            } else if (const auto sourceLine = excitationAt(event->position())) {
                 selectExcitation(*sourceLine);
                 emit excitationSelected(*sourceLine);
             } else {
                 const auto tag = wireAt(event->position());
                 selectedWireTag_ = tag;
                 selectedExcitationLine_.reset();
+                selectedLoadLine_.reset();
+                selectedTransmissionLine_.reset();
                 emit wireSelected(tag.value_or(-1));
             }
             update();
@@ -274,6 +365,33 @@ void Geometry3DView::paintEvent(QPaintEvent*)
         painter.drawText(endpoint + QPointF{5.0, -4.0}, labels[index]);
     }
 
+    for (const auto& line : transmissionLines_) {
+        const auto first = model::wireSegmentPosition(model_, line.wireTag1, line.segment1);
+        const auto second = model::wireSegmentPosition(model_, line.wireTag2, line.segment2);
+        if (!first || !second) continue;
+        const auto start = project(*first).screen;
+        const auto end = project(*second).screen;
+        const auto selected = selectedTransmissionLine_ == line.sourceLine;
+        const auto color = selected ? QColor(225, 105, 25) : QColor(125, 70, 175);
+        painter.setPen(QPen(color, selected ? 3.0 : 2.0, Qt::DashLine));
+        painter.setBrush(palette().base());
+        painter.drawLine(start, end);
+        painter.drawEllipse(start, selected ? 5.0 : 4.0, selected ? 5.0 : 4.0);
+        painter.drawEllipse(end, selected ? 5.0 : 4.0, selected ? 5.0 : 4.0);
+        painter.drawText((start + end) / 2.0 + QPointF{6.0, -6.0}, tr("TL"));
+    }
+    if (pendingTransmissionLineEndpoint_) {
+        const auto position = model::wireSegmentPosition(model_,
+            pendingTransmissionLineEndpoint_->first, pendingTransmissionLineEndpoint_->second);
+        if (position) {
+            const auto screen = project(*position).screen;
+            painter.setPen(QPen(QColor(125, 70, 175), 2.5, Qt::DashLine));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawEllipse(screen, 9.0, 9.0);
+            painter.drawText(screen + QPointF{11.0, -8.0}, tr("TL start"));
+        }
+    }
+
     struct RenderWire {
         const model::Wire* wire{};
         CameraPoint start;
@@ -301,6 +419,22 @@ void Geometry3DView::paintEvent(QPaintEvent*)
             const auto midpoint = (rendered.start.screen + rendered.end.screen) / 2.0;
             painter.drawText(midpoint + QPointF{8.0, -8.0}, QStringLiteral("GW %1").arg(rendered.wire->tag));
         }
+    }
+
+    for (const auto& load : loads_) {
+        const auto position = model::loadPosition(model_, load);
+        if (!position) continue;
+        const auto screen = project(*position).screen;
+        const auto selected = selectedLoadLine_ == load.sourceLine;
+        const auto halfSize = selected ? 8.0 : 6.0;
+        const QRectF marker(screen.x() - halfSize, screen.y() - halfSize,
+            halfSize * 2.0, halfSize * 2.0);
+        painter.setPen(QPen(selected ? QColor(225, 105, 25) : QColor(45, 145, 115),
+            selected ? 3.0 : 2.0));
+        painter.setBrush(QColor(205, 245, 225));
+        painter.drawRect(marker);
+        painter.setPen(QColor(25, 105, 80));
+        painter.drawText(screen + QPointF{9.0, -7.0}, tr("LD"));
     }
 
     for (const auto& excitation : excitations_) {
@@ -379,6 +513,29 @@ auto Geometry3DView::excitationAt(const QPointF& position) const -> std::optiona
         if (sourcePosition && QLineF(position, project(*sourcePosition).screen).length() <= 12.0) {
             return iterator->sourceLine;
         }
+    }
+    return std::nullopt;
+}
+
+auto Geometry3DView::loadAt(const QPointF& position) const -> std::optional<std::size_t>
+{
+    for (auto iterator = loads_.rbegin(); iterator != loads_.rend(); ++iterator) {
+        const auto markerPosition = model::loadPosition(model_, *iterator);
+        if (markerPosition && QLineF(position, project(*markerPosition).screen).length() <= 12.0)
+            return iterator->sourceLine;
+    }
+    return std::nullopt;
+}
+
+auto Geometry3DView::transmissionLineAt(const QPointF& position) const
+    -> std::optional<std::size_t>
+{
+    for (auto iterator = transmissionLines_.rbegin(); iterator != transmissionLines_.rend(); ++iterator) {
+        const auto first = model::wireSegmentPosition(model_, iterator->wireTag1, iterator->segment1);
+        const auto second = model::wireSegmentPosition(model_, iterator->wireTag2, iterator->segment2);
+        if (first && second
+            && distanceToSegment(position, project(*first).screen, project(*second).screen) <= 8.0)
+            return iterator->sourceLine;
     }
     return std::nullopt;
 }
