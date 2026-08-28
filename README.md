@@ -66,6 +66,17 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+## Windows Downloads
+
+Every push to `main` runs the Windows build workflow on GitHub. To try the latest
+build, open the repository's **Actions** page, select the newest successful
+**Windows Build** run, and download the `NEC-Workbench-Windows-x64` artifact.
+Extract the ZIP and run `nec-workbench.exe`.
+
+The package includes the required Qt runtime files but does not include an NEC
+solver. Select a separately installed Windows-compatible solver executable in
+Analyze Setup when calculation support is needed.
+
 ## Architecture
 
 `necwb_core` deliberately has no Qt dependency. NEC source is represented by
