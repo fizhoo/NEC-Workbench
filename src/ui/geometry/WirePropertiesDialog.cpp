@@ -74,14 +74,18 @@ WirePropertiesDialog::WirePropertiesDialog(const model::Wire& wire,
     auto* sizeGroup = new QGroupBox(tr("Wire Size"), this);
     auto* sizeLayout = new QFormLayout(sizeGroup);
     gaugeControl_ = new QComboBox(sizeGroup);
+    gaugeControl_->setObjectName(QStringLiteral("wireGaugeDialogEditor"));
     gaugeControl_->addItem(tr("Custom radius"));
     for (auto gauge = -3; gauge <= 40; ++gauge) {
         gaugeControl_->addItem(QString::fromStdString(model::awgLabel(gauge)), gauge);
     }
     radiusControl_ = createLengthControl(sizeGroup);
+    radiusControl_->setObjectName(QStringLiteral("wireRadiusDialogEditor"));
     radiusControl_->setRange(0.000000001, 1.0e12);
     radiusControl_->setSuffix(suffix);
     radiusControl_->setValue(model::fromMeters(wire.radius, lengthUnit_));
+    if (const auto gauge = model::matchingAwg(wire.radius))
+        gaugeControl_->setCurrentIndex(gaugeControl_->findData(*gauge));
     diameterLabel_ = new QLabel(sizeGroup);
     auto* gaugeNote = new QLabel(tr("AWG choices use nominal bare-conductor diameter."), sizeGroup);
     gaugeNote->setWordWrap(true);

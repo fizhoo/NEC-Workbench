@@ -44,6 +44,7 @@ class Radiation3DView;
 class SetupEditor;
 class LoadNetworkEditor;
 class WireCardEditor;
+class StructuredCardEditor;
 class DashboardPage;
 
 class MainWindow final : public QMainWindow {
@@ -94,6 +95,9 @@ private:
     void duplicateWire(int tag);
     void showWireProperties(int tag);
     void editWire(const model::Wire& original, const model::Wire& updated);
+    void editStructuredCard(std::size_t sourceLine, const QString& cardText);
+    void addStructuredCard(const QString& cardText);
+    void deleteStructuredCard(std::size_t sourceLine);
     void changeFrequency(const model::FrequencyDefinition& frequency);
     void deleteFrequency(std::size_t sourceLine);
     void changeGround(const model::GroundDefinition& ground);
@@ -130,6 +134,8 @@ private:
     void updateUndoActions();
     void updateProjectTree(const model::AntennaModel& model, std::size_t cardCount);
     void showProjectItemProperties(QTreeWidgetItem* item);
+    void showCardProperties(std::size_t sourceLine);
+    void populateWireProperties(const model::Wire& wire);
     void setCurrentFile(QString path);
     void restoreWorkspaceLayout();
     void saveWorkspaceLayout();
@@ -163,6 +169,7 @@ private:
     QTabWidget* resultsWorkspace_{};
     DashboardPage* dashboardPage_{};
     WireCardEditor* wireCardEditor_{};
+    StructuredCardEditor* structuredCardEditor_{};
     NecEditor* editor_{};
     GeometryView* xyView_{};
     GeometryView* xzView_{};
@@ -214,7 +221,7 @@ private:
     bool currentRunTimedOut_{};
     int sourceTabIndex_{};
     int geometryTabIndex_{};
-    int cardEditorTabIndex_{};
+    int structuredSourceTabIndex_{1};
     int setupTabIndex_{};
     int homeModuleIndex_{};
     int modelModuleIndex_{};

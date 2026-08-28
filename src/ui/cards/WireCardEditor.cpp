@@ -9,6 +9,7 @@
 #include <QSignalBlocker>
 #include <QTableWidget>
 #include <QTableWidgetItem>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <cmath>
@@ -234,7 +235,10 @@ void WireCardEditor::validateAndCommitRow(int row, int changedColumn)
     changedItem->setToolTip({});
     const model::Wire updated{tag, start, end, segments, radius, original->sourceLine};
     if (updated != *original) {
-        emit wireEdited(*original, updated);
+        const auto originalWire = *original;
+        QTimer::singleShot(0, this, [this, originalWire, updated] {
+            emit wireEdited(originalWire, updated);
+        });
     }
 }
 

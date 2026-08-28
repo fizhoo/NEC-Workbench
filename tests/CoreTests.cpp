@@ -10,6 +10,7 @@
 #include "nec/NecSetupConverter.h"
 #include "nec/NecWriter.h"
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <cstdlib>
@@ -78,6 +79,7 @@ void testValidModelCheck()
 {
     const std::string source =
         "GW 1 21 -5 0 10 5 0 10 .001\n"
+        "GE 0\n"
         "EX 0 1 11 0 1 0\n"
         "FR 0 1 0 0 14.175 0\n"
         "EN\n";
@@ -91,16 +93,39 @@ void testValidModelCheck()
 void testCardValidation()
 {
     const std::string source =
+        "GW 1 3 0 0 0 1 0 0 .001\n"
+        "GE 0\n"
         "EX 0 1 bad 0 1 0\n"
         "FR 0 0 0 0 -14 0\n"
         "ZZ unsupported\n"
-        "GW 1 3 0 0 0 1 0 0 .001\n"
         "EX 0 1 2 0 1 0\n"
         "FR 0 1 0 0 14 0\n";
     const auto result = necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(source));
     expect(result.errorCount() == 3, "invalid EX and FR values produce errors");
     expect(result.warningCount() == 1, "unknown card produces a warning");
-    expect(result.diagnostics.front().lineNumber == 1, "card diagnostic retains source line");
+    expect(result.diagnostics.front().lineNumber == 3, "card diagnostic retains source line");
+}
+
+void testGeometryCardOrdering()
+{
+    const auto misplaced = necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
+        "GN 2 0 0 0 13 0.005 0 0 0 0\n"
+        "EX 0 1 1 0 1 0\n"
+        "FR 0 1 0 0 14.175 0\n"
+        "GW 1 11 -4.8768 0 6.096 4.8768 0 6.096 0.001\n"
+        "XQ 0\nRP 0 37 36 1000 0 0 5 10 0 0\nEN\n"));
+    expect(std::ranges::any_of(misplaced.diagnostics, [](const auto& diagnostic) {
+        return diagnostic.message.find("GW geometry cards must precede") != std::string::npos;
+    }), "geometry checker rejects GW cards after control cards");
+    expect(std::ranges::any_of(misplaced.diagnostics, [](const auto& diagnostic) {
+        return diagnostic.message.find("before GE") != std::string::npos;
+    }), "geometry checker reports a missing GE boundary before control cards");
+
+    const auto missingEnd = necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
+        "GW 1 11 -1 0 0 1 0 0 .001\n"));
+    expect(std::ranges::any_of(missingEnd.diagnostics, [](const auto& diagnostic) {
+        return diagnostic.message.find("requires a GE card") != std::string::npos;
+    }), "geometry checker requires GE after the final GW card");
 }
 
 void testIncompleteModelCheck()
@@ -285,7 +310,7 @@ void testStructuredModelSetup()
         "frequency endpoint is derived from NEC linear count and step");
 
     const auto invalid = necwb::nec::NecParser{}.parse(
-        "GW 1 3 0 0 0 1 0 0 .001\nEX 0 2 1 0 1 0\nFR 0 2 0 0 10 0\nEN\n");
+        "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nEX 0 2 1 0 1 0\nFR 0 2 0 0 10 0\nEN\n");
     expect(necwb::nec::NecModelChecker{}.check(invalid).errorCount() == 2,
         "invalid source references and zero frequency steps are diagnosed");
 
@@ -457,6 +482,7 @@ auto main() -> int
     testInvalidWireIsDiagnosed();
     testValidModelCheck();
     testCardValidation();
+    testGeometryCardOrdering();
     testIncompleteModelCheck();
     testOrthographicProjection();
     testWireLookupAndWriting();

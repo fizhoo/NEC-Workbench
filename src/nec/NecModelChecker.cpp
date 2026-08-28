@@ -204,6 +204,51 @@ void checkTransmissionLine(const NecCard& card, ModelCheckResult& result)
         addError(result, card, "TL values must be numeric");
 }
 
+void checkCardOrdering(const NecDocument& document, ModelCheckResult& result)
+{
+    const NecCard* lastGeometry{};
+    auto geometryEnded = false;
+    auto reportedMissingEnd = false;
+    auto controlSeen = false;
+    for (const auto& card : document.cards()) {
+        if (card.kind == NecCardKind::GeometryWire) {
+            lastGeometry = &card;
+            if (geometryEnded) {
+                addError(result, card, "GW geometry cards must appear before GE");
+            }
+            if (controlSeen) {
+                addError(result, card, "GW geometry cards must precede GN, EX, FR, and other control cards");
+            }
+            continue;
+        }
+        if (card.kind == NecCardKind::GeometryEnd) {
+            if (geometryEnded) {
+                addError(result, card, "Only one GE geometry-end card is allowed");
+            }
+            geometryEnded = true;
+            continue;
+        }
+        const auto isControlCard = card.kind == NecCardKind::Excitation
+            || card.kind == NecCardKind::Load
+            || card.kind == NecCardKind::Ground
+            || card.kind == NecCardKind::Frequency
+            || card.kind == NecCardKind::RadiationPattern
+            || card.kind == NecCardKind::Execute
+            || card.kind == NecCardKind::TransmissionLine
+            || card.kind == NecCardKind::Network
+            || card.kind == NecCardKind::End;
+        if (isControlCard && lastGeometry != nullptr && !geometryEnded && !reportedMissingEnd) {
+            addError(result, card, card.mnemonic
+                + " appears before GE; terminate GW geometry with a GE card before control cards");
+            reportedMissingEnd = true;
+        }
+        controlSeen = controlSeen || isControlCard;
+    }
+    if (lastGeometry != nullptr && !geometryEnded && !reportedMissingEnd) {
+        addError(result, *lastGeometry, "Geometry section requires a GE card after the final GW card");
+    }
+}
+
 }
 
 auto ModelCheckResult::errorCount() const noexcept -> std::size_t
@@ -227,6 +272,8 @@ auto NecModelChecker::check(const NecDocument& document) const -> ModelCheckResu
     for (auto& issue : conversion.issues) {
         result.diagnostics.push_back({DiagnosticSeverity::Error, issue.lineNumber, std::move(issue.message)});
     }
+
+    checkCardOrdering(document, result);
 
     for (const auto& card : document.cards()) {
         switch (card.kind) {

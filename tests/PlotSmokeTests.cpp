@@ -3,12 +3,22 @@
 #include "ui/analysis/AnalysisRunStore.h"
 #include "ui/analysis/FieldResultsViews.h"
 #include "ui/dashboard/DashboardPage.h"
+#include "ui/cards/StructuredCardEditor.h"
+#include "ui/cards/WireCardEditor.h"
+#include "ui/geometry/WirePropertiesDialog.h"
+#include "nec/NecParser.h"
+#include "model/WireGauge.h"
 
 #include <QApplication>
+#include <QComboBox>
+#include <QDebug>
 #include <QImage>
+#include <QListWidget>
 #include <QPainter>
 #include <QTemporaryDir>
 #include <QTextDocument>
+#include <QTableWidget>
+#include <QPushButton>
 
 #include <cstdlib>
 #include <cmath>
@@ -80,6 +90,109 @@ auto main(int argc, char* argv[]) -> int
     QImage dashboardImage(1000, 700, QImage::Format_ARGB32_Premultiplied);
     dashboardImage.fill(Qt::transparent); QPainter dashboardPainter(&dashboardImage);
     dashboard.render(&dashboardPainter); dashboardPainter.end();
+    necwb::ui::StructuredCardEditor structuredCards;
+    structuredCards.resize(900, 500);
+    structuredCards.setDocument(necwb::nec::NecParser{}.parse(
+        "GW 1 11 0 0 -0.5 0 0 0.5 0.001\nEX 0 1 6 0 1 0\nFR 0 1 0 0 14.1 0\nEN\n"));
+    QString editedCard;
+    QString addedCard;
+    std::size_t deletedLine{};
+    QObject::connect(&structuredCards, &necwb::ui::StructuredCardEditor::cardEdited,
+        [&editedCard](std::size_t, const QString& text) { editedCard = text; });
+    QObject::connect(&structuredCards, &necwb::ui::StructuredCardEditor::cardEdited,
+        [&structuredCards](std::size_t, const QString& text) {
+            structuredCards.setDocument(necwb::nec::NecParser{}.parse(
+                "GW 1 11 0 0 -0.5 0 0 0.5 0.001\nGE 0\n"
+                + text.toStdString() + "\nFR 0 1 0 0 14.1 0\nEN\n"));
+        });
+    QObject::connect(&structuredCards, &necwb::ui::StructuredCardEditor::cardAddRequested,
+        [&addedCard](const QString& text) { addedCard = text; });
+    QObject::connect(&structuredCards, &necwb::ui::StructuredCardEditor::cardDeleteRequested,
+        [&deletedLine](std::size_t sourceLine) { deletedLine = sourceLine; });
+    auto* structuredTable = structuredCards.findChild<QTableWidget*>(QStringLiteral("structuredCardTable"));
+    auto* structuredFamilies = structuredCards.findChild<QListWidget*>(
+        QStringLiteral("structuredCardFamilies"));
+    auto* structuredAdd = structuredCards.findChild<QPushButton*>(
+        QStringLiteral("structuredAddCardButton"));
+    if (structuredTable == nullptr || structuredFamilies == nullptr || structuredAdd == nullptr
+        || structuredTable->rowCount() != 1 || !structuredAdd->isEnabled()) return EXIT_FAILURE;
+    structuredFamilies->setCurrentRow(1);
+    application.processEvents();
+    const auto duplicateFrequencyBlocked = !structuredAdd->isEnabled();
+    structuredFamilies->setCurrentRow(0);
+    application.processEvents();
+    structuredTable->item(0, 4)->setText(QStringLiteral("not-an-integer"));
+    application.processEvents();
+    const auto invalidEditBlocked = editedCard.isEmpty()
+        && !structuredTable->item(0, 4)->toolTip().isEmpty();
+    structuredTable->item(0, 4)->setText(QStringLiteral("7"));
+    structuredCards.show(); application.processEvents();
+    structuredTable->item(0, 8)->setText(QStringLiteral("2.5"));
+    application.processEvents();
+    structuredFamilies->setCurrentRow(3);
+    application.processEvents();
+    structuredAdd->click();
+    application.processEvents();
+    structuredFamilies->setCurrentRow(0);
+    application.processEvents();
+    structuredTable->selectRow(0);
+    structuredCards.findChild<QPushButton*>(QStringLiteral("structuredDeleteCardButton"))->click();
+    application.processEvents();
+    structuredTable->openPersistentEditor(structuredTable->item(0, 2));
+    application.processEvents();
+    const auto cardDropdowns = structuredTable->findChildren<QComboBox*>();
+    const auto descriptiveDropdown = cardDropdowns.size() == 1
+        && cardDropdowns.front()->currentText().contains(QStringLiteral("Applied voltage source"))
+        && cardDropdowns.front()->count() == 6;
+    structuredTable->closePersistentEditor(structuredTable->item(0, 2));
+    QImage structuredImage(900, 500, QImage::Format_ARGB32_Premultiplied);
+    structuredImage.fill(Qt::transparent); QPainter structuredPainter(&structuredImage);
+    structuredCards.render(&structuredPainter); structuredPainter.end();
+    necwb::ui::StructuredCardEditor extendedCards;
+    extendedCards.setDocument(necwb::nec::NecParser{}.parse(
+        "FR 0 101 0 0 3.0 0.05 8.0 0 0 0\n"));
+    auto* extendedFamilies = extendedCards.findChild<QListWidget*>(
+        QStringLiteral("structuredCardFamilies"));
+    auto* extendedTable = extendedCards.findChild<QTableWidget*>(QStringLiteral("structuredCardTable"));
+    QString extendedFrequency;
+    QObject::connect(&extendedCards, &necwb::ui::StructuredCardEditor::cardEdited,
+        [&extendedFrequency](std::size_t, const QString& text) { extendedFrequency = text; });
+    extendedFamilies->setCurrentRow(1);
+    application.processEvents();
+    extendedTable->item(0, 6)->setText(QStringLiteral("3.1"));
+    application.processEvents();
+    const auto trailingFieldsPreserved = extendedFrequency
+        == QStringLiteral("FR 0 101 0 0 3.1 0.05 8.0 0 0 0");
+    necwb::ui::WireCardEditor wireEditor;
+    wireEditor.resize(900, 400);
+    necwb::model::AntennaModel wireModel;
+    wireModel.addWire({1, {-1.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, 11, 0.001, 1});
+    wireEditor.setModel(wireModel);
+    auto wireEditCommitted = false;
+    QObject::connect(&wireEditor, &necwb::ui::WireCardEditor::wireEdited,
+        [&wireEditor, &wireEditCommitted](const necwb::model::Wire&, const necwb::model::Wire& updated) {
+            necwb::model::AntennaModel refreshed;
+            refreshed.addWire(updated);
+            wireEditor.setModel(refreshed);
+            wireEditCommitted = true;
+        });
+    auto* wireTable = wireEditor.findChild<QTableWidget*>();
+    if (wireTable == nullptr || wireTable->rowCount() != 1) return EXIT_FAILURE;
+    wireTable->item(0, 8)->setText(QStringLiteral("0.002"));
+    wireEditor.show(); application.processEvents();
+    QImage wireImage(900, 400, QImage::Format_ARGB32_Premultiplied);
+    wireImage.fill(Qt::transparent); QPainter wirePainter(&wireImage);
+    wireEditor.render(&wirePainter); wirePainter.end();
+    necwb::model::AntennaModel gaugeModel;
+    const auto gaugeRadius = necwb::model::awgRadiusMeters(12);
+    const necwb::model::Wire gaugeWire{2, {-1.0, 0.0, 0.0}, {1.0, 0.0, 0.0},
+        11, gaugeRadius, 1};
+    gaugeModel.addWire(gaugeWire);
+    necwb::ui::WirePropertiesDialog wireProperties(gaugeWire, gaugeModel,
+        necwb::model::LengthUnit::Meter);
+    auto* gaugeEditor = wireProperties.findChild<QComboBox*>(QStringLiteral("wireGaugeDialogEditor"));
+    const auto gaugeDropdownValid = gaugeEditor != nullptr
+        && gaugeEditor->currentData().toInt() == 12;
     QTemporaryDir directory;
     necwb::ui::AnalysisRunStore store(directory.path());
     auto run = store.create(QStringLiteral("nec2"), QStringLiteral("/tmp/test-dipole.nec"));
@@ -94,7 +207,15 @@ auto main(int argc, char* argv[]) -> int
         && loaded.front().sourceFile == QStringLiteral("/tmp/test-dipole.nec")
         && loaded.front().backend == QStringLiteral("nec2")
         && loaded.front().durationSeconds == 1.25;
-    return !image.isNull() && !fieldImage.isNull() && !currentImage.isNull()
+    const auto passed = !image.isNull() && !fieldImage.isNull() && !currentImage.isNull()
         && !dashboardImage.isNull() && storeValid
-        ? EXIT_SUCCESS : EXIT_FAILURE;
+        && !structuredImage.isNull() && invalidEditBlocked && duplicateFrequencyBlocked
+        && descriptiveDropdown
+        && trailingFieldsPreserved
+        && editedCard == QStringLiteral("EX 0 1 7 0 1 0 2.5")
+        && addedCard == QStringLiteral("LD 0 1 1 11 0 0 0") && deletedLine == 3
+        && !wireImage.isNull() && wireEditCommitted && gaugeDropdownValid;
+    if (!passed) qWarning() << "structured smoke state" << invalidEditBlocked << editedCard
+        << addedCard << deletedLine << "wire committed" << wireEditCommitted;
+    return passed ? EXIT_SUCCESS : EXIT_FAILURE;
 }

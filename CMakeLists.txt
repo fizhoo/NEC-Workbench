@@ -58,6 +58,8 @@ if(NECWB_BUILD_GUI)
         src/ui/analysis/FieldResultsViews.h
         src/ui/cards/WireCardEditor.cpp
         src/ui/cards/WireCardEditor.h
+        src/ui/cards/StructuredCardEditor.cpp
+        src/ui/cards/StructuredCardEditor.h
         src/ui/commands/GeometrySourceCommand.cpp
         src/ui/commands/GeometrySourceCommand.h
         src/ui/commands/MoveEndpointCommand.cpp
@@ -124,6 +126,12 @@ if(NECWB_BUILD_TESTS)
             src/ui/dashboard/DashboardPage.h
             src/ui/editor/NecEditor.cpp
             src/ui/editor/NecEditor.h
+            src/ui/cards/StructuredCardEditor.cpp
+            src/ui/cards/StructuredCardEditor.h
+            src/ui/cards/WireCardEditor.cpp
+            src/ui/cards/WireCardEditor.h
+            src/ui/geometry/WirePropertiesDialog.cpp
+            src/ui/geometry/WirePropertiesDialog.h
         )
         target_link_libraries(necwb_plot_tests PRIVATE necwb_core Qt6::Widgets)
         add_test(NAME necwb_plot_tests COMMAND necwb_plot_tests)

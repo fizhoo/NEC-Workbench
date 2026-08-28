@@ -13,6 +13,7 @@ The current foundation provides:
 - Parsing and writing with original whitespace, comments, and line endings
 - Semantic conversion of `GW` cards into wire model objects
 - A Qt 6 NEC editor with line numbers, highlighting, and clickable model diagnostics
+- Raw and structured NEC Source tabs with add/delete, card-specific columns, source mapping, and contextual properties
 - A dockable engineering workbench shell with project, properties, diagnostics, and solver-output panels
 - Dashboard, Geometry, NEC Source, Analysis, Results, and Optimize workspaces in one main window
 - A live dashboard combining the shared NEC document, interactive 3D renderer, model summary, and quick results

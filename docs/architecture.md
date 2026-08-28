@@ -15,8 +15,8 @@ After loading, Dashboard composes four live panels: a basic editor sharing the
 authoritative source document, the existing interactive 3D results renderer, a
 model summary, and quick solver results. It does not maintain a second NEC copy.
 
-Geometry owns the structured wire-card editor and detailed XY, XZ, YZ, and 3D
-editing views. NEC Source owns the full source editor. Analysis owns frequency,
+Geometry owns the detailed XY, XZ, YZ, and 3D editing views. NEC Source owns the
+full source editor and structured card tables. Analysis owns frequency,
 source, ground, loads/lines, solver, result-request, and run-history controls.
 Results owns numerical impedance, sweep plots, currents, 2D and 3D radiation,
 and raw solver output. Optimize retains its incremental placeholder controls;
@@ -30,6 +30,27 @@ remain visible after source edits, but both Dashboard and Results identify them
 as stale until a new successful solve is parsed. The refactor relocates and
 composes existing widgets; parsing, source writing, selection synchronization,
 solver execution, and both 3D renderers retain their prior boundaries.
+
+NEC Source presents Raw Source and Structured Cards over the same authoritative
+text document. Structured Cards contains the validated, unit-aware `GW` wire
+table plus schema-specific tables for `EX`, `FR`, `GN/GE`, `LD`, `TL`, `RP`, and
+`XQ`. Each row retains its original source-line mapping. Selecting a structured
+row positions the raw editor cursor on that card; editing a field rewrites only
+that mapped line through the existing source command, undo, parse, validation,
+and synchronization path. Supported families provide safe default Add actions
+and selection-aware Delete actions; both are undoable source edits, and new
+control cards are inserted before `XQ`/`EN` as appropriate. Unsupported cards
+remain untouched and available in Raw Source rather than being coerced into an
+unsafe generic schema. Selecting a structured row or moving the Raw Source
+cursor updates the global Properties dock with the card mnemonic, source line,
+raw text, and mnemonic-specific field names and values.
+
+Model validation also enforces NEC section ordering: all `GW` geometry cards
+must precede a terminating `GE`, and `GN`, `EX`, `FR`, loads, requests, and other
+control cards must follow that boundary. Wire insertion creates a missing `GE`
+when necessary, and structured control-card insertion preserves the boundary,
+preventing solver-side “GEOMETRY DATA CARD ERROR” failures that field-only
+validation cannot detect.
 
 The first structured-card section is an editable `GW` wire table. It validates
 tags, segment counts, coordinates, and radii before replacing the mapped source
