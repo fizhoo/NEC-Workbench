@@ -12,12 +12,12 @@ permissions:
 jobs:
   build-windows:
     name: Windows x64
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 30
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -48,7 +48,7 @@ jobs:
           Compress-Archive -Path package/* -DestinationPath NEC-Workbench-Windows-x64.zip
 
       - name: Upload Windows package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: NEC-Workbench-Windows-x64
           path: NEC-Workbench-Windows-x64.zip
