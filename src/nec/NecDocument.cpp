@@ -19,12 +19,12 @@ void NecDocument::setHasFinalLineEnding(bool value) noexcept
     hasFinalLineEnding_ = value;
 }
 
-auto NecDocument::cards() const noexcept -> std::span<const NecCard>
+auto NecDocument::cards() const & noexcept -> std::span<const NecCard>
 {
     return cards_;
 }
 
-auto NecDocument::lineEnding() const noexcept -> const std::string&
+auto NecDocument::lineEnding() const & noexcept -> const std::string&
 {
     return lineEnding_;
 }

@@ -43,7 +43,8 @@ void testRoundTripPreservesSource()
 void testKnownCardsAreRecognized()
 {
     const std::string source = "CM note\nCE\nGW 1 3 0 0 0 1 0 0 .001\nGE\nEX\nLD\nGN\nFR\nRP\nTL\nNT\nEN";
-    const auto cards = necwb::nec::NecParser{}.parse(source).cards();
+    const auto document = necwb::nec::NecParser{}.parse(source);
+    const auto cards = document.cards();
     expect(cards.size() == 12, "all known card lines are parsed");
     expect(cards[0].kind == necwb::nec::NecCardKind::Comment, "CM recognized");
     expect(cards[2].kind == necwb::nec::NecCardKind::GeometryWire, "GW recognized");

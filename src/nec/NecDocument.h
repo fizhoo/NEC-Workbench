@@ -15,8 +15,10 @@ public:
     void addCard(NecCard card);
     void setHasFinalLineEnding(bool value) noexcept;
 
-    [[nodiscard]] auto cards() const noexcept -> std::span<const NecCard>;
-    [[nodiscard]] auto lineEnding() const noexcept -> const std::string&;
+    [[nodiscard]] auto cards() const & noexcept -> std::span<const NecCard>;
+    [[nodiscard]] auto cards() && -> std::span<const NecCard> = delete;
+    [[nodiscard]] auto lineEnding() const & noexcept -> const std::string&;
+    [[nodiscard]] auto lineEnding() && -> const std::string& = delete;
     [[nodiscard]] auto hasFinalLineEnding() const noexcept -> bool;
 
 private:
