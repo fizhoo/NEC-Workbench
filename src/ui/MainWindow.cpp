@@ -672,6 +672,12 @@ void MainWindow::createWorkspace()
     resultsWorkspace_->addTab(radiationPatternView_, tr("Radiation 2D"));
     radiation3DView_ = new Radiation3DView(resultsWorkspace_);
     resultsWorkspace_->addTab(radiation3DView_, tr("3D Results"));
+    radiationPatternView_->setSettingsChangedCallback([this](const auto& settings) {
+        radiation3DView_->setDisplaySettings(settings);
+    });
+    radiation3DView_->setSettingsChangedCallback([this](const auto& settings) {
+        radiationPatternView_->setDisplaySettings(settings);
+    });
     analysisOutput_ = new QPlainTextEdit(resultsWorkspace_);
     analysisOutput_->setReadOnly(true);
     analysisOutput_->setPlaceholderText(tr("Solver command, progress, and NEC output will appear here."));

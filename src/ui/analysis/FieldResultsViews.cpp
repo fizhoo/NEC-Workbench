@@ -11,12 +11,15 @@
 #include <QPainterPath>
 #include <QPushButton>
 #include <QShortcut>
+#include <QSignalBlocker>
 #include <QTableWidget>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <numbers>
 #include <ranges>
@@ -48,6 +51,105 @@ void populateFrequencies(QComboBox* control, const std::vector<double>& values)
     for (const auto value : values) {
         control->addItem(QStringLiteral("%1 MHz").arg(value, 0, 'g', 10), value);
     }
+}
+
+void populateRadiationControls(QComboBox* component, QComboBox* scale, QComboBox* floor)
+{
+    component->addItem(QObject::tr("Total gain"), static_cast<int>(analysis::RadiationComponent::Total));
+    component->addItem(QObject::tr("Vertical polarization"), static_cast<int>(analysis::RadiationComponent::Vertical));
+    component->addItem(QObject::tr("Horizontal polarization"), static_cast<int>(analysis::RadiationComponent::Horizontal));
+    component->addItem(QObject::tr("RHCP"), static_cast<int>(analysis::RadiationComponent::RightHandCircular));
+    component->addItem(QObject::tr("LHCP"), static_cast<int>(analysis::RadiationComponent::LeftHandCircular));
+    scale->addItem(QObject::tr("Normalized dB"), static_cast<int>(analysis::RadiationScale::Normalized));
+    scale->addItem(QObject::tr("Absolute dBi"), static_cast<int>(analysis::RadiationScale::Absolute));
+    for (const auto value : {-20.0, -30.0, -40.0, -50.0, -60.0})
+        floor->addItem(QObject::tr("%1 dB").arg(value, 0, 'f', 0), value);
+    floor->setCurrentIndex(2);
+}
+
+auto displaySettings(QComboBox* frequency, QComboBox* component, QComboBox* scale,
+    QComboBox* floor) -> analysis::RadiationDisplaySettings
+{
+    return {selectedFrequency(frequency),
+        static_cast<analysis::RadiationComponent>(component->currentData().toInt()),
+        static_cast<analysis::RadiationScale>(scale->currentData().toInt()),
+        floor->currentData().toDouble()};
+}
+
+auto componentName(analysis::RadiationComponent component) -> QString
+{
+    switch (component) {
+    case analysis::RadiationComponent::Total: return QObject::tr("Total");
+    case analysis::RadiationComponent::Vertical: return QObject::tr("Vertical");
+    case analysis::RadiationComponent::Horizontal: return QObject::tr("Horizontal");
+    case analysis::RadiationComponent::RightHandCircular: return QObject::tr("RHCP");
+    case analysis::RadiationComponent::LeftHandCircular: return QObject::tr("LHCP");
+    }
+    return {};
+}
+
+void applyDisplaySettings(const analysis::RadiationDisplaySettings& settings,
+    QComboBox* frequency, QComboBox* component, QComboBox* scale, QComboBox* floor)
+{
+    const QSignalBlocker frequencyBlocker(frequency);
+    const QSignalBlocker componentBlocker(component);
+    const QSignalBlocker scaleBlocker(scale);
+    const QSignalBlocker floorBlocker(floor);
+    const auto frequencyIndex = frequency->findData(settings.frequencyMHz);
+    if (frequencyIndex >= 0) frequency->setCurrentIndex(frequencyIndex);
+    const auto componentIndex = component->findData(static_cast<int>(settings.component));
+    if (componentIndex >= 0) component->setCurrentIndex(componentIndex);
+    const auto scaleIndex = scale->findData(static_cast<int>(settings.scale));
+    if (scaleIndex >= 0) scale->setCurrentIndex(scaleIndex);
+    const auto floorIndex = floor->findData(settings.floorDb);
+    if (floorIndex >= 0) floor->setCurrentIndex(floorIndex);
+}
+
+struct CutMetrics {
+    bool valid{};
+    double peakAngle{};
+    double peakGain{};
+    double beamwidth{};
+    double frontToBack{};
+};
+
+auto cutMetrics(const std::vector<QPointF>& values) -> CutMetrics
+{
+    CutMetrics metrics;
+    if (values.empty()) return metrics;
+    const auto peak = std::ranges::max_element(values, {}, [](const QPointF& point) { return point.y(); });
+    metrics.valid = true;
+    metrics.peakAngle = peak->x();
+    metrics.peakGain = peak->y();
+    const auto circularDistance = [](double first, double second) {
+        const auto difference = std::fmod(std::abs(first - second), 360.0);
+        return std::min(difference, 360.0 - difference);
+    };
+    const auto backAngle = std::fmod(metrics.peakAngle + 180.0, 360.0);
+    const auto back = std::ranges::min_element(values, {}, [backAngle, circularDistance](const QPointF& point) {
+        return circularDistance(point.x(), backAngle);
+    });
+    metrics.frontToBack = metrics.peakGain - back->y();
+    const auto threshold = metrics.peakGain - 3.0;
+    const auto peakIndex = static_cast<std::size_t>(std::distance(values.begin(), peak));
+    auto leftIndex = peakIndex;
+    auto rightIndex = peakIndex;
+    auto included = std::size_t{1};
+    while (included < values.size()) {
+        const auto candidate = (leftIndex + values.size() - 1) % values.size();
+        if (values[candidate].y() < threshold) break;
+        leftIndex = candidate;
+        ++included;
+    }
+    while (included < values.size()) {
+        const auto candidate = (rightIndex + 1) % values.size();
+        if (values[candidate].y() < threshold) break;
+        rightIndex = candidate;
+        ++included;
+    }
+    metrics.beamwidth = included == values.size()
+        ? 360.0 : circularDistance(values[leftIndex].x(), values[rightIndex].x());
+    return metrics;
 }
 
 auto pointToSegmentDistance(const QPointF& point, const QPointF& start, const QPointF& end) -> double
@@ -125,6 +227,11 @@ public:
         tracking_ = false;
         update();
     }
+    void setDisplaySettings(const analysis::RadiationDisplaySettings& settings)
+    {
+        settings_ = settings;
+        update();
+    }
 protected:
     void mouseMoveEvent(QMouseEvent* event) override
     {
@@ -144,12 +251,21 @@ protected:
         painter.fillRect(rect(), palette().brush(QPalette::Base));
         const auto radius = std::max(1.0, std::min(width(), height()) / 2.0 - 55.0);
         const QPointF center(width() / 2.0, height() / 2.0 + 8.0);
+        auto maxGain = 0.0;
+        if (!samples_.empty()) {
+            maxGain = std::ranges::max(samples_, {},
+                [](const QPointF& point) { return point.y(); }).y();
+        }
+        const auto outerDb = settings_.scale == analysis::RadiationScale::Normalized
+            ? 0.0 : std::ceil(maxGain / 5.0) * 5.0;
+        const auto innerDb = outerDb + settings_.floorDb;
         painter.setPen(palette().color(QPalette::Mid));
         for (auto ring = 1; ring <= 4; ++ring) {
             const auto ringRadius = radius * ring / 4;
             painter.drawEllipse(center, ringRadius, ringRadius);
+            const auto ringDb = innerDb + (outerDb - innerDb) * ring / 4.0;
             painter.drawText(QPointF(center.x() + 5, center.y() - ringRadius - 2),
-                tr("%1 dB").arg((ring - 4) * 10));
+                tr("%1 dB").arg(ringDb, 0, 'f', 0));
         }
         for (auto angle = 0; angle < 360; angle += 30) {
             const auto radians = angle * std::numbers::pi / 180.0;
@@ -166,13 +282,12 @@ protected:
             painter.drawText(rect(), Qt::AlignCenter, tr("No radiation samples"));
             return;
         }
-        const auto maxGain = std::ranges::max(samples_, {},
-            [](const QPointF& point) { return point.y(); }).y();
         QPainterPath path;
         auto started = false;
         for (const auto& sample : samples_) {
-            const auto clippedDb = std::max(sample.y(), maxGain - 40.0);
-            const auto normalized = (clippedDb - maxGain + 40.0) / 40.0;
+            const auto displayedDb = settings_.scale == analysis::RadiationScale::Normalized
+                ? sample.y() - maxGain : sample.y();
+            const auto normalized = std::clamp((displayedDb - innerDb) / (outerDb - innerDb), 0.0, 1.0);
             const auto radians = sample.x() * std::numbers::pi / 180.0;
             const auto point = center + QPointF(std::sin(radians), -std::cos(radians)) * radius * normalized;
             started ? path.lineTo(point) : path.moveTo(point);
@@ -181,7 +296,9 @@ protected:
         painter.setPen(QPen(QColor(215, 70, 65), 2));
         painter.drawPath(path);
         painter.setPen(palette().color(QPalette::Text));
-        painter.drawText(8, 20, tr("Angle axis: degrees · Radial axis: relative gain (dB) · Peak %1 dBi")
+        painter.drawText(8, 20, tr("Angle: degrees · Radial: %1 · Peak %2 dBi")
+            .arg(settings_.scale == analysis::RadiationScale::Normalized
+                    ? tr("relative gain (dB)") : tr("absolute gain (dBi)"))
             .arg(maxGain, 0, 'f', 2));
         if (tracking_) {
             auto cursorAngle = std::atan2(cursor_.x() - center.x(), center.y() - cursor_.y())
@@ -192,7 +309,9 @@ protected:
                 return std::min(difference, 360.0 - difference);
             };
             const auto nearest = std::ranges::min_element(samples_, {}, circularDistance);
-            const auto normalized = std::clamp((nearest->y() - maxGain + 40.0) / 40.0, 0.0, 1.0);
+            const auto displayedDb = settings_.scale == analysis::RadiationScale::Normalized
+                ? nearest->y() - maxGain : nearest->y();
+            const auto normalized = std::clamp((displayedDb - innerDb) / (outerDb - innerDb), 0.0, 1.0);
             const auto radians = nearest->x() * std::numbers::pi / 180.0;
             const auto marker = center
                 + QPointF(std::sin(radians), -std::cos(radians)) * radius * normalized;
@@ -213,6 +332,7 @@ protected:
     }
 private:
     std::vector<QPointF> samples_;
+    analysis::RadiationDisplaySettings settings_;
     QPointF cursor_;
     bool tracking_{};
 };
@@ -222,6 +342,8 @@ public:
     explicit RadiationSurfaceWidget(QWidget* parent = nullptr) : QWidget(parent)
     { setMinimumSize(420, 320); setMouseTracking(true); }
     void setSamples(std::vector<analysis::RadiationSample> samples) { samples_ = std::move(samples); update(); }
+    void setDisplaySettings(const analysis::RadiationDisplaySettings& settings)
+    { settings_ = settings; update(); }
     void setCurrents(std::vector<analysis::SegmentCurrentResult> currents) { currents_ = std::move(currents); update(); }
     void setModel(const model::AntennaModel& model) { model_ = model; update(); }
     void setLayerVisibility(bool antenna, bool currents, bool radiation)
@@ -260,21 +382,27 @@ protected:
         QPainter painter(this); painter.setRenderHint(QPainter::Antialiasing);
         painter.fillRect(rect(), palette().brush(QPalette::Base));
         const auto scale = std::min(width(), height()) * 0.38 * zoom_;
-        double maxGain{};
+        auto maxGain = -std::numeric_limits<double>::infinity();
         if (showRadiation_ && !samples_.empty()) {
-            maxGain = std::ranges::max(samples_, {}, &analysis::RadiationSample::totalGainDb).totalGainDb;
-            drawRadiation(painter, scale, maxGain);
+            for (const auto& sample : samples_) {
+                const auto gain = analysis::radiationGainDb(sample, settings_.component);
+                if (std::isfinite(gain) && gain > -900.0) maxGain = std::max(maxGain, gain);
+            }
         }
+        const auto hasRadiation = std::isfinite(maxGain);
+        if (hasRadiation) drawRadiation(painter, scale, maxGain);
         model::Point3D modelCenter;
         double modelExtent{};
         modelTransform(modelCenter, modelExtent);
-        const auto antennaScale = showRadiation_ && !samples_.empty() ? scale * 0.24 : scale * 1.7;
+        const auto antennaScale = hasRadiation ? scale * 0.32 : scale * 1.7;
+        drawAxes(painter, scale * 0.34);
         if (showAntenna_) drawAntenna(painter, antennaScale, modelCenter, modelExtent);
         if (showCurrents_ && !currents_.empty())
             drawCurrents(painter, antennaScale, modelCenter, modelExtent);
         painter.setPen(palette().color(QPalette::Text));
         auto status = tr("Drag to orbit · wheel to zoom · zoom %1×").arg(zoom_, 0, 'f', 2);
-        if (showRadiation_ && !samples_.empty()) status += tr(" · radiation peak %1 dBi").arg(maxGain, 0, 'f', 2);
+        if (hasRadiation) status += tr(" · %1 peak %2 dBi")
+            .arg(componentName(settings_.component)).arg(maxGain, 0, 'f', 2);
         painter.drawText(10, 22, status + tr(" · Shift/middle-drag to pan"));
         if ((!showRadiation_ || samples_.empty()) && (!showCurrents_ || currents_.empty()) && model_.empty())
             painter.drawText(rect(), Qt::AlignCenter, tr("No 3D result data"));
@@ -303,14 +431,34 @@ private:
     static auto normalized(const model::Point3D& point, const model::Point3D& center,
         double extent) -> model::Point3D
     { return {(point.x-center.x)/extent, (point.y-center.y)/extent, (point.z-center.z)/extent}; }
+    void drawAxes(QPainter& painter, double scale)
+    {
+        const auto origin = project({}, scale);
+        const std::array axes{
+            std::pair{model::Point3D{1.0, 0.0, 0.0}, QColor(210, 70, 65)},
+            std::pair{model::Point3D{0.0, 1.0, 0.0}, QColor(65, 175, 90)},
+            std::pair{model::Point3D{0.0, 0.0, 1.0}, QColor(55, 125, 220)}};
+        const std::array labels{tr("X"), tr("Y"), tr("Z")};
+        for (auto index = 0U; index < axes.size(); ++index) {
+            const auto end = project(axes[index].first, scale);
+            painter.setPen(QPen(axes[index].second, 2));
+            painter.drawLine(origin, end);
+            painter.drawText(end + QPointF(4.0, -4.0), labels[index]);
+        }
+    }
     void drawRadiation(QPainter& painter, double scale, double maxGain)
     {
         std::map<double, std::vector<std::pair<double, QPointF>>> phiPaths;
         std::map<double, std::vector<std::pair<double, QPointF>>> thetaPaths;
         for (const auto& sample : samples_) {
+            const auto gain = analysis::radiationGainDb(sample, settings_.component);
+            if (!std::isfinite(gain) || gain <= -900.0) continue;
             const auto theta = sample.thetaDegrees * std::numbers::pi / 180.0;
             const auto phi = sample.phiDegrees * std::numbers::pi / 180.0;
-            const auto radial = std::pow(10.0, (std::max(sample.totalGainDb, maxGain - 40.0) - maxGain) / 20.0);
+            const auto reference = settings_.scale == analysis::RadiationScale::Normalized
+                ? maxGain : std::ceil(maxGain / 5.0) * 5.0;
+            const auto radial = std::pow(10.0,
+                (std::max(gain, reference + settings_.floorDb) - reference) / 20.0);
             const model::Point3D point{radial * std::sin(theta) * std::cos(phi),
                 radial * std::sin(theta) * std::sin(phi), radial * std::cos(theta)};
             const auto screen = project(point, scale);
@@ -395,6 +543,7 @@ private:
     model::AntennaModel model_;
     std::vector<analysis::RadiationSample> samples_;
     std::vector<analysis::SegmentCurrentResult> currents_;
+    analysis::RadiationDisplaySettings settings_;
     QPointF last_;
     QPointF cursor_;
     QPointF pan_;
@@ -436,16 +585,28 @@ void CurrentDistributionView::refresh()
 RadiationPatternView::RadiationPatternView(QWidget* parent) : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this); auto* form = new QFormLayout;
-    frequency_ = new QComboBox(this); phi_ = new QComboBox(this); cutLabel_ = new QLabel(tr("Phi plane"), this);
-    form->addRow(tr("Frequency"), frequency_); form->addRow(cutLabel_, phi_);
+    frequency_ = new QComboBox(this); frequency_->setObjectName(QStringLiteral("radiation2DFrequency"));
+    phi_ = new QComboBox(this); cutLabel_ = new QLabel(tr("Phi plane"), this);
+    component_ = new QComboBox(this); component_->setObjectName(QStringLiteral("radiation2DComponent"));
+    scale_ = new QComboBox(this); scale_->setObjectName(QStringLiteral("radiation2DScale"));
+    floor_ = new QComboBox(this); floor_->setObjectName(QStringLiteral("radiation2DFloor"));
+    populateRadiationControls(component_, scale_, floor_);
+    form->addRow(tr("Frequency"), frequency_); form->addRow(tr("Component"), component_);
+    form->addRow(tr("Scale"), scale_); form->addRow(tr("Dynamic range"), floor_);
+    form->addRow(cutLabel_, phi_);
     auto* navigation = new QHBoxLayout;
     auto* previous = new QPushButton(tr("◀ Previous Angle"), this);
     orientationButton_ = new QPushButton(tr("Vertical Cut"), this);
     auto* next = new QPushButton(tr("Next Angle ▶"), this);
     navigation->addWidget(previous); navigation->addWidget(orientationButton_); navigation->addWidget(next); navigation->addStretch();
-    summary_ = new QLabel(tr("Run an RP analysis to populate radiation patterns."), this); summary_->setWordWrap(true); plot_ = new RadiationPolarWidget(this);
+    summary_ = new QLabel(tr("Run an RP analysis to populate radiation patterns."), this);
+    summary_->setObjectName(QStringLiteral("radiation2DSummary"));
+    summary_->setWordWrap(true); plot_ = new RadiationPolarWidget(this);
     layout->addLayout(form); layout->addLayout(navigation); layout->addWidget(summary_); layout->addWidget(plot_, 1);
-    connect(frequency_, &QComboBox::currentIndexChanged, this, [this] { refreshSelectors(); });
+    connect(frequency_, &QComboBox::currentIndexChanged, this, [this] { refreshSelectors(); settingsChanged(); });
+    connect(component_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
+    connect(scale_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
+    connect(floor_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
     connect(phi_, &QComboBox::currentIndexChanged, this, [this] { refresh(); });
     connect(previous, &QPushButton::clicked, this, [this] { stepAngle(-1); });
     connect(next, &QPushButton::clicked, this, [this] { stepAngle(1); });
@@ -460,7 +621,24 @@ RadiationPatternView::RadiationPatternView(QWidget* parent) : QWidget(parent)
     connect(orientationShortcut, &QShortcut::activated, this, [this] { toggleOrientation(); });
 }
 void RadiationPatternView::setResults(const analysis::AnalysisResult& result, const QString& runDirectory)
-{ result_ = result; populateFrequencies(frequency_, frequencies(result.radiation)); summary_->setText(tr("Far-field gain from %1 · Left/Right changes angle · Space switches vertical/horizontal").arg(runDirectory)); refreshSelectors(); }
+{
+    const auto previous = displaySettings(frequency_, component_, scale_, floor_);
+    result_ = result;
+    runContext_ = runDirectory;
+    const QSignalBlocker blocker(frequency_);
+    populateFrequencies(frequency_, frequencies(result.radiation));
+    applyDisplaySettings(previous, frequency_, component_, scale_, floor_);
+    refreshSelectors();
+}
+void RadiationPatternView::setDisplaySettings(const analysis::RadiationDisplaySettings& settings)
+{
+    updatingSettings_ = true;
+    applyDisplaySettings(settings, frequency_, component_, scale_, floor_);
+    updatingSettings_ = false;
+    refreshSelectors();
+}
+void RadiationPatternView::setSettingsChangedCallback(SettingsChangedCallback callback)
+{ settingsChangedCallback_ = std::move(callback); }
 void RadiationPatternView::refreshSelectors()
 {
     const auto previousValue = phi_->currentData().toDouble();
@@ -479,21 +657,33 @@ void RadiationPatternView::refreshSelectors()
 }
 void RadiationPatternView::refresh()
 {
+    const auto settings = displaySettings(frequency_, component_, scale_, floor_);
     std::vector<QPointF> values; const auto angle = phi_->currentData().toDouble();
     for (const auto& value : result_.radiation) {
         if (value.frequencyMHz != selectedFrequency(frequency_)) continue;
         if (orientation_ == CutOrientation::Horizontal && value.thetaDegrees == angle)
-            values.emplace_back(value.phiDegrees, value.totalGainDb);
+            values.emplace_back(value.phiDegrees, analysis::radiationGainDb(value, settings.component));
         if (orientation_ == CutOrientation::Vertical) {
             const auto normalizedPhi = std::fmod(value.phiDegrees + 360.0, 360.0);
             if (std::abs(normalizedPhi - angle) < 1.0e-9)
-                values.emplace_back(value.thetaDegrees, value.totalGainDb);
+                values.emplace_back(value.thetaDegrees, analysis::radiationGainDb(value, settings.component));
             const auto opposite = std::fmod(angle + 180.0, 360.0);
             if (std::abs(normalizedPhi - opposite) < 1.0e-9)
-                values.emplace_back(360.0 - value.thetaDegrees, value.totalGainDb);
+                values.emplace_back(360.0 - value.thetaDegrees, analysis::radiationGainDb(value, settings.component));
         }
     }
+    std::erase_if(values, [](const QPointF& point) { return !std::isfinite(point.y()) || point.y() <= -900.0; });
     std::ranges::sort(values, {}, [](const QPointF& point) { return point.x(); });
+    const auto metrics = cutMetrics(values);
+    if (metrics.valid) {
+        summary_->setText(tr("%1 · %2 peak %3 dBi at %4° · 3 dB beamwidth %5° · F/B %6 dB · Left/Right changes angle · Space changes cut")
+            .arg(runContext_, componentName(settings.component))
+            .arg(metrics.peakGain, 0, 'f', 2).arg(metrics.peakAngle, 0, 'f', 1)
+            .arg(metrics.beamwidth, 0, 'f', 1).arg(metrics.frontToBack, 0, 'f', 2));
+    } else {
+        summary_->setText(tr("No %1 samples for this cut · %2").arg(componentName(settings.component), runContext_));
+    }
+    plot_->setDisplaySettings(settings);
     plot_->setSamples(std::move(values));
 }
 void RadiationPatternView::toggleOrientation()
@@ -508,18 +698,35 @@ void RadiationPatternView::stepAngle(int offset)
     if (phi_->count() == 0) return;
     phi_->setCurrentIndex((phi_->currentIndex() + offset + phi_->count()) % phi_->count());
 }
+void RadiationPatternView::settingsChanged()
+{
+    if (!updatingSettings_ && settingsChangedCallback_)
+        settingsChangedCallback_(displaySettings(frequency_, component_, scale_, floor_));
+}
 
 Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
 {
-    auto* layout = new QVBoxLayout(this); auto* form = new QFormLayout; frequency_ = new QComboBox(this); form->addRow(tr("Frequency"), frequency_);
+    auto* layout = new QVBoxLayout(this); auto* form = new QFormLayout;
+    frequency_ = new QComboBox(this); frequency_->setObjectName(QStringLiteral("radiation3DFrequency"));
+    component_ = new QComboBox(this); component_->setObjectName(QStringLiteral("radiation3DComponent"));
+    scale_ = new QComboBox(this); scale_->setObjectName(QStringLiteral("radiation3DScale"));
+    floor_ = new QComboBox(this); floor_->setObjectName(QStringLiteral("radiation3DFloor"));
+    populateRadiationControls(component_, scale_, floor_);
+    form->addRow(tr("Frequency"), frequency_); form->addRow(tr("Component"), component_);
+    form->addRow(tr("Scale"), scale_); form->addRow(tr("Dynamic range"), floor_);
     auto* layers = new QHBoxLayout;
     antennaControl_ = new QCheckBox(tr("Antenna"), this); antennaControl_->setChecked(true);
     currentControl_ = new QCheckBox(tr("Current Overlay"), this); currentControl_->setChecked(true);
     radiationControl_ = new QCheckBox(tr("Radiation Surface"), this); radiationControl_->setChecked(true);
     layers->addWidget(antennaControl_); layers->addWidget(currentControl_); layers->addWidget(radiationControl_); layers->addStretch();
-    summary_ = new QLabel(tr("Run a multi-phi RP analysis to populate the 3D pattern."), this); surface_ = new RadiationSurfaceWidget(this);
+    summary_ = new QLabel(tr("Run a multi-phi RP analysis to populate the 3D pattern."), this);
+    summary_->setObjectName(QStringLiteral("radiation3DSummary")); summary_->setWordWrap(true);
+    surface_ = new RadiationSurfaceWidget(this);
     layout->addLayout(form); layout->addLayout(layers); layout->addWidget(summary_); layout->addWidget(surface_, 1);
-    connect(frequency_, &QComboBox::currentIndexChanged, this, [this] { refresh(); });
+    connect(frequency_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
+    connect(component_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
+    connect(scale_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
+    connect(floor_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
     const auto updateLayers = [this] {
         surface_->setLayerVisibility(antennaControl_->isChecked(), currentControl_->isChecked(), radiationControl_->isChecked());
     };
@@ -529,32 +736,63 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
 }
 void Radiation3DView::setResults(const analysis::AnalysisResult& result, const QString& runDirectory)
 {
+    const auto previous = displaySettings(frequency_, component_, scale_, floor_);
     result_ = result;
+    runContext_ = runDirectory;
     auto availableFrequencies = frequencies(result.radiation);
     for (const auto value : frequencies(result.currents))
         if (std::ranges::find(availableFrequencies, value) == availableFrequencies.end()) availableFrequencies.push_back(value);
-    std::ranges::sort(availableFrequencies); populateFrequencies(frequency_, availableFrequencies);
-    const auto samples = result.radiation.size();
+    std::ranges::sort(availableFrequencies);
+    const QSignalBlocker blocker(frequency_);
+    populateFrequencies(frequency_, availableFrequencies);
+    applyDisplaySettings(previous, frequency_, component_, scale_, floor_);
     std::vector<double> planes;
     for (const auto& sample : result.radiation) if (std::ranges::find(planes, sample.phiDegrees) == planes.end()) planes.push_back(sample.phiDegrees);
-    auto summary = tr("%1 current segment(s) · %2 far-field sample(s) across %3 phi plane(s) · %4")
-        .arg(result.currents.size()).arg(samples).arg(planes.size()).arg(runDirectory);
-    if (samples > 0 && planes.size() < 3)
-        summary += tr(" · Partial radiation coverage; request Full 3D Pattern for a complete surface.");
-    summary_->setText(summary);
     radiationControl_->setToolTip(planes.size() < 3
         ? tr("This run has partial radiation coverage. Use Analyze Requests → Full 3D Pattern for a complete surface.") : QString{});
     refresh();
 }
 void Radiation3DView::setModel(const model::AntennaModel& model)
 { model_ = model; surface_->setModel(model_); }
+void Radiation3DView::setDisplaySettings(const analysis::RadiationDisplaySettings& settings)
+{
+    updatingSettings_ = true;
+    applyDisplaySettings(settings, frequency_, component_, scale_, floor_);
+    updatingSettings_ = false;
+    refresh();
+}
+void Radiation3DView::setSettingsChangedCallback(SettingsChangedCallback callback)
+{ settingsChangedCallback_ = std::move(callback); }
 void Radiation3DView::refresh()
 {
+    const auto settings = displaySettings(frequency_, component_, scale_, floor_);
     std::vector<analysis::RadiationSample> radiation;
     std::vector<analysis::SegmentCurrentResult> currents;
     for (const auto& value : result_.radiation) if (value.frequencyMHz == selectedFrequency(frequency_)) radiation.push_back(value);
     for (const auto& value : result_.currents) if (value.frequencyMHz == selectedFrequency(frequency_)) currents.push_back(value);
+    const auto metrics = analysis::radiationMetrics(radiation, settings.component);
+    std::vector<double> planes;
+    for (const auto& sample : radiation)
+        if (std::ranges::find(planes, sample.phiDegrees) == planes.end()) planes.push_back(sample.phiDegrees);
+    if (metrics.valid) {
+        auto text = tr("%1 · %2 peak %3 dBi at θ %4°, φ %5° · F/B %6 dB · %7 phi plane(s)")
+            .arg(runContext_, componentName(settings.component)).arg(metrics.peakGainDb, 0, 'f', 2)
+            .arg(metrics.peakThetaDegrees, 0, 'f', 1).arg(metrics.peakPhiDegrees, 0, 'f', 1)
+            .arg(metrics.frontToBackDb, 0, 'f', 2).arg(planes.size());
+        if (planes.size() < 3)
+            text += tr(" · Partial coverage; request Full 3D Pattern for a complete surface.");
+        summary_->setText(text);
+    } else {
+        summary_->setText(tr("%1 · No %2 radiation samples · %3 current segment(s)")
+            .arg(runContext_, componentName(settings.component)).arg(currents.size()));
+    }
+    surface_->setDisplaySettings(settings);
     surface_->setSamples(std::move(radiation)); surface_->setCurrents(std::move(currents));
+}
+void Radiation3DView::settingsChanged()
+{
+    if (!updatingSettings_ && settingsChangedCallback_)
+        settingsChangedCallback_(displaySettings(frequency_, component_, scale_, floor_));
 }
 
 }

@@ -2,6 +2,7 @@
 
 #include <complex>
 #include <limits>
+#include <span>
 #include <vector>
 
 namespace necwb::analysis {
@@ -29,6 +30,26 @@ struct SegmentCurrentResult {
     double phaseDegrees{};
 };
 
+enum class PolarizationSense {
+    Unknown,
+    Linear,
+    RightHand,
+    LeftHand
+};
+
+enum class RadiationComponent {
+    Total,
+    Vertical,
+    Horizontal,
+    RightHandCircular,
+    LeftHandCircular
+};
+
+enum class RadiationScale {
+    Absolute,
+    Normalized
+};
+
 struct RadiationSample {
     double frequencyMHz{};
     double thetaDegrees{};
@@ -36,6 +57,26 @@ struct RadiationSample {
     double verticalGainDb{};
     double horizontalGainDb{};
     double totalGainDb{};
+    double axialRatio{};
+    double tiltDegrees{};
+    PolarizationSense polarizationSense{PolarizationSense::Unknown};
+};
+
+struct RadiationMetrics {
+    bool valid{};
+    double peakGainDb{};
+    double peakThetaDegrees{};
+    double peakPhiDegrees{};
+    double frontToBackDb{};
+};
+
+struct RadiationDisplaySettings {
+    double frequencyMHz{};
+    RadiationComponent component{RadiationComponent::Total};
+    RadiationScale scale{RadiationScale::Normalized};
+    double floorDb{-40.0};
+
+    auto operator==(const RadiationDisplaySettings&) const -> bool = default;
 };
 
 struct AnalysisResult {
@@ -46,5 +87,9 @@ struct AnalysisResult {
 
 [[nodiscard]] auto standingWaveRatio(std::complex<double> impedance,
     double referenceImpedance = 50.0) -> double;
+[[nodiscard]] auto radiationGainDb(const RadiationSample& sample,
+    RadiationComponent component) -> double;
+[[nodiscard]] auto radiationMetrics(std::span<const RadiationSample> samples,
+    RadiationComponent component) -> RadiationMetrics;
 
 }

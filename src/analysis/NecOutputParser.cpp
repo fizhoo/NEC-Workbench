@@ -1,6 +1,7 @@
 #include "analysis/NecOutputParser.h"
 
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 #include <string>
 
@@ -81,6 +82,15 @@ auto parseRadiation(const std::string& source, double frequencyMHz,
     if (!(values >> result.thetaDegrees >> result.phiDegrees
             >> result.verticalGainDb >> result.horizontalGainDb >> result.totalGainDb)) {
         return false;
+    }
+    std::string sense;
+    if (values >> result.axialRatio >> result.tiltDegrees >> sense) {
+        std::ranges::transform(sense, sense.begin(), [](unsigned char character) {
+            return static_cast<char>(std::toupper(character));
+        });
+        if (sense.starts_with("RIGHT")) result.polarizationSense = PolarizationSense::RightHand;
+        else if (sense.starts_with("LEFT")) result.polarizationSense = PolarizationSense::LeftHand;
+        else if (sense.starts_with("LINEAR")) result.polarizationSense = PolarizationSense::Linear;
     }
     result.frequencyMHz = frequencyMHz;
     return true;

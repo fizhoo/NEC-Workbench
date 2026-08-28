@@ -445,6 +445,7 @@ void testNecOutputParsing()
         " RADIATION PATTERNS\n"
         " 0 0 -999.99 -999.99 -999.99 0 0\n"
         " 90 0 2.15 -999.99 2.15 0 0 LINEAR\n"
+        " 90 180 0 0 -7.85 1 45 RIGHT\n"
         "\n";
     const auto result = necwb::analysis::NecOutputParser{}.parse(output);
     expect(result.feedpoints.size() == 2, "NEC output parser reads each frequency block");
@@ -467,10 +468,28 @@ void testNecOutputParsing()
             && result.currents[0].segment == 1
             && result.currents[0].magnitude == 0.010198,
         "NEC output parser reads segment current distribution rows");
-    expect(result.radiation.size() == 2
+    expect(result.radiation.size() == 3
             && result.radiation[1].thetaDegrees == 90.0
-            && result.radiation[1].totalGainDb == 2.15,
+            && result.radiation[1].totalGainDb == 2.15
+            && result.radiation[1].polarizationSense
+                == necwb::analysis::PolarizationSense::Linear,
         "NEC output parser reads radiation gain samples");
+    expect(std::abs(necwb::analysis::radiationGainDb(result.radiation[1],
+                necwb::analysis::RadiationComponent::RightHandCircular)
+            - (2.15 - 3.0102999566)) < 1.0e-9,
+        "linear polarization divides equally into circular components");
+    expect(std::abs(necwb::analysis::radiationGainDb(result.radiation[2],
+                necwb::analysis::RadiationComponent::RightHandCircular) + 7.85) < 1.0e-12
+            && necwb::analysis::radiationGainDb(result.radiation[2],
+                necwb::analysis::RadiationComponent::LeftHandCircular) < -900.0,
+        "circular polarization follows the NEC axial ratio and sense");
+    const auto metrics = necwb::analysis::radiationMetrics(result.radiation,
+        necwb::analysis::RadiationComponent::Total);
+    expect(metrics.valid && metrics.peakGainDb == 2.15
+            && metrics.peakThetaDegrees == 90.0
+            && metrics.peakPhiDegrees == 0.0
+            && std::abs(metrics.frontToBackDb - 10.0) < 1.0e-12,
+        "radiation metrics report peak direction and front-to-back ratio");
 }
 
 }

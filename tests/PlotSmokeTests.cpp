@@ -13,6 +13,7 @@
 #include <QComboBox>
 #include <QDebug>
 #include <QImage>
+#include <QLabel>
 #include <QListWidget>
 #include <QPainter>
 #include <QTemporaryDir>
@@ -68,6 +69,29 @@ auto main(int argc, char* argv[]) -> int
     antenna.addWire({1, {0.0, 0.0, -0.5}, {0.0, 0.0, 0.5}, 11, 0.001, 1});
     radiation3D.setModel(antenna);
     radiation3D.setResults(result, QStringLiteral("test-run"));
+    radiation2D.setSettingsChangedCallback([&radiation3D](const auto& settings) {
+        radiation3D.setDisplaySettings(settings);
+    });
+    radiation3D.setSettingsChangedCallback([&radiation2D](const auto& settings) {
+        radiation2D.setDisplaySettings(settings);
+    });
+    auto* radiation2DComponent = radiation2D.findChild<QComboBox*>(QStringLiteral("radiation2DComponent"));
+    auto* radiation3DComponent = radiation3D.findChild<QComboBox*>(QStringLiteral("radiation3DComponent"));
+    auto* radiation2DFloor = radiation2D.findChild<QComboBox*>(QStringLiteral("radiation2DFloor"));
+    auto* radiation3DFloor = radiation3D.findChild<QComboBox*>(QStringLiteral("radiation3DFloor"));
+    auto* radiation2DSummary = radiation2D.findChild<QLabel*>(QStringLiteral("radiation2DSummary"));
+    auto* radiation3DSummary = radiation3D.findChild<QLabel*>(QStringLiteral("radiation3DSummary"));
+    if (radiation2DComponent == nullptr || radiation3DComponent == nullptr
+        || radiation2DFloor == nullptr || radiation3DFloor == nullptr
+        || radiation2DSummary == nullptr || radiation3DSummary == nullptr) return EXIT_FAILURE;
+    radiation2DComponent->setCurrentIndex(1);
+    radiation3DFloor->setCurrentIndex(4);
+    application.processEvents();
+    const auto radiationControlsSynchronized = radiation3DComponent->currentData()
+            == radiation2DComponent->currentData()
+        && radiation2DFloor->currentData() == radiation3DFloor->currentData();
+    const auto radiationMetricsVisible = radiation2DSummary->text().contains(QStringLiteral("beamwidth"))
+        && radiation3DSummary->text().contains(QStringLiteral("peak"));
     currents.show(); radiation2D.show(); radiation3D.show(); application.processEvents();
     QImage fieldImage(800, 600, QImage::Format_ARGB32_Premultiplied);
     fieldImage.fill(Qt::transparent); QPainter fieldPainter(&fieldImage);
@@ -214,7 +238,8 @@ auto main(int argc, char* argv[]) -> int
         && trailingFieldsPreserved
         && editedCard == QStringLiteral("EX 0 1 7 0 1 0 2.5")
         && addedCard == QStringLiteral("LD 0 1 1 11 0 0 0") && deletedLine == 3
-        && !wireImage.isNull() && wireEditCommitted && gaugeDropdownValid;
+        && !wireImage.isNull() && wireEditCommitted && gaugeDropdownValid
+        && radiationControlsSynchronized && radiationMetricsVisible;
     if (!passed) qWarning() << "structured smoke state" << invalidEditBlocked << editedCard
         << addedCard << deletedLine << "wire committed" << wireEditCommitted;
     return passed ? EXIT_SUCCESS : EXIT_FAILURE;
