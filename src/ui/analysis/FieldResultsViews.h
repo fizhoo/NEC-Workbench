@@ -19,6 +19,8 @@ class CurrentPlotWidget;
 class RadiationPolarWidget;
 class RadiationSurfaceWidget;
 
+[[nodiscard]] auto resultModelExtentFromOrigin(const model::AntennaModel& model) -> double;
+
 class CurrentDistributionView final : public QWidget {
 public:
     explicit CurrentDistributionView(QWidget* parent = nullptr);

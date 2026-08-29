@@ -13,6 +13,7 @@ add_library(necwb_core
     src/analysis/AnalysisResult.cpp
     src/analysis/NecOutputParser.cpp
     src/analysis/SolverCommand.cpp
+    src/analysis/SolverInput.cpp
     src/geometry/OrthographicProjection.cpp
     src/model/AntennaModel.cpp
     src/model/AutoSegmentation.cpp
@@ -138,6 +139,8 @@ if(NECWB_BUILD_TESTS)
             src/ui/geometry/Geometry3DView.h
             src/ui/setup/LoadNetworkEditor.cpp
             src/ui/setup/LoadNetworkEditor.h
+            src/ui/welcome/WelcomePage.cpp
+            src/ui/welcome/WelcomePage.h
         )
         target_link_libraries(necwb_plot_tests PRIVATE necwb_core Qt6::Widgets)
         add_test(NAME necwb_plot_tests COMMAND necwb_plot_tests)

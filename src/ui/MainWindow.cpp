@@ -2,6 +2,7 @@
 
 #include "analysis/SolverCommand.h"
 #include "analysis/NecOutputParser.h"
+#include "analysis/SolverInput.h"
 #include "nec/NecModelChecker.h"
 #include "nec/NecModelConverter.h"
 #include "nec/NecParser.h"
@@ -218,6 +219,9 @@ MainWindow::MainWindow()
         saveAction_->setEnabled(modified);
         setWindowModified(modified);
         sourceWorkspace_->setTabText(0, modified ? tr("NEC Source *") : tr("NEC Source"));
+        if (dashboardPage_ != nullptr)
+            dashboardPage_->setDocumentState(currentFile_.isEmpty()
+                    ? QString{} : QFileInfo(currentFile_).fileName(), modified);
     });
     connect(editor_->document(), &QTextDocument::undoAvailable, this, [this] { updateUndoActions(); });
     connect(editor_->document(), &QTextDocument::redoAvailable, this, [this] { updateUndoActions(); });
@@ -330,7 +334,7 @@ void MainWindow::createActions()
 
     auto* moduleGroup = new QActionGroup(this);
     moduleGroup->setExclusive(true);
-    homeModuleAction_ = moduleGroup->addAction(tr("&Dashboard"));
+    homeModuleAction_ = moduleGroup->addAction(tr("&Home"));
     modelModuleAction_ = moduleGroup->addAction(tr("&Geometry"));
     sourceModuleAction_ = moduleGroup->addAction(tr("NEC &Source"));
     analysisModuleAction_ = moduleGroup->addAction(tr("&Analysis"));
@@ -340,6 +344,10 @@ void MainWindow::createActions()
         action->setCheckable(true);
     }
     homeModuleAction_->setChecked(true);
+    modelModuleAction_->setEnabled(false);
+    sourceModuleAction_->setEnabled(false);
+    analysisModuleAction_->setEnabled(false);
+    visualizeModuleAction_->setEnabled(false);
     optimizeModuleAction_->setEnabled(false);
     connect(homeModuleAction_, &QAction::triggered, this, [this] { showModule(homeModuleIndex_); });
     connect(modelModuleAction_, &QAction::triggered, this, [this] { showModule(modelModuleIndex_); });
@@ -379,9 +387,14 @@ void MainWindow::createWorkspace()
     sourceTabIndex_ = -1;
 
     dashboardStack_ = new QStackedWidget(moduleStack_);
-    dashboardStack_->addWidget(new WelcomePage(newAction_, openAction_, modelModuleAction_,
-        sourceModuleAction_, analysisModuleAction_, visualizeModuleAction_, optimizeModuleAction_, dashboardStack_));
+    welcomePage_ = new WelcomePage(newAction_, openAction_,
+        [this](const QString& path) { openFileAtPath(path); },
+        [this] { openExample(); }, [this] { clearRecentFiles(); }, dashboardStack_);
+    welcomePage_->setRecentFiles(recentFiles());
+    dashboardStack_->addWidget(welcomePage_);
     dashboardPage_ = new DashboardPage(editor_->document(), dashboardStack_);
+    dashboardPage_->setQuickActions(modelModuleAction_, sourceModuleAction_, checkAction_,
+        runAction_, visualizeModuleAction_);
     dashboardStack_->addWidget(dashboardPage_);
     homeModuleIndex_ = moduleStack_->addWidget(dashboardStack_);
 
@@ -1040,6 +1053,10 @@ void MainWindow::newModel()
     undoStack_->clear();
     editor_->setPlainText(tr("CM New NEC Workbench model\nCE\nGE 0\nEN\n"));
     hasNecModel_ = true;
+    modelModuleAction_->setEnabled(true);
+    sourceModuleAction_->setEnabled(true);
+    analysisModuleAction_->setEnabled(true);
+    visualizeModuleAction_->setEnabled(true);
     dashboardStack_->setCurrentIndex(1);
     setCurrentFile({});
     editor_->document()->setModified(false);
@@ -1049,27 +1066,81 @@ void MainWindow::newModel()
 
 void MainWindow::openFile()
 {
-    if (!maybeSaveChanges()) {
-        return;
-    }
     const auto path = QFileDialog::getOpenFileName(this, tr("Open NEC File"), {}, tr("NEC files (*.nec);;All files (*)"));
-    if (path.isEmpty()) {
-        return;
-    }
+    if (!path.isEmpty()) openFileAtPath(path);
+}
+
+void MainWindow::openFileAtPath(const QString& path)
+{
+    if (path.isEmpty() || !maybeSaveChanges()) return;
 
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         QMessageBox::critical(this, tr("Open Failed"), file.errorString());
+        auto files = recentFiles();
+        files.removeAll(QFileInfo(path).absoluteFilePath());
+        QSettings{}.setValue(QStringLiteral("files/recentModels"), files);
+        welcomePage_->setRecentFiles(files);
         return;
     }
     undoStack_->clear();
     editor_->setPlainText(QString::fromUtf8(file.readAll()));
     hasNecModel_ = true;
+    modelModuleAction_->setEnabled(true);
+    sourceModuleAction_->setEnabled(true);
+    analysisModuleAction_->setEnabled(true);
+    visualizeModuleAction_->setEnabled(true);
     dashboardStack_->setCurrentIndex(1);
     setCurrentFile(path);
     editor_->document()->setModified(false);
     showModelTab(sourceTabIndex_);
     checkModel();
+}
+
+void MainWindow::openExample()
+{
+    QString examplesDirectory;
+    for (const auto& candidate : {
+             QDir::current().absoluteFilePath(QStringLiteral("examples")),
+             QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../share/nec-workbench/examples"))}) {
+        if (QDir(candidate).exists()) {
+            examplesDirectory = candidate;
+            break;
+        }
+    }
+    const auto path = QFileDialog::getOpenFileName(this, tr("Open Example NEC Model"),
+        examplesDirectory, tr("NEC files (*.nec);;All files (*)"));
+    if (!path.isEmpty()) openFileAtPath(path);
+}
+
+auto MainWindow::recentFiles() const -> QStringList
+{
+    const auto stored = QSettings{}.value(QStringLiteral("files/recentModels")).toStringList();
+    QStringList result;
+    for (const auto& path : stored) {
+        const auto absolutePath = QFileInfo(path).absoluteFilePath();
+        if (QFileInfo::exists(absolutePath) && !result.contains(absolutePath)) result.append(absolutePath);
+        if (result.size() == 8) break;
+    }
+    return result;
+}
+
+void MainWindow::rememberRecentFile(const QString& path)
+{
+    if (path.isEmpty()) return;
+    auto files = recentFiles();
+    const auto absolutePath = QFileInfo(path).absoluteFilePath();
+    files.removeAll(absolutePath);
+    files.prepend(absolutePath);
+    while (files.size() > 8) files.removeLast();
+    QSettings{}.setValue(QStringLiteral("files/recentModels"), files);
+    if (welcomePage_ != nullptr) welcomePage_->setRecentFiles(files);
+}
+
+void MainWindow::clearRecentFiles()
+{
+    QSettings{}.remove(QStringLiteral("files/recentModels"));
+    if (welcomePage_ != nullptr) welcomePage_->setRecentFiles({});
 }
 
 auto MainWindow::saveFile() -> bool
@@ -1880,7 +1951,9 @@ void MainWindow::startAnalysis()
         QMessageBox::critical(this, tr("Run Failed"), inputFile.errorString());
         return;
     }
-    inputFile.write(editor_->toPlainText().toUtf8());
+    const auto solverInput = analysis::prepareSolverInput(
+        editor_->toPlainText().toStdString(), currentSetup_);
+    inputFile.write(QByteArray::fromStdString(solverInput));
     inputFile.close();
 
     analysis::SolverCommand command;
@@ -2591,11 +2664,15 @@ void MainWindow::populateTransmissionLineProperties(
 void MainWindow::setCurrentFile(QString path)
 {
     currentFile_ = std::move(path);
+    if (!currentFile_.isEmpty()) rememberRecentFile(currentFile_);
     const auto name = currentFile_.isEmpty() ? tr("Untitled") : QFileInfo(currentFile_).fileName();
     setWindowTitle(tr("%1[*] — NEC Workbench").arg(name));
     const auto modelName = currentFile_.isEmpty() ? tr("Untitled model.nec") : name;
     modelFileStatus_->setText(tr("Open model: %1").arg(modelName));
     modelFileStatus_->setToolTip(currentFile_.isEmpty() ? tr("This model has not been saved yet.") : currentFile_);
+    if (dashboardPage_ != nullptr)
+        dashboardPage_->setDocumentState(currentFile_.isEmpty() ? QString{} : name,
+            editor_->document()->isModified());
 }
 
 void MainWindow::restoreWorkspaceLayout()

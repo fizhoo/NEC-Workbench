@@ -163,6 +163,16 @@ auto pointToSegmentDistance(const QPointF& point, const QPointF& start, const QP
 
 }
 
+auto resultModelExtentFromOrigin(const model::AntennaModel& model) -> double
+{
+    auto extent = 1.0e-12;
+    for (const auto& wire : model.wires()) {
+        for (const auto& point : {wire.start, wire.end})
+            extent = std::max({extent, std::abs(point.x), std::abs(point.y), std::abs(point.z)});
+    }
+    return extent;
+}
+
 class CurrentPlotWidget final : public QWidget {
 public:
     explicit CurrentPlotWidget(QWidget* parent = nullptr) : QWidget(parent) { setMinimumHeight(220); }
@@ -391,14 +401,12 @@ protected:
         }
         const auto hasRadiation = std::isfinite(maxGain);
         if (hasRadiation) drawRadiation(painter, scale, maxGain);
-        model::Point3D modelCenter;
-        double modelExtent{};
-        modelTransform(modelCenter, modelExtent);
+        const auto modelExtent = resultModelExtentFromOrigin(model_);
         const auto antennaScale = hasRadiation ? scale * 0.32 : scale * 1.7;
         drawAxes(painter, scale * 0.34);
-        if (showAntenna_) drawAntenna(painter, antennaScale, modelCenter, modelExtent);
+        if (showAntenna_) drawAntenna(painter, antennaScale, modelExtent);
         if (showCurrents_ && !currents_.empty())
-            drawCurrents(painter, antennaScale, modelCenter, modelExtent);
+            drawCurrents(painter, antennaScale, modelExtent);
         painter.setPen(palette().color(QPalette::Text));
         auto status = tr("Drag to orbit · wheel to zoom · zoom %1×").arg(zoom_, 0, 'f', 2);
         if (hasRadiation) status += tr(" · %1 peak %2 dBi")
@@ -417,20 +425,8 @@ private:
         return {width() / 2.0 + pan_.x() + rx * scale,
             height() / 2.0 + pan_.y() - rz * scale};
     }
-    void modelTransform(model::Point3D& center, double& extent) const
-    {
-        if (model_.empty()) { center = {}; extent = 1.0; return; }
-        model::Point3D minimum = model_.wires().front().start, maximum = minimum;
-        for (const auto& wire : model_.wires()) for (const auto& point : {wire.start, wire.end}) {
-            minimum.x = std::min(minimum.x, point.x); minimum.y = std::min(minimum.y, point.y); minimum.z = std::min(minimum.z, point.z);
-            maximum.x = std::max(maximum.x, point.x); maximum.y = std::max(maximum.y, point.y); maximum.z = std::max(maximum.z, point.z);
-        }
-        center = {(minimum.x + maximum.x) / 2, (minimum.y + maximum.y) / 2, (minimum.z + maximum.z) / 2};
-        extent = std::max({maximum.x - minimum.x, maximum.y - minimum.y, maximum.z - minimum.z, 1.0e-12});
-    }
-    static auto normalized(const model::Point3D& point, const model::Point3D& center,
-        double extent) -> model::Point3D
-    { return {(point.x-center.x)/extent, (point.y-center.y)/extent, (point.z-center.z)/extent}; }
+    static auto normalized(const model::Point3D& point, double extent) -> model::Point3D
+    { return {point.x/extent, point.y/extent, point.z/extent}; }
     void drawAxes(QPainter& painter, double scale)
     {
         const auto origin = project({}, scale);
@@ -483,15 +479,15 @@ private:
             painter.drawPath(path);
         }
     }
-    void drawAntenna(QPainter& painter, double scale, const model::Point3D& center, double extent)
+    void drawAntenna(QPainter& painter, double scale, double extent)
     {
         if (model_.empty()) return;
         painter.setPen(QPen(QColor(245, 190, 45), 3));
         for (const auto& wire : model_.wires())
-            painter.drawLine(project(normalized(wire.start, center, extent), scale),
-                project(normalized(wire.end, center, extent), scale));
+            painter.drawLine(project(normalized(wire.start, extent), scale),
+                project(normalized(wire.end, extent), scale));
     }
-    void drawCurrents(QPainter& painter, double scale, const model::Point3D& center, double extent)
+    void drawCurrents(QPainter& painter, double scale, double extent)
     {
         const auto maximum = std::ranges::max(currents_, {}, &analysis::SegmentCurrentResult::magnitude).magnitude;
         const analysis::SegmentCurrentResult* hovered{};
@@ -508,8 +504,8 @@ private:
                     wire->start.y + (wire->end.y-wire->start.y)*fraction,
                     wire->start.z + (wire->end.z-wire->start.z)*fraction};
             };
-            const auto start = project(normalized(interpolate(startFraction), center, extent), scale);
-            const auto end = project(normalized(interpolate(endFraction), center, extent), scale);
+            const auto start = project(normalized(interpolate(startFraction), extent), scale);
+            const auto end = project(normalized(interpolate(endFraction), extent), scale);
             const auto ratio = current.magnitude / std::max(maximum, 1.0e-30);
             painter.setPen(QPen(QColor::fromHsvF((1.0-ratio)*0.67, 0.9, 0.95), 3.0 + 4.0*ratio));
             painter.drawLine(start, end);

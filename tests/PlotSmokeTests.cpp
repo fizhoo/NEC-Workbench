@@ -9,10 +9,12 @@
 #include "ui/geometry/GeometryView.h"
 #include "ui/geometry/Geometry3DView.h"
 #include "ui/setup/LoadNetworkEditor.h"
+#include "ui/welcome/WelcomePage.h"
 #include "nec/NecParser.h"
 #include "model/WireGauge.h"
 
 #include <QApplication>
+#include <QAction>
 #include <QComboBox>
 #include <QDebug>
 #include <QImage>
@@ -47,6 +49,8 @@ auto main(int argc, char* argv[]) -> int
                 std::abs(std::sin(theta * 3.14159265358979323846 / 180.0))));
             result.radiation.push_back({14.1, static_cast<double>(theta),
                 static_cast<double>(phi), gain, -999.99, gain});
+            result.radiation.push_back({14.2, static_cast<double>(theta),
+                static_cast<double>(phi), gain + 0.1, -999.99, gain + 0.1});
         }
     }
     necwb::ui::SweepPlotsView view;
@@ -71,6 +75,10 @@ auto main(int argc, char* argv[]) -> int
     necwb::model::AntennaModel antenna;
     antenna.addWire({1, {0.0, 0.0, -0.5}, {0.0, 0.0, 0.5}, 11, 0.001, 1});
     radiation3D.setModel(antenna);
+    necwb::model::AntennaModel elevatedAntenna;
+    elevatedAntenna.addWire({1, {-5.0, 0.0, 6.1}, {5.0, 0.0, 6.1}, 11, 0.001, 1});
+    const auto resultOriginPreserved = std::abs(
+        necwb::ui::resultModelExtentFromOrigin(elevatedAntenna) - 6.1) < 1.0e-12;
     radiation3D.setResults(result, QStringLiteral("test-run"));
     radiation2D.setSettingsChangedCallback([&radiation3D](const auto& settings) {
         radiation3D.setDisplaySettings(settings);
@@ -79,17 +87,24 @@ auto main(int argc, char* argv[]) -> int
         radiation2D.setDisplaySettings(settings);
     });
     auto* radiation2DComponent = radiation2D.findChild<QComboBox*>(QStringLiteral("radiation2DComponent"));
+    auto* radiation2DFrequency = radiation2D.findChild<QComboBox*>(QStringLiteral("radiation2DFrequency"));
     auto* radiation3DComponent = radiation3D.findChild<QComboBox*>(QStringLiteral("radiation3DComponent"));
+    auto* radiation3DFrequency = radiation3D.findChild<QComboBox*>(QStringLiteral("radiation3DFrequency"));
     auto* radiation2DFloor = radiation2D.findChild<QComboBox*>(QStringLiteral("radiation2DFloor"));
     auto* radiation3DFloor = radiation3D.findChild<QComboBox*>(QStringLiteral("radiation3DFloor"));
     auto* radiation2DSummary = radiation2D.findChild<QLabel*>(QStringLiteral("radiation2DSummary"));
     auto* radiation3DSummary = radiation3D.findChild<QLabel*>(QStringLiteral("radiation3DSummary"));
-    if (radiation2DComponent == nullptr || radiation3DComponent == nullptr
+    if (radiation2DComponent == nullptr || radiation2DFrequency == nullptr
+        || radiation3DComponent == nullptr || radiation3DFrequency == nullptr
         || radiation2DFloor == nullptr || radiation3DFloor == nullptr
         || radiation2DSummary == nullptr || radiation3DSummary == nullptr) return EXIT_FAILURE;
     radiation2DComponent->setCurrentIndex(1);
+    radiation2DFrequency->setCurrentIndex(1);
     radiation3DFloor->setCurrentIndex(4);
     application.processEvents();
+    const auto radiationSweepSelectable = radiation2DFrequency->count() == 2
+        && radiation2DFrequency->currentData().toDouble() == 14.2
+        && radiation3DFrequency->currentData().toDouble() == 14.2;
     const auto radiationControlsSynchronized = radiation3DComponent->currentData()
             == radiation2DComponent->currentData()
         && radiation2DFloor->currentData() == radiation3DFloor->currentData();
@@ -112,11 +127,44 @@ auto main(int argc, char* argv[]) -> int
     dashboard.resize(1000, 700);
     necwb::model::ModelSetup setup;
     dashboard.setModel(antenna, setup, QStringLiteral("nec2"), true, 0, 0);
+    QAction geometryAction(QStringLiteral("Geometry"), &dashboard);
+    QAction sourceAction(QStringLiteral("NEC Source"), &dashboard);
+    QAction checkAction(QStringLiteral("Check Model"), &dashboard);
+    QAction runAction(QStringLiteral("Run Analysis"), &dashboard);
+    QAction resultsAction(QStringLiteral("Results"), &dashboard);
+    dashboard.setQuickActions(&geometryAction, &sourceAction, &checkAction, &runAction, &resultsAction);
+    dashboard.setDocumentState(QStringLiteral("test.nec"), true);
     dashboard.setResults(result, QStringLiteral("Model: test.nec · Run: dashboard"), false);
     dashboard.show(); application.processEvents();
     QImage dashboardImage(1000, 700, QImage::Format_ARGB32_Premultiplied);
     dashboardImage.fill(Qt::transparent); QPainter dashboardPainter(&dashboardImage);
     dashboard.render(&dashboardPainter); dashboardPainter.end();
+    const auto* dashboardFileState = dashboard.findChild<QLabel*>(QStringLiteral("dashboardFileState"));
+    const auto dashboardStateVisible = dashboardFileState != nullptr
+        && dashboardFileState->text().contains(QStringLiteral("test.nec"))
+        && dashboardFileState->text().contains(QStringLiteral("Unsaved"));
+    QAction welcomeNew(QStringLiteral("New NEC Model"));
+    QAction welcomeOpen(QStringLiteral("Open NEC File"));
+    QString recentOpened;
+    auto examplesOpened = false;
+    auto recentCleared = false;
+    necwb::ui::WelcomePage welcome(&welcomeNew, &welcomeOpen,
+        [&recentOpened](const QString& path) { recentOpened = path; },
+        [&examplesOpened] { examplesOpened = true; },
+        [&recentCleared] { recentCleared = true; });
+    welcome.resize(900, 650);
+    welcome.setRecentFiles({QStringLiteral("/tmp/first.nec"), QStringLiteral("/tmp/second.nec")});
+    welcome.show(); application.processEvents();
+    auto* recentList = welcome.findChild<QListWidget*>(QStringLiteral("recentModelsList"));
+    auto* openRecent = welcome.findChild<QPushButton*>(QStringLiteral("openRecentModelButton"));
+    auto* clearRecent = welcome.findChild<QPushButton*>(QStringLiteral("clearRecentModelsButton"));
+    if (recentList == nullptr || openRecent == nullptr || clearRecent == nullptr) return EXIT_FAILURE;
+    recentList->setCurrentRow(1); openRecent->click(); clearRecent->click();
+    QImage welcomeImage(900, 650, QImage::Format_ARGB32_Premultiplied);
+    welcomeImage.fill(Qt::transparent); QPainter welcomePainter(&welcomeImage);
+    welcome.render(&welcomePainter); welcomePainter.end();
+    const auto welcomeStateValid = recentList->count() == 2
+        && recentOpened == QStringLiteral("/tmp/second.nec") && recentCleared;
     necwb::ui::StructuredCardEditor structuredCards;
     structuredCards.resize(900, 500);
     structuredCards.setDocument(necwb::nec::NecParser{}.parse(
@@ -278,14 +326,16 @@ auto main(int argc, char* argv[]) -> int
         && loaded.front().backend == QStringLiteral("nec2")
         && loaded.front().durationSeconds == 1.25;
     const auto passed = !image.isNull() && !fieldImage.isNull() && !currentImage.isNull()
-        && !dashboardImage.isNull() && storeValid
+        && !dashboardImage.isNull() && dashboardStateVisible
+        && !welcomeImage.isNull() && welcomeStateValid && !examplesOpened && storeValid
         && !structuredImage.isNull() && invalidEditBlocked && duplicateFrequencyBlocked
         && descriptiveDropdown
         && trailingFieldsPreserved
         && editedCard == QStringLiteral("EX 0 1 7 0 1 0 2.5")
         && addedCard == QStringLiteral("LD 0 1 1 11 0 0 0") && deletedLine == 3
         && !wireImage.isNull() && wireEditCommitted && gaugeDropdownValid
-        && radiationControlsSynchronized && radiationMetricsVisible
+        && radiationControlsSynchronized && radiationSweepSelectable && radiationMetricsVisible
+        && resultOriginPreserved
         && !attachmentImage.isNull() && invalidLoadBlocked && validLoadEmitted
         && invalidLineBlocked && validLineEmitted;
     if (!passed) qWarning() << "structured smoke state" << invalidEditBlocked << editedCard

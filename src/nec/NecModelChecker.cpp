@@ -127,8 +127,9 @@ void checkGround(const NecCard& card, ModelCheckResult& result)
 
 void checkRadiationPattern(const NecCard& card, ModelCheckResult& result)
 {
-    if (card.fields.size() < 10) {
-        addError(result, card, "RP requires four integer and six numeric fields");
+    if (card.fields.size() < 8) {
+        addError(result, card,
+            "RP requires four integer and four numeric stepping fields; distance and normalization are optional");
         return;
     }
     const bool integerFieldsValid = std::ranges::all_of(card.fields.begin(), card.fields.begin() + 4,

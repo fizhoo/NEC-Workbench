@@ -9,6 +9,8 @@
 class QLabel;
 class QTableWidget;
 class QTextDocument;
+class QAction;
+class QHBoxLayout;
 
 namespace necwb::ui {
 
@@ -18,6 +20,10 @@ class Radiation3DView;
 class DashboardPage final : public QWidget {
 public:
     explicit DashboardPage(QTextDocument* document, QWidget* parent = nullptr);
+
+    void setQuickActions(QAction* geometry, QAction* source, QAction* check,
+        QAction* run, QAction* results);
+    void setDocumentState(const QString& fileName, bool modified);
 
     void setModel(const model::AntennaModel& model, const model::ModelSetup& setup,
         const QString& solver, bool checked, std::size_t errors, std::size_t warnings);
@@ -33,6 +39,8 @@ private:
     QTableWidget* quickResults_{};
     QLabel* modelState_{};
     QLabel* resultState_{};
+    QLabel* fileState_{};
+    QHBoxLayout* quickActions_{};
     QString resultContext_;
     bool hasResults_{};
     bool resultsStale_{};

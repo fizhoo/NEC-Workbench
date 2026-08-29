@@ -3,12 +3,14 @@
 #include "ui/analysis/FieldResultsViews.h"
 #include "ui/editor/NecEditor.h"
 
+#include <QAction>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QLabel>
 #include <QTableWidget>
 #include <QTextDocument>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -59,6 +61,26 @@ DashboardPage::DashboardPage(QTextDocument* document, QWidget* parent) : QWidget
     layout->setContentsMargins(12, 12, 12, 12);
     layout->setSpacing(10);
 
+    auto* headingPanel = new QWidget(this);
+    auto* headingLayout = new QHBoxLayout(headingPanel);
+    headingLayout->setContentsMargins(4, 2, 4, 2);
+    auto* headingText = new QVBoxLayout;
+    auto* heading = new QLabel(tr("Project Dashboard"), headingPanel);
+    auto headingFont = heading->font();
+    headingFont.setBold(true);
+    headingFont.setPointSize(headingFont.pointSize()+5);
+    heading->setFont(headingFont);
+    fileState_ = new QLabel(tr("Untitled model · Saved"), headingPanel);
+    fileState_->setObjectName(QStringLiteral("dashboardFileState"));
+    fileState_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    headingText->addWidget(heading);
+    headingText->addWidget(fileState_);
+    quickActions_ = new QHBoxLayout;
+    quickActions_->setSpacing(6);
+    headingLayout->addLayout(headingText);
+    headingLayout->addStretch();
+    headingLayout->addLayout(quickActions_);
+
     editor_ = new NecEditor(this);
     editor_->setDocument(document);
     editor_->setMinimumSize(360, 240);
@@ -72,7 +94,7 @@ DashboardPage::DashboardPage(QTextDocument* document, QWidget* parent) : QWidget
     modelState_ = new QLabel(tr("No model loaded"), modelPanel);
     modelState_->setWordWrap(true);
     modelSummary_ = summaryTable({tr("Wires"), tr("Segments"), tr("Sources"), tr("Loads"),
-        tr("TLs"), tr("Solver"), tr("Ground")}, modelPanel);
+        tr("TLs"), tr("Solver"), tr("Ground"), tr("Frequency")}, modelPanel);
     modelLayout->addWidget(modelState_);
     modelLayout->addWidget(modelSummary_, 1);
 
@@ -86,14 +108,37 @@ DashboardPage::DashboardPage(QTextDocument* document, QWidget* parent) : QWidget
     resultLayout->addWidget(resultState_);
     resultLayout->addWidget(quickResults_, 1);
 
-    layout->addWidget(panel(tr("NEC Source"), editor_, this), 0, 0);
-    layout->addWidget(panel(tr("3D Overview"), view3D_, this), 0, 1);
-    layout->addWidget(panel(tr("Model Summary"), modelPanel, this), 1, 0);
-    layout->addWidget(panel(tr("Quick Results"), resultPanel, this), 1, 1);
-    layout->setRowStretch(0, 3);
-    layout->setRowStretch(1, 2);
+    layout->addWidget(headingPanel, 0, 0, 1, 2);
+    layout->addWidget(panel(tr("NEC Source"), editor_, this), 1, 0);
+    layout->addWidget(panel(tr("3D Overview"), view3D_, this), 1, 1);
+    layout->addWidget(panel(tr("Model Summary"), modelPanel, this), 2, 0);
+    layout->addWidget(panel(tr("Quick Results"), resultPanel, this), 2, 1);
+    layout->setRowStretch(1, 3);
+    layout->setRowStretch(2, 2);
     layout->setColumnStretch(0, 1);
     layout->setColumnStretch(1, 1);
+}
+
+void DashboardPage::setQuickActions(QAction* geometry, QAction* source, QAction* check,
+    QAction* run, QAction* results)
+{
+    while (auto* item = quickActions_->takeAt(0)) {
+        delete item->widget();
+        delete item;
+    }
+    for (auto* action : {geometry, source, check, run, results}) {
+        if (action == nullptr) continue;
+        auto* button = new QToolButton(this);
+        button->setDefaultAction(action);
+        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        quickActions_->addWidget(button);
+    }
+}
+
+void DashboardPage::setDocumentState(const QString& fileName, bool modified)
+{
+    fileState_->setText(tr("%1 · %2").arg(fileName.isEmpty() ? tr("Untitled model.nec") : fileName,
+        modified ? tr("Unsaved changes") : tr("Saved")));
 }
 
 void DashboardPage::setValue(QTableWidget* table, int row, const QString& value)
@@ -114,6 +159,14 @@ void DashboardPage::setModel(const model::AntennaModel& model, const model::Mode
     setValue(modelSummary_, 4, QString::number(setup.transmissionLines.size()));
     setValue(modelSummary_, 5, solver);
     setValue(modelSummary_, 6, groundName(setup.ground));
+    setValue(modelSummary_, 7, setup.frequency
+        ? (setup.frequency->count > 1
+            ? tr("%1–%2 MHz (%3 points)")
+                  .arg(setup.frequency->startMHz, 0, 'g', 8)
+                  .arg(model::frequencyEndMHz(*setup.frequency), 0, 'g', 8)
+                  .arg(setup.frequency->count)
+            : tr("%1 MHz").arg(setup.frequency->startMHz, 0, 'g', 8))
+        : tr("Not configured"));
     modelState_->setText(!checked ? tr("Model changed — validation required")
         : errors > 0 ? tr("Invalid model — %1 error(s), %2 warning(s)").arg(errors).arg(warnings)
         : tr("Ready — %1 warning(s)").arg(warnings));

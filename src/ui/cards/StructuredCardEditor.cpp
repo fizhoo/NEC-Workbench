@@ -154,7 +154,8 @@ auto requiredFieldCount(const QString& mnemonic, const QStringList& fields) -> i
     if (mnemonic == QStringLiteral("EX") || mnemonic == QStringLiteral("FR")) return 6;
     if (mnemonic == QStringLiteral("GE") || mnemonic == QStringLiteral("XQ")) return 1;
     if (mnemonic == QStringLiteral("LD")) return 7;
-    if (mnemonic == QStringLiteral("TL") || mnemonic == QStringLiteral("RP")) return 10;
+    if (mnemonic == QStringLiteral("TL")) return 10;
+    if (mnemonic == QStringLiteral("RP")) return 8;
     if (mnemonic == QStringLiteral("GN")) {
         const auto type = fields.empty() ? -1 : fields.front().toInt();
         return type == 0 || type == 2 ? 6 : 1;

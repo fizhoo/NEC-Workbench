@@ -1,5 +1,6 @@
 #include "analysis/SolverCommand.h"
 #include "analysis/NecOutputParser.h"
+#include "analysis/SolverInput.h"
 #include "geometry/OrthographicProjection.h"
 #include "model/AutoSegmentation.h"
 #include "model/LengthUnit.h"
@@ -16,6 +17,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <span>
 #include <string>
 
 namespace {
@@ -380,6 +382,15 @@ void testAnalysisRequests()
     expect(necwb::nec::NecModelChecker{}.check(document).errorCount() == 0,
         "valid XQ and RP requests pass model checking");
 
+    const auto shortPattern = necwb::nec::NecParser{}.parse(
+        "RP 0 181 361 1000 0.000 0.000 1.000 1.000\n");
+    const auto shortSetup = necwb::nec::NecSetupConverter{}.convert(shortPattern);
+    expect(necwb::nec::NecModelChecker{}.check(shortPattern).errorCount() == 0
+            && shortSetup.radiationPattern
+            && shortSetup.radiationPattern->thetaCount == 181
+            && shortSetup.radiationPattern->phiCount == 361,
+        "RP accepts omitted optional distance and normalization fields");
+
     const auto invalid = necwb::nec::NecParser{}.parse(
         "RP 0 0 2 1000 0 0 1 0 0 0\nXQ bad\n");
     expect(necwb::nec::NecModelChecker{}.check(invalid).errorCount() == 3,
@@ -437,6 +448,36 @@ void testSolverCommand()
         "nec2c command uses short working-directory-relative arguments");
 }
 
+void testRadiationSweepSolverInput()
+{
+    const std::string source =
+        "CM sweep\nCE\nGW 1 11 0 0 0 1 0 0 .001\nGE 0\n"
+        "EX 0 1 6 0 1 0\nFR 0 3 0 0 14 0.25\nGN 2 0 0 0 13 .005\nXQ 0\n"
+        "RP 0 19 12 1000 0 0 10 30 0 0\nEN\n";
+    const auto document = necwb::nec::NecParser{}.parse(source);
+    const auto setup = necwb::nec::NecSetupConverter{}.convert(document);
+    const auto prepared = necwb::analysis::prepareSolverInput(source, setup);
+    expect(prepared.find("FR 0 3 0 0 14 0.25") == std::string::npos
+            && prepared.find("XQ 0") == std::string::npos,
+        "radiation sweeps replace native sweep execution cards");
+    expect(prepared.find("GN 2 0 0 0 13 .005\nFR 0 1 0 0 14 0") != std::string::npos,
+        "radiation sweep expansion retains environment cards before execution");
+    expect(prepared.find("FR 0 1 0 0 14 0\nRP 0 19 12 1000") != std::string::npos
+            && prepared.find("FR 0 1 0 0 14.25 0\nRP 0 19 12 1000") != std::string::npos
+            && prepared.find("FR 0 1 0 0 14.5 0\nRP 0 19 12 1000") != std::string::npos,
+        "radiation sweeps request a pattern at every additive frequency");
+
+    auto logarithmic = setup;
+    logarithmic.frequency->steppingMode = 1;
+    logarithmic.frequency->startMHz = 10.0;
+    logarithmic.frequency->step = 2.0;
+    const auto logarithmicPrepared = necwb::analysis::prepareSolverInput(source, logarithmic);
+    expect(logarithmicPrepared.find("FR 0 1 0 0 10 0") != std::string::npos
+            && logarithmicPrepared.find("FR 0 1 0 0 20 0") != std::string::npos
+            && logarithmicPrepared.find("FR 0 1 0 0 40 0") != std::string::npos,
+        "radiation sweeps expand multiplicative frequencies");
+}
+
 void testNecOutputParsing()
 {
     const std::string output =
@@ -458,6 +499,10 @@ void testNecOutputParsing()
         " 0 0 -999.99 -999.99 -999.99 0 0\n"
         " 90 0 2.15 -999.99 2.15 0 0 LINEAR\n"
         " 90 180 0 0 -7.85 1 45 RIGHT\n"
+        "\n"
+        " FREQUENCY : 1.4200E+01 MHz\n"
+        " RADIATION PATTERNS\n"
+        " 90 0 2.25 -999.99 2.25 0 0 LINEAR\n"
         "\n";
     const auto result = necwb::analysis::NecOutputParser{}.parse(output);
     expect(result.feedpoints.size() == 2, "NEC output parser reads each frequency block");
@@ -480,12 +525,15 @@ void testNecOutputParsing()
             && result.currents[0].segment == 1
             && result.currents[0].magnitude == 0.010198,
         "NEC output parser reads segment current distribution rows");
-    expect(result.radiation.size() == 3
+    expect(result.radiation.size() == 4
             && result.radiation[1].thetaDegrees == 90.0
             && result.radiation[1].totalGainDb == 2.15
             && result.radiation[1].polarizationSense
                 == necwb::analysis::PolarizationSense::Linear,
         "NEC output parser reads radiation gain samples");
+    expect(result.radiation[3].frequencyMHz == 14.2
+            && result.radiation[3].totalGainDb == 2.25,
+        "NEC output parser retains each radiation sweep frequency");
     expect(std::abs(necwb::analysis::radiationGainDb(result.radiation[1],
                 necwb::analysis::RadiationComponent::RightHandCircular)
             - (2.15 - 3.0102999566)) < 1.0e-9,
@@ -495,7 +543,8 @@ void testNecOutputParsing()
             && necwb::analysis::radiationGainDb(result.radiation[2],
                 necwb::analysis::RadiationComponent::LeftHandCircular) < -900.0,
         "circular polarization follows the NEC axial ratio and sense");
-    const auto metrics = necwb::analysis::radiationMetrics(result.radiation,
+    const auto metrics = necwb::analysis::radiationMetrics(
+        std::span<const necwb::analysis::RadiationSample>{result.radiation.data(), 3},
         necwb::analysis::RadiationComponent::Total);
     expect(metrics.valid && metrics.peakGainDb == 2.15
             && metrics.peakThetaDegrees == 90.0
@@ -527,6 +576,7 @@ auto main() -> int
     testAnalysisRequests();
     testLoadsAndTransmissionLines();
     testSolverCommand();
+    testRadiationSweepSolverInput();
     testNecOutputParsing();
 
     if (failures != 0) {

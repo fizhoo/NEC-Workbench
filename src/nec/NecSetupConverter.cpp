@@ -78,12 +78,10 @@ auto NecSetupConverter::convert(const NecDocument& document) const -> model::Mod
             }
         }
         if (card.kind == NecCardKind::RadiationPattern && !setup.radiationPattern
-            && card.fields.size() >= 10) {
+            && card.fields.size() >= 8) {
             model::RadiationPatternRequest request;
             int mode{};
             int format{};
-            double distance{};
-            double normalization{};
             request.sourceLine = card.lineNumber;
             if (parseNumber(card.fields[0], mode) && mode == 0
                 && parseNumber(card.fields[1], request.thetaCount)
@@ -92,9 +90,7 @@ auto NecSetupConverter::convert(const NecDocument& document) const -> model::Mod
                 && parseNumber(card.fields[4], request.thetaStart)
                 && parseNumber(card.fields[5], request.phiStart)
                 && parseNumber(card.fields[6], request.thetaStep)
-                && parseNumber(card.fields[7], request.phiStep)
-                && parseNumber(card.fields[8], distance)
-                && parseNumber(card.fields[9], normalization)) {
+                && parseNumber(card.fields[7], request.phiStep)) {
                 setup.radiationPattern = request;
             }
         }

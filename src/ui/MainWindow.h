@@ -10,6 +10,7 @@
 #include <QElapsedTimer>
 #include <QProcess>
 #include <QString>
+#include <QStringList>
 
 #include <optional>
 #include <utility>
@@ -47,6 +48,7 @@ class LoadNetworkEditor;
 class WireCardEditor;
 class StructuredCardEditor;
 class DashboardPage;
+class WelcomePage;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -70,6 +72,11 @@ private:
     [[nodiscard]] auto formatLength(double meters) const -> QString;
     void newModel();
     void openFile();
+    void openFileAtPath(const QString& path);
+    void openExample();
+    [[nodiscard]] auto recentFiles() const -> QStringList;
+    void rememberRecentFile(const QString& path);
+    void clearRecentFiles();
     auto saveFile() -> bool;
     auto saveFileAs() -> bool;
     auto writeFile(const QString& path) -> bool;
@@ -178,6 +185,7 @@ private:
     QTabWidget* sourceWorkspace_{};
     QTabWidget* resultsWorkspace_{};
     DashboardPage* dashboardPage_{};
+    WelcomePage* welcomePage_{};
     WireCardEditor* wireCardEditor_{};
     StructuredCardEditor* structuredCardEditor_{};
     NecEditor* editor_{};
