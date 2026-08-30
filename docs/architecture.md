@@ -17,8 +17,8 @@ model summary, and quick solver results. It does not maintain a second NEC copy.
 
 Geometry owns the detailed XY, XZ, YZ, and 3D editing views. NEC Source owns the
 full source editor and structured card tables. Analysis owns frequency,
-source, ground, loads/lines, solver, result-request, and run-history controls.
-Results owns numerical impedance, sweep plots, currents, 2D and 3D radiation,
+source, ground, loads/lines, solver, and result-request controls. Results owns
+run history, numerical impedance, sweep plots, currents, 2D and 3D radiation,
 and raw solver output. Optimize retains its incremental placeholder controls;
 no optimizer algorithm is implied by the workspace refactor. Project and
 Properties remain global docks. Bottom-tabbed Validation, Solver Output, and
@@ -119,7 +119,7 @@ undoable source edit. Supported environments are explicit free space, perfect
 ground, finite ground using the reflection approximation, and finite ground using
 Sommerfeld/Norton, with custom material values or an average-ground preset.
 
-Analyze Setup stores the selected backend family and executable path separately
+Analysis Solver stores the selected backend family and executable path separately
 from the NEC model deck. It currently supports configuration for NEC-2/nec2c,
 OpenNEC, NEC-4-compatible installations, and custom adapters. No solver is
 bundled. The first executable adapter targets `nec2c`; other choices remain
@@ -127,7 +127,7 @@ visible but are reported as not runnable until their command adapters exist.
 When NEC-2 is selected with no saved path, the application discovers `nec2c`
 from `PATH`.
 
-Analyze Requests manages a canonical `XQ` current/impedance request and a normal
+Analysis Requests manages a canonical `XQ` current/impedance request and a normal
 far-field `RP` request with theta and phi sampling controls. Applying requests
 updates, inserts, or removes only the managed cards in one undoable source edit.
 The readiness summary requires a freshly checked valid model, supported `FR` and
@@ -141,27 +141,28 @@ warnings. This keeps partial models editable without reporting the misleading
 
 Run Analysis writes the checked source deck to a unique directory under the
 application's durable local-data location and starts the solver asynchronously with `QProcess`.
-The Runs tab records status, duration, backend, and artifact location. Standard
+The Results workspace's Run History tab records status, duration, backend, and artifact location. Standard
 output, standard error, and the completed NEC output file are mirrored to the
-Analyze Output tab and Solver Output dock; `model.nec`, `model.out`, and
+Results Raw NEC Output tab and Solver Output dock; `model.nec`, `model.out`, and
 `run.log` remain in the run directory. Runs support a configurable timeout and
 manual cancellation. Each directory includes versioned JSON metadata; records
 are discovered on startup, incomplete records are marked Interrupted, and
-selecting a historical row reloads its log, result tables, and plots. Parsing raw
+using Open Results or double-clicking a historical row reloads its archived
+model, log, result tables, and plots. Parsing raw
 NEC output into structured result objects is a
 separate core layer. The first parser reads each frequency block's antenna-input
-rows into backend-neutral feedpoint results. Analyze Results and Visualize
-Impedance show frequency, source location, resistance, reactance, impedance
+rows into backend-neutral feedpoint results. Results Numerical Results shows
+frequency, source location, resistance, reactance, impedance
 magnitude and phase, input power, and SWR referenced to 50 ohms. Raw output
 remains available for audit and future parsers.
 
-Visualize Sweep Plots renders resistance and reactance together and SWR in a
+Results Sweep Plots renders resistance and reactance together and SWR in a
 separate vertically resizable plot. The Qt Widgets renderer has no charting
 dependency; it handles automatic axes, single-frequency markers, multiple
 feedpoints, legends, and exact hover readouts while retaining the tabular view.
 
 The output parser also reads each frequency block's segment-current table and
-far-field radiation samples. Visualize Currents provides magnitude-versus-
+far-field radiation samples. Results Currents provides magnitude-versus-
 segment plots plus complex-current tables. Radiation 2D selects frequency and
 either a vertical phi plane or horizontal theta angle for a normalized polar
 gain cut. Left/Right cycle the available angles and Space switches orientation;
@@ -173,7 +174,7 @@ absolute dBi, and relative dB under the pointer. Radiation 3D renders the availa
 an orbitable, mouse-wheel-zoomable normalized wireframe mesh and
 overlays the antenna geometry from the exact run deck at its center. The mesh
 connects both constant-theta and constant-phi sample directions and closes the
-azimuth rings when full coverage exists. Analyze Requests provides explicit 2D
+azimuth rings when full coverage exists. Analysis Requests provides explicit 2D
 Elevation Cut and Full 3D Pattern presets; the latter requests theta 0–180° and
 phi 0–350°. Older or custom runs containing fewer than three phi planes remain
 partial and display a coverage warning rather than inventing symmetry. Gain
@@ -189,9 +190,11 @@ these as renderer layers rather than separate widgets allows later workspace
 layout changes without duplicating data or rendering code.
 
 The status bar identifies the currently open NEC file in every workspace. Each
-run record also stores its originating file path, while result summaries and the
-solver log show the friendly model filename beside the immutable run ID. Legacy
-run records without this metadata are labeled as archived `model.nec` snapshots.
+run record also stores its originating file path. Historical result summaries
+show the model filename, run timestamp, and backend. Opening a run loads its
+archived input as a Save-As-only historical snapshot, so the original model and
+immutable run artifacts are not overwritten. Legacy run records without source
+metadata are labeled as archived `model.nec` snapshots.
 
 Model Loads & Lines provides structured editable tables for NEC `LD` types 0–5
 and `TL` cards. Changes rewrite or insert one canonical card through the shared
@@ -221,10 +224,13 @@ supported cards without discarding source it cannot yet interpret.
 
 ## Near-Term Milestones
 
-1. Add normalized attachments for `LD`, `TL`, `NT`, and additional EX types.
-2. Add radiation polarization and field-component views.
-3. Add gain-surface mesh filling and export.
-4. Add optional external-solver adapters, including OpenNEC.
+1. Add named parameters and `SY`-style expression resolution.
+2. Add a one-parameter sweep workflow and candidate result tracking.
+3. Add optimization objectives, constraints, and bounded variables.
+4. Add normalized attachments for `LD`, `TL`, `NT`, and additional EX types.
+5. Add optional external-solver adapters, including OpenNEC.
+
+See [Development Roadmap](roadmap.md) for the broader sequence and parking lot.
 
 Solver executables are never bundled. NEC-4 and NEC-5 support will accept paths
 to user-provided licensed executables.

@@ -3,6 +3,7 @@
 #include "model/AntennaModel.h"
 #include "model/LengthUnit.h"
 #include "model/ModelSetup.h"
+#include "nec/NecDocument.h"
 #include "ui/geometry/GeometrySettings.h"
 #include "ui/analysis/AnalysisRunStore.h"
 #include "analysis/AnalysisResult.h"
@@ -139,6 +140,10 @@ private:
     void loadRunHistory();
     void addRunRecord(const AnalysisRunRecord& record, bool prepend);
     void loadSelectedRun();
+    auto loadRunModel(const QString& directory, const QString& modelName,
+        const QString& runContext) -> bool;
+    void deleteSelectedRun();
+    void updateRunSelectionActions();
     void displayRunArtifacts(const QString& directory, const QString& context);
     void setDisplayedResults(const analysis::AnalysisResult& result);
     void applyResultFrequency(double frequencyMHz);
@@ -151,7 +156,7 @@ private:
     void performUndo();
     void performRedo();
     void updateUndoActions();
-    void updateProjectTree(const model::AntennaModel& model, std::size_t cardCount);
+    void updateProjectTree(const model::AntennaModel& model, const nec::NecDocument& document);
     void showProjectItemProperties(QTreeWidgetItem* item);
     void showCardProperties(std::size_t sourceLine);
     void populateWireProperties(const model::Wire& wire);
@@ -213,6 +218,8 @@ private:
     QPlainTextEdit* analysisOutput_{};
     QPushButton* cancelRunButton_{};
     QPushButton* openRunFolderButton_{};
+    QPushButton* openRunResultsButton_{};
+    QPushButton* deleteRunButton_{};
     QTreeWidget* projectTree_{};
     QTableWidget* properties_{};
     QTreeWidget* diagnostics_{};
@@ -239,6 +246,7 @@ private:
     QElapsedTimer solverElapsed_;
     QString currentRunDirectory_;
     QString currentRunOutputPath_;
+    QString displayedRunDirectory_;
     AnalysisRunStore runStore_;
     std::optional<AnalysisRunRecord> currentRunRecord_;
     int currentRunRow_{-1};

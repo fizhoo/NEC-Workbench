@@ -21,6 +21,7 @@ class StructuredCardEditor final : public QWidget {
 public:
     explicit StructuredCardEditor(QWidget* parent = nullptr);
     void setDocument(const nec::NecDocument& document);
+    auto selectCard(std::size_t sourceLine) -> bool;
 
 signals:
     void cardSelected(std::size_t sourceLine);

@@ -65,7 +65,7 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent)
         static_cast<int>(analysis::RadiationSweepMode::CenterFrequencyOnly));
     radiationSweepControl_->addItem(tr("Start, center, and end"),
         static_cast<int>(analysis::RadiationSweepMode::RepresentativeFrequencies));
-    radiationSweepControl_->addItem(tr("Every frequency (slow, large files)"),
+    radiationSweepControl_->addItem(tr("Every frequency"),
         static_cast<int>(analysis::RadiationSweepMode::EveryFrequency));
     const auto savedSweepMode = QSettings{}.value(QStringLiteral("analysis/radiationSweepMode"),
         static_cast<int>(analysis::RadiationSweepMode::CenterFrequencyOnly)).toInt();
@@ -231,8 +231,7 @@ void AnalysisRequestEditor::updatePatternControls()
     const auto sampleCount = static_cast<qlonglong>(patternCount) * thetaCount * phiCount;
     sweepCostLabel_->setText(tr("Frequency sweep: %1 point(s). Radiation: %2 frequency calculation(s) × %3 angles = approximately %4 samples.")
         .arg(frequencyCount).arg(patternCount).arg(thetaCount * phiCount).arg(sampleCount));
-    sweepCostLabel_->setStyleSheet(patternCount > 20
-        ? QStringLiteral("color: #a05a18; font-weight: bold;") : QString{});
+    sweepCostLabel_->setStyleSheet(QString{});
 }
 
 }

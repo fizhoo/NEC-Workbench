@@ -26,11 +26,11 @@ The current foundation provides:
 - Selectable EX markers with contextual properties, deletion, and nearest-segment source creation from 2D/3D wires
 - Dedicated EX Properties dialog plus batch source management in Model Setup
 - Structured GN/GE ground environments: free space, perfect, real/fast, real/Sommerfeld, and average-ground preset
-- Persistent Analyze backend selection for NEC-2, OpenNEC, NEC-4-compatible, or custom executables
+- Persistent Analysis backend selection for NEC-2, OpenNEC, NEC-4-compatible, or custom executables
 - Managed XQ/RP result requests with far-field angular grids and live analysis-readiness validation
 - Asynchronous `nec2c` execution with timeout/cancel controls, run history, live output, and preserved artifacts
 - Persistent selectable run history that reloads historical raw output, tables, and plots
-- Persistent open-model indicator plus model filenames and run IDs across history, logs, tables, and plots
+- Persistent open-model indicator plus model filenames, timestamps, and backends across history and results
 - Structured feedpoint results with frequency, complex impedance, phase, power, and 50-ohm SWR tables
 - Interactive resistance/reactance and 50-ohm SWR sweep plots with automatic scaling and hover values
 - Parsed per-segment currents with selectable-frequency distribution plots and tables
@@ -43,6 +43,12 @@ The current foundation provides:
 - Quick AWG radius selection from the contextual Properties dock
 - Right-click wire creation, splitting, deletion, and property access with undoable source-deck edits
 - Dependency-free core tests
+
+## Documentation
+
+- [User Guide](docs/user-guide.md) — workspace paths, editing, analysis, results, and interaction controls
+- [Architecture](docs/architecture.md) — internal boundaries and current development milestones
+- [Roadmap](docs/roadmap.md) — parameterization, optimization, and planned improvements
 
 ## Build
 
@@ -75,7 +81,7 @@ Extract the ZIP and run `nec-workbench.exe`.
 
 The package includes the required Qt runtime files but does not include an NEC
 solver. Select a separately installed Windows-compatible solver executable in
-Analyze Setup when calculation support is needed.
+**Analysis → Solver** when calculation support is needed.
 
 ## Architecture
 

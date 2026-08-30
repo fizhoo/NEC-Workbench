@@ -49,8 +49,10 @@ AutoSegmentationDialog::AutoSegmentationDialog(const model::AntennaModel& model,
     table_->setAlternatingRowColors(true);
     table_->horizontalHeader()->setStretchLastSection(true);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Apply | QDialogButtonBox::Cancel, this);
-    buttons->button(QDialogButtonBox::Apply)->setText(tr("Apply Segmentation"));
-    connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    auto* applyButton = buttons->button(QDialogButtonBox::Apply);
+    applyButton->setObjectName(QStringLiteral("applySegmentationButton"));
+    applyButton->setText(tr("Apply Segmentation"));
+    connect(applyButton, &QPushButton::clicked, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     connect(segmentsPerWavelengthControl_, &QSpinBox::valueChanged, this,
         [this] { refreshProposal(); });

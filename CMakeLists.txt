@@ -137,6 +137,8 @@ if(NECWB_BUILD_TESTS)
             src/ui/geometry/GeometryView.h
             src/ui/geometry/Geometry3DView.cpp
             src/ui/geometry/Geometry3DView.h
+            src/ui/geometry/AutoSegmentationDialog.cpp
+            src/ui/geometry/AutoSegmentationDialog.h
             src/ui/setup/LoadNetworkEditor.cpp
             src/ui/setup/LoadNetworkEditor.h
             src/ui/welcome/WelcomePage.cpp

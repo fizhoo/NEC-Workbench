@@ -62,15 +62,28 @@ auto AnalysisRunStore::save(const AnalysisRunRecord& record) const -> bool
         return false;
     }
     const QJsonObject object{
-        {QStringLiteral("version"), 2},
+        {QStringLiteral("version"), 3},
         {QStringLiteral("id"), record.id},
         {QStringLiteral("started"), record.started.toString(Qt::ISODateWithMs)},
         {QStringLiteral("sourceFile"), record.sourceFile},
         {QStringLiteral("backend"), record.backend},
         {QStringLiteral("status"), record.status},
         {QStringLiteral("durationSeconds"), record.durationSeconds},
+        {QStringLiteral("outputBytes"), record.outputBytes},
+        {QStringLiteral("frequencyCount"), record.frequencyCount},
+        {QStringLiteral("hasImpedance"), record.hasImpedance},
+        {QStringLiteral("hasCurrents"), record.hasCurrents},
+        {QStringLiteral("hasRadiation"), record.hasRadiation},
     };
     return file.write(QJsonDocument(object).toJson(QJsonDocument::Indented)) >= 0;
+}
+
+auto AnalysisRunStore::remove(const QString& directory) const -> bool
+{
+    const auto root = QDir(rootDirectory_).absolutePath();
+    const auto target = QDir(directory).absolutePath();
+    if (target == root || !target.startsWith(root + QDir::separator())) return false;
+    return QDir(target).removeRecursively();
 }
 
 auto AnalysisRunStore::rootDirectory() const -> QString
@@ -94,6 +107,11 @@ auto AnalysisRunStore::readRecord(const QString& directory) const -> AnalysisRun
     record.backend = object.value(QStringLiteral("backend")).toString();
     record.status = object.value(QStringLiteral("status")).toString();
     record.durationSeconds = object.value(QStringLiteral("durationSeconds")).toDouble();
+    record.outputBytes = object.value(QStringLiteral("outputBytes")).toInteger();
+    record.frequencyCount = object.value(QStringLiteral("frequencyCount")).toInt();
+    record.hasImpedance = object.value(QStringLiteral("hasImpedance")).toBool();
+    record.hasCurrents = object.value(QStringLiteral("hasCurrents")).toBool();
+    record.hasRadiation = object.value(QStringLiteral("hasRadiation")).toBool();
     return record;
 }
 

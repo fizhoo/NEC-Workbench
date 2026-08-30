@@ -6,6 +6,7 @@
 #include "ui/cards/StructuredCardEditor.h"
 #include "ui/cards/WireCardEditor.h"
 #include "ui/geometry/WirePropertiesDialog.h"
+#include "ui/geometry/AutoSegmentationDialog.h"
 #include "ui/geometry/GeometryView.h"
 #include "ui/geometry/Geometry3DView.h"
 #include "ui/setup/LoadNetworkEditor.h"
@@ -18,6 +19,7 @@
 #include <QComboBox>
 #include <QDebug>
 #include <QImage>
+#include <QFileInfo>
 #include <QLabel>
 #include <QListWidget>
 #include <QPainter>
@@ -224,6 +226,8 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("structuredAddCardButton"));
     if (structuredTable == nullptr || structuredFamilies == nullptr || structuredAdd == nullptr
         || structuredTable->rowCount() != 1 || !structuredAdd->isEnabled()) return EXIT_FAILURE;
+    const auto structuredSelectionWorks = structuredCards.selectCard(3)
+        && structuredFamilies->currentRow() == 1 && structuredTable->currentRow() == 0;
     structuredFamilies->setCurrentRow(1);
     application.processEvents();
     const auto duplicateFrequencyBlocked = !structuredAdd->isEnabled();
@@ -304,6 +308,13 @@ auto main(int argc, char* argv[]) -> int
     necwb::model::AntennaModel attachmentModel;
     attachmentModel.addWire({1, {-1.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, 11, 0.001, 1});
     attachmentModel.addWire({2, {-1.0, 1.0, 0.0}, {1.0, 1.0, 0.0}, 11, 0.001, 2});
+    necwb::ui::AutoSegmentationDialog segmentationDialog(attachmentModel, {}, 30.0);
+    auto* applySegmentation = segmentationDialog.findChild<QPushButton*>(
+        QStringLiteral("applySegmentationButton"));
+    if (applySegmentation == nullptr) return EXIT_FAILURE;
+    applySegmentation->click();
+    application.processEvents();
+    const auto segmentationApplyAccepted = segmentationDialog.result() == QDialog::Accepted;
     necwb::model::ModelSetup attachmentSetup;
     attachmentSetup.loads.push_back({4, 1, 6, 6, 50.0, 0.0, 0.0, 7});
     attachmentSetup.transmissionLines.push_back({1, 3, 2, 9, 50.0, 0.0,
@@ -349,6 +360,11 @@ auto main(int argc, char* argv[]) -> int
     auto run = store.create(QStringLiteral("nec2"), QStringLiteral("/tmp/test-dipole.nec"));
     run.status = QStringLiteral("Completed");
     run.durationSeconds = 1.25;
+    run.outputBytes = 8192;
+    run.frequencyCount = 3;
+    run.hasImpedance = true;
+    run.hasCurrents = true;
+    run.hasRadiation = true;
     if (!store.save(run)) {
         return EXIT_FAILURE;
     }
@@ -357,16 +373,25 @@ auto main(int argc, char* argv[]) -> int
         && loaded.front().status == QStringLiteral("Completed")
         && loaded.front().sourceFile == QStringLiteral("/tmp/test-dipole.nec")
         && loaded.front().backend == QStringLiteral("nec2")
-        && loaded.front().durationSeconds == 1.25;
+        && loaded.front().durationSeconds == 1.25
+        && loaded.front().outputBytes == 8192
+        && loaded.front().frequencyCount == 3
+        && loaded.front().hasImpedance && loaded.front().hasCurrents
+        && loaded.front().hasRadiation;
+    const auto runDeletionSafe = !store.remove(directory.path())
+        && store.remove(run.directory) && !QFileInfo::exists(run.directory);
     const auto passed = !image.isNull() && !fieldImage.isNull() && !currentImage.isNull()
         && !dashboardImage.isNull() && dashboardStateVisible
         && !welcomeImage.isNull() && welcomeStateValid && !examplesOpened && storeValid
+        && runDeletionSafe
         && !structuredImage.isNull() && invalidEditBlocked && duplicateFrequencyBlocked
+        && structuredSelectionWorks
         && descriptiveDropdown
         && trailingFieldsPreserved
         && editedCard == QStringLiteral("EX 0 1 7 0 1 0 2.5")
         && addedCard == QStringLiteral("LD 0 1 1 11 0 0 0") && deletedLine == 3
         && !wireImage.isNull() && wireEditCommitted && gaugeDropdownValid
+        && segmentationApplyAccepted
         && radiationControlsSynchronized && radiationSweepSelectable && radiationMetricsVisible
         && radiationExportReady && maxGainCutSelected && missingRadiationReported
         && missingRadiationDisablesDataExport

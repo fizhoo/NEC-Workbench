@@ -15,6 +15,11 @@ struct AnalysisRunRecord {
     QString backend;
     QString status;
     double durationSeconds{};
+    qint64 outputBytes{};
+    int frequencyCount{};
+    bool hasImpedance{};
+    bool hasCurrents{};
+    bool hasRadiation{};
 };
 
 class AnalysisRunStore final {
@@ -24,6 +29,7 @@ public:
     [[nodiscard]] auto create(const QString& backend, const QString& sourceFile = {}) const -> AnalysisRunRecord;
     [[nodiscard]] auto load() const -> std::vector<AnalysisRunRecord>;
     auto save(const AnalysisRunRecord& record) const -> bool;
+    auto remove(const QString& directory) const -> bool;
     [[nodiscard]] auto rootDirectory() const -> QString;
 
 private:

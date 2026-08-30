@@ -317,6 +317,26 @@ void StructuredCardEditor::setDocument(const nec::NecDocument& document)
     refreshTable();
 }
 
+auto StructuredCardEditor::selectCard(std::size_t sourceLine) -> bool
+{
+    const auto card = std::ranges::find(document_.cards(), sourceLine, &nec::NecCard::lineNumber);
+    if (card == document_.cards().end()) return false;
+    const auto family = std::ranges::find_if(families(), [&card](const auto& candidate) {
+        return belongsTo(*card, candidate);
+    });
+    if (family == families().end()) return false;
+    families_->setCurrentRow(static_cast<int>(std::distance(families().begin(), family)));
+    for (auto row = 0; row < table_->rowCount(); ++row) {
+        const auto* item = table_->item(row, 0);
+        if (item != nullptr && item->data(SourceLineRole).toULongLong() == sourceLine) {
+            table_->selectRow(row);
+            table_->scrollToItem(item);
+            return true;
+        }
+    }
+    return false;
+}
+
 void StructuredCardEditor::refreshFamilies()
 {
     const auto previous = families_->currentRow();

@@ -96,13 +96,70 @@ auto sameResultFrequency(double first, double second) -> bool
 }
 constexpr auto RunDirectoryRole = Qt::UserRole + 3;
 constexpr auto RunContextRole = Qt::UserRole + 4;
+constexpr auto CardMnemonicRole = Qt::UserRole + 5;
+
+enum RunColumn {
+    RunStartedColumn,
+    RunModelColumn,
+    RunResultsColumn,
+    RunOutputSizeColumn,
+    RunBackendColumn,
+    RunStatusColumn,
+    RunDurationColumn,
+    RunFolderColumn,
+    RunColumnCount
+};
+
+auto formatByteSize(qint64 bytes) -> QString
+{
+    if (bytes <= 0) return QObject::tr("—");
+    constexpr auto kibibyte = 1024.0;
+    constexpr auto mebibyte = kibibyte * 1024.0;
+    if (bytes >= mebibyte) return QObject::tr("%1 MB").arg(bytes / mebibyte, 0, 'f', 1);
+    if (bytes >= kibibyte) return QObject::tr("%1 KB").arg(bytes / kibibyte, 0, 'f', 1);
+    return QObject::tr("%1 B").arg(bytes);
+}
+
+auto runResultsText(const AnalysisRunRecord& record) -> QString
+{
+    QStringList types;
+    if (record.hasImpedance) types.append(QObject::tr("Z"));
+    if (record.hasCurrents) types.append(QObject::tr("I"));
+    if (record.hasRadiation) types.append(QObject::tr("RP"));
+    if (types.empty()) return record.outputBytes > 0 ? QObject::tr("Not indexed") : QObject::tr("—");
+    return record.frequencyCount > 0
+        ? QObject::tr("%1 freq · %2").arg(record.frequencyCount).arg(types.join(QStringLiteral(" · ")))
+        : types.join(QStringLiteral(" · "));
+}
+
+void setRunResultMetadata(AnalysisRunRecord& record, const analysis::AnalysisResult& result,
+    qint64 outputBytes)
+{
+    record.outputBytes = outputBytes;
+    record.hasImpedance = !result.feedpoints.empty();
+    record.hasCurrents = !result.currents.empty();
+    record.hasRadiation = !result.radiation.empty();
+    std::vector<double> frequencies;
+    const auto addFrequency = [&frequencies](double frequencyMHz) {
+        if (std::ranges::find_if(frequencies, [frequencyMHz](double existing) {
+                return sameResultFrequency(existing, frequencyMHz);
+            }) == frequencies.end()) frequencies.push_back(frequencyMHz);
+    };
+    for (const auto& value : result.feedpoints) addFrequency(value.frequencyMHz);
+    for (const auto& value : result.currents) addFrequency(value.frequencyMHz);
+    for (const auto& value : result.radiation) addFrequency(value.frequencyMHz);
+    record.frequencyCount = static_cast<int>(frequencies.size());
+}
 
 auto runContext(const AnalysisRunRecord& record) -> QString
 {
     const auto modelName = record.sourceFile.isEmpty()
         ? QObject::tr("Archived model.nec")
         : QFileInfo(record.sourceFile).fileName();
-    return QObject::tr("Model: %1 · Run: %2").arg(modelName, record.id);
+    const auto started = record.started.isValid()
+        ? record.started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : record.id;
+    const auto backend = record.backend.isEmpty() ? QObject::tr("Unknown backend") : record.backend;
+    return QObject::tr("Model: %1 · Run: %2 · Backend: %3").arg(modelName, started, backend);
 }
 
 auto cardPropertyLabels(const QString& mnemonic) -> QStringList
@@ -353,13 +410,16 @@ void MainWindow::createActions()
     modelModuleAction_->setEnabled(false);
     sourceModuleAction_->setEnabled(false);
     analysisModuleAction_->setEnabled(false);
-    visualizeModuleAction_->setEnabled(false);
+    visualizeModuleAction_->setEnabled(true);
     optimizeModuleAction_->setEnabled(false);
     connect(homeModuleAction_, &QAction::triggered, this, [this] { showModule(homeModuleIndex_); });
     connect(modelModuleAction_, &QAction::triggered, this, [this] { showModule(modelModuleIndex_); });
     connect(sourceModuleAction_, &QAction::triggered, this, [this] { showModule(sourceModuleIndex_); });
     connect(analysisModuleAction_, &QAction::triggered, this, [this] { showModule(analysisModuleIndex_); });
-    connect(visualizeModuleAction_, &QAction::triggered, this, [this] { showModule(visualizeModuleIndex_); });
+    connect(visualizeModuleAction_, &QAction::triggered, this, [this] {
+        showModule(visualizeModuleIndex_);
+        if (!resultsAvailable_) resultsWorkspace_->setCurrentIndex(analysisRunsTabIndex_);
+    });
     connect(optimizeModuleAction_, &QAction::triggered, this, [this] { showModule(optimizeModuleIndex_); });
 }
 
@@ -669,7 +729,7 @@ void MainWindow::createWorkspace()
         });
     analysisWorkspace_->addTab(analysisRequestEditor_, tr("Requests"));
 
-    auto* runsPage = new QWidget(analysisWorkspace_);
+    auto* runsPage = new QWidget(moduleStack_);
     auto* runsLayout = new QVBoxLayout(runsPage);
     runsLayout->setContentsMargins(16, 16, 16, 16);
     auto* runsHeading = new QLabel(tr("Analysis Runs"), runsPage);
@@ -677,38 +737,54 @@ void MainWindow::createWorkspace()
     runsHeadingFont.setBold(true);
     runsHeadingFont.setPointSize(runsHeadingFont.pointSize() + 3);
     runsHeading->setFont(runsHeadingFont);
-    analysisRuns_ = new QTableWidget(0, 6, runsPage);
-    analysisRuns_->setHorizontalHeaderLabels({tr("Started"), tr("Model"), tr("Backend"),
-        tr("Status"), tr("Duration"), tr("Run Folder")});
+    auto* runsDescription = new QLabel(tr(
+        "Select a run to inspect its metadata. Open Results or double-click to load its archived solver output."), runsPage);
+    runsDescription->setWordWrap(true);
+    analysisRuns_ = new QTableWidget(0, RunColumnCount, runsPage);
+    analysisRuns_->setObjectName(QStringLiteral("analysisRunsTable"));
+    analysisRuns_->setHorizontalHeaderLabels({tr("Started"), tr("Model"), tr("Results"),
+        tr("Output"), tr("Backend"), tr("Status"), tr("Duration"), tr("Run Folder")});
     analysisRuns_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     analysisRuns_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    analysisRuns_->setSelectionMode(QAbstractItemView::SingleSelection);
     analysisRuns_->setAlternatingRowColors(true);
     analysisRuns_->horizontalHeader()->setStretchLastSection(true);
     auto* runButtons = new QHBoxLayout;
     cancelRunButton_ = new QPushButton(tr("Cancel Active Run"), runsPage);
     cancelRunButton_->setEnabled(false);
+    openRunResultsButton_ = new QPushButton(tr("Open Results"), runsPage);
+    openRunResultsButton_->setObjectName(QStringLiteral("openRunResultsButton"));
+    openRunResultsButton_->setEnabled(false);
     openRunFolderButton_ = new QPushButton(tr("Open Run Folder"), runsPage);
     openRunFolderButton_->setEnabled(false);
+    deleteRunButton_ = new QPushButton(tr("Delete Run…"), runsPage);
+    deleteRunButton_->setObjectName(QStringLiteral("deleteRunButton"));
+    deleteRunButton_->setEnabled(false);
     runButtons->addWidget(cancelRunButton_);
+    runButtons->addWidget(openRunResultsButton_);
     runButtons->addWidget(openRunFolderButton_);
+    runButtons->addWidget(deleteRunButton_);
     runButtons->addStretch();
     runsLayout->addWidget(runsHeading);
+    runsLayout->addWidget(runsDescription);
     runsLayout->addWidget(analysisRuns_, 1);
     runsLayout->addLayout(runButtons);
     connect(cancelRunButton_, &QPushButton::clicked, this, [this] { cancelAnalysis(); });
+    connect(openRunResultsButton_, &QPushButton::clicked, this, [this] { loadSelectedRun(); });
+    connect(deleteRunButton_, &QPushButton::clicked, this, [this] { deleteSelectedRun(); });
     connect(openRunFolderButton_, &QPushButton::clicked, this, [this] {
-        const auto selectedItems = analysisRuns_->selectedItems();
-        const auto directory = selectedItems.empty()
-            ? currentRunDirectory_ : selectedItems.front()->data(RunDirectoryRole).toString();
+        const auto* item = analysisRuns_->currentRow() >= 0
+            ? analysisRuns_->item(analysisRuns_->currentRow(), RunStartedColumn) : nullptr;
+        const auto directory = item != nullptr
+            ? item->data(RunDirectoryRole).toString() : currentRunDirectory_;
         if (!directory.isEmpty()) {
             QDesktopServices::openUrl(QUrl::fromLocalFile(directory));
         }
     });
-    connect(analysisRuns_, &QTableWidget::itemSelectionChanged, this, [this] {
-        openRunFolderButton_->setEnabled(analysisRuns_->currentRow() >= 0);
-        loadSelectedRun();
-    });
-    analysisRunsTabIndex_ = analysisWorkspace_->addTab(runsPage, tr("Runs"));
+    connect(analysisRuns_, &QTableWidget::itemSelectionChanged,
+        this, [this] { updateRunSelectionActions(); });
+    connect(analysisRuns_, &QTableWidget::cellDoubleClicked,
+        this, [this](int, int) { loadSelectedRun(); });
 
     analysisModuleIndex_ = moduleStack_->addWidget(analysisWorkspace_);
 
@@ -732,6 +808,7 @@ void MainWindow::createWorkspace()
     frequencyBar->addWidget(resultsAvailabilityLabel_, 1);
     resultsWorkspace_ = new QTabWidget(resultsPage);
     resultsWorkspace_->setDocumentMode(true);
+    analysisRunsTabIndex_ = resultsWorkspace_->addTab(runsPage, tr("Run History"));
     analysisResultsView_ = new ImpedanceResultsView(resultsWorkspace_);
     visualizeResultsView_ = analysisResultsView_;
     analysisResultsTabIndex_ = resultsWorkspace_->addTab(analysisResultsView_, tr("Numerical Results"));
@@ -1020,7 +1097,7 @@ void MainWindow::createDocks()
     connect(projectTree_, &QTreeWidget::itemDoubleClicked, this,
         [this](QTreeWidgetItem* item) { activateProjectItem(item); });
 
-    updateProjectTree({}, 0);
+    updateProjectTree({}, nec::NecDocument{});
 }
 
 void MainWindow::createMenusAndToolbar()
@@ -1259,7 +1336,7 @@ void MainWindow::checkModel()
     structuredCardEditor_->setDocument(document);
     dashboardPage_->setModel(currentModel_, currentSetup_, solverBackendId_, true,
         modelErrorCount_, modelWarningCount_);
-    updateProjectTree(currentModel_, document.cards().size());
+    updateProjectTree(currentModel_, document);
     checkStatus_->setText(tr("Checked: %1 errors, %2 warnings, %3 wires, %4 cards")
         .arg(static_cast<qulonglong>(result.errorCount()))
         .arg(static_cast<qulonglong>(result.warningCount()))
@@ -1301,6 +1378,7 @@ void MainWindow::goToDiagnostic(QTreeWidgetItem* item)
 void MainWindow::activateProjectItem(QTreeWidgetItem* item)
 {
     const auto kind = item->data(0, ItemKindRole).toString();
+    const auto sourceLine = item->data(0, SourceLineRole).toULongLong();
     if (kind == QStringLiteral("geometry")) {
         showModelTab(geometryTabIndex_);
         return;
@@ -1319,12 +1397,57 @@ void MainWindow::activateProjectItem(QTreeWidgetItem* item)
         return;
     }
     if (kind == QStringLiteral("source") || kind == QStringLiteral("wire")) {
-        showModelTab(sourceTabIndex_);
-        const auto lineNumber = item->data(0, SourceLineRole).toULongLong();
-        if (lineNumber != 0) {
-            editor_->goToLine(static_cast<std::size_t>(lineNumber));
+        if (kind == QStringLiteral("wire")) {
+            showModule(sourceModuleIndex_);
+            sourceWorkspace_->setCurrentIndex(structuredSourceTabIndex_);
+            if (auto* tabs = qobject_cast<QTabWidget*>(wireCardEditor_->parentWidget()))
+                tabs->setCurrentWidget(wireCardEditor_);
+            wireCardEditor_->selectWire(item->data(0, WireTagRole).toInt());
+        } else {
+            showModelTab(sourceTabIndex_);
         }
+        if (sourceLine != 0) editor_->goToLine(static_cast<std::size_t>(sourceLine));
+        return;
     }
+    if (kind != QStringLiteral("card") || sourceLine == 0) return;
+
+    const auto mnemonic = item->data(0, CardMnemonicRole).toString();
+    if (mnemonic == QStringLiteral("FR") || mnemonic == QStringLiteral("GN")
+        || mnemonic == QStringLiteral("GE") || mnemonic == QStringLiteral("EX")) {
+        showModelTab(setupTabIndex_);
+        if (mnemonic == QStringLiteral("EX")) setupEditor_->selectExcitation(sourceLine);
+        return;
+    }
+    if (mnemonic == QStringLiteral("LD")) {
+        showLoadInEditor(sourceLine);
+        return;
+    }
+    if (mnemonic == QStringLiteral("TL")) {
+        showTransmissionLineInEditor(sourceLine);
+        return;
+    }
+    if (mnemonic == QStringLiteral("RP") || mnemonic == QStringLiteral("XQ")) {
+        showModule(analysisModuleIndex_);
+        analysisWorkspace_->setCurrentWidget(analysisRequestEditor_);
+        return;
+    }
+    if (mnemonic == QStringLiteral("GW")) {
+        showModule(sourceModuleIndex_);
+        sourceWorkspace_->setCurrentIndex(structuredSourceTabIndex_);
+        if (auto* tabs = qobject_cast<QTabWidget*>(wireCardEditor_->parentWidget()))
+            tabs->setCurrentWidget(wireCardEditor_);
+        wireCardEditor_->selectWire(item->data(0, WireTagRole).toInt());
+        return;
+    }
+    if (structuredCardEditor_->selectCard(sourceLine)) {
+        showModule(sourceModuleIndex_);
+        sourceWorkspace_->setCurrentIndex(structuredSourceTabIndex_);
+        if (auto* tabs = qobject_cast<QTabWidget*>(structuredCardEditor_->parentWidget()))
+            tabs->setCurrentWidget(structuredCardEditor_);
+        return;
+    }
+    showModelTab(sourceTabIndex_);
+    editor_->goToLine(sourceLine);
 }
 
 void MainWindow::selectWireInProject(int tag)
@@ -2051,8 +2174,9 @@ void MainWindow::startAnalysis()
     cancelRunButton_->setEnabled(true);
     openRunFolderButton_->setEnabled(true);
     runAction_->setEnabled(false);
-    showModule(analysisModuleIndex_);
-    analysisWorkspace_->setCurrentIndex(analysisRunsTabIndex_);
+    showModule(visualizeModuleIndex_);
+    resultsWorkspace_->setCurrentIndex(analysisRunsTabIndex_);
+    updateRunSelectionActions();
     solverOutputDock_->show();
     solverOutputDock_->raise();
     statusBar()->showMessage(tr("Running NEC analysis…"));
@@ -2114,6 +2238,15 @@ void MainWindow::finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus)
         appendSolverOutput(QString::fromLocal8Bit(outputBytes));
         const auto result = analysis::NecOutputParser{}.parse(std::string_view(
             outputBytes.constData(), static_cast<std::size_t>(outputBytes.size())));
+        if (currentRunRecord_) {
+            setRunResultMetadata(*currentRunRecord_, result, outputBytes.size());
+            if (currentRunRow_ >= 0) {
+                analysisRuns_->setItem(currentRunRow_, RunResultsColumn,
+                    new QTableWidgetItem(runResultsText(*currentRunRecord_)));
+                analysisRuns_->setItem(currentRunRow_, RunOutputSizeColumn,
+                    new QTableWidgetItem(formatByteSize(currentRunRecord_->outputBytes)));
+            }
+        }
         const auto context = runContext(*currentRunRecord_);
         analysisResultsView_->setResults(result, context);
         visualizePlotsView_->setResults(result, context);
@@ -2122,6 +2255,7 @@ void MainWindow::finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus)
         radiation3DView_->setModel(currentModel_);
         radiation3DView_->setResults(result, context);
         setDisplayedResults(result);
+        displayedRunDirectory_ = currentRunDirectory_;
         dashboardPage_->setResults(result, context, false);
         dashboardPage_->setModel(currentModel_, currentSetup_, solverBackendId_, true,
             modelErrorCount_, modelWarningCount_);
@@ -2146,7 +2280,7 @@ void MainWindow::finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus)
     setCurrentRunStatus(status);
     if (currentRunRow_ >= 0) {
         const auto duration = solverElapsed_.elapsed() / 1000.0;
-        analysisRuns_->setItem(currentRunRow_, 4,
+        analysisRuns_->setItem(currentRunRow_, RunDurationColumn,
             new QTableWidgetItem(tr("%1 s").arg(duration, 0, 'f', 2)));
         if (currentRunRecord_) {
             currentRunRecord_->durationSeconds = duration;
@@ -2159,6 +2293,7 @@ void MainWindow::finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus)
     cancelRunButton_->setEnabled(false);
     solverProcess_->deleteLater();
     solverProcess_ = nullptr;
+    updateRunSelectionActions();
     updateAnalysisReadiness();
 }
 
@@ -2171,7 +2306,7 @@ void MainWindow::failAnalysis(const QString& message)
     setCurrentRunStatus(tr("Failed to start"));
     if (currentRunRow_ >= 0) {
         const auto duration = solverElapsed_.elapsed() / 1000.0;
-        analysisRuns_->setItem(currentRunRow_, 4,
+        analysisRuns_->setItem(currentRunRow_, RunDurationColumn,
             new QTableWidgetItem(tr("%1 s").arg(duration, 0, 'f', 2)));
         if (currentRunRecord_) {
             currentRunRecord_->durationSeconds = duration;
@@ -2187,13 +2322,14 @@ void MainWindow::failAnalysis(const QString& message)
     cancelRunButton_->setEnabled(false);
     solverProcess_->deleteLater();
     solverProcess_ = nullptr;
+    updateRunSelectionActions();
     updateAnalysisReadiness();
 }
 
 void MainWindow::setCurrentRunStatus(const QString& status)
 {
     if (currentRunRow_ >= 0) {
-        analysisRuns_->setItem(currentRunRow_, 3, new QTableWidgetItem(status));
+        analysisRuns_->setItem(currentRunRow_, RunStatusColumn, new QTableWidgetItem(status));
     }
     if (currentRunRecord_) {
         currentRunRecord_->status = status;
@@ -2211,16 +2347,22 @@ void MainWindow::loadRunHistory()
     analysisRuns_->setUpdatesEnabled(true);
     analysisRuns_->resizeColumnsToContents();
     analysisRuns_->clearSelection();
-    openRunFolderButton_->setEnabled(false);
+    updateRunSelectionActions();
 }
 
 void MainWindow::addRunRecord(const AnalysisRunRecord& record, bool prepend)
 {
     const auto row = prepend ? 0 : analysisRuns_->rowCount();
     analysisRuns_->insertRow(row);
+    const auto outputBytes = record.outputBytes > 0 ? record.outputBytes
+        : QFileInfo(QDir(record.directory).filePath(QStringLiteral("model.out"))).size();
+    auto displayRecord = record;
+    displayRecord.outputBytes = outputBytes;
     const QStringList values{
         record.started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")),
         record.sourceFile.isEmpty() ? tr("Archived model.nec") : QFileInfo(record.sourceFile).fileName(),
+        runResultsText(displayRecord),
+        formatByteSize(outputBytes),
         record.backend,
         record.status,
         record.durationSeconds > 0.0 ? tr("%1 s").arg(record.durationSeconds, 0, 'f', 2) : tr("—"),
@@ -2240,11 +2382,89 @@ void MainWindow::loadSelectedRun()
     if (solverProcess_ != nullptr || analysisRuns_->currentRow() < 0) {
         return;
     }
-    const auto* item = analysisRuns_->item(analysisRuns_->currentRow(), 0);
+    const auto row = analysisRuns_->currentRow();
+    const auto* item = analysisRuns_->item(row, RunStartedColumn);
     if (item != nullptr) {
-        displayRunArtifacts(item->data(RunDirectoryRole).toString(),
-            item->data(RunContextRole).toString());
+        const auto directory = item->data(RunDirectoryRole).toString();
+        const auto modelName = analysisRuns_->item(row, RunModelColumn)->text();
+        const auto context = item->data(RunContextRole).toString();
+        const auto inputPath = QDir(directory).filePath(QStringLiteral("model.nec"));
+        if (QFileInfo::exists(inputPath) && !loadRunModel(directory, modelName, context)) return;
+        displayRunArtifacts(directory, context);
     }
+}
+
+auto MainWindow::loadRunModel(const QString& directory, const QString& modelName,
+    const QString& runContext) -> bool
+{
+    QFile inputFile(QDir(directory).filePath(QStringLiteral("model.nec")));
+    if (!inputFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        statusBar()->showMessage(tr("Selected run has no archived NEC input: %1").arg(directory), 5000);
+        return true;
+    }
+    if (!maybeSaveChanges()) return false;
+
+    clearDisplayedResults();
+    undoStack_->clear();
+    editor_->setPlainText(QString::fromUtf8(inputFile.readAll()));
+    hasNecModel_ = true;
+    modelModuleAction_->setEnabled(true);
+    sourceModuleAction_->setEnabled(true);
+    analysisModuleAction_->setEnabled(true);
+    visualizeModuleAction_->setEnabled(true);
+    dashboardStack_->setCurrentIndex(1);
+    setCurrentFile({});
+    const auto displayName = modelName.isEmpty() ? tr("Archived model.nec") : modelName;
+    setWindowTitle(tr("%1 (run snapshot)[*] — NEC Workbench").arg(displayName));
+    modelFileStatus_->setText(tr("Historical run snapshot: %1").arg(displayName));
+    modelFileStatus_->setToolTip(tr("%1\nArchived input: %2\nUse Save As to create an editable model file.")
+        .arg(runContext, inputFile.fileName()));
+    editor_->document()->setModified(false);
+    checkModel();
+    dashboardPage_->setDocumentState(displayName, false);
+    return true;
+}
+
+void MainWindow::updateRunSelectionActions()
+{
+    const auto row = analysisRuns_->currentRow();
+    const auto hasSelection = row >= 0 && analysisRuns_->item(row, RunStartedColumn) != nullptr;
+    auto activeSelection = false;
+    if (hasSelection && solverProcess_ != nullptr) {
+        activeSelection = analysisRuns_->item(row, RunStartedColumn)->data(RunDirectoryRole).toString()
+            == currentRunDirectory_;
+    }
+    openRunResultsButton_->setEnabled(hasSelection && !activeSelection);
+    openRunFolderButton_->setEnabled(hasSelection);
+    deleteRunButton_->setEnabled(hasSelection && !activeSelection);
+}
+
+void MainWindow::deleteSelectedRun()
+{
+    const auto row = analysisRuns_->currentRow();
+    if (row < 0) return;
+    const auto* item = analysisRuns_->item(row, RunStartedColumn);
+    if (item == nullptr) return;
+    const auto directory = item->data(RunDirectoryRole).toString();
+    if (solverProcess_ != nullptr && directory == currentRunDirectory_) {
+        QMessageBox::information(this, tr("Run Is Active"),
+            tr("The active solver run cannot be deleted."));
+        return;
+    }
+    const auto modelName = analysisRuns_->item(row, RunModelColumn)->text();
+    const auto answer = QMessageBox::warning(this, tr("Delete Run"),
+        tr("Permanently delete the selected run for %1?\n\n%2")
+            .arg(modelName, directory), QMessageBox::Yes | QMessageBox::Cancel,
+        QMessageBox::Cancel);
+    if (answer != QMessageBox::Yes) return;
+    if (!runStore_.remove(directory)) {
+        QMessageBox::critical(this, tr("Delete Failed"),
+            tr("Could not delete the run folder:\n%1").arg(directory));
+        return;
+    }
+    analysisRuns_->removeRow(row);
+    if (displayedRunDirectory_ == directory) clearDisplayedResults();
+    updateRunSelectionActions();
 }
 
 void MainWindow::displayRunArtifacts(const QString& directory, const QString& context)
@@ -2253,29 +2473,68 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
     const auto logText = logFile.open(QIODevice::ReadOnly)
         ? QString::fromLocal8Bit(logFile.readAll()) : tr("No run log is available.");
     solverOutput_->setPlainText(logText);
-    analysisOutput_->setPlainText(logText);
 
     QFile outputFile(QDir(directory).filePath(QStringLiteral("model.out")));
     if (!outputFile.open(QIODevice::ReadOnly)) {
-        statusBar()->showMessage(tr("Selected run has no solver output: %1").arg(directory), 5000);
+        clearDisplayedResults();
+        const auto message = tr("Historical run is incomplete — model.out is missing or unreadable. %1")
+            .arg(context);
+        resultsStatusLabel_->setText(message);
+        analysisOutput_->setPlainText(tr("Solver output unavailable: %1").arg(outputFile.fileName()));
+        showModule(visualizeModuleIndex_);
+        resultsWorkspace_->setCurrentIndex(analysisRunsTabIndex_);
+        statusBar()->showMessage(message, 7000);
         return;
     }
     const auto outputBytes = outputFile.readAll();
+    analysisOutput_->setPlainText(QString::fromLocal8Bit(outputBytes));
     const auto result = analysis::NecOutputParser{}.parse(std::string_view(
         outputBytes.constData(), static_cast<std::size_t>(outputBytes.size())));
+    AnalysisRunRecord summary;
+    setRunResultMetadata(summary, result, outputBytes.size());
+    const auto selectedRow = analysisRuns_->currentRow();
+    if (selectedRow >= 0) {
+        analysisRuns_->setItem(selectedRow, RunResultsColumn,
+            new QTableWidgetItem(runResultsText(summary)));
+        analysisRuns_->setItem(selectedRow, RunOutputSizeColumn,
+            new QTableWidgetItem(formatByteSize(summary.outputBytes)));
+    }
+    const auto hasParsedResults = !result.feedpoints.empty()
+        || !result.currents.empty() || !result.radiation.empty();
+    if (!hasParsedResults) {
+        clearDisplayedResults();
+        const auto message = tr("Historical run contains no supported result data. %1").arg(context);
+        resultsStatusLabel_->setText(message);
+        showModule(visualizeModuleIndex_);
+        resultsWorkspace_->setCurrentIndex(analysisOutputTabIndex_);
+        statusBar()->showMessage(message, 7000);
+        return;
+    }
     analysisResultsView_->setResults(result, context);
     visualizePlotsView_->setResults(result, context);
     currentResultsView_->setResults(result, context);
     radiationPatternView_->setResults(result, context);
+    radiation3DView_->setModel({});
+    auto archivedModelAvailable = false;
     QFile inputFile(QDir(directory).filePath(QStringLiteral("model.nec")));
     if (inputFile.open(QIODevice::ReadOnly)) {
         const auto runDocument = nec::NecParser{}.parse(
             QString::fromUtf8(inputFile.readAll()).toStdString());
-        radiation3DView_->setModel(nec::NecModelConverter{}.convert(runDocument).model);
+        const auto conversion = nec::NecModelConverter{}.convert(runDocument);
+        if (!conversion.model.empty()) {
+            radiation3DView_->setModel(conversion.model);
+            archivedModelAvailable = true;
+        }
     }
     radiation3DView_->setResults(result, context);
     setDisplayedResults(result);
-    resultsStatusLabel_->setText(tr("Historical results — %1").arg(context));
+    displayedRunDirectory_ = directory;
+    resultsAvailable_ = true;
+    resultsStatusLabel_->setText(archivedModelAvailable
+        ? tr("Historical run snapshot — %1").arg(context)
+        : tr("Historical results — archived model.nec is missing or invalid · %1").arg(context));
+    showModule(visualizeModuleIndex_);
+    resultsWorkspace_->setCurrentIndex(analysisResultsTabIndex_);
     statusBar()->showMessage(tr("Displaying historical run: %1").arg(directory), 5000);
 }
 
@@ -2373,6 +2632,7 @@ void MainWindow::clearDisplayedResults()
     radiation3DView_->setResults(empty, context);
     radiation3DView_->setModel({});
     setDisplayedResults(empty);
+    displayedRunDirectory_.clear();
     resultsAvailable_ = false;
     resultsStatusLabel_->setText(tr("No analysis results are loaded."));
 }
@@ -2558,7 +2818,7 @@ void MainWindow::updateUndoActions()
             : tr("&Redo"));
 }
 
-void MainWindow::updateProjectTree(const model::AntennaModel& model, std::size_t cardCount)
+void MainWindow::updateProjectTree(const model::AntennaModel& antennaModel, const nec::NecDocument& document)
 {
     projectTree_->clear();
     const auto projectName = currentFile_.isEmpty() ? tr("Untitled NEC Model") : QFileInfo(currentFile_).fileName();
@@ -2566,50 +2826,116 @@ void MainWindow::updateProjectTree(const model::AntennaModel& model, std::size_t
     root->setIcon(0, style()->standardIcon(QStyle::SP_FileIcon));
     root->setData(0, ItemKindRole, QStringLiteral("model"));
 
-    auto* source = new QTreeWidgetItem(root, {tr("Source Deck (%1 cards)").arg(static_cast<qulonglong>(cardCount))});
-    source->setData(0, ItemKindRole, QStringLiteral("source"));
-
-    auto* geometry = new QTreeWidgetItem(root, {tr("Geometry (%1 wires)").arg(static_cast<qulonglong>(model.wireCount()))});
+    auto* geometry = new QTreeWidgetItem(root, {tr("Geometry")});
     geometry->setData(0, ItemKindRole, QStringLiteral("geometry"));
-    for (const auto& wire : model.wires()) {
-        auto* item = new QTreeWidgetItem(geometry, {tr("Wire %1 (%2 segments)").arg(wire.tag).arg(wire.segments)});
-        item->setData(0, ItemKindRole, QStringLiteral("wire"));
-        item->setData(0, WireTagRole, wire.tag);
-        item->setData(0, SourceLineRole, static_cast<qulonglong>(wire.sourceLine));
+    auto* environment = new QTreeWidgetItem(root, {tr("Environment")});
+    auto* frequencySources = new QTreeWidgetItem(root, {tr("Frequency && Sources")});
+    auto* attachments = new QTreeWidgetItem(root, {tr("Loads && Networks")});
+    auto* requests = new QTreeWidgetItem(root, {tr("Requests && Execution")});
+    auto* comments = new QTreeWidgetItem(root, {tr("Comments")});
+    auto* other = new QTreeWidgetItem(root, {tr("Other Cards")});
+    auto* allCards = new QTreeWidgetItem(root, {tr("All Cards")});
+    for (auto* category : {environment, frequencySources, attachments, requests, comments, other, allCards})
+        category->setData(0, ItemKindRole, QStringLiteral("category"));
+
+    const auto categoryFor = [&](const nec::NecCard& card) -> QTreeWidgetItem* {
+        const auto mnemonic = QString::fromStdString(card.mnemonic).toUpper();
+        if (card.kind == nec::NecCardKind::Comment) return comments;
+        if (card.kind == nec::NecCardKind::GeometryWire
+            || QStringList{QStringLiteral("GA"), QStringLiteral("GH"), QStringLiteral("GM"),
+                   QStringLiteral("GR"), QStringLiteral("GS"), QStringLiteral("GX"),
+                   QStringLiteral("SP"), QStringLiteral("SM"), QStringLiteral("SC"),
+                   QStringLiteral("GF")}.contains(mnemonic)) return geometry;
+        if (card.kind == nec::NecCardKind::GeometryEnd || card.kind == nec::NecCardKind::Ground
+            || QStringList{QStringLiteral("EK"), QStringLiteral("GD"), QStringLiteral("KH")}
+                   .contains(mnemonic)) return environment;
+        if (card.kind == nec::NecCardKind::Frequency || card.kind == nec::NecCardKind::Excitation)
+            return frequencySources;
+        if (card.kind == nec::NecCardKind::Load || card.kind == nec::NecCardKind::TransmissionLine
+            || card.kind == nec::NecCardKind::Network) return attachments;
+        if (card.kind == nec::NecCardKind::RadiationPattern || card.kind == nec::NecCardKind::Execute
+            || card.kind == nec::NecCardKind::End
+            || QStringList{QStringLiteral("NE"), QStringLiteral("NH"), QStringLiteral("PQ"),
+                   QStringLiteral("PT"), QStringLiteral("CP"), QStringLiteral("WG"),
+                   QStringLiteral("NX")}.contains(mnemonic)) return requests;
+        return other;
+    };
+    const auto addCard = [&](QTreeWidgetItem* parent, const nec::NecCard& card, bool generic) {
+        const auto mnemonic = QString::fromStdString(card.mnemonic).toUpper();
+        auto label = tr("Line %1 · %2").arg(card.lineNumber).arg(
+            mnemonic.isEmpty() ? tr("Blank") : QString::fromStdString(card.sourceText).trimmed());
+        auto kind = QStringLiteral("card");
+        auto wireTag = 0;
+        if (card.kind == nec::NecCardKind::GeometryWire) {
+            const auto wire = std::ranges::find(antennaModel.wires(), card.lineNumber, &model::Wire::sourceLine);
+            if (wire != antennaModel.wires().end()) {
+                wireTag = wire->tag;
+                if (!generic) {
+                    label = tr("GW · Wire %1 (%2 segments) · line %3")
+                        .arg(wire->tag).arg(wire->segments).arg(card.lineNumber);
+                    kind = QStringLiteral("wire");
+                }
+            }
+        } else if (!generic && card.kind == nec::NecCardKind::Excitation) {
+            const auto value = std::ranges::find(currentSetup_.excitations, card.lineNumber,
+                &model::Excitation::sourceLine);
+            if (value != currentSetup_.excitations.end()) {
+                label = tr("EX · Wire %1, segment %2 · line %3")
+                    .arg(value->wireTag).arg(value->segment).arg(card.lineNumber);
+                kind = QStringLiteral("excitation");
+                wireTag = value->wireTag;
+            }
+        } else if (!generic && card.kind == nec::NecCardKind::Load) {
+            const auto value = std::ranges::find(currentSetup_.loads, card.lineNumber,
+                &model::LoadDefinition::sourceLine);
+            if (value != currentSetup_.loads.end()) {
+                label = tr("LD · Wire %1, segments %2–%3 · line %4")
+                    .arg(value->wireTag).arg(value->firstSegment).arg(value->lastSegment).arg(card.lineNumber);
+                kind = QStringLiteral("load");
+                wireTag = value->wireTag;
+            }
+        } else if (!generic && card.kind == nec::NecCardKind::TransmissionLine) {
+            const auto value = std::ranges::find(currentSetup_.transmissionLines, card.lineNumber,
+                &model::TransmissionLineDefinition::sourceLine);
+            if (value != currentSetup_.transmissionLines.end()) {
+                label = tr("TL · W%1/S%2 → W%3/S%4 · line %5")
+                    .arg(value->wireTag1).arg(value->segment1).arg(value->wireTag2)
+                    .arg(value->segment2).arg(card.lineNumber);
+                kind = QStringLiteral("transmissionLine");
+            }
+        }
+        auto* item = new QTreeWidgetItem(parent, {label});
+        item->setData(0, ItemKindRole, kind);
+        item->setData(0, SourceLineRole, static_cast<qulonglong>(card.lineNumber));
+        item->setData(0, CardMnemonicRole, mnemonic);
+        item->setData(0, WireTagRole, wireTag);
+        item->setToolTip(0, QString::fromStdString(card.sourceText));
+    };
+
+    auto cardCount = 0;
+    for (const auto& card : document.cards()) {
+        if (card.kind == nec::NecCardKind::Blank) continue;
+        addCard(categoryFor(card), card, false);
+        addCard(allCards, card, true);
+        ++cardCount;
     }
-    auto* sources = new QTreeWidgetItem(root, {
-        tr("Sources (%1)").arg(static_cast<qulonglong>(currentSetup_.excitations.size()))});
-    sources->setData(0, ItemKindRole, QStringLiteral("sources"));
-    for (const auto& excitation : currentSetup_.excitations) {
-        auto* item = new QTreeWidgetItem(sources, {
-            tr("EX: Wire %1, segment %2").arg(excitation.wireTag).arg(excitation.segment)});
-        item->setData(0, ItemKindRole, QStringLiteral("excitation"));
-        item->setData(0, WireTagRole, excitation.wireTag);
-        item->setData(0, SourceLineRole, static_cast<qulonglong>(excitation.sourceLine));
-    }
-    auto* attachments = new QTreeWidgetItem(root, {
-        tr("Loads && Lines (%1)").arg(static_cast<qulonglong>(
-            currentSetup_.loads.size() + currentSetup_.transmissionLines.size()))});
-    attachments->setData(0, ItemKindRole, QStringLiteral("attachments"));
-    for (const auto& load : currentSetup_.loads) {
-        auto* item = new QTreeWidgetItem(attachments, {
-            tr("LD: Wire %1, segments %2–%3")
-                .arg(load.wireTag).arg(load.firstSegment).arg(load.lastSegment)});
-        item->setData(0, ItemKindRole, QStringLiteral("load"));
-        item->setData(0, WireTagRole, load.wireTag);
-        item->setData(0, SourceLineRole, static_cast<qulonglong>(load.sourceLine));
-    }
-    for (const auto& line : currentSetup_.transmissionLines) {
-        auto* item = new QTreeWidgetItem(attachments, {
-            tr("TL: W%1/S%2 → W%3/S%4")
-                .arg(line.wireTag1).arg(line.segment1).arg(line.wireTag2).arg(line.segment2)});
-        item->setData(0, ItemKindRole, QStringLiteral("transmissionLine"));
-        item->setData(0, SourceLineRole, static_cast<qulonglong>(line.sourceLine));
-    }
+    const auto labelCategory = [](QTreeWidgetItem* item, const QString& title) {
+        item->setText(0, QStringLiteral("%1 (%2)").arg(title).arg(item->childCount()));
+    };
+    labelCategory(geometry, tr("Geometry"));
+    labelCategory(environment, tr("Environment"));
+    labelCategory(frequencySources, tr("Frequency && Sources"));
+    labelCategory(attachments, tr("Loads && Networks"));
+    labelCategory(requests, tr("Requests && Execution"));
+    labelCategory(comments, tr("Comments"));
+    labelCategory(other, tr("Other Cards"));
+    allCards->setText(0, tr("All Cards (%1)").arg(cardCount));
     projectTree_->expandItem(root);
     projectTree_->expandItem(geometry);
-    projectTree_->expandItem(sources);
+    projectTree_->expandItem(environment);
+    projectTree_->expandItem(frequencySources);
     projectTree_->expandItem(attachments);
+    projectTree_->expandItem(requests);
 }
 
 void MainWindow::showProjectItemProperties(QTreeWidgetItem* item)
@@ -2659,6 +2985,8 @@ void MainWindow::showProjectItemProperties(QTreeWidgetItem* item)
             loadNetworkEditor_->selectTransmissionLine(sourceLine);
             populateTransmissionLineProperties(*found);
         }
+    } else if (kind == QStringLiteral("card")) {
+        showCardProperties(item->data(0, SourceLineRole).toULongLong());
     } else {
         addPropertyRow(properties_, tr("Selection"), item->text(0));
     }
