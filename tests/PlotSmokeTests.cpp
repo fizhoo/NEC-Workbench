@@ -399,6 +399,8 @@ auto main(int argc, char* argv[]) -> int
         && !attachmentImage.isNull() && invalidLoadBlocked && validLoadEmitted
         && invalidLineBlocked && validLineEmitted;
     if (!passed) qWarning() << "structured smoke state" << invalidEditBlocked << editedCard
-        << addedCard << deletedLine << "wire committed" << wireEditCommitted;
+        << addedCard << deletedLine << "wire committed" << wireEditCommitted
+        << "segmentation apply" << segmentationApplyAccepted
+        << "run store" << storeValid << "run deletion" << runDeletionSafe;
     return passed ? EXIT_SUCCESS : EXIT_FAILURE;
 }

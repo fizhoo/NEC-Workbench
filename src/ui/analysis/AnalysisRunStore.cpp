@@ -82,7 +82,9 @@ auto AnalysisRunStore::remove(const QString& directory) const -> bool
 {
     const auto root = QDir(rootDirectory_).absolutePath();
     const auto target = QDir(directory).absolutePath();
-    if (target == root || !target.startsWith(root + QDir::separator())) return false;
+    const auto relative = QDir(root).relativeFilePath(target);
+    if (relative == QStringLiteral(".") || relative == QStringLiteral("..")
+        || relative.startsWith(QStringLiteral("../")) || QDir::isAbsolutePath(relative)) return false;
     return QDir(target).removeRecursively();
 }
 
