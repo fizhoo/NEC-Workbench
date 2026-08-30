@@ -7,7 +7,14 @@
 
 namespace necwb::analysis {
 
+enum class RadiationSweepMode {
+    CenterFrequencyOnly,
+    RepresentativeFrequencies,
+    EveryFrequency
+};
+
 [[nodiscard]] auto prepareSolverInput(std::string_view source,
-    const model::ModelSetup& setup) -> std::string;
+    const model::ModelSetup& setup,
+    RadiationSweepMode mode = RadiationSweepMode::CenterFrequencyOnly) -> std::string;
 
 }

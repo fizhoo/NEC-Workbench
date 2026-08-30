@@ -35,7 +35,8 @@ auto splitLines(std::string_view source) -> std::vector<std::string>
 
 }
 
-auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup) -> std::string
+auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
+    RadiationSweepMode mode) -> std::string
 {
     if (!setup.frequency || !setup.radiationPattern || setup.frequency->count <= 1) {
         return std::string(source);
@@ -63,9 +64,28 @@ auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup)
 
     insertionIndex = std::min(insertionIndex, retained.size());
     const nec::NecWriter writer;
+    std::vector<int> patternIndexes;
+    if (mode == RadiationSweepMode::EveryFrequency) {
+        patternIndexes.reserve(static_cast<std::size_t>(setup.frequency->count));
+        for (auto index = 0; index < setup.frequency->count; ++index)
+            patternIndexes.push_back(index);
+    } else if (mode == RadiationSweepMode::RepresentativeFrequencies) {
+        patternIndexes = {setup.frequency->count - 1, 0,
+            (setup.frequency->count - 1) / 2};
+        std::ranges::sort(patternIndexes);
+        const auto duplicates = std::ranges::unique(patternIndexes);
+        patternIndexes.erase(duplicates.begin(), duplicates.end());
+    } else {
+        patternIndexes = {(setup.frequency->count - 1) / 2};
+    }
+
     std::vector<std::string> requests;
     requests.reserve(static_cast<std::size_t>(setup.frequency->count) * 2);
-    for (auto index = 0; index < setup.frequency->count; ++index) {
+    if (mode != RadiationSweepMode::EveryFrequency && setup.executionRequest) {
+        requests.push_back(writer.writeFrequencyCard(*setup.frequency));
+        requests.push_back(writer.writeExecutionCard(*setup.executionRequest));
+    }
+    for (const auto index : patternIndexes) {
         auto point = *setup.frequency;
         point.steppingMode = 0;
         point.count = 1;

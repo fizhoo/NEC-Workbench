@@ -1,11 +1,13 @@
 #include "ui/analysis/AnalysisRequestEditor.h"
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QLabel>
 #include <QPushButton>
+#include <QSettings>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 
@@ -57,6 +59,23 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent)
     phiStartControl_ = angleControl(patternControls_, -360.0, 360.0);
     phiEndControl_ = angleControl(patternControls_, -360.0, 360.0);
     phiStepControl_ = angleControl(patternControls_, 0.001, 360.0);
+    radiationSweepControl_ = new QComboBox(patternControls_);
+    radiationSweepControl_->setObjectName(QStringLiteral("radiationSweepMode"));
+    radiationSweepControl_->addItem(tr("Center frequency only (recommended)"),
+        static_cast<int>(analysis::RadiationSweepMode::CenterFrequencyOnly));
+    radiationSweepControl_->addItem(tr("Start, center, and end"),
+        static_cast<int>(analysis::RadiationSweepMode::RepresentativeFrequencies));
+    radiationSweepControl_->addItem(tr("Every frequency (slow, large files)"),
+        static_cast<int>(analysis::RadiationSweepMode::EveryFrequency));
+    const auto savedSweepMode = QSettings{}.value(QStringLiteral("analysis/radiationSweepMode"),
+        static_cast<int>(analysis::RadiationSweepMode::CenterFrequencyOnly)).toInt();
+    const auto savedSweepIndex = radiationSweepControl_->findData(savedSweepMode);
+    radiationSweepControl_->setCurrentIndex(savedSweepIndex >= 0 ? savedSweepIndex : 0);
+    radiationSweepControl_->setToolTip(tr(
+        "The FR sweep controls impedance and current frequencies. This separate setting chooses "
+        "which frequencies also receive the more expensive radiation-pattern calculation."));
+    sweepCostLabel_ = new QLabel(patternControls_);
+    sweepCostLabel_->setWordWrap(true);
     thetaEndControl_->setValue(180.0);
     thetaStepControl_->setValue(5.0);
     phiEndControl_->setValue(350.0);
@@ -67,6 +86,8 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent)
     patternForm->addRow(tr("Phi start"), phiStartControl_);
     patternForm->addRow(tr("Phi end"), phiEndControl_);
     patternForm->addRow(tr("Phi step"), phiStepControl_);
+    patternForm->addRow(tr("Calculate radiation at"), radiationSweepControl_);
+    patternForm->addRow(QString{}, sweepCostLabel_);
     auto* patternPresets = new QHBoxLayout;
     auto* cutPreset = new QPushButton(tr("2D Elevation Cut"), patternControls_);
     auto* spherePreset = new QPushButton(tr("Full 3D Pattern"), patternControls_);
@@ -97,6 +118,14 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent)
     layout->addStretch();
 
     connect(patternControl_, &QCheckBox::toggled, this, [this] { updatePatternControls(); });
+    connect(radiationSweepControl_, &QComboBox::currentIndexChanged, this, [this] {
+        QSettings{}.setValue(QStringLiteral("analysis/radiationSweepMode"),
+            radiationSweepControl_->currentData().toInt());
+        updatePatternControls();
+    });
+    for (auto* control : {thetaStartControl_, thetaEndControl_, thetaStepControl_,
+             phiStartControl_, phiEndControl_, phiStepControl_})
+        connect(control, &QDoubleSpinBox::valueChanged, this, [this] { updatePatternControls(); });
     connect(cutPreset, &QPushButton::clicked, this, [this] {
         thetaStartControl_->setValue(0.0); thetaEndControl_->setValue(180.0); thetaStepControl_->setValue(2.0);
         phiStartControl_->setValue(0.0); phiEndControl_->setValue(180.0); phiStepControl_->setValue(180.0);
@@ -157,6 +186,11 @@ void AnalysisRequestEditor::setReadiness(const QStringList& blockingReasons)
     readinessLabel_->setStyleSheet(QStringLiteral("color: #9a3030;"));
 }
 
+auto AnalysisRequestEditor::radiationSweepMode() const -> analysis::RadiationSweepMode
+{
+    return static_cast<analysis::RadiationSweepMode>(radiationSweepControl_->currentData().toInt());
+}
+
 auto AnalysisRequestEditor::patternRequest() const -> model::RadiationPatternRequest
 {
     model::RadiationPatternRequest pattern;
@@ -180,6 +214,25 @@ auto AnalysisRequestEditor::angularCount(double start, double end, double step) 
 void AnalysisRequestEditor::updatePatternControls()
 {
     patternControls_->setEnabled(patternControl_->isChecked());
+    const auto frequencyCount = setup_.frequency ? std::max(1, setup_.frequency->count) : 1;
+    auto patternCount = 1;
+    if (frequencyCount > 1) {
+        switch (radiationSweepMode()) {
+        case analysis::RadiationSweepMode::CenterFrequencyOnly: patternCount = 1; break;
+        case analysis::RadiationSweepMode::RepresentativeFrequencies:
+            patternCount = std::min(3, frequencyCount); break;
+        case analysis::RadiationSweepMode::EveryFrequency: patternCount = frequencyCount; break;
+        }
+    }
+    const auto thetaCount = angularCount(thetaStartControl_->value(),
+        std::max(thetaStartControl_->value(), thetaEndControl_->value()), thetaStepControl_->value());
+    const auto phiCount = angularCount(phiStartControl_->value(),
+        std::max(phiStartControl_->value(), phiEndControl_->value()), phiStepControl_->value());
+    const auto sampleCount = static_cast<qlonglong>(patternCount) * thetaCount * phiCount;
+    sweepCostLabel_->setText(tr("Frequency sweep: %1 point(s). Radiation: %2 frequency calculation(s) × %3 angles = approximately %4 samples.")
+        .arg(frequencyCount).arg(patternCount).arg(thetaCount * phiCount).arg(sampleCount));
+    sweepCostLabel_->setStyleSheet(patternCount > 20
+        ? QStringLiteral("color: #a05a18; font-weight: bold;") : QString{});
 }
 
 }

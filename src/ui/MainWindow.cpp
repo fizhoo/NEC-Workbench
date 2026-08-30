@@ -78,6 +78,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 #include <exception>
 #include <span>
 #include <utility>
@@ -88,6 +89,11 @@ namespace {
 constexpr auto ItemKindRole = Qt::UserRole;
 constexpr auto WireTagRole = Qt::UserRole + 1;
 constexpr auto SourceLineRole = Qt::UserRole + 2;
+
+auto sameResultFrequency(double first, double second) -> bool
+{
+    return std::abs(first - second) <= 1.0e-9 * std::max({1.0, std::abs(first), std::abs(second)});
+}
 constexpr auto RunDirectoryRole = Qt::UserRole + 3;
 constexpr auto RunContextRole = Qt::UserRole + 4;
 
@@ -712,6 +718,18 @@ void MainWindow::createWorkspace()
     resultsStatusLabel_ = new QLabel(tr("No analysis results are loaded."), resultsPage);
     resultsStatusLabel_->setContentsMargins(12, 7, 12, 7);
     resultsStatusLabel_->setWordWrap(true);
+    auto* frequencyBar = new QHBoxLayout;
+    auto* frequencyLabel = new QLabel(tr("Result Frequency:"), resultsPage);
+    resultsFrequencyControl_ = new QComboBox(resultsPage);
+    resultsFrequencyControl_->setObjectName(QStringLiteral("resultsFrequencyControl"));
+    resultsFrequencyControl_->setMinimumContentsLength(24);
+    resultsFrequencyControl_->setEnabled(false);
+    resultsAvailabilityLabel_ = new QLabel(tr("No result data available."), resultsPage);
+    resultsAvailabilityLabel_->setObjectName(QStringLiteral("resultsAvailabilityLabel"));
+    frequencyBar->addWidget(frequencyLabel);
+    frequencyBar->addWidget(resultsFrequencyControl_);
+    frequencyBar->addSpacing(12);
+    frequencyBar->addWidget(resultsAvailabilityLabel_, 1);
     resultsWorkspace_ = new QTabWidget(resultsPage);
     resultsWorkspace_->setDocumentMode(true);
     analysisResultsView_ = new ImpedanceResultsView(resultsWorkspace_);
@@ -731,11 +749,16 @@ void MainWindow::createWorkspace()
     radiation3DView_->setSettingsChangedCallback([this](const auto& settings) {
         radiationPatternView_->setDisplaySettings(settings);
     });
+    connect(resultsFrequencyControl_, &QComboBox::currentIndexChanged, this, [this] {
+        if (resultsFrequencyControl_->currentIndex() >= 0)
+            applyResultFrequency(resultsFrequencyControl_->currentData().toDouble());
+    });
     analysisOutput_ = new QPlainTextEdit(resultsWorkspace_);
     analysisOutput_->setReadOnly(true);
     analysisOutput_->setPlaceholderText(tr("Solver command, progress, and NEC output will appear here."));
     analysisOutputTabIndex_ = resultsWorkspace_->addTab(analysisOutput_, tr("Raw NEC Output"));
     resultsLayout->addWidget(resultsStatusLabel_);
+    resultsLayout->addLayout(frequencyBar);
     resultsLayout->addWidget(resultsWorkspace_, 1);
     visualizeModuleIndex_ = moduleStack_->addWidget(resultsPage);
 
@@ -1050,6 +1073,7 @@ void MainWindow::newModel()
     if (!maybeSaveChanges()) {
         return;
     }
+    clearDisplayedResults();
     undoStack_->clear();
     editor_->setPlainText(tr("CM New NEC Workbench model\nCE\nGE 0\nEN\n"));
     hasNecModel_ = true;
@@ -1083,6 +1107,7 @@ void MainWindow::openFileAtPath(const QString& path)
         welcomePage_->setRecentFiles(files);
         return;
     }
+    clearDisplayedResults();
     undoStack_->clear();
     editor_->setPlainText(QString::fromUtf8(file.readAll()));
     hasNecModel_ = true;
@@ -1952,7 +1977,8 @@ void MainWindow::startAnalysis()
         return;
     }
     const auto solverInput = analysis::prepareSolverInput(
-        editor_->toPlainText().toStdString(), currentSetup_);
+        editor_->toPlainText().toStdString(), currentSetup_,
+        analysisRequestEditor_->radiationSweepMode());
     inputFile.write(QByteArray::fromStdString(solverInput));
     inputFile.close();
 
@@ -2095,6 +2121,7 @@ void MainWindow::finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus)
         radiationPatternView_->setResults(result, context);
         radiation3DView_->setModel(currentModel_);
         radiation3DView_->setResults(result, context);
+        setDisplayedResults(result);
         dashboardPage_->setResults(result, context, false);
         dashboardPage_->setModel(currentModel_, currentSetup_, solverBackendId_, true,
             modelErrorCount_, modelWarningCount_);
@@ -2177,12 +2204,14 @@ void MainWindow::setCurrentRunStatus(const QString& status)
 void MainWindow::loadRunHistory()
 {
     analysisRuns_->setRowCount(0);
+    analysisRuns_->setUpdatesEnabled(false);
     for (const auto& record : runStore_.load()) {
         addRunRecord(record, false);
     }
-    if (analysisRuns_->rowCount() > 0) {
-        analysisRuns_->selectRow(0);
-    }
+    analysisRuns_->setUpdatesEnabled(true);
+    analysisRuns_->resizeColumnsToContents();
+    analysisRuns_->clearSelection();
+    openRunFolderButton_->setEnabled(false);
 }
 
 void MainWindow::addRunRecord(const AnalysisRunRecord& record, bool prepend)
@@ -2203,7 +2232,7 @@ void MainWindow::addRunRecord(const AnalysisRunRecord& record, bool prepend)
         item->setData(RunContextRole, runContext(record));
         analysisRuns_->setItem(row, column, item);
     }
-    analysisRuns_->resizeColumnsToContents();
+    if (prepend) analysisRuns_->resizeColumnsToContents();
 }
 
 void MainWindow::loadSelectedRun()
@@ -2245,8 +2274,107 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
         radiation3DView_->setModel(nec::NecModelConverter{}.convert(runDocument).model);
     }
     radiation3DView_->setResults(result, context);
+    setDisplayedResults(result);
     resultsStatusLabel_->setText(tr("Historical results — %1").arg(context));
     statusBar()->showMessage(tr("Displaying historical run: %1").arg(directory), 5000);
+}
+
+void MainWindow::setDisplayedResults(const analysis::AnalysisResult& result)
+{
+    const auto previousFrequency = resultsFrequencyControl_->currentIndex() >= 0
+        ? std::optional{resultsFrequencyControl_->currentData().toDouble()} : std::nullopt;
+    displayedResults_ = result;
+    std::vector<double> frequencies;
+    const auto addFrequency = [&frequencies](double frequencyMHz) {
+        if (std::ranges::find_if(frequencies, [frequencyMHz](double value) {
+                return sameResultFrequency(value, frequencyMHz);
+            }) == frequencies.end()) frequencies.push_back(frequencyMHz);
+    };
+    for (const auto& value : result.feedpoints) addFrequency(value.frequencyMHz);
+    for (const auto& value : result.currents) addFrequency(value.frequencyMHz);
+    for (const auto& value : result.radiation) addFrequency(value.frequencyMHz);
+    std::ranges::sort(frequencies);
+
+    const QSignalBlocker blocker(resultsFrequencyControl_);
+    resultsFrequencyControl_->clear();
+    for (const auto frequencyMHz : frequencies) {
+        const auto hasImpedance = std::ranges::any_of(result.feedpoints, [frequencyMHz](const auto& value) {
+            return sameResultFrequency(value.frequencyMHz, frequencyMHz);
+        });
+        const auto hasCurrents = std::ranges::any_of(result.currents, [frequencyMHz](const auto& value) {
+            return sameResultFrequency(value.frequencyMHz, frequencyMHz);
+        });
+        const auto hasRadiation = std::ranges::any_of(result.radiation, [frequencyMHz](const auto& value) {
+            return sameResultFrequency(value.frequencyMHz, frequencyMHz);
+        });
+        QStringList available;
+        if (hasImpedance) available.append(tr("Z"));
+        if (hasCurrents) available.append(tr("I"));
+        if (hasRadiation) available.append(tr("RP"));
+        resultsFrequencyControl_->addItem(tr("%1 MHz — %2")
+            .arg(frequencyMHz, 0, 'g', 10).arg(available.join(QStringLiteral(" · "))), frequencyMHz);
+    }
+    resultsFrequencyControl_->setEnabled(!frequencies.empty());
+    auto selectedIndex = 0;
+    if (previousFrequency) {
+        for (auto index = 0; index < resultsFrequencyControl_->count(); ++index) {
+            if (sameResultFrequency(resultsFrequencyControl_->itemData(index).toDouble(), *previousFrequency)) {
+                selectedIndex = index;
+                break;
+            }
+        }
+    }
+    if (!frequencies.empty()) {
+        resultsFrequencyControl_->setCurrentIndex(selectedIndex);
+        applyResultFrequency(resultsFrequencyControl_->currentData().toDouble());
+    } else {
+        resultsAvailabilityLabel_->setText(tr("No parsed frequency results are available."));
+    }
+}
+
+void MainWindow::applyResultFrequency(double frequencyMHz)
+{
+    const auto hasImpedance = std::ranges::any_of(displayedResults_.feedpoints, [frequencyMHz](const auto& value) {
+        return sameResultFrequency(value.frequencyMHz, frequencyMHz);
+    });
+    const auto hasCurrents = std::ranges::any_of(displayedResults_.currents, [frequencyMHz](const auto& value) {
+        return sameResultFrequency(value.frequencyMHz, frequencyMHz);
+    });
+    const auto hasRadiation = std::ranges::any_of(displayedResults_.radiation, [frequencyMHz](const auto& value) {
+        return sameResultFrequency(value.frequencyMHz, frequencyMHz);
+    });
+    QStringList available;
+    QStringList missing;
+    const auto addStatus = [&available, &missing](bool present, const QString& name) {
+        (present ? available : missing).append(name);
+    };
+    addStatus(hasImpedance, tr("impedance"));
+    addStatus(hasCurrents, tr("currents"));
+    addStatus(hasRadiation, tr("radiation"));
+    auto text = tr("Available: %1").arg(available.empty() ? tr("none") : available.join(QStringLiteral(" · ")));
+    if (!missing.empty()) text += tr("  |  Missing: %1").arg(missing.join(QStringLiteral(" · ")));
+    resultsAvailabilityLabel_->setText(text);
+
+    analysisResultsView_->setSelectedFrequency(frequencyMHz);
+    visualizePlotsView_->setSelectedFrequency(frequencyMHz);
+    currentResultsView_->setSelectedFrequency(frequencyMHz);
+    radiationPatternView_->setSelectedFrequency(frequencyMHz);
+    radiation3DView_->setSelectedFrequency(frequencyMHz);
+}
+
+void MainWindow::clearDisplayedResults()
+{
+    const analysis::AnalysisResult empty;
+    const auto context = tr("No analysis run");
+    analysisResultsView_->setResults(empty, context);
+    visualizePlotsView_->setResults(empty, context);
+    currentResultsView_->setResults(empty, context);
+    radiationPatternView_->setResults(empty, context);
+    radiation3DView_->setResults(empty, context);
+    radiation3DView_->setModel({});
+    setDisplayedResults(empty);
+    resultsAvailable_ = false;
+    resultsStatusLabel_->setText(tr("No analysis results are loaded."));
 }
 
 void MainWindow::editWire(const model::Wire& original, const model::Wire& updated)

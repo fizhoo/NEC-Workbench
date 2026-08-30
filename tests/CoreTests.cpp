@@ -456,22 +456,43 @@ void testRadiationSweepSolverInput()
         "RP 0 19 12 1000 0 0 10 30 0 0\nEN\n";
     const auto document = necwb::nec::NecParser{}.parse(source);
     const auto setup = necwb::nec::NecSetupConverter{}.convert(document);
+    const auto countOccurrences = [](const std::string& text, std::string_view value) {
+        auto count = 0;
+        auto position = std::size_t{};
+        while ((position = text.find(value, position)) != std::string::npos) {
+            ++count;
+            position += value.size();
+        }
+        return count;
+    };
     const auto prepared = necwb::analysis::prepareSolverInput(source, setup);
-    expect(prepared.find("FR 0 3 0 0 14 0.25") == std::string::npos
-            && prepared.find("XQ 0") == std::string::npos,
-        "radiation sweeps replace native sweep execution cards");
-    expect(prepared.find("GN 2 0 0 0 13 .005\nFR 0 1 0 0 14 0") != std::string::npos,
-        "radiation sweep expansion retains environment cards before execution");
-    expect(prepared.find("FR 0 1 0 0 14 0\nRP 0 19 12 1000") != std::string::npos
-            && prepared.find("FR 0 1 0 0 14.25 0\nRP 0 19 12 1000") != std::string::npos
-            && prepared.find("FR 0 1 0 0 14.5 0\nRP 0 19 12 1000") != std::string::npos,
-        "radiation sweeps request a pattern at every additive frequency");
+    expect(prepared.find("GN 2 0 0 0 13 .005\nFR 0 3 0 0 14 0.25\nXQ 0") != std::string::npos,
+        "center-only radiation retains the fast native impedance sweep");
+    expect(countOccurrences(prepared, "RP 0 19 12 1000") == 1
+            && prepared.find("FR 0 1 0 0 14.25 0\nRP") != std::string::npos,
+        "center-only radiation requests one pattern at the sweep midpoint");
+
+    const auto representative = necwb::analysis::prepareSolverInput(source, setup,
+        necwb::analysis::RadiationSweepMode::RepresentativeFrequencies);
+    expect(countOccurrences(representative, "RP 0 19 12 1000") == 3
+            && representative.find("FR 0 1 0 0 14 0\nRP") != std::string::npos
+            && representative.find("FR 0 1 0 0 14.25 0\nRP") != std::string::npos
+            && representative.find("FR 0 1 0 0 14.5 0\nRP") != std::string::npos,
+        "representative radiation requests start, center, and end patterns");
+
+    const auto everyFrequency = necwb::analysis::prepareSolverInput(source, setup,
+        necwb::analysis::RadiationSweepMode::EveryFrequency);
+    expect(everyFrequency.find("FR 0 3 0 0 14 0.25") == std::string::npos
+            && everyFrequency.find("XQ 0") == std::string::npos
+            && countOccurrences(everyFrequency, "RP 0 19 12 1000") == 3,
+        "exhaustive radiation sweeps execute one pattern per frequency");
 
     auto logarithmic = setup;
     logarithmic.frequency->steppingMode = 1;
     logarithmic.frequency->startMHz = 10.0;
     logarithmic.frequency->step = 2.0;
-    const auto logarithmicPrepared = necwb::analysis::prepareSolverInput(source, logarithmic);
+    const auto logarithmicPrepared = necwb::analysis::prepareSolverInput(source, logarithmic,
+        necwb::analysis::RadiationSweepMode::EveryFrequency);
     expect(logarithmicPrepared.find("FR 0 1 0 0 10 0") != std::string::npos
             && logarithmicPrepared.find("FR 0 1 0 0 20 0") != std::string::npos
             && logarithmicPrepared.find("FR 0 1 0 0 40 0") != std::string::npos,
@@ -490,6 +511,14 @@ void testNecOutputParsing()
         " FREQUENCY : 1.4100D+01 MHz\n"
         " --------- ANTENNA INPUT PARAMETERS ---------\n"
         " 1 6 1.0D+00 0.0D+00 1.1D-02 0.0D+00 5.0D+01 0.0D+00 0 0 5.5D-03\n"
+        "\n"
+        " CURRENTS AND LOCATION\n"
+        " 1 1 0 0 -0.1 0.05 1.0E-02 -2.0E-03 1.0198E-02 -11.31\n"
+        " 2 1 0 0 0.1 0.05 8.0E-03 1.0E-03 8.0623E-03 7.125\n"
+        "\n"
+        " FREQUENCY : 1.4100E+01 MHz\n"
+        " ANTENNA INPUT PARAMETERS\n"
+        " 1 6 1.0E+00 0.0E+00 1.1E-02 0.0E+00 5.0E+01 0.0E+00 0 0 5.5E-03\n"
         "\n"
         " CURRENTS AND LOCATION\n"
         " 1 1 0 0 -0.1 0.05 1.0E-02 -2.0E-03 1.0198E-02 -11.31\n"

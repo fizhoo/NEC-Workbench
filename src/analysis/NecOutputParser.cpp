@@ -2,11 +2,17 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <sstream>
 #include <string>
 
 namespace necwb::analysis {
 namespace {
+
+auto sameFrequency(double first, double second) -> bool
+{
+    return std::abs(first - second) <= 1.0e-9 * std::max({1.0, std::abs(first), std::abs(second)});
+}
 
 auto parseFrequency(const std::string& line, double& frequencyMHz) -> bool
 {
@@ -130,7 +136,11 @@ auto NecOutputParser::parse(std::string_view output) const -> AnalysisResult
         if (readingCurrents) {
             SegmentCurrentResult current;
             if (parseCurrent(line, frequencyMHz, current)) {
-                result.currents.push_back(current);
+                const auto duplicate = std::ranges::any_of(result.currents, [&current](const auto& existing) {
+                    return sameFrequency(existing.frequencyMHz, current.frequencyMHz)
+                        && existing.wireTag == current.wireTag && existing.segment == current.segment;
+                });
+                if (!duplicate) result.currents.push_back(current);
                 foundCurrentRow = true;
                 continue;
             }
@@ -154,7 +164,11 @@ auto NecOutputParser::parse(std::string_view output) const -> AnalysisResult
         }
         FeedpointResult feedpoint;
         if (parseFeedpoint(line, frequencyMHz, feedpoint)) {
-            result.feedpoints.push_back(feedpoint);
+            const auto duplicate = std::ranges::any_of(result.feedpoints, [&feedpoint](const auto& existing) {
+                return sameFrequency(existing.frequencyMHz, feedpoint.frequencyMHz)
+                    && existing.wireTag == feedpoint.wireTag && existing.segment == feedpoint.segment;
+            });
+            if (!duplicate) result.feedpoints.push_back(feedpoint);
             foundInputRow = true;
         } else if (foundInputRow && line.find_first_not_of(" \t\r") == std::string::npos) {
             readingInputParameters = false;

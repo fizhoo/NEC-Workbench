@@ -8,6 +8,16 @@
 #include <cmath>
 
 namespace necwb::ui {
+namespace {
+
+constexpr auto FrequencyRole = Qt::UserRole;
+
+auto sameFrequency(double first, double second) -> bool
+{
+    return std::abs(first - second) <= 1.0e-9 * std::max({1.0, std::abs(first), std::abs(second)});
+}
+
+}
 
 ImpedanceResultsView::ImpedanceResultsView(QWidget* parent)
     : QWidget(parent)
@@ -56,6 +66,7 @@ void ImpedanceResultsView::setResults(const analysis::AnalysisResult& result,
         for (auto column = 0; column < values.size(); ++column) {
             auto* item = new QTableWidgetItem(values[column]);
             item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            item->setData(FrequencyRole, feedpoint.frequencyMHz);
             table_->setItem(row, column, item);
         }
     }
@@ -64,6 +75,19 @@ void ImpedanceResultsView::setResults(const analysis::AnalysisResult& result,
             : tr("%1 feedpoint result(s) parsed from %2. SWR uses a 50 Ω reference.")
                 .arg(result.feedpoints.size()).arg(runDirectory));
     table_->resizeColumnsToContents();
+}
+
+void ImpedanceResultsView::setSelectedFrequency(double frequencyMHz)
+{
+    table_->clearSelection();
+    for (auto row = 0; row < table_->rowCount(); ++row) {
+        const auto* item = table_->item(row, 0);
+        if (item != nullptr && sameFrequency(item->data(FrequencyRole).toDouble(), frequencyMHz)) {
+            table_->selectRow(row);
+            table_->scrollToItem(item, QAbstractItemView::PositionAtCenter);
+            return;
+        }
+    }
 }
 
 }

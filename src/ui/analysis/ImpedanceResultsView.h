@@ -14,6 +14,7 @@ public:
     explicit ImpedanceResultsView(QWidget* parent = nullptr);
 
     void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
+    void setSelectedFrequency(double frequencyMHz);
 
 private:
     QLabel* summary_{};

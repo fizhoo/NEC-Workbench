@@ -5,6 +5,7 @@
 #include "model/ModelSetup.h"
 #include "ui/geometry/GeometrySettings.h"
 #include "ui/analysis/AnalysisRunStore.h"
+#include "analysis/AnalysisResult.h"
 
 #include <QMainWindow>
 #include <QElapsedTimer>
@@ -139,6 +140,9 @@ private:
     void addRunRecord(const AnalysisRunRecord& record, bool prepend);
     void loadSelectedRun();
     void displayRunArtifacts(const QString& directory, const QString& context);
+    void setDisplayedResults(const analysis::AnalysisResult& result);
+    void applyResultFrequency(double frequencyMHz);
+    void clearDisplayedResults();
     void pushGeometrySourceEdit(const QString& description, QString updatedSource);
     void applyGeometrySource(const QString& source, int targetTabIndex);
     [[nodiscard]] auto nextWireTag() const -> int;
@@ -184,6 +188,7 @@ private:
     QTabWidget* workspace_{};
     QTabWidget* sourceWorkspace_{};
     QTabWidget* resultsWorkspace_{};
+    QComboBox* resultsFrequencyControl_{};
     DashboardPage* dashboardPage_{};
     WelcomePage* welcomePage_{};
     WireCardEditor* wireCardEditor_{};
@@ -220,6 +225,8 @@ private:
     QLabel* checkStatus_{};
     QLabel* modelFileStatus_{};
     QLabel* resultsStatusLabel_{};
+    QLabel* resultsAvailabilityLabel_{};
+    analysis::AnalysisResult displayedResults_;
     model::AntennaModel currentModel_;
     model::ModelSetup currentSetup_;
     GeometrySettings geometrySettings_;

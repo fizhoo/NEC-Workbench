@@ -1,6 +1,7 @@
 #pragma once
 
 #include "model/ModelSetup.h"
+#include "analysis/SolverInput.h"
 
 #include <QWidget>
 #include <QStringList>
@@ -8,6 +9,7 @@
 class QCheckBox;
 class QDoubleSpinBox;
 class QLabel;
+class QComboBox;
 
 namespace necwb::ui {
 
@@ -19,6 +21,7 @@ public:
 
     void setData(const model::ModelSetup& setup);
     void setReadiness(const QStringList& blockingReasons);
+    [[nodiscard]] auto radiationSweepMode() const -> analysis::RadiationSweepMode;
 
 signals:
     void requestsChanged(bool executionEnabled, model::ExecutionRequest execution,
@@ -38,8 +41,10 @@ private:
     QDoubleSpinBox* phiStartControl_{};
     QDoubleSpinBox* phiEndControl_{};
     QDoubleSpinBox* phiStepControl_{};
+    QComboBox* radiationSweepControl_{};
     QLabel* validationLabel_{};
     QLabel* readinessLabel_{};
+    QLabel* sweepCostLabel_{};
     QWidget* patternControls_{};
 };
 

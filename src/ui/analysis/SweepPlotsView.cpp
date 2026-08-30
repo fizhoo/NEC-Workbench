@@ -54,6 +54,12 @@ public:
         update();
     }
 
+    void setSelectedFrequency(double frequencyMHz)
+    {
+        selectedFrequencyMHz_ = frequencyMHz;
+        update();
+    }
+
 protected:
     void paintEvent(QPaintEvent*) override
     {
@@ -143,6 +149,15 @@ protected:
             }
             painter.setBrush(Qt::NoBrush);
             painter.drawPath(path);
+        }
+        if (std::isfinite(selectedFrequencyMHz_)
+            && selectedFrequencyMHz_ >= xMinimum_ && selectedFrequencyMHz_ <= xMaximum_) {
+            const auto x = mapPoint({selectedFrequencyMHz_, yMinimum_}).x();
+            painter.setPen(QPen(QColor(225, 145, 35), 2, Qt::DashLine));
+            painter.drawLine(QPointF(x, plotRect_.top()), QPointF(x, plotRect_.bottom()));
+            painter.setPen(palette().color(QPalette::Text));
+            painter.drawText(QRectF(x - 60, plotRect_.top() + 27, 120, 20), Qt::AlignCenter,
+                tr("Selected %1 MHz").arg(selectedFrequencyMHz_, 0, 'g', 8));
         }
     }
 
@@ -255,6 +270,7 @@ private:
     double yMinimum_{};
     double yMaximum_{};
     double minimumY_{-std::numeric_limits<double>::infinity()};
+    double selectedFrequencyMHz_{std::numeric_limits<double>::quiet_NaN()};
     bool includeZero_{};
     bool boundsValid_{};
     int hoveredSeries_{-1};
@@ -323,6 +339,12 @@ void SweepPlotsView::setResults(const analysis::AnalysisResult& result, const QS
             ? tr("No supported feedpoint results were found in %1.").arg(runDirectory)
             : tr("%1 result point(s) from %2. Hover a marker for its exact value.")
                 .arg(result.feedpoints.size()).arg(runDirectory));
+}
+
+void SweepPlotsView::setSelectedFrequency(double frequencyMHz)
+{
+    impedancePlot_->setSelectedFrequency(frequencyMHz);
+    swrPlot_->setSelectedFrequency(frequencyMHz);
 }
 
 }

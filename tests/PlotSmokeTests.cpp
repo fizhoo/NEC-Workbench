@@ -53,9 +53,11 @@ auto main(int argc, char* argv[]) -> int
                 static_cast<double>(phi), gain + 0.1, -999.99, gain + 0.1});
         }
     }
+    result.radiation.push_back({14.2, 75.0, 60.0, 20.0, -999.99, 20.0});
     necwb::ui::SweepPlotsView view;
     view.resize(900, 700);
     view.setResults(result, QStringLiteral("test-run"));
+    view.setSelectedFrequency(14.2);
     view.show();
     application.processEvents();
 
@@ -71,6 +73,7 @@ auto main(int argc, char* argv[]) -> int
         resultView->resize(800, 600);
     }
     currents.setResults(result, QStringLiteral("test-run"));
+    currents.setSelectedFrequency(14.1);
     radiation2D.setResults(result, QStringLiteral("test-run"));
     necwb::model::AntennaModel antenna;
     antenna.addWire({1, {0.0, 0.0, -0.5}, {0.0, 0.0, 0.5}, 11, 0.001, 1});
@@ -93,13 +96,25 @@ auto main(int argc, char* argv[]) -> int
     auto* radiation2DFloor = radiation2D.findChild<QComboBox*>(QStringLiteral("radiation2DFloor"));
     auto* radiation3DFloor = radiation3D.findChild<QComboBox*>(QStringLiteral("radiation3DFloor"));
     auto* radiation2DSummary = radiation2D.findChild<QLabel*>(QStringLiteral("radiation2DSummary"));
+    auto* radiation2DCutPlane = radiation2D.findChild<QComboBox*>(QStringLiteral("radiation2DCutPlane"));
+    auto* radiation2DOrientation = radiation2D.findChild<QPushButton*>(QStringLiteral("radiation2DOrientation"));
+    auto* radiation2DMaxGainCut = radiation2D.findChild<QPushButton*>(QStringLiteral("radiation2DMaxGainCut"));
     auto* radiation3DSummary = radiation3D.findChild<QLabel*>(QStringLiteral("radiation3DSummary"));
+    auto* radiation2DExportImage = radiation2D.findChild<QPushButton*>(QStringLiteral("radiation2DExportImage"));
+    auto* radiation2DExportData = radiation2D.findChild<QPushButton*>(QStringLiteral("radiation2DExportData"));
+    auto* radiation3DExportImage = radiation3D.findChild<QPushButton*>(QStringLiteral("radiation3DExportImage"));
+    auto* radiation3DExportData = radiation3D.findChild<QPushButton*>(QStringLiteral("radiation3DExportData"));
     if (radiation2DComponent == nullptr || radiation2DFrequency == nullptr
         || radiation3DComponent == nullptr || radiation3DFrequency == nullptr
         || radiation2DFloor == nullptr || radiation3DFloor == nullptr
-        || radiation2DSummary == nullptr || radiation3DSummary == nullptr) return EXIT_FAILURE;
+        || radiation2DSummary == nullptr || radiation3DSummary == nullptr
+        || radiation2DCutPlane == nullptr || radiation2DOrientation == nullptr
+        || radiation2DMaxGainCut == nullptr
+        || radiation2DExportImage == nullptr || radiation2DExportData == nullptr
+        || radiation3DExportImage == nullptr || radiation3DExportData == nullptr) return EXIT_FAILURE;
     radiation2DComponent->setCurrentIndex(1);
-    radiation2DFrequency->setCurrentIndex(1);
+    radiation2D.setSelectedFrequency(14.2);
+    radiation3D.setSelectedFrequency(14.2);
     radiation3DFloor->setCurrentIndex(4);
     application.processEvents();
     const auto radiationSweepSelectable = radiation2DFrequency->count() == 2
@@ -110,6 +125,21 @@ auto main(int argc, char* argv[]) -> int
         && radiation2DFloor->currentData() == radiation3DFloor->currentData();
     const auto radiationMetricsVisible = radiation2DSummary->text().contains(QStringLiteral("beamwidth"))
         && radiation3DSummary->text().contains(QStringLiteral("peak"));
+    const auto radiationExportReady = radiation2DExportImage->isEnabled()
+        && radiation2DExportData->isEnabled() && radiation3DExportImage->isEnabled()
+        && radiation3DExportData->isEnabled();
+    radiation2DOrientation->click();
+    radiation2DMaxGainCut->click();
+    application.processEvents();
+    const auto maxGainCutSelected = radiation2DOrientation->text() == QStringLiteral("Vertical Cut")
+        && radiation2DCutPlane->currentData().toDouble() == 60.0
+        && radiation2DSummary->text().contains(QStringLiteral("20.00 dBi"));
+    radiation2D.setSelectedFrequency(14.0);
+    application.processEvents();
+    const auto missingRadiationReported = radiation2DSummary->text().contains(QStringLiteral("14 MHz"))
+        && radiation2DSummary->text().contains(QStringLiteral("No"))
+        && !radiation2DExportData->isEnabled();
+    radiation2D.setSelectedFrequency(14.2);
     currents.show(); radiation2D.show(); radiation3D.show(); application.processEvents();
     QImage fieldImage(800, 600, QImage::Format_ARGB32_Premultiplied);
     fieldImage.fill(Qt::transparent); QPainter fieldPainter(&fieldImage);
@@ -118,7 +148,10 @@ auto main(int argc, char* argv[]) -> int
     necwb::analysis::AnalysisResult currentOnly;
     currentOnly.currents = result.currents;
     radiation3D.setResults(currentOnly, QStringLiteral("Model: test.nec · Run: current-only"));
+    radiation3D.setSelectedFrequency(14.1);
     application.processEvents();
+    const auto missingRadiationDisablesDataExport = !radiation3DExportData->isEnabled()
+        && radiation3DExportImage->isEnabled();
     QImage currentImage(800, 600, QImage::Format_ARGB32_Premultiplied);
     currentImage.fill(Qt::transparent); QPainter currentPainter(&currentImage);
     radiation3D.render(&currentPainter); currentPainter.end();
@@ -335,6 +368,8 @@ auto main(int argc, char* argv[]) -> int
         && addedCard == QStringLiteral("LD 0 1 1 11 0 0 0") && deletedLine == 3
         && !wireImage.isNull() && wireEditCommitted && gaugeDropdownValid
         && radiationControlsSynchronized && radiationSweepSelectable && radiationMetricsVisible
+        && radiationExportReady && maxGainCutSelected && missingRadiationReported
+        && missingRadiationDisablesDataExport
         && resultOriginPreserved
         && !attachmentImage.isNull() && invalidLoadBlocked && validLoadEmitted
         && invalidLineBlocked && validLineEmitted;
