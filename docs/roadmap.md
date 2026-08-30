@@ -13,15 +13,21 @@ configured by the user and are not bundled.
 - Impedance, SWR, current-distribution, and 2D/3D radiation results
 - Historical run snapshots that restore the exact archived input deck
 - Categorized Project tree with contextual Properties and editor navigation
+- Solver-independent `SY` expressions with numeric NEC run-deck generation
+- One-variable bounded SWR sweeps with reproducible candidate runs
 - Linux development builds and automated Windows packaging
 
 ## Next: Parameterized Models
 
-1. Define named model parameters using an `SY`-style syntax.
-2. Parse safe arithmetic expressions and parameter references.
-3. Show resolved values and expression errors in structured editors.
-4. Generate a numeric NEC deck before invoking native NEC-2 backends.
-5. Preserve parameterized source separately from generated run input.
+Workbench recognizes `SY` declarations, evaluates safe arithmetic and earlier
+parameter references, validates the resolved model, reports source-line
+diagnostics, and produces a numeric solver deck. Each run retains both the
+authored parameterized source and the generated NEC input. The remaining
+sequence is:
+
+1. Show resolved values and expression errors in structured editors.
+2. Apply a selected optimization candidate back to the parameterized model.
+3. Add safe expression-aware structured and graphical editing.
 
 Parameterization is the required foundation for both model templates and
 optimization. It should remain a Workbench feature rather than depending on a
@@ -29,12 +35,10 @@ particular solver's extensions.
 
 ## Then: Sweeps and Optimization
 
-1. Sweep one selected parameter over a bounded range.
-2. Plot SWR, impedance, gain, efficiency, and other available metrics by candidate.
-3. Define objectives, weights, constraints, and evaluation frequencies.
-4. Add bounded multi-parameter optimization.
-5. Preserve candidates as normal Analysis runs with reproducible metadata.
-6. Add explicit Compare Runs and baseline-versus-candidate overlays.
+1. Plot SWR, impedance, gain, efficiency, and other available metrics by candidate.
+2. Define objectives, weights, constraints, and evaluation frequencies.
+3. Add bounded multi-parameter optimization.
+4. Add explicit Compare Runs and baseline-versus-candidate overlays.
 
 The first optimizer should favor transparent, reproducible behavior over a
 large collection of algorithms. Additional search methods can be added behind a

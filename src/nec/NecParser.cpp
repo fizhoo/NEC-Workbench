@@ -23,6 +23,7 @@ auto classify(std::string_view mnemonic) -> NecCardKind
     static const std::unordered_map<std::string_view, NecCardKind> kinds{
         {"CM", NecCardKind::Comment},
         {"CE", NecCardKind::Comment},
+        {"SY", NecCardKind::Symbol},
         {"GW", NecCardKind::GeometryWire},
         {"GE", NecCardKind::GeometryEnd},
         {"EX", NecCardKind::Excitation},

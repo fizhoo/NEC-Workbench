@@ -1,0 +1,14 @@
+CM Parameterized 40-meter center-fed dipole
+CM Change frequency, height, or segment count in the SY cards
+CE
+SY frequency=14.1, velocity=299.792458, length=20
+SY halfLength=0.95*velocity/(4*frequency), height=10
+SY radius=0.001, segments=41, feedSegment=(segments+1)/2
+GW 1 41 -length/2 0 10 length/2 0 10 0.000813863316895752
+GE 0
+GN 2 0 0 0 13 0.005
+EX 0 1 feedSegment 0 1 0
+FR 0 1 0 0 frequency 0
+RP 0 37 36 1000 0 0 5 10
+XQ 0
+EN

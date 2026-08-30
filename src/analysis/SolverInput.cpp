@@ -1,5 +1,6 @@
 #include "analysis/SolverInput.h"
 
+#include "nec/NecParser.h"
 #include "nec/NecWriter.h"
 
 #include <algorithm>
@@ -102,6 +103,34 @@ auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
         if (index != 0) output << '\n';
         output << retained[index];
     }
+    return output.str();
+}
+
+auto prepareImpedanceInput(std::string_view source) -> std::string
+{
+    const auto document = nec::NecParser{}.parse(source);
+    const auto hasExecution = std::ranges::any_of(document.cards(), [](const auto& card) {
+        return card.kind == nec::NecCardKind::Execute;
+    });
+    std::vector<std::string> lines;
+    lines.reserve(document.cards().size() + 1);
+    auto insertedExecution = false;
+    for (const auto& card : document.cards()) {
+        if (card.kind == nec::NecCardKind::RadiationPattern) continue;
+        if (!hasExecution && !insertedExecution && card.kind == nec::NecCardKind::End) {
+            lines.emplace_back("XQ 0");
+            insertedExecution = true;
+        }
+        lines.push_back(card.sourceText);
+    }
+    if (!hasExecution && !insertedExecution) lines.emplace_back("XQ 0");
+
+    std::ostringstream output;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        if (index != 0) output << document.lineEnding();
+        output << lines[index];
+    }
+    if (document.hasFinalLineEnding() && !lines.empty()) output << document.lineEnding();
     return output.str();
 }
 

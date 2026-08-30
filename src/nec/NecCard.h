@@ -9,6 +9,7 @@ namespace necwb::nec {
 enum class NecCardKind {
     Blank,
     Comment,
+    Symbol,
     GeometryWire,
     GeometryEnd,
     Excitation,

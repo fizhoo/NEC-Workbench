@@ -9,6 +9,7 @@
 #include "nec/NecModelChecker.h"
 #include "nec/NecParser.h"
 #include "nec/NecSetupConverter.h"
+#include "nec/NecSymbolResolver.h"
 #include "nec/NecWriter.h"
 
 #include <algorithm>
@@ -44,13 +45,89 @@ void testRoundTripPreservesSource()
 
 void testKnownCardsAreRecognized()
 {
-    const std::string source = "CM note\nCE\nGW 1 3 0 0 0 1 0 0 .001\nGE\nEX\nLD\nGN\nFR\nRP\nTL\nNT\nEN";
+    const std::string source = "CM note\nCE\nSY length=1\nGW 1 3 0 0 0 1 0 0 .001\nGE\nEX\nLD\nGN\nFR\nRP\nTL\nNT\nEN";
     const auto document = necwb::nec::NecParser{}.parse(source);
     const auto cards = document.cards();
-    expect(cards.size() == 12, "all known card lines are parsed");
+    expect(cards.size() == 13, "all known card lines are parsed");
     expect(cards[0].kind == necwb::nec::NecCardKind::Comment, "CM recognized");
-    expect(cards[2].kind == necwb::nec::NecCardKind::GeometryWire, "GW recognized");
-    expect(cards[11].kind == necwb::nec::NecCardKind::End, "EN recognized");
+    expect(cards[2].kind == necwb::nec::NecCardKind::Symbol, "SY recognized");
+    expect(cards[3].kind == necwb::nec::NecCardKind::GeometryWire, "GW recognized");
+    expect(cards[12].kind == necwb::nec::NecCardKind::End, "EN recognized");
+}
+
+void testSymbolResolution()
+{
+    const std::string source =
+        "CM parameterized dipole\r\nCE\r\n"
+        "SY half = 5, Height=2+4\r\n"
+        "SY length=half*2, segments=2^4+5\r\n"
+        "\r\n"
+        "GW 1 segments -half 0 height half 0 Height 0.001\r\n"
+        "GE 0\r\n"
+        "EX 0 1 (segments+1)/2 0 1 0\r\n"
+        "FR 0 1 0 0 7*2.025 0\r\n"
+        "EN\r\n";
+    const auto resolution = necwb::nec::NecSymbolResolver{}.resolve(source);
+    expect(resolution.ok(), "valid symbols and expressions resolve without diagnostics");
+    expect(resolution.definitions.size() == 4, "all symbol assignments are retained");
+    expect(resolution.definitions[0].name == "half" && resolution.definitions[0].value == 5.0,
+        "symbol definitions retain names and evaluated values");
+    expect(resolution.definitions[3].name == "segments" && resolution.definitions[3].value == 21.0,
+        "later assignments can use arithmetic and earlier symbols");
+    expect(resolution.generatedDeck.find("SY ") == std::string::npos,
+        "generated numeric deck omits Workbench symbol declarations");
+    expect(resolution.resolvedSource.find("CE\r\n\r\n\r\n\r\nGW") != std::string::npos,
+        "line-preserving resolution replaces each SY declaration with a blank source line");
+    expect(resolution.generatedDeck.find("GW 1 21 -5 0 6 5 0 6 0.001") != std::string::npos,
+        "symbolic geometry fields become numeric NEC fields");
+    expect(resolution.generatedDeck.find("EX 0 1 11 0 1 0") != std::string::npos,
+        "integer expressions resolve for segment references");
+    expect(resolution.generatedDeck.find("FR 0 1 0 0 14.175 0") != std::string::npos,
+        "arithmetic-only fields resolve without a named symbol");
+    expect(resolution.generatedDeck.find("\r\n\r\nGW") != std::string::npos,
+        "retained blank lines and CRLF endings survive numeric generation");
+    expect(!resolution.generatedDeck.empty() && resolution.generatedDeck.ends_with("\r\n"),
+        "generated deck preserves the final line ending");
+    const auto resolvedDocument = necwb::nec::NecParser{}.parse(resolution.resolvedSource);
+    const auto checked = necwb::nec::NecModelChecker{}.check(resolvedDocument);
+    expect(checked.errorCount() == 0 && checked.model.wireCount() == 1,
+        "resolved deck is valid input for the existing NEC model pipeline");
+    expect(checked.model.wires().front().sourceLine == 6,
+        "line-preserving resolution keeps semantic objects mapped to parameterized source lines");
+    const auto generatedDocument = necwb::nec::NecParser{}.parse(resolution.generatedDeck);
+    const auto generatedSetup = necwb::nec::NecSetupConverter{}.convert(generatedDocument);
+    expect(generatedSetup.frequency && generatedSetup.frequency->startMHz == 14.175,
+        "generated numeric deck converts through the existing setup pipeline");
+    const auto solverInput = necwb::analysis::prepareSolverInput(
+        resolution.generatedDeck, generatedSetup);
+    expect(solverInput.find("SY ") == std::string::npos
+            && solverInput.find("FR 0 1 0 0 14.175 0") != std::string::npos,
+        "native solver input contains resolved numeric cards and no Workbench symbols");
+    const auto overridden = necwb::nec::NecSymbolResolver{}.resolve(source, {{"HALF", 7.5}});
+    expect(overridden.ok()
+            && overridden.generatedDeck.find("GW 1 21 -7.5 0 6 7.5 0 6 0.001") != std::string::npos,
+        "case-insensitive symbol overrides generate optimization candidates");
+    const auto impedanceInput = necwb::analysis::prepareImpedanceInput(
+        "FR 0 1 0 0 7.1 0\nRP 0 37 36 1000 0 0 5 10\nEN\n");
+    expect(impedanceInput.find("RP ") == std::string::npos,
+        "impedance-only solver input removes expensive radiation requests");
+    expect(impedanceInput.find("XQ 0\nEN") != std::string::npos,
+        "impedance-only solver input inserts an execution request before EN");
+    const auto existingExecution = necwb::analysis::prepareImpedanceInput(
+        "FR 0 1 0 0 7.1 0\r\nXQ 0\r\nEN\r\n");
+    expect(existingExecution == "FR 0 1 0 0 7.1 0\r\nXQ 0\r\nEN\r\n",
+        "impedance-only input preserves an existing execution request and line endings");
+
+    const auto invalid = necwb::nec::NecSymbolResolver{}.resolve(
+        "SY first=missing+1, good=2, GOOD=3, zero=1/0\n"
+        "GW 1 unknown 0 0 0 1 0 0 .001\n"
+        "XX textual-extension\n");
+    expect(!invalid.ok() && invalid.diagnostics.size() == 4,
+        "unknown, duplicate, zero-divisor, and unresolved field errors are reported");
+    expect(invalid.definitions.size() == 1 && invalid.definitions.front().name == "good",
+        "invalid assignments do not hide independent valid definitions");
+    expect(invalid.generatedDeck.find("XX textual-extension") != std::string::npos,
+        "unsupported card text remains untouched during symbol resolution");
 }
 
 void testWireConversion()
@@ -588,6 +665,7 @@ auto main() -> int
 {
     testRoundTripPreservesSource();
     testKnownCardsAreRecognized();
+    testSymbolResolution();
     testWireConversion();
     testInvalidWireIsDiagnosed();
     testValidModelCheck();

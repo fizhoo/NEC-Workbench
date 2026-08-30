@@ -25,6 +25,7 @@ add_library(necwb_core
     src/nec/NecModelConverter.cpp
     src/nec/NecParser.cpp
     src/nec/NecSetupConverter.cpp
+    src/nec/NecSymbolResolver.cpp
     src/nec/NecWriter.cpp
 )
 
@@ -86,6 +87,8 @@ if(NECWB_BUILD_GUI)
         src/ui/geometry/GeometrySettingsDialog.h
         src/ui/geometry/WirePropertiesDialog.cpp
         src/ui/geometry/WirePropertiesDialog.h
+        src/ui/optimization/OptimizationWorkspace.cpp
+        src/ui/optimization/OptimizationWorkspace.h
         src/ui/setup/SetupEditor.cpp
         src/ui/setup/SetupEditor.h
         src/ui/setup/LoadNetworkEditor.cpp

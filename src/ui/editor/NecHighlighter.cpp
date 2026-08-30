@@ -25,7 +25,8 @@ void NecHighlighter::highlightBlock(const QString& text)
     static const QSet<QString> knownCards{
         QStringLiteral("CM"), QStringLiteral("CE"), QStringLiteral("GW"), QStringLiteral("GE"),
         QStringLiteral("EX"), QStringLiteral("LD"), QStringLiteral("GN"), QStringLiteral("FR"),
-        QStringLiteral("RP"), QStringLiteral("TL"), QStringLiteral("NT"), QStringLiteral("EN")};
+        QStringLiteral("RP"), QStringLiteral("TL"), QStringLiteral("NT"), QStringLiteral("XQ"),
+        QStringLiteral("SY"), QStringLiteral("EN")};
 
     const auto cardMatch = cardExpression.match(text);
     if (!cardMatch.hasMatch()) {

@@ -17,4 +17,6 @@ enum class RadiationSweepMode {
     const model::ModelSetup& setup,
     RadiationSweepMode mode = RadiationSweepMode::CenterFrequencyOnly) -> std::string;
 
+[[nodiscard]] auto prepareImpedanceInput(std::string_view source) -> std::string;
+
 }

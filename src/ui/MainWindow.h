@@ -51,6 +51,7 @@ class WireCardEditor;
 class StructuredCardEditor;
 class DashboardPage;
 class WelcomePage;
+class OptimizationWorkspace;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -213,6 +214,7 @@ private:
     CurrentDistributionView* currentResultsView_{};
     RadiationPatternView* radiationPatternView_{};
     Radiation3DView* radiation3DView_{};
+    OptimizationWorkspace* optimizationWorkspace_{};
     QTabWidget* analysisWorkspace_{};
     QTableWidget* analysisRuns_{};
     QPlainTextEdit* analysisOutput_{};

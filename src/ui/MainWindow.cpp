@@ -7,6 +7,7 @@
 #include "nec/NecModelConverter.h"
 #include "nec/NecParser.h"
 #include "nec/NecSetupConverter.h"
+#include "nec/NecSymbolResolver.h"
 #include "nec/NecWriter.h"
 #include "model/WireGauge.h"
 #include "ui/commands/GeometrySourceCommand.h"
@@ -28,6 +29,7 @@
 #include "ui/geometry/GeometryView.h"
 #include "ui/geometry/GeometrySettingsDialog.h"
 #include "ui/geometry/WirePropertiesDialog.h"
+#include "ui/optimization/OptimizationWorkspace.h"
 #include "ui/setup/SetupEditor.h"
 #include "ui/setup/LoadNetworkEditor.h"
 #include "ui/setup/ExcitationPropertiesDialog.h"
@@ -190,27 +192,6 @@ auto cardPropertyLabels(const QString& mnemonic) -> QStringList
     return {};
 }
 
-auto createPlaceholder(const QString& title, const QString& description, QWidget* parent) -> QWidget*
-{
-    auto* page = new QWidget(parent);
-    auto* layout = new QVBoxLayout(page);
-    layout->setContentsMargins(32, 32, 32, 32);
-
-    auto* heading = new QLabel(title, page);
-    auto font = heading->font();
-    font.setBold(true);
-    font.setPointSize(font.pointSize() + 5);
-    heading->setFont(font);
-
-    auto* body = new QLabel(description, page);
-    body->setWordWrap(true);
-    body->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-    layout->addWidget(heading);
-    layout->addWidget(body);
-    layout->addStretch();
-    return page;
-}
-
 void addPropertyRow(QTableWidget* table, const QString& name, const QString& value)
 {
     const auto row = table->rowCount();
@@ -300,16 +281,19 @@ MainWindow::MainWindow()
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    if (solverProcess_ != nullptr) {
-        const auto answer = QMessageBox::question(this, tr("Analysis Running"),
-            tr("A solver run is still active. Cancel it and close NEC Workbench?"),
+    if (solverProcess_ != nullptr || optimizationWorkspace_->isRunning()) {
+        const auto answer = QMessageBox::question(this, tr("Solver Running"),
+            tr("A solver task is still active. Cancel it and close NEC Workbench?"),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (answer != QMessageBox::Yes) {
             event->ignore();
             return;
         }
-        solverProcess_->kill();
-        solverProcess_->waitForFinished(2000);
+        if (solverProcess_ != nullptr) {
+            solverProcess_->kill();
+            solverProcess_->waitForFinished(2000);
+        }
+        optimizationWorkspace_->cancelAndWait();
     }
     if (!maybeSaveChanges()) {
         event->ignore();
@@ -713,6 +697,9 @@ void MainWindow::createWorkspace()
             solverBackendId_ = std::move(backendId);
             solverExecutablePath_ = std::move(executablePath);
             solverTimeoutSeconds_ = timeoutSeconds;
+            optimizationWorkspace_->setContext(editor_->toPlainText(), currentFile_,
+                solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_,
+                modelChecked_ && modelErrorCount_ == 0);
             dashboardPage_->setModel(currentModel_, currentSetup_, solverBackendId_, modelChecked_,
                 modelErrorCount_, modelWarningCount_);
             runAction_->setStatusTip(solverExecutablePath_.isEmpty()
@@ -839,15 +826,10 @@ void MainWindow::createWorkspace()
     resultsLayout->addWidget(resultsWorkspace_, 1);
     visualizeModuleIndex_ = moduleStack_->addWidget(resultsPage);
 
-    auto* optimizeWorkspace = new QTabWidget(moduleStack_);
-    optimizeWorkspace->setDocumentMode(true);
-    optimizeWorkspace->addTab(createPlaceholder(tr("Optimization Variables"),
-        tr("Geometry and electrical variables will be defined here."), optimizeWorkspace), tr("Variables"));
-    optimizeWorkspace->addTab(createPlaceholder(tr("Objectives and Constraints"),
-        tr("Define engineering goals, limits, and frequency ranges."), optimizeWorkspace), tr("Objectives"));
-    optimizeWorkspace->addTab(createPlaceholder(tr("Optimization Runs"),
-        tr("Parameter sweeps, optimizers, history, and comparisons will appear here."), optimizeWorkspace), tr("Runs"));
-    optimizeModuleIndex_ = moduleStack_->addWidget(optimizeWorkspace);
+    optimizationWorkspace_ = new OptimizationWorkspace(moduleStack_);
+    optimizationWorkspace_->setRunsChangedCallback([this] { loadRunHistory(); });
+    optimizationWorkspace_->setRunningChangedCallback([this] { updateAnalysisReadiness(); });
+    optimizeModuleIndex_ = moduleStack_->addWidget(optimizationWorkspace_);
     showModule(homeModuleIndex_);
 }
 
@@ -1288,10 +1270,22 @@ auto MainWindow::maybeSaveChanges() -> bool
 
 void MainWindow::checkModel()
 {
-    const auto document = nec::NecParser{}.parse(editor_->toPlainText().toStdString());
-    const auto result = nec::NecModelChecker{}.check(document);
+    const auto source = editor_->toPlainText().toStdString();
+    const auto document = nec::NecParser{}.parse(source);
+    const auto resolution = nec::NecSymbolResolver{}.resolve(source);
+    nec::ModelCheckResult result;
+    if (resolution.ok()) {
+        const auto resolvedDocument = nec::NecParser{}.parse(resolution.resolvedSource);
+        result = nec::NecModelChecker{}.check(resolvedDocument);
+        currentSetup_ = nec::NecSetupConverter{}.convert(resolvedDocument);
+    } else {
+        for (const auto& diagnostic : resolution.diagnostics) {
+            result.diagnostics.push_back({nec::DiagnosticSeverity::Error,
+                diagnostic.lineNumber, diagnostic.message});
+        }
+        currentSetup_ = {};
+    }
     currentModel_ = result.model;
-    currentSetup_ = nec::NecSetupConverter{}.convert(document);
     if (pendingTransmissionLineEndpoint_
         && !model::wireSegmentPosition(currentModel_, pendingTransmissionLineEndpoint_->first,
             pendingTransmissionLineEndpoint_->second)) {
@@ -1337,6 +1331,9 @@ void MainWindow::checkModel()
     dashboardPage_->setModel(currentModel_, currentSetup_, solverBackendId_, true,
         modelErrorCount_, modelWarningCount_);
     updateProjectTree(currentModel_, document);
+    optimizationWorkspace_->setContext(editor_->toPlainText(), currentFile_,
+        solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_,
+        modelErrorCount_ == 0);
     checkStatus_->setText(tr("Checked: %1 errors, %2 warnings, %3 wires, %4 cards")
         .arg(static_cast<qulonglong>(result.errorCount()))
         .arg(static_cast<qulonglong>(result.warningCount()))
@@ -1358,6 +1355,7 @@ void MainWindow::clearCheckResults()
     editor_->setDiagnostics(std::span<const nec::ModelDiagnostic>{});
     checkStatus_->setText(tr("Model changed — check required"));
     modelChecked_ = false;
+    optimizationWorkspace_->setModelValid(false);
     dashboardPage_->setModel(currentModel_, currentSetup_, solverBackendId_, false,
         modelErrorCount_, modelWarningCount_);
     if (resultsAvailable_) dashboardPage_->markResultsStale();
@@ -2066,6 +2064,9 @@ void MainWindow::updateAnalysisReadiness()
     } else if (!executable.exists() || !executable.isFile() || !executable.isExecutable()) {
         blockers.append(tr("Solver executable path is not runnable."));
     }
+    if (optimizationWorkspace_->isRunning()) {
+        blockers.append(tr("An optimization sweep is running."));
+    }
     analysisRequestEditor_->setReadiness(blockers);
     runAction_->setEnabled(blockers.empty() && solverProcess_ == nullptr);
     optimizeModuleAction_->setEnabled(modelChecked_ && modelErrorCount_ == 0);
@@ -2093,14 +2094,35 @@ void MainWindow::startAnalysis()
     }
 
     const auto inputPath = QDir(currentRunDirectory_).filePath(QStringLiteral("model.nec"));
+    const auto sourcePath = QDir(currentRunDirectory_).filePath(QStringLiteral("model.source.nec"));
     currentRunOutputPath_ = QDir(currentRunDirectory_).filePath(QStringLiteral("model.out"));
+    const auto source = editor_->toPlainText().toStdString();
+    const auto resolution = nec::NecSymbolResolver{}.resolve(source);
+    if (!resolution.ok()) {
+        QMessageBox::critical(this, tr("Run Failed"),
+            tr("The parameterized source could not be resolved."));
+        currentRunRecord_.reset();
+        return;
+    }
+    QFile sourceFile(sourcePath);
+    if (!sourceFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QMessageBox::critical(this, tr("Run Failed"), sourceFile.errorString());
+        currentRunRecord_.reset();
+        return;
+    }
+    sourceFile.write(QByteArray::fromStdString(source));
+    sourceFile.close();
+
     QFile inputFile(inputPath);
     if (!inputFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         QMessageBox::critical(this, tr("Run Failed"), inputFile.errorString());
+        currentRunRecord_.reset();
         return;
     }
+    const auto generatedDocument = nec::NecParser{}.parse(resolution.generatedDeck);
+    const auto generatedSetup = nec::NecSetupConverter{}.convert(generatedDocument);
     const auto solverInput = analysis::prepareSolverInput(
-        editor_->toPlainText().toStdString(), currentSetup_,
+        resolution.generatedDeck, generatedSetup,
         analysisRequestEditor_->radiationSweepMode());
     inputFile.write(QByteArray::fromStdString(solverInput));
     inputFile.close();
@@ -2132,6 +2154,7 @@ void MainWindow::startAnalysis()
     currentRunCanceled_ = false;
     currentRunTimedOut_ = false;
     solverProcess_ = new QProcess(this);
+    optimizationWorkspace_->setExternalRunActive(true);
     solverProcess_->setWorkingDirectory(currentRunDirectory_);
     solverProcess_->setProgram(program);
     solverProcess_->setArguments(arguments);
@@ -2293,6 +2316,7 @@ void MainWindow::finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus)
     cancelRunButton_->setEnabled(false);
     solverProcess_->deleteLater();
     solverProcess_ = nullptr;
+    optimizationWorkspace_->setExternalRunActive(false);
     updateRunSelectionActions();
     updateAnalysisReadiness();
 }
@@ -2322,6 +2346,7 @@ void MainWindow::failAnalysis(const QString& message)
     cancelRunButton_->setEnabled(false);
     solverProcess_->deleteLater();
     solverProcess_ = nullptr;
+    optimizationWorkspace_->setExternalRunActive(false);
     updateRunSelectionActions();
     updateAnalysisReadiness();
 }
@@ -2828,6 +2853,7 @@ void MainWindow::updateProjectTree(const model::AntennaModel& antennaModel, cons
 
     auto* geometry = new QTreeWidgetItem(root, {tr("Geometry")});
     geometry->setData(0, ItemKindRole, QStringLiteral("geometry"));
+    auto* parameters = new QTreeWidgetItem(root, {tr("Parameters")});
     auto* environment = new QTreeWidgetItem(root, {tr("Environment")});
     auto* frequencySources = new QTreeWidgetItem(root, {tr("Frequency && Sources")});
     auto* attachments = new QTreeWidgetItem(root, {tr("Loads && Networks")});
@@ -2835,12 +2861,13 @@ void MainWindow::updateProjectTree(const model::AntennaModel& antennaModel, cons
     auto* comments = new QTreeWidgetItem(root, {tr("Comments")});
     auto* other = new QTreeWidgetItem(root, {tr("Other Cards")});
     auto* allCards = new QTreeWidgetItem(root, {tr("All Cards")});
-    for (auto* category : {environment, frequencySources, attachments, requests, comments, other, allCards})
+    for (auto* category : {parameters, environment, frequencySources, attachments, requests, comments, other, allCards})
         category->setData(0, ItemKindRole, QStringLiteral("category"));
 
     const auto categoryFor = [&](const nec::NecCard& card) -> QTreeWidgetItem* {
         const auto mnemonic = QString::fromStdString(card.mnemonic).toUpper();
         if (card.kind == nec::NecCardKind::Comment) return comments;
+        if (card.kind == nec::NecCardKind::Symbol) return parameters;
         if (card.kind == nec::NecCardKind::GeometryWire
             || QStringList{QStringLiteral("GA"), QStringLiteral("GH"), QStringLiteral("GM"),
                    QStringLiteral("GR"), QStringLiteral("GS"), QStringLiteral("GX"),
@@ -2923,6 +2950,7 @@ void MainWindow::updateProjectTree(const model::AntennaModel& antennaModel, cons
         item->setText(0, QStringLiteral("%1 (%2)").arg(title).arg(item->childCount()));
     };
     labelCategory(geometry, tr("Geometry"));
+    labelCategory(parameters, tr("Parameters"));
     labelCategory(environment, tr("Environment"));
     labelCategory(frequencySources, tr("Frequency && Sources"));
     labelCategory(attachments, tr("Loads && Networks"));
@@ -2932,6 +2960,7 @@ void MainWindow::updateProjectTree(const model::AntennaModel& antennaModel, cons
     allCards->setText(0, tr("All Cards (%1)").arg(cardCount));
     projectTree_->expandItem(root);
     projectTree_->expandItem(geometry);
+    projectTree_->expandItem(parameters);
     projectTree_->expandItem(environment);
     projectTree_->expandItem(frequencySources);
     projectTree_->expandItem(attachments);

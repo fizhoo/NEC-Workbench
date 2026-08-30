@@ -330,19 +330,41 @@ Solver Output dock.
 
 Path: **Optimize** on the top workspace bar
 
-Optimize currently contains placeholders for Variables, Objectives, and Runs.
-It does not yet modify models or launch optimization jobs.
+Optimize provides a basic bounded sweep for one `SY` variable. Choose the
+variable, minimum, maximum, number of candidate points, and reference impedance,
+then select **Run SWR Sweep**. Workbench runs each candidate through the selected
+NEC backend and identifies the value with the lowest worst-case SWR across all
+frequencies in the model.
 
-The planned implementation order is:
-
-1. Named model parameters and `SY`-style expressions
-2. Conversion of parameterized fields into numeric solver decks
-3. One-parameter sweeps with result plots
-4. Objectives, constraints, and bounded variables
-5. Automated optimization and candidate comparison
+Radiation requests are omitted from these initial impedance-only candidates to
+keep the sweep fast. Each candidate remains available in Results → Run History
+and contains `model.source.nec`, the generated numeric `model.nec`, solver output,
+and `optimization.json` metadata. The best value is reported but is not yet
+automatically written back into the model.
 
 Native NEC-2 solvers receive numeric cards. NEC Workbench will resolve symbols
 before invoking the backend so parameterization remains solver-independent.
+
+### Parameterized Source
+
+Use `SY` cards in the raw NEC source to define reusable values and expressions:
+
+```text
+SY frequency=7.1, halfLength=10.03
+SY segments=41, feedSegment=(segments+1)/2
+GW 1 segments -halfLength 0 10 halfLength 0 10 0.001
+FR 0 1 0 0 frequency 0
+```
+
+Names are case-insensitive and must be declared before use. Expressions support
+parentheses and `+`, `-`, `*`, `/`, and `^`. **Check Model** reports expression
+errors on the corresponding source line. When a run starts, Workbench saves the
+authored deck as `model.source.nec` and sends a generated numeric `model.nec` to
+the solver. See `examples/40m-symbolic-dipole.nec` for a complete model.
+
+For this initial checkpoint, edit symbolic fields in the raw source editor.
+Structured or geometry edits can replace an expression with its resolved numeric
+value.
 
 ## Global Docks and Controls
 

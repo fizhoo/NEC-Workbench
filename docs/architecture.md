@@ -222,13 +222,39 @@ before those card families can participate safely.
 every source line, including blank and unknown lines. Semantic conversion reads
 supported cards without discarding source it cannot yet interpret.
 
+## Parameterization Core
+
+The Qt-free NEC core recognizes `SY` cards and provides a solver-independent
+symbol resolver. Symbol names are case-insensitive, may reference definitions
+declared earlier in the deck, and support parentheses plus `+`, `-`, `*`, `/`,
+and `^`. Multiple `name=expression` assignments may appear on one `SY` line.
+Resolution returns the original definitions, line-specific diagnostics, and a
+generated numeric deck with `SY` declarations removed. Comments, unsupported
+cards, line-ending style, and retained blank lines are preserved.
+
+Model checking resolves expressions into a line-preserving intermediate source,
+so diagnostics and graphical objects still point to the authored lines. Analysis
+runs archive the authored source as `model.source.nec` and pass a generated,
+numeric `model.nec` to the selected backend. Native NEC solvers therefore do not
+need to understand Workbench symbols.
+
+Raw source is currently authoritative for symbolic fields. Structured or
+graphical edits may replace an expression with its current numeric value. The
+Optimize workspace can inspect definitions and override one value across a
+bounded linear sweep without modifying the authored source.
+
+Optimization candidates use the same external solver adapter and durable run
+store as ordinary analysis. The initial objective minimizes the worst SWR across
+all returned feedpoint frequencies. Candidate input removes `RP` requests and
+ensures an `XQ` request, avoiding unnecessary far-field calculations. An
+`optimization.json` artifact records the variable, value, objective, and
+reference impedance used for each generated numeric deck.
+
 ## Near-Term Milestones
 
-1. Add named parameters and `SY`-style expression resolution.
-2. Add a one-parameter sweep workflow and candidate result tracking.
-3. Add optimization objectives, constraints, and bounded variables.
-4. Add normalized attachments for `LD`, `TL`, `NT`, and additional EX types.
-5. Add optional external-solver adapters, including OpenNEC.
+1. Add candidate plots and apply-best workflow.
+2. Add optimization objectives, constraints, and bounded variables.
+3. Add normalized attachments and optional solver adapters, including OpenNEC.
 
 See [Development Roadmap](roadmap.md) for the broader sequence and parking lot.
 
