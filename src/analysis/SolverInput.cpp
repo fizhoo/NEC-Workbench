@@ -134,4 +134,55 @@ auto prepareImpedanceInput(std::string_view source) -> std::string
     return output.str();
 }
 
+auto prepareExplicitFrequencyInput(std::string_view source,
+    std::span<const double> frequenciesMHz) -> std::string
+{
+    std::vector<double> frequencies;
+    frequencies.reserve(frequenciesMHz.size());
+    for (const auto frequencyMHz : frequenciesMHz) {
+        if (std::isfinite(frequencyMHz) && frequencyMHz > 0.0)
+            frequencies.push_back(frequencyMHz);
+    }
+    std::ranges::sort(frequencies);
+    const auto duplicates = std::ranges::unique(frequencies);
+    frequencies.erase(duplicates.begin(), duplicates.end());
+    if (frequencies.empty()) return prepareImpedanceInput(source);
+
+    const auto document = nec::NecParser{}.parse(source);
+    const nec::NecWriter writer;
+    std::vector<std::string> requests;
+    requests.reserve(frequencies.size() * 2);
+    for (const auto frequencyMHz : frequencies) {
+        model::FrequencyDefinition frequency;
+        frequency.startMHz = frequencyMHz;
+        requests.push_back(writer.writeFrequencyCard(frequency));
+        requests.emplace_back("XQ 0");
+    }
+
+    std::vector<std::string> lines;
+    lines.reserve(document.cards().size() + requests.size());
+    auto insertedRequests = false;
+    for (const auto& card : document.cards()) {
+        if (card.kind == nec::NecCardKind::Frequency
+            || card.kind == nec::NecCardKind::RadiationPattern
+            || card.kind == nec::NecCardKind::Execute) {
+            continue;
+        }
+        if (!insertedRequests && card.kind == nec::NecCardKind::End) {
+            lines.insert(lines.end(), requests.begin(), requests.end());
+            insertedRequests = true;
+        }
+        lines.push_back(card.sourceText);
+    }
+    if (!insertedRequests) lines.insert(lines.end(), requests.begin(), requests.end());
+
+    std::ostringstream output;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        if (index != 0) output << document.lineEnding();
+        output << lines[index];
+    }
+    if (document.hasFinalLineEnding() && !lines.empty()) output << document.lineEnding();
+    return output.str();
+}
+
 }

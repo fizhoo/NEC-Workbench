@@ -178,7 +178,7 @@ void Geometry3DView::contextMenuEvent(QContextMenuEvent* event)
     if (const auto sourceLine = loadAt(event->pos())) {
         selectLoad(*sourceLine);
         emit loadSelected(*sourceLine);
-        auto* editAction = menu.addAction(tr("Edit in Loads && Lines"));
+        auto* editAction = menu.addAction(tr("Edit in Model Setup"));
         menu.addSeparator();
         auto* deleteAction = menu.addAction(tr("Delete Load"));
         const auto* selectedAction = menu.exec(event->globalPos());
@@ -187,7 +187,7 @@ void Geometry3DView::contextMenuEvent(QContextMenuEvent* event)
     } else if (const auto sourceLine = transmissionLineAt(event->pos())) {
         selectTransmissionLine(*sourceLine);
         emit transmissionLineSelected(*sourceLine);
-        auto* editAction = menu.addAction(tr("Edit in Loads && Lines"));
+        auto* editAction = menu.addAction(tr("Edit in Model Setup"));
         menu.addSeparator();
         auto* deleteAction = menu.addAction(tr("Delete Transmission Line"));
         const auto* selectedAction = menu.exec(event->globalPos());

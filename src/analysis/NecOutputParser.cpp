@@ -27,6 +27,19 @@ auto parseFrequency(const std::string& line, double& frequencyMHz) -> bool
     return static_cast<bool>(values >> frequencyMHz);
 }
 
+auto parseLabeledValue(const std::string& line, std::string_view marker, double& value) -> bool
+{
+    const auto position = line.find(marker);
+    if (position == std::string::npos) return false;
+    auto valueText = line.substr(position + marker.size());
+    std::ranges::replace(valueText, 'D', 'E');
+    std::ranges::replace(valueText, 'd', 'e');
+    const auto numberStart = valueText.find_first_of("+-.0123456789");
+    if (numberStart == std::string::npos) return false;
+    std::istringstream values(valueText.substr(numberStart));
+    return static_cast<bool>(values >> value);
+}
+
 auto parseFeedpoint(const std::string& source, double frequencyMHz, FeedpointResult& result) -> bool
 {
     auto line = source;
@@ -118,6 +131,12 @@ auto NecOutputParser::parse(std::string_view output) const -> AnalysisResult
     bool foundRadiationRow{};
     while (std::getline(lines, line)) {
         parseFrequency(line, frequencyMHz);
+        double averagePowerGain{};
+        if (parseLabeledValue(line, "AVERAGE POWER GAIN", averagePowerGain))
+            result.averagePowerGain = averagePowerGain;
+        double solidAnglePi{};
+        if (parseLabeledValue(line, "SOLID ANGLE USED IN AVERAGING", solidAnglePi))
+            result.averagingSolidAnglePi = solidAnglePi;
         if (line.find("ANTENNA INPUT PARAMETERS") != std::string::npos) {
             readingInputParameters = true;
             foundInputRow = false;

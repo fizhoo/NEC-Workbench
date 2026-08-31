@@ -97,6 +97,25 @@ DashboardPage::DashboardPage(QTextDocument* document, QWidget* parent) : QWidget
         tr("TLs"), tr("Solver"), tr("Ground"), tr("Frequency")}, modelPanel);
     modelLayout->addWidget(modelState_);
     modelLayout->addWidget(modelSummary_, 1);
+    auto* averageGainHeading = new QLabel(tr("Model Quality"), modelPanel);
+    auto averageGainFont = averageGainHeading->font();
+    averageGainFont.setBold(true);
+    averageGainHeading->setFont(averageGainFont);
+    averageGainState_ = new QLabel(tr("AGT not run"), modelPanel);
+    averageGainState_->setWordWrap(true);
+    averageGainButton_ = new QToolButton(modelPanel);
+    averageGainButton_->setText(tr("Run Average Gain Test…"));
+    averageGainButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    convergenceState_ = new QLabel(tr("Segmentation convergence not run"), modelPanel);
+    convergenceState_->setWordWrap(true);
+    convergenceButton_ = new QToolButton(modelPanel);
+    convergenceButton_->setText(tr("Segmentation Convergence…"));
+    convergenceButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    modelLayout->addWidget(averageGainHeading);
+    modelLayout->addWidget(averageGainState_);
+    modelLayout->addWidget(averageGainButton_, 0, Qt::AlignLeft);
+    modelLayout->addWidget(convergenceState_);
+    modelLayout->addWidget(convergenceButton_, 0, Qt::AlignLeft);
 
     auto* resultPanel = new QWidget(this);
     auto* resultLayout = new QVBoxLayout(resultPanel);
@@ -117,6 +136,18 @@ DashboardPage::DashboardPage(QTextDocument* document, QWidget* parent) : QWidget
     layout->setRowStretch(2, 2);
     layout->setColumnStretch(0, 1);
     layout->setColumnStretch(1, 1);
+}
+
+void DashboardPage::setAverageGainAction(QAction* action)
+{
+    averageGainButton_->setDefaultAction(action);
+    averageGainButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+}
+
+void DashboardPage::setConvergenceAction(QAction* action)
+{
+    convergenceButton_->setDefaultAction(action);
+    convergenceButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 }
 
 void DashboardPage::setQuickActions(QAction* geometry, QAction* source, QAction* check,
@@ -204,6 +235,63 @@ void DashboardPage::markResultsStale()
         resultsStale_ = true;
         resultState_->setText(tr("STALE — model changed after %1").arg(resultContext_));
     }
+}
+
+void DashboardPage::setAverageGainRunning(double frequencyMHz)
+{
+    averageGainState_->setText(tr("AGT running at %1 MHz…").arg(frequencyMHz, 0, 'g', 12));
+}
+
+void DashboardPage::setAverageGainResult(
+    const analysis::AverageGainAssessment& assessment, double frequencyMHz)
+{
+    hasAverageGainResult_ = true;
+    QString classification;
+    switch (assessment.classification) {
+    case analysis::AverageGainClassification::Pass: classification = tr("Pass"); break;
+    case analysis::AverageGainClassification::Usable: classification = tr("Usable"); break;
+    case analysis::AverageGainClassification::Caution: classification = tr("Caution"); break;
+    case analysis::AverageGainClassification::Questionable: classification = tr("Questionable"); break;
+    }
+    averageGainState_->setText(tr("AGT %1 · %2 at %3 MHz")
+        .arg(assessment.normalizedGain, 0, 'f', 4)
+        .arg(classification)
+        .arg(frequencyMHz, 0, 'g', 12));
+}
+
+void DashboardPage::setAverageGainFailure(const QString& message)
+{
+    hasAverageGainResult_ = false;
+    averageGainState_->setText(tr("AGT failed · %1").arg(message));
+}
+
+void DashboardPage::markAverageGainStale()
+{
+    if (hasAverageGainResult_) averageGainState_->setText(tr("AGT stale · model changed after the test"));
+}
+
+void DashboardPage::clearAverageGain()
+{
+    hasAverageGainResult_ = false;
+    averageGainState_->setText(tr("AGT not run"));
+}
+
+void DashboardPage::setConvergenceState(const QString& summary)
+{
+    hasConvergenceResult_ = true;
+    convergenceState_->setText(summary);
+}
+
+void DashboardPage::markConvergenceStale()
+{
+    if (hasConvergenceResult_)
+        convergenceState_->setText(tr("Segmentation convergence stale · model changed after the study"));
+}
+
+void DashboardPage::clearConvergence()
+{
+    hasConvergenceResult_ = false;
+    convergenceState_->setText(tr("Segmentation convergence not run"));
 }
 
 }

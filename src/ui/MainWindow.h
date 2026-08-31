@@ -4,9 +4,12 @@
 #include "model/LengthUnit.h"
 #include "model/ModelSetup.h"
 #include "nec/NecDocument.h"
+#include "nec/DeckGeometryUnits.h"
 #include "ui/geometry/GeometrySettings.h"
 #include "ui/analysis/AnalysisRunStore.h"
 #include "analysis/AnalysisResult.h"
+#include "analysis/AverageGainTest.h"
+#include "analysis/SolverCommand.h"
 
 #include <QMainWindow>
 #include <QElapsedTimer>
@@ -23,6 +26,7 @@ class QDockWidget;
 class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
+class QLineEdit;
 class QPlainTextEdit;
 class QPushButton;
 class QTableWidget;
@@ -41,6 +45,9 @@ class AnalysisRequestEditor;
 class Geometry3DView;
 class GeometryView;
 class ImpedanceResultsView;
+class ResultsSummaryView;
+class AverageGainResultsView;
+class ConvergenceWorkspace;
 class SweepPlotsView;
 class CurrentDistributionView;
 class RadiationPatternView;
@@ -61,6 +68,11 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 
 private:
+    enum class SolverRunPurpose {
+        Analysis,
+        AverageGainTest
+    };
+
     void createActions();
     void createWorkspace();
     void createDocks();
@@ -68,6 +80,9 @@ private:
     void showModule(int index);
     void showModelTab(int index);
     void setDisplayLengthUnit(model::LengthUnit unit);
+    void changeDeckLengthUnit(model::LengthUnit unit);
+    void updateDeckUnitControls(const nec::DeckGeometryUnitInfo& info);
+    [[nodiscard]] auto deckScaleForSourceLine(std::size_t sourceLine) const -> double;
     void setSnapSpacing(double meters);
     void applyGeometrySettings(const GeometrySettings& settings);
     void showGeometrySettings();
@@ -133,6 +148,10 @@ private:
     void changeTransmissionLine(const model::TransmissionLineDefinition& line);
     void updateAnalysisReadiness();
     void startAnalysis();
+    void startAverageGainTest();
+    void showConvergenceStudy();
+    void synchronizeRunnerState();
+    void startSolverProcess(const analysis::SolverCommand& command, const QString& activity);
     void cancelAnalysis();
     void appendSolverOutput(const QString& text);
     void finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus);
@@ -141,13 +160,25 @@ private:
     void loadRunHistory();
     void addRunRecord(const AnalysisRunRecord& record, bool prepend);
     void loadSelectedRun();
+    void inspectSelectedRunInput();
+    void openSelectedRunSnapshot();
     auto loadRunModel(const QString& directory, const QString& modelName,
         const QString& runContext) -> bool;
     void deleteSelectedRun();
     void updateRunSelectionActions();
-    void displayRunArtifacts(const QString& directory, const QString& context);
+    void displayRunArtifacts(const QString& directory, const QString& context, bool historical = true);
+    void displayAverageGainTestArtifacts(const QString& directory, const QString& context);
+    void returnToCurrentWork();
+    void captureHistoricalReturnContext();
+    void leaveHistoricalSessionViews();
+    void showHistoricalResultsContext(const QString& modelName, const QString& started,
+        const QString& backend);
+    void showActiveResultsContext(const QString& context);
+    void updateActiveModelResultsLabel();
     void setDisplayedResults(const analysis::AnalysisResult& result);
     void applyResultFrequency(double frequencyMHz);
+    void jumpRawOutputToSelectedFrequency();
+    void findInRawOutput();
     void clearDisplayedResults();
     void pushGeometrySourceEdit(const QString& description, QString updatedSource);
     void applyGeometrySource(const QString& source, int targetTabIndex);
@@ -173,6 +204,8 @@ private:
     QAction* saveAsAction_{};
     QAction* checkAction_{};
     QAction* runAction_{};
+    QAction* averageGainAction_{};
+    QAction* convergenceAction_{};
     QAction* fitGeometryAction_{};
     QAction* snapGridAction_{};
     QAction* snapEndpointsAction_{};
@@ -188,6 +221,8 @@ private:
     QAction* optimizeModuleAction_{};
     QUndoStack* undoStack_{};
     QComboBox* lengthUnitControl_{};
+    QComboBox* deckUnitControl_{};
+    QLabel* deckScaleLabel_{};
     QDoubleSpinBox* snapSpacingControl_{};
     QStackedWidget* moduleStack_{};
     QStackedWidget* dashboardStack_{};
@@ -195,6 +230,7 @@ private:
     QTabWidget* sourceWorkspace_{};
     QTabWidget* resultsWorkspace_{};
     QComboBox* resultsFrequencyControl_{};
+    QLineEdit* rawOutputFindControl_{};
     DashboardPage* dashboardPage_{};
     WelcomePage* welcomePage_{};
     WireCardEditor* wireCardEditor_{};
@@ -208,19 +244,25 @@ private:
     LoadNetworkEditor* loadNetworkEditor_{};
     AnalysisSetupEditor* analysisSetupEditor_{};
     AnalysisRequestEditor* analysisRequestEditor_{};
+    ResultsSummaryView* resultsSummaryView_{};
+    AverageGainResultsView* averageGainResultsView_{};
+    ConvergenceWorkspace* convergenceWorkspace_{};
     ImpedanceResultsView* analysisResultsView_{};
-    ImpedanceResultsView* visualizeResultsView_{};
     SweepPlotsView* visualizePlotsView_{};
     CurrentDistributionView* currentResultsView_{};
     RadiationPatternView* radiationPatternView_{};
     Radiation3DView* radiation3DView_{};
     OptimizationWorkspace* optimizationWorkspace_{};
     QTabWidget* analysisWorkspace_{};
+    QTabWidget* modelSetupWorkspace_{};
+    QTabWidget* validationWorkspace_{};
     QTableWidget* analysisRuns_{};
     QPlainTextEdit* analysisOutput_{};
     QPushButton* cancelRunButton_{};
     QPushButton* openRunFolderButton_{};
     QPushButton* openRunResultsButton_{};
+    QPushButton* inspectRunInputButton_{};
+    QPushButton* openRunSnapshotButton_{};
     QPushButton* deleteRunButton_{};
     QTreeWidget* projectTree_{};
     QTableWidget* properties_{};
@@ -230,15 +272,22 @@ private:
     QDockWidget* propertiesDock_{};
     QDockWidget* diagnosticsDock_{};
     QDockWidget* solverOutputDock_{};
-    QDockWidget* messagesDock_{};
+    QLabel* validationSummary_{};
+    QLabel* validationScope_{};
     QLabel* checkStatus_{};
     QLabel* modelFileStatus_{};
+    QLabel* resultsContextTitleLabel_{};
+    QLabel* resultsContextDetailLabel_{};
+    QLabel* activeModelResultsLabel_{};
+    QPushButton* returnToActiveResultsButton_{};
     QLabel* resultsStatusLabel_{};
     QLabel* resultsAvailabilityLabel_{};
     analysis::AnalysisResult displayedResults_;
     model::AntennaModel currentModel_;
     model::ModelSetup currentSetup_;
     GeometrySettings geometrySettings_;
+    double deckScaleToMeters_{1.0};
+    bool updatingDeckUnitControl_{};
     QString currentFile_;
     QString solverBackendId_{QStringLiteral("nec2")};
     QString solverExecutablePath_;
@@ -249,8 +298,14 @@ private:
     QString currentRunDirectory_;
     QString currentRunOutputPath_;
     QString displayedRunDirectory_;
+    QString activeModelResultsDirectory_;
+    QString activeModelResultsContext_;
     AnalysisRunStore runStore_;
     std::optional<AnalysisRunRecord> currentRunRecord_;
+    SolverRunPurpose currentRunPurpose_{SolverRunPurpose::Analysis};
+    analysis::AverageGainEnvironment currentAverageGainEnvironment_{
+        analysis::AverageGainEnvironment::FreeSpace};
+    double currentAverageGainFrequencyMHz_{};
     int currentRunRow_{-1};
     bool currentRunCanceled_{};
     bool currentRunTimedOut_{};
@@ -264,16 +319,25 @@ private:
     int sourceModuleIndex_{};
     int analysisModuleIndex_{};
     int analysisRunsTabIndex_{};
-    int analysisResultsTabIndex_{};
+    int resultsSummaryTabIndex_{};
+    int averageGainResultsTabIndex_{};
+    int averageGainValidationTabIndex_{};
+    int convergenceValidationTabIndex_{};
     int analysisOutputTabIndex_{};
     int visualizeModuleIndex_{};
     int optimizeModuleIndex_{};
+    int lastNonResultsModuleIndex_{-1};
+    int historicalReturnModuleIndex_{-1};
+    int historicalReturnResultsTabIndex_{-1};
     bool updatingSourceFromGeometry_{};
     std::size_t modelErrorCount_{};
     std::size_t modelWarningCount_{};
     bool modelChecked_{};
     bool hasNecModel_{};
     bool resultsAvailable_{};
+    bool displayingHistoricalResults_{};
+    bool historicalReviewActive_{};
+    bool historicalSessionViewActive_{};
     std::optional<std::pair<int, int>> pendingTransmissionLineEndpoint_;
 };
 

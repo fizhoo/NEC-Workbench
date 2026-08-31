@@ -1,14 +1,16 @@
-CM Parameterized 40-meter center-fed dipole
-CM Change frequency, height, or segment count in the SY cards
-CE
-SY frequency=14.1, velocity=299.792458, length=20
-SY halfLength=0.95*velocity/(4*frequency), height=10
-SY radius=0.001, segments=41, feedSegment=(segments+1)/2
-GW 1 41 -length/2 0 10 length/2 0 10 0.000813863316895752
-GE 0
+CE 40m Center-Fed Dipole at 35 ft
+SY freq = 7.15
+SY h_ft = 35.0
+SY len_ft = 66.0
+SY rad_in = 0.04025
+SY height = h_ft*0.3048
+SY hlen = len_ft*0.3048/2
+SY rad = rad_in*0.0254
+GW 1 11 0 -hlen 10.668 0 hlen 10.668 0.00102235
+GE 1
 GN 2 0 0 0 13 0.005
-EX 0 1 feedSegment 0 1 0
-FR 0 1 0 0 frequency 0
-RP 0 37 36 1000 0 0 5 10
+EX 0 1 6 0 1 0
+FR 0 16 0 0 7 0.02
+RP 0 37 37 1000 0 0 5 10 0 0
 XQ 0
 EN

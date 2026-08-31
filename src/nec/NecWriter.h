@@ -11,7 +11,9 @@ namespace necwb::nec {
 class NecWriter {
 public:
     [[nodiscard]] auto write(const NecDocument& document) const -> std::string;
-    [[nodiscard]] auto writeWireCard(const model::Wire& wire) const -> std::string;
+    [[nodiscard]] auto writeWireCard(const model::Wire& wire,
+        double scaleToMeters = 1.0) const -> std::string;
+    [[nodiscard]] auto writeGeometryScaleCard(double scaleToMeters) const -> std::string;
     [[nodiscard]] auto writeFrequencyCard(const model::FrequencyDefinition& frequency) const -> std::string;
     [[nodiscard]] auto writeExcitationCard(const model::Excitation& excitation) const -> std::string;
     [[nodiscard]] auto writeGroundCard(const model::GroundDefinition& ground) const -> std::string;

@@ -1,6 +1,9 @@
 #include "analysis/AnalysisResult.h"
 #include "ui/analysis/SweepPlotsView.h"
 #include "ui/analysis/AnalysisRunStore.h"
+#include "ui/analysis/ResultsSummaryView.h"
+#include "ui/analysis/AverageGainResultsView.h"
+#include "ui/analysis/ConvergenceWorkspace.h"
 #include "ui/analysis/FieldResultsViews.h"
 #include "ui/dashboard/DashboardPage.h"
 #include "ui/cards/StructuredCardEditor.h"
@@ -10,6 +13,7 @@
 #include "ui/geometry/GeometryView.h"
 #include "ui/geometry/Geometry3DView.h"
 #include "ui/setup/LoadNetworkEditor.h"
+#include "ui/setup/SetupEditor.h"
 #include "ui/welcome/WelcomePage.h"
 #include "nec/NecParser.h"
 #include "model/WireGauge.h"
@@ -27,8 +31,10 @@
 #include <QTextDocument>
 #include <QTableWidget>
 #include <QPushButton>
+#include <QSplitter>
 
 #include <cstdlib>
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -68,6 +74,49 @@ auto main(int argc, char* argv[]) -> int
     QPainter painter(&image);
     view.render(&painter);
     painter.end();
+    necwb::ui::ResultsSummaryView resultsSummary;
+    resultsSummary.resize(700, 420);
+    resultsSummary.setResults(result, QStringLiteral("test-run"));
+    resultsSummary.setSelectedFrequency(14.1);
+    resultsSummary.show();
+    application.processEvents();
+    QImage summaryImage(resultsSummary.size(), QImage::Format_ARGB32_Premultiplied);
+    summaryImage.fill(Qt::transparent);
+    QPainter summaryPainter(&summaryImage);
+    resultsSummary.render(&summaryPainter);
+    summaryPainter.end();
+    necwb::ui::AverageGainResultsView averageGainResults;
+    averageGainResults.resize(700, 420);
+    averageGainResults.setResult(necwb::analysis::assessAverageGain(0.98, 1.0), 14.1,
+        necwb::analysis::AverageGainEnvironment::FreeSpace, 4.0,
+        QStringLiteral("Model: test.nec · Run: AGT"));
+    averageGainResults.show();
+    application.processEvents();
+    QImage averageGainImage(averageGainResults.size(), QImage::Format_ARGB32_Premultiplied);
+    averageGainImage.fill(Qt::transparent);
+    QPainter averageGainPainter(&averageGainImage);
+    averageGainResults.render(&averageGainPainter);
+    averageGainPainter.end();
+    necwb::ui::ConvergenceWorkspace convergence;
+    convergence.resize(900, 620);
+    convergence.show();
+    application.processEvents();
+    auto* runConvergence = convergence.findChild<QPushButton*>(
+        QStringLiteral("runConvergenceStudyButton"));
+    auto* convergenceHistoricalBanner = convergence.findChild<QWidget*>(
+        QStringLiteral("convergenceHistoricalBanner"));
+    auto* convergenceReturn = convergence.findChild<QPushButton*>(
+        QStringLiteral("convergenceReturnToCurrentWorkButton"));
+    const auto convergenceHistoryControlsValid = runConvergence != nullptr
+        && runConvergence->text() == QStringLiteral("Run Convergence Study")
+        && convergenceHistoricalBanner != nullptr && !convergenceHistoricalBanner->isVisible()
+        && convergenceReturn != nullptr;
+    if (!convergenceHistoryControlsValid) return EXIT_FAILURE;
+    QImage convergenceImage(convergence.size(), QImage::Format_ARGB32_Premultiplied);
+    convergenceImage.fill(Qt::transparent);
+    QPainter convergencePainter(&convergenceImage);
+    convergence.render(&convergencePainter);
+    convergencePainter.end();
     necwb::ui::CurrentDistributionView currents;
     necwb::ui::RadiationPatternView radiation2D;
     necwb::ui::Radiation3DView radiation3D;
@@ -167,9 +216,15 @@ auto main(int argc, char* argv[]) -> int
     QAction checkAction(QStringLiteral("Check Model"), &dashboard);
     QAction runAction(QStringLiteral("Run Analysis"), &dashboard);
     QAction resultsAction(QStringLiteral("Results"), &dashboard);
+    QAction averageGainAction(QStringLiteral("Run Average Gain Test"), &dashboard);
+    QAction convergenceAction(QStringLiteral("Segmentation Convergence"), &dashboard);
     dashboard.setQuickActions(&geometryAction, &sourceAction, &checkAction, &runAction, &resultsAction);
+    dashboard.setAverageGainAction(&averageGainAction);
+    dashboard.setConvergenceAction(&convergenceAction);
     dashboard.setDocumentState(QStringLiteral("test.nec"), true);
     dashboard.setResults(result, QStringLiteral("Model: test.nec · Run: dashboard"), false);
+    dashboard.setAverageGainResult(necwb::analysis::assessAverageGain(1.02, 1.0), 14.1);
+    dashboard.setConvergenceState(QStringLiteral("Stable across final refinements"));
     dashboard.show(); application.processEvents();
     QImage dashboardImage(1000, 700, QImage::Format_ARGB32_Premultiplied);
     dashboardImage.fill(Qt::transparent); QPainter dashboardPainter(&dashboardImage);
@@ -305,6 +360,14 @@ auto main(int argc, char* argv[]) -> int
     auto* gaugeEditor = wireProperties.findChild<QComboBox*>(QStringLiteral("wireGaugeDialogEditor"));
     const auto gaugeDropdownValid = gaugeEditor != nullptr
         && gaugeEditor->currentData().toInt() == 12;
+    necwb::ui::SetupEditor setupEditor;
+    setupEditor.resize(900, 650);
+    setupEditor.show();
+    application.processEvents();
+    auto* setupColumns = setupEditor.findChild<QSplitter*>(
+        QStringLiteral("modelSetupCompactSplitter"));
+    const auto setupColumnsValid = setupColumns != nullptr
+        && setupColumns->orientation() == Qt::Horizontal && setupColumns->count() == 2;
     necwb::model::AntennaModel attachmentModel;
     attachmentModel.addWire({1, {-1.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, 11, 0.001, 1});
     attachmentModel.addWire({2, {-1.0, 1.0, 0.0}, {1.0, 1.0, 0.0}, 11, 0.001, 2});
@@ -368,19 +431,37 @@ auto main(int argc, char* argv[]) -> int
     if (!store.save(run)) {
         return EXIT_FAILURE;
     }
+    auto session = store.create(QStringLiteral("nec2"), QStringLiteral("/tmp/test-dipole.nec"),
+        QStringLiteral("optimization-session"));
+    session.status = QStringLiteral("Completed");
+    session.summary = QStringLiteral("Best candidate: length = 10");
+    session.candidateCount = 2;
+    if (!store.save(session)) return EXIT_FAILURE;
+    auto candidate = store.create(QStringLiteral("nec2"), QStringLiteral("/tmp/test-dipole.nec"),
+        QStringLiteral("optimization-candidate"), session.id);
+    candidate.status = QStringLiteral("Completed");
+    if (!store.save(candidate)) return EXIT_FAILURE;
     const auto loaded = store.load();
-    const auto storeValid = loaded.size() == 1
-        && loaded.front().status == QStringLiteral("Completed")
-        && loaded.front().sourceFile == QStringLiteral("/tmp/test-dipole.nec")
-        && loaded.front().backend == QStringLiteral("nec2")
-        && loaded.front().durationSeconds == 1.25
-        && loaded.front().outputBytes == 8192
-        && loaded.front().frequencyCount == 3
-        && loaded.front().hasImpedance && loaded.front().hasCurrents
-        && loaded.front().hasRadiation;
+    const auto loadedRun = std::ranges::find(loaded, run.id, &necwb::ui::AnalysisRunRecord::id);
+    const auto loadedSession = std::ranges::find(loaded, session.id, &necwb::ui::AnalysisRunRecord::id);
+    const auto loadedCandidate = std::ranges::find(loaded, candidate.id, &necwb::ui::AnalysisRunRecord::id);
+    const auto storeValid = loaded.size() == 3 && loadedRun != loaded.end()
+        && loadedRun->status == QStringLiteral("Completed")
+        && loadedRun->sourceFile == QStringLiteral("/tmp/test-dipole.nec")
+        && loadedRun->backend == QStringLiteral("nec2")
+        && loadedRun->durationSeconds == 1.25 && loadedRun->outputBytes == 8192
+        && loadedRun->frequencyCount == 3 && loadedRun->hasImpedance
+        && loadedRun->hasCurrents && loadedRun->hasRadiation
+        && loadedSession != loaded.end()
+        && loadedSession->runType == QStringLiteral("optimization-session")
+        && loadedSession->candidateCount == 2
+        && loadedCandidate != loaded.end() && loadedCandidate->parentId == session.id;
     const auto runDeletionSafe = !store.remove(directory.path())
+        && store.removeGroup(session.id, session.directory)
+        && !QFileInfo::exists(session.directory) && !QFileInfo::exists(candidate.directory)
         && store.remove(run.directory) && !QFileInfo::exists(run.directory);
-    const auto passed = !image.isNull() && !fieldImage.isNull() && !currentImage.isNull()
+    const auto passed = !image.isNull() && !summaryImage.isNull()
+        && !fieldImage.isNull() && !currentImage.isNull()
         && !dashboardImage.isNull() && dashboardStateVisible
         && !welcomeImage.isNull() && welcomeStateValid && !examplesOpened && storeValid
         && runDeletionSafe
@@ -391,6 +472,8 @@ auto main(int argc, char* argv[]) -> int
         && editedCard == QStringLiteral("EX 0 1 7 0 1 0 2.5")
         && addedCard == QStringLiteral("LD 0 1 1 11 0 0 0") && deletedLine == 3
         && !wireImage.isNull() && wireEditCommitted && gaugeDropdownValid
+        && setupColumnsValid
+        && convergenceHistoryControlsValid
         && segmentationApplyAccepted
         && radiationControlsSynchronized && radiationSweepSelectable && radiationMetricsVisible
         && radiationExportReady && maxGainCutSelected && missingRadiationReported

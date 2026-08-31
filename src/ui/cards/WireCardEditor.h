@@ -21,6 +21,7 @@ public:
     void setModel(const model::AntennaModel& model);
     void selectWire(int tag);
     void setLengthUnit(model::LengthUnit unit);
+    void setDeckScale(double scaleToMeters, QString unitLabel);
 
 signals:
     void wireSelected(int tag);
@@ -41,7 +42,8 @@ private:
     QPushButton* duplicateButton_{};
     QPushButton* deleteButton_{};
     model::AntennaModel model_;
-    model::LengthUnit lengthUnit_{model::LengthUnit::Meter};
+    double scaleToMeters_{1.0};
+    QString unitLabel_{QStringLiteral("m")};
     bool updating_{};
 };
 

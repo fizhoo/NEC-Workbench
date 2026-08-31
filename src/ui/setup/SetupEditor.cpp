@@ -11,6 +11,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QSplitter>
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -48,7 +49,7 @@ SetupEditor::SetupEditor(QWidget* parent)
     headingFont.setPointSize(headingFont.pointSize() + 2);
     heading->setFont(headingFont);
     auto* description = new QLabel(
-        tr("Configure the analysis frequency and voltage sources without editing raw NEC cards."), this);
+        tr("Configure frequency, ground, and voltage sources without editing raw NEC cards."), this);
     description->setWordWrap(true);
 
     auto* frequencyGroup = new QGroupBox(tr("Frequency (FR)"), this);
@@ -156,8 +157,14 @@ SetupEditor::SetupEditor(QWidget* parent)
 
     layout->addWidget(heading);
     layout->addWidget(description);
-    layout->addWidget(frequencyGroup);
-    layout->addWidget(groundGroup);
+    auto* compactSetup = new QSplitter(Qt::Horizontal, this);
+    compactSetup->setObjectName(QStringLiteral("modelSetupCompactSplitter"));
+    compactSetup->setChildrenCollapsible(false);
+    compactSetup->addWidget(frequencyGroup);
+    compactSetup->addWidget(groundGroup);
+    compactSetup->setStretchFactor(0, 1);
+    compactSetup->setStretchFactor(1, 1);
+    layout->addWidget(compactSetup);
     layout->addWidget(excitationGroup, 1);
 
     connect(frequencySweepControl_, &QCheckBox::toggled, this, [this] { updateFrequencyControls(); });

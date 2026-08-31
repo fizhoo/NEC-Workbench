@@ -25,6 +25,7 @@ auto classify(std::string_view mnemonic) -> NecCardKind
         {"CE", NecCardKind::Comment},
         {"SY", NecCardKind::Symbol},
         {"GW", NecCardKind::GeometryWire},
+        {"GS", NecCardKind::GeometryScale},
         {"GE", NecCardKind::GeometryEnd},
         {"EX", NecCardKind::Excitation},
         {"LD", NecCardKind::Load},

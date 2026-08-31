@@ -11,6 +11,7 @@ enum class NecCardKind {
     Comment,
     Symbol,
     GeometryWire,
+    GeometryScale,
     GeometryEnd,
     Excitation,
     Load,

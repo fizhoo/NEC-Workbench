@@ -2,6 +2,7 @@
 
 #include <complex>
 #include <limits>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -83,6 +84,8 @@ struct AnalysisResult {
     std::vector<FeedpointResult> feedpoints;
     std::vector<SegmentCurrentResult> currents;
     std::vector<RadiationSample> radiation;
+    std::optional<double> averagePowerGain;
+    std::optional<double> averagingSolidAnglePi;
 };
 
 [[nodiscard]] auto standingWaveRatio(std::complex<double> impedance,

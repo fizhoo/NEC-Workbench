@@ -1,5 +1,7 @@
 #include "nec/NecModelConverter.h"
 
+#include "nec/DeckGeometryUnits.h"
+
 #include <charconv>
 #include <string_view>
 
@@ -37,6 +39,15 @@ auto NecModelConverter::convert(const NecDocument& document) const -> ModelConve
 {
     ModelConversionResult result;
     for (const auto& card : document.cards()) {
+        if (card.kind == NecCardKind::GeometryScale) {
+            if (const auto factor = geometryScaleFactor(card)) {
+                result.model.scale(*factor);
+            } else {
+                result.issues.push_back({card.lineNumber,
+                    "GS requires two integer placeholders and a positive numeric scale factor"});
+            }
+            continue;
+        }
         if (card.kind != NecCardKind::GeometryWire) {
             continue;
         }

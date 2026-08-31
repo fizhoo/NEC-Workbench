@@ -10,6 +10,19 @@ void AntennaModel::addWire(Wire wire)
     wires_.push_back(std::move(wire));
 }
 
+void AntennaModel::scale(double factor) noexcept
+{
+    for (auto& wire : wires_) {
+        wire.start.x *= factor;
+        wire.start.y *= factor;
+        wire.start.z *= factor;
+        wire.end.x *= factor;
+        wire.end.y *= factor;
+        wire.end.z *= factor;
+        wire.radius *= factor;
+    }
+}
+
 auto AntennaModel::wireByTag(int tag) noexcept -> Wire*
 {
     const auto found = std::ranges::find(wires_, tag, &Wire::tag);

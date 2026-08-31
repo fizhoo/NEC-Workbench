@@ -26,8 +26,21 @@ NEC Source, Analysis, Results, and—after successful validation—Optimize.
 Path: **Model → Check Model**, the toolbar **Check Model** button, or `F7`
 
 Check Model parses the authoritative NEC source, updates every graphical and
-structured view, and reports errors and warnings in the Diagnostics dock.
-Analysis is disabled when blocking model errors are present.
+structured view, and reports errors and warnings in the Model Adequacy dock.
+Analysis is disabled when blocking model errors are present. Adequacy warnings
+do not block a run; they identify numerical-modeling conditions that should be
+reviewed before trusting or optimizing the results.
+
+The first adequacy checks evaluate every wire at the highest modeled frequency.
+They report segments longer than `0.1` wavelength or shorter than `0.001`
+wavelength, segment-length/diameter ratios at or below `4`, center feeds on
+even-segment wires, adjoining segment lengths differing by more than `2:1`, and
+junctions containing more than 30 wires. These are conservative NEC-2 guidance,
+not proof that a model is correct or incorrect.
+
+Average Gain Test and convergence status are not inferred from these static
+checks. **Home → Model Quality** provides separate solver-backed Average Gain
+Test and Segmentation Convergence studies.
 
 ## Home
 
@@ -46,9 +59,44 @@ most recent results.
 - Continue modeling: use the Geometry or NEC Source quick action
 - Configure or run analysis: use the Analysis quick action
 - Inspect available results: use the Results quick action
+- Run model-quality validation: **Home → Model Quality → Run Average Gain Test**
 
 Home does not own a separate copy of the model. Its source preview and summary
 reflect the same document used by every other workspace.
+
+### Average Gain Test
+
+Path: **Home → Model Quality → Run Average Gain Test** or
+**Model → Run Average Gain Test**
+
+Choose one frequency and either free space or perfect ground. Workbench resolves
+symbols, creates a temporary lossless solver deck, replaces finite ground with
+the selected ideal test environment, and requests whole-space or hemisphere
+gain averaging. It preserves the authored source as `model.source.nec` and does
+not modify the open model.
+
+The result appears under **Results → Validation** and in Runs as type **AGT**.
+Free-space results are normalized to an expected average power gain of `1.0`;
+perfect-ground results are normalized to `2.0`. The displayed gain adjustment is
+diagnostic guidance, not a substitute for correcting a questionable model.
+
+### Segmentation Convergence
+
+Path: **Home → Model Quality → Segmentation Convergence**, **Model →
+Segmentation Convergence**, or **Results → Validation → Segmentation
+Convergence**
+
+Choose one frequency, a percentage increase, at least three segmentation
+levels, and comparison tolerances. Workbench repeatedly runs the same resolved
+model, remapping supported voltage sources, loads, and transmission-line
+endpoints by relative physical position. The authored source is unchanged.
+
+The table compares resistance, reactance, complex-impedance change, and—when the
+model requests radiation—sampled peak-gain change. A level is within tolerance only
+relative to the preceding level. The overall study reports stability after two
+consecutive refinements meet the selected limits. `NT` cards and unsupported EX
+types currently block the study because their references cannot yet be remapped
+safely.
 
 ## Geometry
 
@@ -143,9 +191,19 @@ After direct text edits, run **Check Model** before analysis.
 
 Path: **NEC Source → Structured Cards**
 
+The **NEC deck geometry units** selector is independent of Geometry display
+units. It identifies the units actually written in geometry cards and manages a
+standard `GS` conversion before `GE`: meters use no scale card, feet use
+`GS 0 0 0.3048`, inches use `0.0254`, centimeters use `0.01`, and millimeters
+use `0.001`. Changing this selector on a numeric `GW` deck rewrites coordinates
+and radii while preserving the antenna's physical dimensions. Decks with
+symbolic `GW` expressions or unsupported geometry generators are recognized but
+are not automatically rewritten; update their expressions and `GS` together.
+
 The structured editor provides cell-based editing for supported card families:
 
 - **Wires (GW)** — tag, segments, endpoints, and radius
+- **GS** — geometry-to-meter scale factor
 - **EX** — voltage and other excitation fields
 - **FR** — single frequency and sweep fields
 - **GN/GE** — ground environment and geometry ground flag
@@ -169,7 +227,7 @@ Loads & Networks, Requests & Execution, Comments, Other Cards, and All Cards.
 - Single-click any card to inspect it in Properties.
 - Double-click `GW` to open the structured wire editor.
 - Double-click `FR`, `GN`, `GE`, or `EX` to open Model Setup.
-- Double-click `LD` or `TL` to open Loads & Lines.
+- Double-click `LD` or `TL` to open **Model Setup → Loads & Transmission Lines**.
 - Double-click `RP` or `XQ` to open Analysis Requests.
 - Double-click supported remaining cards to open their structured table.
 - Double-click unsupported cards or comments to jump to their raw source line.
@@ -180,7 +238,7 @@ Loads & Networks, Requests & Execution, Comments, Other Cards, and All Cards.
 
 Analysis defines how the active model will be solved. It combines model-level
 electrical setup, loads and networks, external solver configuration, and result
-requests.
+requests. Its three top-level tabs are Model Setup, Solver, and Requests.
 
 Path: **Analysis** on the top workspace bar
 
@@ -198,10 +256,14 @@ Configure:
 - One or more voltage sources and their wire segment, magnitude, and phase
 
 The setup controls edit the corresponding `FR`, `GN`, `GE`, and `EX` cards.
+Frequency and Ground share an adjustable two-column row, while the voltage-source
+table remains full width. Use the nested **Frequency, Ground & Sources** and
+**Loads & Transmission Lines** tabs to switch between compact forms and the
+wider attachment tables.
 
 ### Loads & Lines
 
-Path: **Analysis → Loads & Lines**
+Path: **Analysis → Model Setup → Loads & Transmission Lines**
 
 Edit supported `LD` loads and `TL` transmission lines in structured tables.
 Selections synchronize with their markers in Geometry and with the Properties
@@ -248,23 +310,50 @@ are available even when no model is currently open.
 
 Path: **Results** on the top workspace bar
 
-### Run History
+### Runs
 
-Path: **Results → Run History**
+Path: **Results → Runs**
 
-Run History lists the originating model, start time, available result types,
+Runs lists the originating model, run type, start time, available result types,
 output size, backend, status, duration, and artifact directory. Only one run can
 be selected at a time.
 
-- Click **Open Results** or double-click a run to load it.
+Ordinary analyses appear as individual rows. An optimization sweep appears as
+one **Optimization** session row; its candidate runs remain stored as children
+but do not flood the main list. View the session to restore its candidate table
+in Optimize as an archived, read-only session. A segmentation study similarly appears as one **Convergence** row
+with hidden child levels. Deleting either session deletes its child runs as a
+group.
+
+- Click **View Run Results** or double-click a run to display archived results without changing the active model.
+- Click **Inspect Input Snapshot** to view the run's immutable `model.nec` deck in a read-only window.
+- Click **Open Snapshot as New Model** only when you intentionally want the archived deck to replace the editor as an untitled editable copy.
 - Click **Open Run Folder** to inspect archived files.
 - Click **Delete Run** to permanently remove the selected run directory.
 - Use **Cancel Active Run** while a solver process is running.
 
-Opening historical results also loads the archived `model.nec` as a **historical
-run snapshot**. Geometry, NEC Source, and Analysis then describe the exact deck
-used for that run. The snapshot does not overwrite the original model; use
-**File → Save As** to turn it into a normal editable file.
+Viewing an ordinary historical analysis leaves Geometry, NEC Source, and Analysis attached
+to the active model. Results loads the archived `model.nec` internally only for historical
+geometry and radiation overlays. A persistent banner identifies the viewed run, states that
+it is archived output, and names the active model separately. When results from the active
+model are available, **Return to Current Work** restores them without changing the editor.
+
+Every historical view provides **Return to Current Work**. It returns to the
+workspace that was active before history was opened, or to the active model's
+results when those were being viewed. Historical optimization and convergence
+sessions disable their setup and Run controls; archived sessions cannot be
+rerun in place or silently use the currently edited model.
+
+AGT and convergence sessions reopen their Validation results without loading a
+temporary transformed test deck as the editable model.
+
+### Validation
+
+Path: **Results → Validation**
+
+The **Average Gain Test** page shows the normalized lossless-model test. The
+**Segmentation Convergence** page configures, runs, and restores mesh-refinement
+studies. These are model-adequacy tools, not optimization algorithms.
 
 Missing or invalid archived files are reported in the Results status area. A
 missing model never causes an unrelated antenna to be displayed with historical
@@ -276,19 +365,22 @@ The Result Frequency control above the result tabs selects the active frequency
 across compatible tables and plots. The availability summary indicates whether
 impedance, currents, and radiation data exist at that frequency.
 
-### Numerical Results
+### Result Summary
 
-Path: **Results → Numerical Results**
+Path: **Results → Summary**
 
-Shows feedpoint frequency, source location, resistance, reactance, impedance
-magnitude and phase, input power, and 50-ohm SWR.
+Shows the loaded run identity, frequency coverage, selected-frequency impedance,
+minimum and maximum SWR, selected-frequency peak radiation, and available data
+families. Summary becomes the active page after a successful run is loaded.
 
-### Sweep Plots
+### Impedance
 
-Path: **Results → Sweep Plots**
+Path: **Results → Impedance**
 
-Shows resistance/reactance and SWR over frequency. Move the pointer over a plot
-for exact values.
+The **Table** page shows feedpoint frequency, source location, resistance,
+reactance, impedance magnitude and phase, input power, and 50-ohm SWR. The
+**Plots** page shows resistance/reactance and SWR over frequency, with exact
+pointer values.
 
 ### Currents
 
@@ -297,32 +389,31 @@ Path: **Results → Currents**
 Shows per-segment current magnitude and a table of complex current values for
 the selected frequency.
 
-### Radiation 2D
+### Radiation
 
-Path: **Results → Radiation 2D**
+Path: **Results → Radiation**
 
-Select polarization component, scale, cut orientation, and cut angle. Move the
-pointer over the plot for live angle, absolute dBi, and relative dB.
+The **2D Pattern** page provides polarization component, scale, cut orientation,
+and cut angle controls. Move the pointer over the plot for live angle, absolute
+dBi, and relative dB.
 
 - Left/Right changes the available cut angle.
 - Space switches horizontal and vertical cut orientation.
 - **Show Peak Cut** moves to the sampled cut containing maximum gain.
 
-### 3D Results
-
-Path: **Results → 3D Results**
-
-The 3D renderer can layer the archived antenna, current distribution, and
-radiation surface. Orbit, pan, and zoom use the same controls as 3D Geometry.
+The **3D Pattern** page can layer the archived antenna, current distribution,
+and radiation surface. Orbit, pan, and zoom use the same controls as 3D Geometry.
 Layers can be hidden independently.
 
-### Raw NEC Output
+### Raw Output
 
-Path: **Results → Raw NEC Output**
+Path: **Results → Raw Output**
 
-Displays the archived solver `model.out` for auditing or diagnosing output that
-is not yet parsed into a structured result view. Process messages remain in the
-Solver Output dock.
+Displays the complete, unchanged solver `model.out` for auditing or diagnosing
+output that is not yet parsed into a structured result view. Changing Result
+Frequency does not rewrite this authoritative artifact. Use **Jump to Selected
+Frequency** to position the editor at the matching solver section, or **Find
+Next** for free-text search. Process messages remain in the Solver Output dock.
 
 ## Optimize
 
@@ -331,15 +422,43 @@ Solver Output dock.
 Path: **Optimize** on the top workspace bar
 
 Optimize provides a basic bounded sweep for one `SY` variable. Choose the
-variable, minimum, maximum, number of candidate points, and reference impedance,
-then select **Run SWR Sweep**. Workbench runs each candidate through the selected
-NEC backend and identifies the value with the lowest worst-case SWR across all
-frequencies in the model.
+variable, minimum, maximum, number of candidate points, reference impedance, and
+SWR objective, then select **Run Parameter Sweep**.
+
+**Frequency Source** controls the frequencies calculated for every candidate:
+
+- **Use Model FR Sweep** keeps the model's existing `FR` definition.
+- **Use Selected Frequencies** evaluates only the explicit MHz values in the
+  editable list. Add values individually or paste a list separated by spaces,
+  commas, semicolons, or new lines. This supports separated bands without
+  calculating every frequency between them.
+
+The workload summary shows candidate count × frequency count before the sweep.
+
+Symbols used directly in `GW` coordinate or radius fields are labeled with the
+detected NEC deck geometry unit. Candidate values remain source values; the
+deck's `GS` card performs the conversion to meters. Frequency and unitless
+symbols do not receive a geometry-unit suffix.
+
+This tool exhaustively evaluates the requested candidate points. “Complete”
+means every candidate was attempted; it is not optimizer convergence. A future
+adaptive optimizer will separately report search stopping criteria. Future
+tolerance analysis will perturb a finalist to measure construction and component
+sensitivity.
+
+**Minimize Worst SWR Across Frequencies** scores each candidate using its highest
+calculated SWR. This is the appropriate choice when every modeled or explicitly
+selected frequency must remain usable. **Minimize SWR at Selected Frequency** scores the
+calculated frequency nearest the requested frequency. If the model contains only
+one frequency, both objectives produce the same score.
 
 Radiation requests are omitted from these initial impedance-only candidates to
 keep the sweep fast. Each candidate remains available in Results → Run History
 and contains `model.source.nec`, the generated numeric `model.nec`, solver output,
-and `optimization.json` metadata. The best value is reported but is not yet
+and `optimization.json` metadata. The results table identifies the frequency and
+feedpoint impedance that produced each score. Select a completed candidate to
+inspect its SWR, resistance, and reactance at every calculated frequency; the
+frequency that determines the objective is bold. The best value is reported but is not yet
 automatically written back into the model.
 
 Native NEC-2 solvers receive numeric cards. NEC Workbench will resolve symbols
@@ -378,10 +497,12 @@ Properties; double-click navigates to the most appropriate editor.
 Shows contextual data for the current wire, source, load, transmission line, or
 NEC card. Supported wire selections include direct radius and AWG controls.
 
-### Diagnostics
+### Model Adequacy
 
-Shows model-check errors and warnings. Click a diagnostic to jump to its source
-line.
+Shows source/card errors, readiness warnings, compatibility notices, and static
+model-adequacy findings in separate categories. Click a finding to jump to its
+source line. A clean static report does not replace **Results → Validation →
+Average Gain Test** or segmentation convergence testing.
 
 ### Solver Output
 

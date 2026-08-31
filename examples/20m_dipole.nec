@@ -1,0 +1,13 @@
+CM 20m dipole at 25 ft
+CM 50 ft lossless 50-ohm transmission line
+CM Tiny remote source segment minimizes parallel source-wire current
+CE
+GW 1 21 -5.030 0.000 7.620 5.030 0.000 7.620 0.001
+GW 2 1 0.000 0.000 100.000 0.000 0.000 100.001 0.000001
+GE 0
+GN 2 0 0 0 13.000 0.005
+FR 0 1 0 0 14.200 0.000
+TL 1 11 2 1 50.000 5 0.000 0.000 0.000 0.000
+EX 0 2 1 0 1.000 0.000
+RP 0 19 37 1000 0.000 0.000 5.000 10.000
+EN

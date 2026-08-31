@@ -115,13 +115,13 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
     auto row = 0;
     for (const auto& wire : model_.wires()) {
         const QStringList values{QString::number(wire.tag), QString::number(wire.segments),
-            number(model::fromMeters(wire.start.x, lengthUnit_)),
-            number(model::fromMeters(wire.start.y, lengthUnit_)),
-            number(model::fromMeters(wire.start.z, lengthUnit_)),
-            number(model::fromMeters(wire.end.x, lengthUnit_)),
-            number(model::fromMeters(wire.end.y, lengthUnit_)),
-            number(model::fromMeters(wire.end.z, lengthUnit_)),
-            number(model::fromMeters(wire.radius, lengthUnit_))};
+            number(wire.start.x / scaleToMeters_),
+            number(wire.start.y / scaleToMeters_),
+            number(wire.start.z / scaleToMeters_),
+            number(wire.end.x / scaleToMeters_),
+            number(wire.end.y / scaleToMeters_),
+            number(wire.end.z / scaleToMeters_),
+            number(wire.radius / scaleToMeters_)};
         for (auto column = 0; column < ColumnCount; ++column) {
             auto* item = new QTableWidgetItem(values[column]);
             item->setData(WireTagRole, wire.tag);
@@ -136,10 +136,17 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
 
 void WireCardEditor::setLengthUnit(model::LengthUnit unit)
 {
-    if (lengthUnit_ == unit) {
-        return;
-    }
-    lengthUnit_ = unit;
+    const auto symbol = model::lengthUnitSymbol(unit);
+    setDeckScale(model::metersPerUnit(unit),
+        QString::fromLatin1(symbol.data(), static_cast<qsizetype>(symbol.size())));
+}
+
+void WireCardEditor::setDeckScale(double scaleToMeters, QString unitLabel)
+{
+    if (!std::isfinite(scaleToMeters) || scaleToMeters <= 0.0) return;
+    if (scaleToMeters_ == scaleToMeters && unitLabel_ == unitLabel) return;
+    scaleToMeters_ = scaleToMeters;
+    unitLabel_ = std::move(unitLabel);
     updateUnitLabels();
     setModel(model_);
 }
@@ -171,13 +178,12 @@ void WireCardEditor::updateActionStates()
 
 void WireCardEditor::updateUnitLabels()
 {
-    const auto symbol = model::lengthUnitSymbol(lengthUnit_);
-    const auto unit = QString::fromLatin1(symbol.data(), static_cast<qsizetype>(symbol.size()));
-    table_->setHorizontalHeaderLabels({tr("Tag"), tr("Segments"), tr("X1 (%1)").arg(unit),
-        tr("Y1 (%1)").arg(unit), tr("Z1 (%1)").arg(unit), tr("X2 (%1)").arg(unit),
-        tr("Y2 (%1)").arg(unit), tr("Z2 (%1)").arg(unit), tr("Radius (%1)").arg(unit)});
-    instructions_->setText(tr("Double-click a cell to edit it. NEC source remains stored in meters; values are displayed in %1.")
-            .arg(unit));
+    table_->setHorizontalHeaderLabels({tr("Tag"), tr("Segments"), tr("X1 (%1)").arg(unitLabel_),
+        tr("Y1 (%1)").arg(unitLabel_), tr("Z1 (%1)").arg(unitLabel_),
+        tr("X2 (%1)").arg(unitLabel_), tr("Y2 (%1)").arg(unitLabel_),
+        tr("Z2 (%1)").arg(unitLabel_), tr("Radius (%1)").arg(unitLabel_)});
+    instructions_->setText(tr("Double-click a cell to edit it. Values use the NEC deck geometry unit (%1); GS converts them to meters for the solver.")
+            .arg(unitLabel_));
 }
 
 void WireCardEditor::validateAndCommitRow(int row, int changedColumn)
@@ -198,7 +204,7 @@ void WireCardEditor::validateAndCommitRow(int row, int changedColumn)
     const auto readDouble = [&](Column column) {
         bool ok = false;
         const auto displayedValue = table_->item(row, column)->text().toDouble(&ok);
-        const auto value = model::toMeters(displayedValue, lengthUnit_);
+        const auto value = displayedValue * scaleToMeters_;
         valuesOk = valuesOk && ok && std::isfinite(value);
         return value;
     };

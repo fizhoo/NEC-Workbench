@@ -18,6 +18,7 @@ struct ModelDiagnostic {
     DiagnosticSeverity severity{DiagnosticSeverity::Error};
     std::size_t lineNumber{};
     std::string message;
+    std::string category{"Model"};
 };
 
 struct ModelCheckResult {

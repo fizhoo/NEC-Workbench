@@ -14,10 +14,28 @@ configured by the user and are not bundled.
 - Historical run snapshots that restore the exact archived input deck
 - Categorized Project tree with contextual Properties and editor navigation
 - Solver-independent `SY` expressions with numeric NEC run-deck generation
-- One-variable bounded SWR sweeps with reproducible candidate runs
+- Ordered `GS` geometry scaling with separate display and deck-unit controls
+- One-variable bounded sweeps with model-sweep or explicit-frequency SWR objectives
+- Static model-adequacy checks for segmentation, thin-wire ratios, sources, and junctions
+- Single-frequency lossless Average Gain Test with archived Validation results
+- Segmentation convergence studies with EX, LD, and TL attachment remapping
 - Linux development builds and automated Windows packaging
 
-## Next: Parameterized Models
+## Next: Model Adequacy
+
+Static checks are only the first layer. Following Cebik's guidance, AGT and
+convergence are necessary but not sufficient tests of model adequacy. The next
+sequence is:
+
+1. Plot impedance, gain, and pattern changes across segmentation levels.
+2. Add safe remapping for supported `NT` network references.
+3. Revalidate optimization finalists with the converged model.
+
+Adequacy findings should warn and explain rather than impose universal pass/fail
+rules. The modeling purpose determines whether a remaining numerical difference
+is operationally significant.
+
+## Parameterized Models
 
 Workbench recognizes `SY` declarations, evaluates safe arithmetic and earlier
 parameter references, validates the resolved model, reports source-line
@@ -33,12 +51,18 @@ Parameterization is the required foundation for both model templates and
 optimization. It should remain a Workbench feature rather than depending on a
 particular solver's extensions.
 
-## Then: Sweeps and Optimization
+## Then: Adaptive Optimization
 
 1. Plot SWR, impedance, gain, efficiency, and other available metrics by candidate.
-2. Define objectives, weights, constraints, and evaluation frequencies.
-3. Add bounded multi-parameter optimization.
-4. Add explicit Compare Runs and baseline-versus-candidate overlays.
+2. Add an iterative optimizer with explicit search-convergence stopping criteria.
+3. Add finalist sensitivity/tolerance analysis for parameter perturbations.
+4. Add gain and pattern objectives, weights, and constraints.
+5. Add bounded multi-parameter optimization.
+6. Add explicit Compare Runs and baseline-versus-candidate overlays.
+
+Explicit frequency sets currently provide a simple multi-band foundation.
+Named amateur bands, per-frequency weights, and pass/fail constraints remain
+future refinements rather than complicating the first workflow.
 
 The first optimizer should favor transparent, reproducible behavior over a
 large collection of algorithms. Additional search methods can be added behind a
@@ -63,6 +87,7 @@ common optimizer interface later.
 ## Parking Lot
 
 - Multi-run comparison workspace
+- Detached historical-results viewing that leaves the active editable model loaded
 - Near-field visualization
 - Optimization algorithm plugins
 - Additional platform installers and signed release packages

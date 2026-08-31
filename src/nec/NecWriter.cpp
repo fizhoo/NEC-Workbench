@@ -20,14 +20,24 @@ auto NecWriter::write(const NecDocument& document) const -> std::string
     return output;
 }
 
-auto NecWriter::writeWireCard(const model::Wire& wire) const -> std::string
+auto NecWriter::writeWireCard(const model::Wire& wire, double scaleToMeters) const -> std::string
 {
+    const auto divisor = std::isfinite(scaleToMeters) && scaleToMeters > 0.0
+        ? scaleToMeters : 1.0;
     std::ostringstream output;
     output << std::setprecision(15)
            << "GW " << wire.tag << ' ' << wire.segments << ' '
-           << wire.start.x << ' ' << wire.start.y << ' ' << wire.start.z << ' '
-           << wire.end.x << ' ' << wire.end.y << ' ' << wire.end.z << ' '
-           << wire.radius;
+           << wire.start.x / divisor << ' ' << wire.start.y / divisor << ' '
+           << wire.start.z / divisor << ' ' << wire.end.x / divisor << ' '
+           << wire.end.y / divisor << ' ' << wire.end.z / divisor << ' '
+           << wire.radius / divisor;
+    return output.str();
+}
+
+auto NecWriter::writeGeometryScaleCard(double scaleToMeters) const -> std::string
+{
+    std::ostringstream output;
+    output << std::setprecision(15) << "GS 0 0 " << scaleToMeters;
     return output.str();
 }
 

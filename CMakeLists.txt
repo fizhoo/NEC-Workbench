@@ -11,7 +11,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(necwb_core
     src/analysis/AnalysisResult.cpp
+    src/analysis/AverageGainTest.cpp
     src/analysis/NecOutputParser.cpp
+    src/analysis/OptimizationObjective.cpp
+    src/analysis/SegmentationConvergence.cpp
     src/analysis/SolverCommand.cpp
     src/analysis/SolverInput.cpp
     src/geometry/OrthographicProjection.cpp
@@ -21,6 +24,7 @@ add_library(necwb_core
     src/model/ModelSetup.cpp
     src/model/WireGauge.cpp
     src/nec/NecDocument.cpp
+    src/nec/DeckGeometryUnits.cpp
     src/nec/NecModelChecker.cpp
     src/nec/NecModelConverter.cpp
     src/nec/NecParser.cpp
@@ -52,8 +56,14 @@ if(NECWB_BUILD_GUI)
         src/ui/analysis/AnalysisRequestEditor.h
         src/ui/analysis/AnalysisRunStore.cpp
         src/ui/analysis/AnalysisRunStore.h
+        src/ui/analysis/AverageGainResultsView.cpp
+        src/ui/analysis/AverageGainResultsView.h
+        src/ui/analysis/ConvergenceWorkspace.cpp
+        src/ui/analysis/ConvergenceWorkspace.h
         src/ui/analysis/ImpedanceResultsView.cpp
         src/ui/analysis/ImpedanceResultsView.h
+        src/ui/analysis/ResultsSummaryView.cpp
+        src/ui/analysis/ResultsSummaryView.h
         src/ui/analysis/SweepPlotsView.cpp
         src/ui/analysis/SweepPlotsView.h
         src/ui/analysis/FieldResultsViews.cpp
@@ -122,6 +132,12 @@ if(NECWB_BUILD_TESTS)
             tests/PlotSmokeTests.cpp
             src/ui/analysis/AnalysisRunStore.cpp
             src/ui/analysis/AnalysisRunStore.h
+            src/ui/analysis/AverageGainResultsView.cpp
+            src/ui/analysis/AverageGainResultsView.h
+            src/ui/analysis/ConvergenceWorkspace.cpp
+            src/ui/analysis/ConvergenceWorkspace.h
+            src/ui/analysis/ResultsSummaryView.cpp
+            src/ui/analysis/ResultsSummaryView.h
             src/ui/analysis/FieldResultsViews.cpp
             src/ui/analysis/FieldResultsViews.h
             src/ui/analysis/SweepPlotsView.cpp
@@ -144,6 +160,8 @@ if(NECWB_BUILD_TESTS)
             src/ui/geometry/AutoSegmentationDialog.h
             src/ui/setup/LoadNetworkEditor.cpp
             src/ui/setup/LoadNetworkEditor.h
+            src/ui/setup/SetupEditor.cpp
+            src/ui/setup/SetupEditor.h
             src/ui/welcome/WelcomePage.cpp
             src/ui/welcome/WelcomePage.h
         )

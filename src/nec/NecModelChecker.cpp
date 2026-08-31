@@ -5,6 +5,9 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
+#include <iomanip>
+#include <sstream>
 #include <string_view>
 #include <utility>
 
@@ -21,7 +24,121 @@ auto isNumber(std::string_view text) -> bool
 
 void addError(ModelCheckResult& result, const NecCard& card, std::string message)
 {
-    result.diagnostics.push_back({DiagnosticSeverity::Error, card.lineNumber, std::move(message)});
+    result.diagnostics.push_back(
+        {DiagnosticSeverity::Error, card.lineNumber, std::move(message), "Card validation"});
+}
+
+void addAdequacyWarning(ModelCheckResult& result, std::size_t lineNumber, std::string message)
+{
+    result.diagnostics.push_back(
+        {DiagnosticSeverity::Warning, lineNumber, std::move(message), "Model adequacy"});
+}
+
+auto wireLength(const model::Wire& wire) -> double
+{
+    const auto x = wire.end.x - wire.start.x;
+    const auto y = wire.end.y - wire.start.y;
+    const auto z = wire.end.z - wire.start.z;
+    return std::sqrt(x * x + y * y + z * z);
+}
+
+auto nearby(const model::Point3D& first, const model::Point3D& second) -> bool
+{
+    const auto scale = std::max({1.0, std::abs(first.x), std::abs(first.y), std::abs(first.z),
+        std::abs(second.x), std::abs(second.y), std::abs(second.z)});
+    const auto tolerance = scale * 1.0e-9;
+    return std::abs(first.x - second.x) <= tolerance
+        && std::abs(first.y - second.y) <= tolerance
+        && std::abs(first.z - second.z) <= tolerance;
+}
+
+auto concise(double value) -> std::string
+{
+    std::ostringstream stream;
+    stream << std::setprecision(4) << value;
+    return stream.str();
+}
+
+void checkStaticAdequacy(const model::ModelSetup& setup, ModelCheckResult& result)
+{
+    if (!setup.frequency || result.model.empty()) return;
+    const auto highestFrequencyMHz = std::max(setup.frequency->startMHz,
+        model::frequencyEndMHz(*setup.frequency));
+    if (!std::isfinite(highestFrequencyMHz) || highestFrequencyMHz <= 0.0) return;
+    const auto wavelengthMeters = 299.792458 / highestFrequencyMHz;
+
+    struct Endpoint {
+        model::Point3D point;
+        const model::Wire* wire{};
+        double segmentLength{};
+    };
+    std::vector<Endpoint> endpoints;
+    endpoints.reserve(result.model.wireCount() * 2);
+
+    for (const auto& wire : result.model.wires()) {
+        if (wire.segments <= 0 || wire.radius <= 0.0) continue;
+        const auto segmentLength = wireLength(wire) / static_cast<double>(wire.segments);
+        const auto wavelengthRatio = segmentLength / wavelengthMeters;
+        const auto diameterRatio = segmentLength / (2.0 * wire.radius);
+        if (wavelengthRatio > 0.1) {
+            addAdequacyWarning(result, wire.sourceLine,
+                "Wire tag " + std::to_string(wire.tag) + " segment length is "
+                    + concise(wavelengthRatio) + " wavelength at "
+                    + concise(highestFrequencyMHz)
+                    + " MHz; keep segments below 0.1 wavelength and prefer about 0.05");
+        } else if (wavelengthRatio < 0.001) {
+            addAdequacyWarning(result, wire.sourceLine,
+                "Wire tag " + std::to_string(wire.tag) + " segment length is "
+                    + concise(wavelengthRatio)
+                    + " wavelength; very short segments can reduce NEC numerical reliability");
+        }
+        if (diameterRatio <= 4.0) {
+            addAdequacyWarning(result, wire.sourceLine,
+                "Wire tag " + std::to_string(wire.tag) + " segment-length/diameter ratio is "
+                    + concise(diameterRatio)
+                    + "; values above 4 are the conservative NEC-2 thin-wire guideline");
+        }
+        endpoints.push_back({wire.start, &wire, segmentLength});
+        endpoints.push_back({wire.end, &wire, segmentLength});
+    }
+
+    std::vector<bool> grouped(endpoints.size());
+    for (std::size_t index = 0; index < endpoints.size(); ++index) {
+        if (grouped[index]) continue;
+        std::vector<const Endpoint*> junction;
+        for (std::size_t candidate = index; candidate < endpoints.size(); ++candidate) {
+            if (nearby(endpoints[index].point, endpoints[candidate].point)) {
+                grouped[candidate] = true;
+                junction.push_back(&endpoints[candidate]);
+            }
+        }
+        if (junction.size() < 2) continue;
+        const auto [shortest, longest] = std::ranges::minmax_element(junction,
+            {}, [](const Endpoint* endpoint) { return endpoint->segmentLength; });
+        if ((*shortest)->segmentLength > 0.0
+            && (*longest)->segmentLength / (*shortest)->segmentLength > 2.0) {
+            addAdequacyWarning(result, (*longest)->wire->sourceLine,
+                "Connected wires " + std::to_string((*shortest)->wire->tag) + " and "
+                    + std::to_string((*longest)->wire->tag)
+                    + " have adjoining segment lengths differing by more than 2:1");
+        }
+        if (junction.size() > 30) {
+            addAdequacyWarning(result, junction.front()->wire->sourceLine,
+                "Junction contains " + std::to_string(junction.size())
+                    + " wires; NEC-2 recommends no more than 30 wires at one junction");
+        }
+    }
+
+    for (const auto& excitation : setup.excitations) {
+        const auto* wire = result.model.wireByTag(excitation.wireTag);
+        if (excitation.type != 0 || wire == nullptr || wire->segments % 2 != 0) continue;
+        if (excitation.segment == wire->segments / 2
+            || excitation.segment == wire->segments / 2 + 1) {
+            addAdequacyWarning(result, excitation.sourceLine,
+                "Center-fed wire tag " + std::to_string(wire->tag)
+                    + " has an even segment count; no segment lies exactly at its center");
+        }
+    }
 }
 
 void checkExcitation(const NecCard& card, ModelCheckResult& result)
@@ -217,13 +334,15 @@ void checkCardOrdering(const NecDocument& document, ModelCheckResult& result)
     auto reportedMissingEnd = false;
     auto controlSeen = false;
     for (const auto& card : document.cards()) {
-        if (card.kind == NecCardKind::GeometryWire) {
-            lastGeometry = &card;
+        if (card.kind == NecCardKind::GeometryWire
+            || card.kind == NecCardKind::GeometryScale) {
+            if (card.kind == NecCardKind::GeometryWire) lastGeometry = &card;
             if (geometryEnded) {
-                addError(result, card, "GW geometry cards must appear before GE");
+                addError(result, card, card.mnemonic + " geometry cards must appear before GE");
             }
             if (controlSeen) {
-                addError(result, card, "GW geometry cards must precede GN, EX, FR, and other control cards");
+                addError(result, card, card.mnemonic
+                    + " geometry cards must precede GN, EX, FR, and other control cards");
             }
             continue;
         }
@@ -276,7 +395,8 @@ auto NecModelChecker::check(const NecDocument& document) const -> ModelCheckResu
     auto conversion = NecModelConverter{}.convert(document);
     ModelCheckResult result{std::move(conversion.model), {}};
     for (auto& issue : conversion.issues) {
-        result.diagnostics.push_back({DiagnosticSeverity::Error, issue.lineNumber, std::move(issue.message)});
+        result.diagnostics.push_back({DiagnosticSeverity::Error, issue.lineNumber,
+            std::move(issue.message), "Geometry"});
     }
 
     checkCardOrdering(document, result);
@@ -306,7 +426,8 @@ auto NecModelChecker::check(const NecDocument& document) const -> ModelCheckResu
             break;
         case NecCardKind::Unknown:
             result.diagnostics.push_back({DiagnosticSeverity::Warning, card.lineNumber,
-                "Unknown card " + card.mnemonic + "; the source line will be preserved"});
+                "Unknown card " + card.mnemonic + "; the source line will be preserved",
+                "Compatibility"});
             break;
         default:
             break;
@@ -315,16 +436,17 @@ auto NecModelChecker::check(const NecDocument& document) const -> ModelCheckResu
     const auto setup = NecSetupConverter{}.convert(document);
     if (result.model.empty()) {
         result.diagnostics.push_back({DiagnosticSeverity::Warning, 0,
-            "Incomplete model: no valid GW wire geometry"});
+            "Incomplete model: no valid GW wire geometry", "Readiness"});
     }
     if (!setup.frequency) {
         result.diagnostics.push_back({DiagnosticSeverity::Warning, 0,
-            "Incomplete analysis setup: no supported FR frequency definition"});
+            "Incomplete analysis setup: no supported FR frequency definition", "Readiness"});
     }
     if (setup.excitations.empty()) {
         result.diagnostics.push_back({DiagnosticSeverity::Warning, 0,
-            "Incomplete analysis setup: no supported EX voltage source"});
+            "Incomplete analysis setup: no supported EX voltage source", "Readiness"});
     }
+    checkStaticAdequacy(setup, result);
     std::ranges::sort(result.diagnostics, {}, &ModelDiagnostic::lineNumber);
     return result;
 }

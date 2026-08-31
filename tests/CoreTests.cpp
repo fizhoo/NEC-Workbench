@@ -1,10 +1,14 @@
 #include "analysis/SolverCommand.h"
+#include "analysis/AverageGainTest.h"
 #include "analysis/NecOutputParser.h"
+#include "analysis/OptimizationObjective.h"
+#include "analysis/SegmentationConvergence.h"
 #include "analysis/SolverInput.h"
 #include "geometry/OrthographicProjection.h"
 #include "model/AutoSegmentation.h"
 #include "model/LengthUnit.h"
 #include "model/WireGauge.h"
+#include "nec/DeckGeometryUnits.h"
 #include "nec/NecModelConverter.h"
 #include "nec/NecModelChecker.h"
 #include "nec/NecParser.h"
@@ -13,6 +17,7 @@
 #include "nec/NecWriter.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <cstdlib>
@@ -45,14 +50,15 @@ void testRoundTripPreservesSource()
 
 void testKnownCardsAreRecognized()
 {
-    const std::string source = "CM note\nCE\nSY length=1\nGW 1 3 0 0 0 1 0 0 .001\nGE\nEX\nLD\nGN\nFR\nRP\nTL\nNT\nEN";
+    const std::string source = "CM note\nCE\nSY length=1\nGW 1 3 0 0 0 1 0 0 .001\nGS 0 0 1\nGE\nEX\nLD\nGN\nFR\nRP\nTL\nNT\nEN";
     const auto document = necwb::nec::NecParser{}.parse(source);
     const auto cards = document.cards();
-    expect(cards.size() == 13, "all known card lines are parsed");
+    expect(cards.size() == 14, "all known card lines are parsed");
     expect(cards[0].kind == necwb::nec::NecCardKind::Comment, "CM recognized");
     expect(cards[2].kind == necwb::nec::NecCardKind::Symbol, "SY recognized");
     expect(cards[3].kind == necwb::nec::NecCardKind::GeometryWire, "GW recognized");
-    expect(cards[12].kind == necwb::nec::NecCardKind::End, "EN recognized");
+    expect(cards[4].kind == necwb::nec::NecCardKind::GeometryScale, "GS recognized");
+    expect(cards[13].kind == necwb::nec::NecCardKind::End, "EN recognized");
 }
 
 void testSymbolResolution()
@@ -117,6 +123,16 @@ void testSymbolResolution()
         "FR 0 1 0 0 7.1 0\r\nXQ 0\r\nEN\r\n");
     expect(existingExecution == "FR 0 1 0 0 7.1 0\r\nXQ 0\r\nEN\r\n",
         "impedance-only input preserves an existing execution request and line endings");
+    const std::array explicitFrequencies{21.2, 7.15, 7.0, 7.15,
+        std::numeric_limits<double>::quiet_NaN(), -1.0};
+    const auto explicitInput = necwb::analysis::prepareExplicitFrequencyInput(
+        "FR 0 16 0 0 7 0.02\r\nRP 0 181 1 1000 0 0 1 0 0 0\r\nXQ 0\r\nEN\r\n",
+        explicitFrequencies);
+    expect(explicitInput ==
+            "FR 0 1 0 0 7 0\r\nXQ 0\r\n"
+            "FR 0 1 0 0 7.15 0\r\nXQ 0\r\n"
+            "FR 0 1 0 0 21.2 0\r\nXQ 0\r\nEN\r\n",
+        "explicit-frequency input sorts and deduplicates valid points while replacing old requests");
 
     const auto invalid = necwb::nec::NecSymbolResolver{}.resolve(
         "SY first=missing+1, good=2, GOOD=3, zero=1/0\n"
@@ -155,6 +171,47 @@ void testInvalidWireIsDiagnosed()
         "diagnostics retain source lines");
 }
 
+void testGeometryScaleConversion()
+{
+    const auto document = necwb::nec::NecParser{}.parse(
+        "GW 1 3 0 0 0 10 0 0 .1\n"
+        "GS 0 0 0.3048\n"
+        "GW 2 3 0 0 0 10 0 0 .1\n"
+        "GE 0\n");
+    const auto result = necwb::nec::NecModelConverter{}.convert(document);
+    expect(result.issues.empty() && result.model.wireCount() == 2,
+        "valid GS geometry converts without issues");
+    expect(std::abs(result.model.wires()[0].end.x - 3.048) < 1.0e-12
+            && std::abs(result.model.wires()[0].radius - 0.03048) < 1.0e-12,
+        "GS scales preceding wire coordinates and radius to meters");
+    expect(result.model.wires()[1].end.x == 10.0 && result.model.wires()[1].radius == 0.1,
+        "GS does not scale geometry cards that follow it");
+
+    const auto feetDocument = necwb::nec::NecParser{}.parse(
+        "GW 1 3 0 0 0 10 0 0 .1\nGS 0 0 0.3048\nGE 0\n");
+    const auto units = necwb::nec::inspectDeckGeometryUnits(feetDocument);
+    expect(units.uniform && units.standardUnit == necwb::model::LengthUnit::Foot
+            && units.scaleToMeters == 0.3048,
+        "a trailing 0.3048 GS card identifies feet deck geometry");
+
+    const necwb::model::Wire physical{3, {0.0, 0.0, 0.0}, {3.048, 0.0, 0.0}, 5,
+        0.03048, 1};
+    const auto feetSource = necwb::nec::NecWriter{}.writeWireCard(physical, 0.3048)
+        + "\nGS 0 0 0.3048\nGE 0\n";
+    const auto roundTrip = necwb::nec::NecModelConverter{}.convert(
+        necwb::nec::NecParser{}.parse(feetSource));
+    expect(roundTrip.issues.empty()
+            && std::abs(roundTrip.model.wires().front().end.x - physical.end.x) < 1.0e-12
+            && std::abs(roundTrip.model.wires().front().radius - physical.radius) < 1.0e-12,
+        "deck-unit wire writing and GS conversion preserve physical geometry");
+
+    const auto invalid = necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
+        "GW 1 3 0 0 0 1 0 0 .001\nGS 0 0 -1\nGE 0\n"));
+    expect(std::ranges::any_of(invalid.diagnostics, [](const auto& diagnostic) {
+        return diagnostic.message.find("GS requires") != std::string::npos;
+    }), "invalid GS scale factors are diagnosed");
+}
+
 void testValidModelCheck()
 {
     const std::string source =
@@ -168,6 +225,31 @@ void testValidModelCheck()
     expect(result.errorCount() == 0, "valid model has no errors");
     expect(result.warningCount() == 0, "valid model has no warnings");
     expect(result.model.wireCount() == 1, "model check returns semantic geometry");
+}
+
+void testStaticModelAdequacyChecks()
+{
+    const std::string source =
+        "GW 1 2 0 0 0 10 0 0 1\n"
+        "GE 0\n"
+        "EX 0 1 1 0 1 0\n"
+        "FR 0 1 0 0 300 0\n"
+        "EN\n";
+    const auto result = necwb::nec::NecModelChecker{}.check(
+        necwb::nec::NecParser{}.parse(source));
+    expect(result.errorCount() == 0, "adequacy findings do not block an otherwise valid model");
+    expect(std::ranges::any_of(result.diagnostics, [](const auto& diagnostic) {
+        return diagnostic.category == "Model adequacy"
+            && diagnostic.message.find("0.1 wavelength") != std::string::npos;
+    }), "model adequacy warns about electrically long segments");
+    expect(std::ranges::any_of(result.diagnostics, [](const auto& diagnostic) {
+        return diagnostic.category == "Model adequacy"
+            && diagnostic.message.find("segment-length/diameter") != std::string::npos;
+    }), "model adequacy warns about thick-wire segment ratios");
+    expect(std::ranges::any_of(result.diagnostics, [](const auto& diagnostic) {
+        return diagnostic.category == "Model adequacy"
+            && diagnostic.message.find("even segment count") != std::string::npos;
+    }), "model adequacy warns when a center feed has no center segment");
 }
 
 void testCardValidation()
@@ -609,6 +691,7 @@ void testNecOutputParsing()
         " FREQUENCY : 1.4200E+01 MHz\n"
         " RADIATION PATTERNS\n"
         " 90 0 2.25 -999.99 2.25 0 0 LINEAR\n"
+        " AVERAGE POWER GAIN: 9.97119E-01 - SOLID ANGLE USED IN AVERAGING: (+4.0000)*PI STERADIANS\n"
         "\n";
     const auto result = necwb::analysis::NecOutputParser{}.parse(output);
     expect(result.feedpoints.size() == 2, "NEC output parser reads each frequency block");
@@ -649,6 +732,10 @@ void testNecOutputParsing()
             && necwb::analysis::radiationGainDb(result.radiation[2],
                 necwb::analysis::RadiationComponent::LeftHandCircular) < -900.0,
         "circular polarization follows the NEC axial ratio and sense");
+    expect(result.averagePowerGain && result.averagingSolidAnglePi
+            && std::abs(*result.averagePowerGain - 0.997119) < 1.0e-12
+            && *result.averagingSolidAnglePi == 4.0,
+        "NEC output parser reads average-gain-test values");
     const auto metrics = necwb::analysis::radiationMetrics(
         std::span<const necwb::analysis::RadiationSample>{result.radiation.data(), 3},
         necwb::analysis::RadiationComponent::Total);
@@ -657,6 +744,123 @@ void testNecOutputParsing()
             && metrics.peakPhiDegrees == 0.0
             && std::abs(metrics.frontToBackDb - 10.0) < 1.0e-12,
         "radiation metrics report peak direction and front-to-back ratio");
+}
+
+void testOptimizationObjectives()
+{
+    const std::vector<necwb::analysis::FeedpointResult> feedpoints{
+        {.frequencyMHz = 7.0, .impedance = {50.0, 0.0}},
+        {.frequencyMHz = 7.1, .impedance = {75.0, 0.0}},
+        {.frequencyMHz = 7.2, .impedance = {100.0, 0.0}},
+    };
+    const auto maximum = necwb::analysis::evaluateOptimizationObjective(feedpoints,
+        {.kind = necwb::analysis::OptimizationObjectiveKind::MaximumSwr,
+            .referenceImpedance = 50.0});
+    expect(maximum && maximum->feedpoint && maximum->feedpoint->frequencyMHz == 7.2
+            && std::abs(maximum->score - 2.0) < 1.0e-12,
+        "maximum-SWR objective scores the limiting sweep frequency");
+
+    const auto selected = necwb::analysis::evaluateOptimizationObjective(feedpoints,
+        {.kind = necwb::analysis::OptimizationObjectiveKind::SwrAtFrequency,
+            .referenceImpedance = 50.0, .targetFrequencyMHz = 7.11});
+    expect(selected && selected->feedpoint && selected->feedpoint->frequencyMHz == 7.1
+            && selected->score < maximum->score,
+        "selected-frequency objective scores the nearest calculated frequency");
+}
+
+void testAverageGainTestPreparation()
+{
+    const std::string source =
+        "CM lossy test\n"
+        "GW 1 11 -5 0 6 5 0 6 .001\n"
+        "GE 1\n"
+        "GN 2 0 0 0 13 .005\n"
+        "LD 5 1 0 0 5.8e7 0 0\n"
+        "LD 0 1 3 3 2 1e-6 0\n"
+        "TL 1 3 1 9 50 0 2 .5 3 .7\n"
+        "EX 0 1 6 0 1 0\n"
+        "FR 0 3 0 0 7 0.1\n"
+        "XQ 0\n"
+        "RP 0 19 12 1000 0 0 5 30\n"
+        "EN\n";
+    const auto deck = necwb::analysis::prepareAverageGainTestInput(source, 7.1,
+        necwb::analysis::AverageGainEnvironment::PerfectGround);
+    expect(deck.find("GE 1\nGN 1") != std::string::npos
+            && deck.find("GN 2") == std::string::npos,
+        "AGT preparation replaces finite ground with perfect ground");
+    expect(deck.find("LD 5") == std::string::npos
+            && deck.find("LD 0 1 3 3 0 1e-6 0") != std::string::npos,
+        "AGT preparation removes conductor loss and zeroes resistive loads");
+    expect(deck.find("TL 1 3 1 9 50 0 0 .5 0 .7") != std::string::npos,
+        "AGT preparation zeroes transmission-line shunt losses");
+    expect(deck.find("FR 0 1 0 0 7.1 0") != std::string::npos
+            && deck.find("RP 0 91 361 1002 0 0 1 1") != std::string::npos
+            && deck.find("XQ 0") == std::string::npos,
+        "perfect-ground AGT uses one frequency and hemisphere averaging");
+
+    const auto freeSpaceDeck = necwb::analysis::prepareAverageGainTestInput(source, 7.1,
+        necwb::analysis::AverageGainEnvironment::FreeSpace);
+    expect(freeSpaceDeck.find("GE 0") != std::string::npos
+            && freeSpaceDeck.find("GN ") == std::string::npos
+            && freeSpaceDeck.find("RP 0 181 361 1002 0 0 1 1") != std::string::npos,
+        "free-space AGT removes ground and uses full-sphere averaging");
+
+    const auto assessment = necwb::analysis::assessAverageGain(1.96, 2.0);
+    expect(assessment.classification == necwb::analysis::AverageGainClassification::Pass
+            && std::abs(assessment.normalizedGain - 0.98) < 1.0e-12
+            && assessment.gainAdjustmentDb > 0.0,
+        "AGT assessment normalizes perfect-ground results and reports correction direction");
+}
+
+void testSegmentationConvergencePreparation()
+{
+    const std::string source =
+        "CM convergence model\n"
+        "CE\n"
+        "GW 1 11 -5 0 6 5 0 6 .001\n"
+        "GW 2 10 0 0 0 0 0 5 .001\n"
+        "GE 0\n"
+        "LD 0 1 3 9 5 0 0\n"
+        "TL 1 3 2 8 50 0 0 0 0 0\n"
+        "EX 0 1 6 0 1 0\n"
+        "FR 0 3 0 0 7 0.1\n"
+        "XQ 0\n"
+        "EN\n";
+    const auto prepared = necwb::analysis::prepareSegmentationConvergenceInput(
+        source, 7.1, 1.5);
+    expect(prepared.ok() && prepared.totalSegments == 32,
+        "convergence preparation scales wire segment counts");
+    const auto document = necwb::nec::NecParser{}.parse(prepared.deck);
+    const auto model = necwb::nec::NecModelConverter{}.convert(document).model;
+    const auto setup = necwb::nec::NecSetupConverter{}.convert(document);
+    expect(model.wireByTag(1) != nullptr && model.wireByTag(1)->segments == 17
+            && model.wireByTag(2) != nullptr && model.wireByTag(2)->segments == 15,
+        "convergence preparation preserves centered-source odd segmentation");
+    expect(setup.excitations.size() == 1 && setup.excitations[0].segment == 9
+            && setup.loads.size() == 1 && setup.loads[0].firstSegment == 4
+            && setup.loads[0].lastSegment == 14
+            && setup.transmissionLines.size() == 1
+            && setup.transmissionLines[0].segment1 == 4
+            && setup.transmissionLines[0].segment2 == 12,
+        "convergence preparation remaps segment attachments by physical position");
+    expect(setup.frequency && setup.frequency->count == 1
+            && std::abs(setup.frequency->startMHz - 7.1) < 1.0e-12,
+        "convergence preparation runs one selected frequency");
+
+    const auto unsupported = necwb::analysis::prepareSegmentationConvergenceInput(
+        source.substr(0, source.find("EN\n")) + "NT 1 1 2 2 1 0 0 0 0 0\nEN\n", 7.1, 1.5);
+    expect(!unsupported.ok(), "convergence preparation rejects unsupported network remapping");
+
+    const auto globalSubset = necwb::analysis::prepareSegmentationConvergenceInput(
+        "GW 1 11 0 0 0 1 0 0 .001\nGE 0\nLD 0 0 3 5 5 0 0\n"
+        "EX 0 1 6 0 1 0\nFR 0 1 0 0 7.1 0\nXQ 0\nEN\n", 7.1, 1.5);
+    expect(!globalSubset.ok(),
+        "convergence preparation rejects ambiguous global load subsets");
+
+    const auto excessive = necwb::analysis::prepareSegmentationConvergenceInput(
+        source, 7.1, 1000.0);
+    expect(excessive.ok() && !excessive.warning.empty(),
+        "convergence preparation flags refinements outside recommended segment limits");
 }
 
 }
@@ -668,7 +872,9 @@ auto main() -> int
     testSymbolResolution();
     testWireConversion();
     testInvalidWireIsDiagnosed();
+    testGeometryScaleConversion();
     testValidModelCheck();
+    testStaticModelAdequacyChecks();
     testCardValidation();
     testGeometryCardOrdering();
     testIncompleteModelCheck();
@@ -685,6 +891,9 @@ auto main() -> int
     testSolverCommand();
     testRadiationSweepSolverInput();
     testNecOutputParsing();
+    testOptimizationObjectives();
+    testAverageGainTestPreparation();
+    testSegmentationConvergencePreparation();
 
     if (failures != 0) {
         std::cerr << failures << " test assertion(s) failed\n";

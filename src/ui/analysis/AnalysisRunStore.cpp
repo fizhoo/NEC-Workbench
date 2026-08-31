@@ -2,6 +2,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStandardPaths>
@@ -20,14 +21,22 @@ AnalysisRunStore::AnalysisRunStore(QString rootDirectory)
     }
 }
 
-auto AnalysisRunStore::create(const QString& backend, const QString& sourceFile) const -> AnalysisRunRecord
+auto AnalysisRunStore::create(const QString& backend, const QString& sourceFile,
+    const QString& runType, const QString& parentId) const -> AnalysisRunRecord
 {
     const auto started = QDateTime::currentDateTime();
     const auto id = QStringLiteral("%1-%2")
         .arg(started.toString(QStringLiteral("yyyyMMdd-HHmmss-zzz")),
             QUuid::createUuid().toString(QUuid::Id128).left(8));
-    AnalysisRunRecord record{id, QDir(rootDirectory_).filePath(id), started,
-        sourceFile, backend, QStringLiteral("Starting"), 0.0};
+    AnalysisRunRecord record;
+    record.id = id;
+    record.directory = QDir(rootDirectory_).filePath(id);
+    record.started = started;
+    record.sourceFile = sourceFile;
+    record.backend = backend;
+    record.status = QStringLiteral("Starting");
+    record.runType = runType;
+    record.parentId = parentId;
     QDir().mkpath(record.directory);
     save(record);
     return record;
@@ -62,12 +71,16 @@ auto AnalysisRunStore::save(const AnalysisRunRecord& record) const -> bool
         return false;
     }
     const QJsonObject object{
-        {QStringLiteral("version"), 3},
+        {QStringLiteral("version"), 4},
         {QStringLiteral("id"), record.id},
         {QStringLiteral("started"), record.started.toString(Qt::ISODateWithMs)},
         {QStringLiteral("sourceFile"), record.sourceFile},
         {QStringLiteral("backend"), record.backend},
         {QStringLiteral("status"), record.status},
+        {QStringLiteral("runType"), record.runType},
+        {QStringLiteral("parentId"), record.parentId},
+        {QStringLiteral("summary"), record.summary},
+        {QStringLiteral("candidateCount"), record.candidateCount},
         {QStringLiteral("durationSeconds"), record.durationSeconds},
         {QStringLiteral("outputBytes"), record.outputBytes},
         {QStringLiteral("frequencyCount"), record.frequencyCount},
@@ -86,6 +99,15 @@ auto AnalysisRunStore::remove(const QString& directory) const -> bool
     if (relative == QStringLiteral(".") || relative == QStringLiteral("..")
         || relative.startsWith(QStringLiteral("../")) || QDir::isAbsolutePath(relative)) return false;
     return QDir(target).removeRecursively();
+}
+
+auto AnalysisRunStore::removeGroup(const QString& id, const QString& directory) const -> bool
+{
+    auto removed = true;
+    for (const auto& record : load()) {
+        if (record.parentId == id) removed = remove(record.directory) && removed;
+    }
+    return remove(directory) && removed;
 }
 
 auto AnalysisRunStore::rootDirectory() const -> QString
@@ -108,6 +130,14 @@ auto AnalysisRunStore::readRecord(const QString& directory) const -> AnalysisRun
     record.sourceFile = object.value(QStringLiteral("sourceFile")).toString();
     record.backend = object.value(QStringLiteral("backend")).toString();
     record.status = object.value(QStringLiteral("status")).toString();
+    record.runType = object.value(QStringLiteral("runType")).toString();
+    if (record.runType.isEmpty()) {
+        record.runType = QFileInfo::exists(QDir(directory).filePath(QStringLiteral("optimization.json")))
+            ? QStringLiteral("optimization-candidate") : QStringLiteral("analysis");
+    }
+    record.parentId = object.value(QStringLiteral("parentId")).toString();
+    record.summary = object.value(QStringLiteral("summary")).toString();
+    record.candidateCount = object.value(QStringLiteral("candidateCount")).toInt();
     record.durationSeconds = object.value(QStringLiteral("durationSeconds")).toDouble();
     record.outputBytes = object.value(QStringLiteral("outputBytes")).toInteger();
     record.frequencyCount = object.value(QStringLiteral("frequencyCount")).toInt();

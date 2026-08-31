@@ -2,6 +2,7 @@
 
 #include "model/ModelSetup.h"
 
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -18,5 +19,8 @@ enum class RadiationSweepMode {
     RadiationSweepMode mode = RadiationSweepMode::CenterFrequencyOnly) -> std::string;
 
 [[nodiscard]] auto prepareImpedanceInput(std::string_view source) -> std::string;
+
+[[nodiscard]] auto prepareExplicitFrequencyInput(std::string_view source,
+    std::span<const double> frequenciesMHz) -> std::string;
 
 }

@@ -18,11 +18,11 @@ model summary, and quick solver results. It does not maintain a second NEC copy.
 Geometry owns the detailed XY, XZ, YZ, and 3D editing views. NEC Source owns the
 full source editor and structured card tables. Analysis owns frequency,
 source, ground, loads/lines, solver, and result-request controls. Results owns
-run history, numerical impedance, sweep plots, currents, 2D and 3D radiation,
-and raw solver output. Optimize retains its incremental placeholder controls;
-no optimizer algorithm is implied by the workspace refactor. Project and
-Properties remain global docks. Bottom-tabbed Validation, Solver Output, and
-Messages docks preserve diagnostics and process logs across every workspace.
+summary, grouped run history, impedance tables and plots, currents, nested 2D/3D
+radiation, and immutable raw solver output. Optimize provides bounded
+single-variable SWR sweeps.
+Project and Properties remain global docks. Bottom-tabbed Validation and Solver
+Output docks preserve diagnostics and process logs across every workspace.
 
 Validation errors disable Solve and Optimize while warnings do not. Solve runs
 validation again immediately before creating solver artifacts. Existing results
@@ -34,7 +34,7 @@ solver execution, and both 3D renderers retain their prior boundaries.
 NEC Source presents Raw Source and Structured Cards over the same authoritative
 text document. Structured Cards contains the validated, unit-aware `GW` wire
 table plus schema-specific tables for `EX`, `FR`, `GN/GE`, `LD`, `TL`, `RP`, and
-`XQ`. Each row retains its original source-line mapping. Selecting a structured
+`XQ`, plus explicit `GS` scale editing. Each row retains its original source-line mapping. Selecting a structured
 row positions the raw editor cursor on that card; editing a field rewrites only
 that mapped line through the existing source command, undo, parse, validation,
 and synchronization path. Supported families provide safe default Add actions
@@ -58,9 +58,17 @@ line. Add, duplicate, delete, and cell edits use the same source-level undo stac
 as geometry operations. Raw source remains authoritative and unsupported cards
 remain untouched.
 
-NEC source and semantic geometry always use meters internally. The Model UI can
-display meters, centimeters, millimeters, inches, or feet without changing the
-stored deck. Automatic major-grid spacing is chosen in the active display unit
+Semantic geometry always uses meters internally, while authored NEC geometry
+may use meters, centimeters, millimeters, inches, feet, or a custom scale. `GS`
+is a first-class ordered geometry operation: it scales coordinates and wire
+radii generated before that card, matching NEC behavior. The standard unit
+selector normalizes supported numeric `GW` decks to one `GS` immediately before
+`GE`; wire editing divides canonical meter values by the effective deck scale
+before rewriting source. Symbolic and unsupported geometry is never flattened
+automatically merely to change units.
+
+The Model UI can display meters, centimeters, millimeters, inches, or feet
+without changing the stored deck or `GS`. Automatic major-grid spacing is chosen in the active display unit
 using `1/2/5 × 10ⁿ` engineering steps, so imperial displays use clean foot or inch
 labels rather than converted metric intervals. Grid snapping defaults to rounding
 the converted interval upward to a clean `1/2/5 × 10ⁿ` value in the new unit, so
@@ -91,7 +99,13 @@ Qt Widgets, avoiding an additional OpenGL dependency. It supports orbit, pan,
 zoom, fit, isometric reset, world-axis rendering, wire picking, and synchronized
 selection and properties. It is intentionally read-only in this checkpoint.
 
-The Model Setup tab manages the first supported analysis cards. It edits one
+The Analyze workspace exposes three top-level tabs: Model Setup, Solver, and
+Requests. Model Setup contains nested Frequency, Ground & Sources and Loads &
+Transmission Lines editors, avoiding another top-level workflow step. Its
+compact frequency and ground forms share an adjustable horizontal splitter;
+source and attachment tables retain full-width editing areas.
+
+The Model Setup editors manage the first supported analysis cards. They edit one
 linear or multiplicative `FR` frequency definition and any number of standard
 voltage-source `EX 0` cards using magnitude and phase. Source references are
 validated against wire tags and segment counts, and feed positions are marked in
@@ -137,7 +151,23 @@ Check Model distinguishes malformed cards from an unfinished deck: syntax,
 numeric, and reference failures remain errors, while missing wire geometry,
 frequency setup, or a supported voltage source appear as explicit completeness
 warnings. This keeps partial models editable without reporting the misleading
-“No issues found” state.
+"No issues found" state. Its static model-adequacy pass evaluates segment length
+at the highest requested frequency, thin-wire segment/diameter ratios,
+center-source segmentation, adjoining segment consistency, and large junctions.
+These findings are non-blocking because NEC modeling limits require engineering
+judgment. The Model Adequacy dock categorizes the findings and keeps source-line
+navigation. Solver-backed Average Gain Test is a separate `average-gain-test`
+run type rather than an inference from static geometry. It archives the authored
+source, resolves symbols, generates a one-frequency lossless deck with the
+appropriate whole-sphere or perfect-ground hemisphere `RP` request, parses the
+solver's average power gain, and stores test metadata in `agt.json`. Historical
+AGT rows reopen Results Validation without loading the transformed test deck as
+the editable model. Segmentation convergence uses a `convergence-session` parent
+with hidden `convergence-step` children. Each child archives a progressively
+refined numeric deck while remapping supported EX, LD, and TL references by
+relative wire position. Validation compares successive complex impedance and
+peak-gain values; selected tolerances describe observed numerical stability,
+not a universal correctness pass.
 
 Run Analysis writes the checked source deck to a unique directory under the
 application's durable local-data location and starts the solver asynchronously with `QProcess`.
@@ -147,8 +177,14 @@ Results Raw NEC Output tab and Solver Output dock; `model.nec`, `model.out`, and
 `run.log` remain in the run directory. Runs support a configurable timeout and
 manual cancellation. Each directory includes versioned JSON metadata; records
 are discovered on startup, incomplete records are marked Interrupted, and
-using Open Results or double-clicking a historical row reloads its archived
-model, log, result tables, and plots. Parsing raw
+using View Run Results or double-clicking a historical row reloads its log,
+result tables, and plots without replacing the editable document. The archived
+`model.nec` is parsed separately for result geometry and radiation overlays. A
+persistent result-context banner distinguishes historical output from the active
+model, while explicit actions inspect the archived deck read-only or open it as
+an untitled editable model. Historical optimization and convergence sessions use
+the same return context, expose read-only session banners, and cannot re-enable
+execution against the current editor. Parsing raw
 NEC output into structured result objects is a
 separate core layer. The first parser reads each frequency block's antenna-input
 rows into backend-neutral feedpoint results. Results Numerical Results shows
@@ -191,12 +227,13 @@ layout changes without duplicating data or rendering code.
 
 The status bar identifies the currently open NEC file in every workspace. Each
 run record also stores its originating file path. Historical result summaries
-show the model filename, run timestamp, and backend. Opening a run loads its
-archived input as a Save-As-only historical snapshot, so the original model and
-immutable run artifacts are not overwritten. Legacy run records without source
-metadata are labeled as archived `model.nec` snapshots.
+show the model filename, run timestamp, and backend. Viewing a run leaves the
+active editor untouched; opening its archived input as an untitled editable copy
+requires the separate Open Snapshot as New Model action. Immutable run artifacts
+are never overwritten. Legacy run records without source metadata are labeled
+as archived `model.nec` snapshots.
 
-Model Loads & Lines provides structured editable tables for NEC `LD` types 0–5
+Model Setup → Loads & Transmission Lines provides structured editable tables for NEC `LD` types 0–5
 and `TL` cards. Changes rewrite or insert one canonical card through the shared
 undoable source path. Validation checks numeric field types, load wire/segment
 ranges, and both transmission-line endpoints. These attachments intentionally
@@ -243,17 +280,37 @@ graphical edits may replace an expression with its current numeric value. The
 Optimize workspace can inspect definitions and override one value across a
 bounded linear sweep without modifying the authored source.
 
+Optimizer values remain in authored source units. Symbols referenced directly
+by `GW` coordinate or radius expressions receive the detected deck-unit suffix;
+the solver still applies `GS` when evaluating each generated candidate. This
+avoids applying geometry scaling to frequency, angle, integer, or unitless
+symbols.
+
 Optimization candidates use the same external solver adapter and durable run
-store as ordinary analysis. The initial objective minimizes the worst SWR across
-all returned feedpoint frequencies. Candidate input removes `RP` requests and
-ensures an `XQ` request, avoiding unnecessary far-field calculations. An
-`optimization.json` artifact records the variable, value, objective, and
-reference impedance used for each generated numeric deck.
+store as ordinary analysis. Objective evaluation is centralized in the core
+analysis layer rather than embedded in solver lifecycle code. The initial
+objectives minimize either the maximum SWR across all returned feedpoint
+frequencies or the SWR nearest a selected frequency. Candidate input removes
+`RP` requests and ensures an `XQ` request, avoiding unnecessary far-field
+calculations. Optimization can retain the model's `FR` sweep or replace it with
+an explicit, sorted frequency set. Explicit sets are emitted as repeated
+single-frequency `FR`/`XQ` blocks, which permits disconnected bands in one
+candidate process. Parsed feedpoint rows remain attached to each candidate so
+the workspace can show its full frequency-by-frequency SWR and impedance detail.
+An `optimization.json` artifact records the variable, value, objective,
+frequency mode and points, selected objective frequency, and reference impedance
+used for each generated numeric deck.
+
+Run metadata distinguishes ordinary analyses, AGT runs, convergence sessions
+and steps, and parameter-sweep sessions and candidates. The Results run browser
+hides child rows and shows
+their parent session instead; opening the session reconstructs the candidate
+table from durable child artifacts. Deleting the session removes the group.
 
 ## Near-Term Milestones
 
 1. Add candidate plots and apply-best workflow.
-2. Add optimization objectives, constraints, and bounded variables.
+2. Add gain and pattern objectives, constraints, and bounded variables.
 3. Add normalized attachments and optional solver adapters, including OpenNEC.
 
 See [Development Roadmap](roadmap.md) for the broader sequence and parking lot.

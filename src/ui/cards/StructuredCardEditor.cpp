@@ -43,7 +43,7 @@ struct CardFamily {
 
 const auto& families()
 {
-    static const std::array<CardFamily, 7> values{{
+    static const std::array<CardFamily, 8> values{{
         {QObject::tr("Sources (EX)"), QObject::tr("Voltage and other excitation cards."),
             {nec::NecCardKind::Excitation},
             {QObject::tr("Type"), QObject::tr("Wire Tag"), QObject::tr("Segment"), QObject::tr("I4"),
@@ -78,6 +78,11 @@ const auto& families()
                 QObject::tr("Normalization")}, QStringLiteral("RP"), false},
         {QObject::tr("Execution (XQ)"), QObject::tr("Calculation execution requests."),
             {nec::NecCardKind::Execute}, {QObject::tr("Option")}, QStringLiteral("XQ"), true},
+        {QObject::tr("Geometry Scale (GS)"),
+            QObject::tr("Convert geometry coordinates and wire radii to meters for NEC."),
+            {nec::NecCardKind::GeometryScale},
+            {QObject::tr("I1 (unused)"), QObject::tr("I2 (unused)"),
+                QObject::tr("Scale to meters")}, QStringLiteral("GS"), true},
     }};
     return values;
 }
@@ -96,6 +101,8 @@ struct FieldChoice {
 
 auto fieldType(const QString& mnemonic, int fieldIndex) -> FieldType
 {
+    if (mnemonic == QStringLiteral("GS"))
+        return fieldIndex < 2 ? FieldType::Integer : FieldType::Number;
     if (mnemonic == QStringLiteral("GE") || mnemonic == QStringLiteral("XQ"))
         return FieldType::Integer;
     return fieldIndex < 4 ? FieldType::Integer : FieldType::Number;
@@ -152,6 +159,7 @@ auto parsesAs(const QString& text) -> bool
 auto requiredFieldCount(const QString& mnemonic, const QStringList& fields) -> int
 {
     if (mnemonic == QStringLiteral("EX") || mnemonic == QStringLiteral("FR")) return 6;
+    if (mnemonic == QStringLiteral("GS")) return 3;
     if (mnemonic == QStringLiteral("GE") || mnemonic == QStringLiteral("XQ")) return 1;
     if (mnemonic == QStringLiteral("LD")) return 7;
     if (mnemonic == QStringLiteral("TL")) return 10;
@@ -414,6 +422,10 @@ void StructuredCardEditor::updateActions()
             disabledReason = tr("This model already has a %1 card. Select it in the table to edit it.")
                 .arg(family.mnemonic);
         }
+        if (family.mnemonic == QStringLiteral("GS") && !alreadyExists) {
+            addEnabled = false;
+            disabledReason = tr("Use the NEC deck geometry-units selector to add GS while preserving physical dimensions.");
+        }
         if ((family.mnemonic == QStringLiteral("EX") || family.mnemonic == QStringLiteral("LD")
                 || family.mnemonic == QStringLiteral("TL")) && wireDefaults().empty()) {
             addEnabled = false;
@@ -501,6 +513,7 @@ auto StructuredCardEditor::defaultCard(int familyIndex) const -> QString
     if (familyIndex < 0 || familyIndex >= static_cast<int>(families().size())) return {};
     const auto& family = families()[static_cast<std::size_t>(familyIndex)];
     const auto wires = wireDefaults();
+    if (family.mnemonic == QStringLiteral("GS")) return QStringLiteral("GS 0 0 0.3048");
     if (family.mnemonic == QStringLiteral("EX") && !wires.empty())
         return QStringLiteral("EX 0 %1 %2 0 1 0").arg(wires.front().first)
             .arg((wires.front().second+1)/2);
