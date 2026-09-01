@@ -2,6 +2,11 @@
 
 ## Current Boundaries
 
+User-facing decimal presentation is centralized in `ui/DisplayFormat.h`. Standard
+workspace values use three decimal places, with scientific notation for very small
+or very large values. Source decks, solver artifacts, exports, and precision-sensitive
+editors are deliberately excluded from presentation rounding.
+
 - `model`: solver-independent semantic antenna objects using SI units
 - `nec`: source-deck parsing, preservation, writing, and semantic conversion
 - `ui`: Qt Widgets desktop shell; it does not own parsing or model logic
@@ -23,6 +28,20 @@ radiation, and immutable raw solver output. Optimize provides bounded
 single-variable SWR sweeps.
 Project and Properties remain global docks. Bottom-tabbed Validation and Solver
 Output docks preserve diagnostics and process logs across every workspace.
+
+Results uses one movable content widget rather than duplicated views. A stable
+host remains in the main module stack while the same widget is reparented into a
+single reusable top-level window. Reattaching or closing that window moves the
+widget back, preserving selected tabs, parsed data, render state, and run context.
+This task-window model keeps one-screen tabbed operation while allowing Geometry
+and Results to be tiled without creating a window per run.
+
+Impedance, Currents, and Radiation use the same composition rule at category
+level: a small detachable-panel wrapper reparents each existing live widget into
+one reusable category window. Solver updates continue through the original view
+pointers, so category popouts add no duplicate parsed results or renderers. The
+Dashboard reuses the radiation renderer in overview mode, hiding result controls
+and summary chrome while retaining orbit, pan, and zoom interaction.
 
 Validation errors disable Solve and Optimize while warnings do not. Solve runs
 validation again immediately before creating solver artifacts. Existing results
@@ -93,6 +112,12 @@ sizes from 4/0 through 40 AWG. These edits use the same source command path, so
 the card table, raw source, plane views, project tree, and undo stack remain
 synchronized. The contextual Properties dock also offers AWG as a quick radius
 editor, while the modal dialog handles the complete wire definition.
+
+Field-only transforms preserve authored expressions. Automatic Segmentation
+replaces only the `GW` segment count and the affected EX, LD, and TL segment
+references rather than serializing entire semantic cards. Direct graphical
+movement, splitting, and property replacement are blocked for symbolic `GW`
+geometry until an explicit symbol-aware editing workflow is available.
 
 The 3D Model Geometry tab uses a lightweight software projection rendered with
 Qt Widgets, avoiding an additional OpenGL dependency. It supports orbit, pan,
@@ -171,6 +196,11 @@ not a universal correctness pass.
 
 Run Analysis writes the checked source deck to a unique directory under the
 application's durable local-data location and starts the solver asynchronously with `QProcess`.
+Every analysis, AGT, convergence, and optimization deck passes through one
+solver-boundary normalization step. Workbench preserves inline `CM` notes in the
+authored source snapshot, while external NEC decks retain only the opening
+comment block so strict NEC-2 implementations do not interpret later comments
+as geometry cards.
 The Results workspace's Run History tab records status, duration, backend, and artifact location. Standard
 output, standard error, and the completed NEC output file are mirrored to the
 Results Raw NEC Output tab and Solver Output dock; `model.nec`, `model.out`, and
@@ -236,9 +266,8 @@ as archived `model.nec` snapshots.
 Model Setup → Loads & Transmission Lines provides structured editable tables for NEC `LD` types 0–5
 and `TL` cards. Changes rewrite or insert one canonical card through the shared
 undoable source path. Validation checks numeric field types, load wire/segment
-ranges, and both transmission-line endpoints. These attachments intentionally
-block automatic segmentation until generalized normalized attachment mapping is
-implemented.
+ranges, and both transmission-line endpoints. Supported attachments participate
+in automatic segmentation through normalized wire-position remapping.
 
 ## Automatic Segmentation
 
@@ -249,11 +278,11 @@ and proposed count and resulting segment length. Applying the proposal updates
 all affected `GW` cards in one undoable source edit. An optional odd-count policy
 keeps an unambiguous center segment on excited wires.
 
-Supported `EX 0` sources are remapped by normalized position along their wire and
-the preview reports changed segment numbers. Decks containing unsupported EX
-types or `LD`, `TL`, or `NT` attachments are blocked rather than risk moving an
-electrical connection. A persistent normalized attachment model is still needed
-before those card families can participate safely.
+Supported `EX 0` sources, `LD` ranges, and `TL` endpoints are remapped by
+normalized position along their wires, and the preview reports changed segment
+numbers. TL-connected wires participate in the odd-center policy. Unsupported
+forms and `NT` network cards remain blocked rather than risk moving an electrical
+connection.
 
 `NecDocument` and `AntennaModel` are intentionally distinct. Parsing preserves
 every source line, including blank and unknown lines. Semantic conversion reads

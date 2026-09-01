@@ -1,8 +1,11 @@
 #include "ui/analysis/AverageGainResultsView.h"
 
+#include "ui/DisplayFormat.h"
+
 #include <QHeaderView>
 #include <QLabel>
 #include <QTableWidget>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 namespace necwb::ui {
@@ -43,6 +46,9 @@ AverageGainResultsView::AverageGainResultsView(QWidget* parent) : QWidget(parent
     description->setWordWrap(true);
     status_ = new QLabel(tr("No Average Gain Test result is loaded."), this);
     status_->setWordWrap(true);
+    runButton_ = new QToolButton(this);
+    runButton_->setObjectName(QStringLiteral("runAverageGainFromValidationButton"));
+    runButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     details_ = new QTableWidget(8, 2, this);
     details_->setHorizontalHeaderLabels({tr("Item"), tr("Value")});
     details_->verticalHeader()->hide();
@@ -59,8 +65,14 @@ AverageGainResultsView::AverageGainResultsView(QWidget* parent) : QWidget(parent
     details_->resizeColumnToContents(0);
     layout->addWidget(heading);
     layout->addWidget(description);
+    layout->addWidget(runButton_, 0, Qt::AlignLeft);
     layout->addWidget(status_);
     layout->addWidget(details_, 1);
+}
+
+void AverageGainResultsView::setRunAction(QAction* action)
+{
+    runButton_->setDefaultAction(action);
 }
 
 void AverageGainResultsView::clear()
@@ -75,7 +87,7 @@ void AverageGainResultsView::setRunning(double frequencyMHz,
 {
     clear();
     status_->setText(tr("Running AGT · %1").arg(context));
-    setValue(5, tr("%1 MHz").arg(frequencyMHz, 0, 'g', 12));
+    setValue(5, tr("%1 MHz").arg(formatDecimal(frequencyMHz)));
     setValue(6, environmentName(environment));
 }
 
@@ -86,13 +98,14 @@ void AverageGainResultsView::setResult(const analysis::AverageGainAssessment& as
     hasResult_ = true;
     status_->setText(tr("Completed · %1").arg(context));
     setValue(0, classificationName(assessment.classification));
-    setValue(1, QString::number(assessment.averagePowerGain, 'g', 10));
-    setValue(2, QString::number(assessment.expectedGain, 'g', 6));
-    setValue(3, QString::number(assessment.normalizedGain, 'g', 10));
-    setValue(4, tr("%1 dB").arg(assessment.gainAdjustmentDb, 0, 'f', 3));
-    setValue(5, tr("%1 MHz").arg(frequencyMHz, 0, 'g', 12));
+    setValue(1, formatDecimal(assessment.averagePowerGain));
+    setValue(2, formatDecimal(assessment.expectedGain));
+    setValue(3, formatDecimal(assessment.normalizedGain));
+    setValue(4, tr("%1 dB").arg(formatDecimal(assessment.gainAdjustmentDb)));
+    setValue(5, tr("%1 MHz").arg(formatDecimal(frequencyMHz)));
     setValue(6, environmentName(environment));
-    setValue(7, solidAnglePi ? tr("%1π steradians").arg(*solidAnglePi, 0, 'g', 8) : tr("Not reported"));
+    setValue(7, solidAnglePi
+        ? tr("%1π steradians").arg(formatDecimal(*solidAnglePi)) : tr("Not reported"));
 }
 
 void AverageGainResultsView::setFailure(const QString& message, const QString& context)

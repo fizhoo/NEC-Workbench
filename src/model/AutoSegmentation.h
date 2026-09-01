@@ -23,10 +23,15 @@ struct WireSegmentationProposal {
 struct SegmentationProposal {
     std::vector<WireSegmentationProposal> wires;
     std::vector<Excitation> remappedExcitations;
+    std::vector<LoadDefinition> remappedLoads;
+    std::vector<TransmissionLineDefinition> remappedTransmissionLines;
 };
 
 [[nodiscard]] auto proposeSegmentation(const AntennaModel& model,
     const std::vector<Excitation>& excitations, double maximumFrequencyMHz,
-    const SegmentationSettings& settings) -> SegmentationProposal;
+    const SegmentationSettings& settings,
+    const std::vector<LoadDefinition>& loads = {},
+    const std::vector<TransmissionLineDefinition>& transmissionLines = {})
+    -> SegmentationProposal;
 
 }

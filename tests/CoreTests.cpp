@@ -9,6 +9,7 @@
 #include "model/LengthUnit.h"
 #include "model/WireGauge.h"
 #include "nec/DeckGeometryUnits.h"
+#include "nec/NecCardFieldEditor.h"
 #include "nec/NecModelConverter.h"
 #include "nec/NecModelChecker.h"
 #include "nec/NecParser.h"
@@ -144,6 +145,32 @@ void testSymbolResolution()
         "invalid assignments do not hide independent valid definitions");
     expect(invalid.generatedDeck.find("XX textual-extension") != std::string::npos,
         "unsupported card text remains untouched during symbol resolution");
+}
+
+void testCardFieldEditingPreservesExpressions()
+{
+    const std::string wire = "GW  1  11  0  -hlen  height  0  hlen  height  rad";
+    const std::array wireReplacement{
+        necwb::nec::NecFieldReplacement{1, "29"}};
+    const auto updatedWire = necwb::nec::replaceNecCardFields(wire, wireReplacement);
+    expect(updatedWire && *updatedWire
+            == "GW  1  29  0  -hlen  height  0  hlen  height  rad",
+        "field editing changes only the selected GW field");
+    expect(necwb::nec::necCardFieldIsNumeric(wire, 0)
+            && !necwb::nec::necCardFieldIsNumeric(wire, 3)
+            && !necwb::nec::necCardFieldIsNumeric(wire, 8),
+        "symbolic GW geometry fields are distinguished from numeric fields");
+    expect(necwb::nec::necCardFieldIsNumeric("GW 1 11 +1D-3 0 0 1 0 0 .001", 2),
+        "signed Fortran-exponent fields remain numeric");
+
+    const std::string line = "TL 1 11 2 9 z0 electrical_len 0 0 0 0";
+    const std::array lineReplacements{
+        necwb::nec::NecFieldReplacement{1, "15"},
+        necwb::nec::NecFieldReplacement{3, "13"}};
+    const auto updatedLine = necwb::nec::replaceNecCardFields(line, lineReplacements);
+    expect(updatedLine && *updatedLine
+            == "TL 1 15 2 13 z0 electrical_len 0 0 0 0",
+        "field editing preserves unrelated symbolic TL values");
 }
 
 void testWireConversion()
@@ -433,6 +460,38 @@ void testAutoSegmentation()
     const auto evenProposal = necwb::model::proposeSegmentation(model, excitations, 299.792458, {20, false});
     expect(evenProposal.wires[0].newSegments == 20,
         "odd-count preference can be disabled");
+
+    necwb::model::AntennaModel transmissionLineModel;
+    transmissionLineModel.addWire(
+        {1, {-5.03, 0.0, 7.62}, {5.03, 0.0, 7.62}, 21, 0.001, 1});
+    transmissionLineModel.addWire(
+        {2, {0.0, 0.0, 100.0}, {0.0, 0.0, 100.001}, 1, 0.000001, 2});
+    const std::vector<necwb::model::Excitation> remoteExcitation{
+        {0, 2, 1, 1.0, 0.0, 11}};
+    const std::vector<necwb::model::LoadDefinition> loads{
+        {4, 1, 5, 17, 50.0, 0.0, 0.0, 10}};
+    const std::vector<necwb::model::TransmissionLineDefinition> lines{
+        {1, 11, 2, 1, 50.0, 5.0, 0.0, 0.0, 0.0, 0.0, 9}};
+    const auto attachmentProposal = necwb::model::proposeSegmentation(
+        transmissionLineModel, remoteExcitation, 14.25, {20, true}, loads, lines);
+    expect(attachmentProposal.wires[0].newSegments == 11,
+        "a TL-fed wire keeps an odd center segment during automatic segmentation");
+    expect(attachmentProposal.remappedTransmissionLines[0].segment1 == 6
+            && attachmentProposal.remappedTransmissionLines[0].segment2 == 1,
+        "automatic segmentation remaps both transmission-line endpoints");
+    expect(attachmentProposal.remappedLoads[0].firstSegment == 3
+            && attachmentProposal.remappedLoads[0].lastSegment == 9,
+        "automatic segmentation remaps supported load ranges");
+
+    const auto transmissionLineDeck = necwb::nec::NecParser{}.parse(
+        "CM 20m dipole at 25 ft\nCE\n"
+        "GW 1 21 -5.030 0.000 7.620 5.030 0.000 7.620 0.001\n"
+        "GW 2 1 0.000 0.000 100.000 0.000 0.000 100.001 0.000001\n"
+        "GE 0\nGN 2 0 0 0 13.000 0.005\nFR 0 26 0 0 14 0.01\n"
+        "TL 1 11 2 1 50.000 5 0.000 0.000 0.000 0.000\n"
+        "EX 0 2 1 0 1 0\nRP 0 19 37 1000 0.000 0.000 5.000 10.000\nEN\n");
+    expect(necwb::nec::NecModelChecker{}.check(transmissionLineDeck).errorCount() == 0,
+        "valid EX 0 and TL references pass model checking");
 }
 
 void testStructuredModelSetup()
@@ -464,6 +523,8 @@ void testStructuredModelSetup()
         "linear sweep count includes both exact endpoints");
     expect(necwb::model::frequencyPointCount(0, 10.0, 20.0, 3.0) == 4,
         "linear sweep count does not exceed the requested end");
+    expect(necwb::model::frequencyPointCount(0, 14.0, 14.350, 0.01) == 36,
+        "14.000 through 14.350 MHz at 0.010 MHz includes all 36 points");
     expect(necwb::model::frequencyPointCount(1, 1.0, 16.0, 2.0) == 5,
         "multiplicative sweep count spans powers through the endpoint");
     expect(!necwb::model::frequencyPointCount(1, 1.0, 16.0, 1.0),
@@ -609,8 +670,13 @@ void testSolverCommand()
 
 void testRadiationSweepSolverInput()
 {
+    const auto normalizedWithoutCe = necwb::analysis::normalizeSolverDeck(
+        "CM opening note\nGW 1 1 0 0 0 1 0 0 .001\nCM inline note\nGE 0\nEN\n");
+    expect(normalizedWithoutCe.find("CM opening note") != std::string::npos
+            && normalizedWithoutCe.find("CM inline note") == std::string::npos,
+        "solver normalization recognizes inline comments even without an explicit CE card");
     const std::string source =
-        "CM sweep\nCE\nGW 1 11 0 0 0 1 0 0 .001\nGE 0\n"
+        "CM sweep\nCE\nCM inline geometry note\nGW 1 11 0 0 0 1 0 0 .001\nGE 0\n"
         "EX 0 1 6 0 1 0\nFR 0 3 0 0 14 0.25\nGN 2 0 0 0 13 .005\nXQ 0\n"
         "RP 0 19 12 1000 0 0 10 30 0 0\nEN\n";
     const auto document = necwb::nec::NecParser{}.parse(source);
@@ -625,6 +691,9 @@ void testRadiationSweepSolverInput()
         return count;
     };
     const auto prepared = necwb::analysis::prepareSolverInput(source, setup);
+    expect(prepared.find("CM sweep") != std::string::npos
+            && prepared.find("CM inline geometry note") == std::string::npos,
+        "solver input retains the NEC comment block and omits Workbench inline comments");
     expect(prepared.find("GN 2 0 0 0 13 .005\nFR 0 3 0 0 14 0.25\nXQ 0") != std::string::npos,
         "center-only radiation retains the fast native impedance sweep");
     expect(countOccurrences(prepared, "RP 0 19 12 1000") == 1
@@ -638,6 +707,20 @@ void testRadiationSweepSolverInput()
             && representative.find("FR 0 1 0 0 14.25 0\nRP") != std::string::npos
             && representative.find("FR 0 1 0 0 14.5 0\nRP") != std::string::npos,
         "representative radiation requests start, center, and end patterns");
+
+    const std::string sourceWithoutExecution =
+        "CM sweep\nCE\nGW 1 11 0 0 0 1 0 0 .001\nGE 0\n"
+        "EX 0 1 6 0 1 0\nFR 0 36 0 0 14 0.01\nGN 2 0 0 0 13 .005\n"
+        "RP 0 19 12 1000 0 0 10 30 0 0\nEN\n";
+    const auto setupWithoutExecution = necwb::nec::NecSetupConverter{}.convert(
+        necwb::nec::NecParser{}.parse(sourceWithoutExecution));
+    const auto representativeWithoutExecution = necwb::analysis::prepareSolverInput(
+        sourceWithoutExecution, setupWithoutExecution,
+        necwb::analysis::RadiationSweepMode::RepresentativeFrequencies);
+    expect(representativeWithoutExecution.find("FR 0 36 0 0 14 0.01\nXQ 0")
+                != std::string::npos
+            && countOccurrences(representativeWithoutExecution, "RP 0 19 12 1000") == 3,
+        "representative radiation preserves the complete impedance sweep without an authored XQ");
 
     const auto everyFrequency = necwb::analysis::prepareSolverInput(source, setup,
         necwb::analysis::RadiationSweepMode::EveryFrequency);
@@ -656,6 +739,17 @@ void testRadiationSweepSolverInput()
             && logarithmicPrepared.find("FR 0 1 0 0 20 0") != std::string::npos
             && logarithmicPrepared.find("FR 0 1 0 0 40 0") != std::string::npos,
         "radiation sweeps expand multiplicative frequencies");
+
+    const std::string singleFrequencySource =
+        "CM single\nCE\nCM inline note\nGW 1 11 0 0 0 1 0 0 .001\nGE 0\n"
+        "EX 0 1 6 0 1 0\nFR 0 1 0 0 14 0\nEN\n";
+    const auto singleFrequencySetup = necwb::nec::NecSetupConverter{}.convert(
+        necwb::nec::NecParser{}.parse(singleFrequencySource));
+    const auto singleFrequencyPrepared = necwb::analysis::prepareSolverInput(
+        singleFrequencySource, singleFrequencySetup);
+    expect(singleFrequencyPrepared.find("CM inline note") == std::string::npos
+            && singleFrequencyPrepared.find("GW 1 11") != std::string::npos,
+        "single-frequency solver input also omits inline comments after CE");
 }
 
 void testNecOutputParsing()
@@ -674,6 +768,7 @@ void testNecOutputParsing()
         " CURRENTS AND LOCATION\n"
         " 1 1 0 0 -0.1 0.05 1.0E-02 -2.0E-03 1.0198E-02 -11.31\n"
         " 2 1 0 0 0.1 0.05 8.0E-03 1.0E-03 8.0623E-03 7.125\n"
+        " 3 2 0.2 0 0.1 0.05 -7.0E-03 1.0E-03 7.0711E-03 171.87\n"
         "\n"
         " FREQUENCY : 1.4100E+01 MHz\n"
         " ANTENNA INPUT PARAMETERS\n"
@@ -682,6 +777,7 @@ void testNecOutputParsing()
         " CURRENTS AND LOCATION\n"
         " 1 1 0 0 -0.1 0.05 1.0E-02 -2.0E-03 1.0198E-02 -11.31\n"
         " 2 1 0 0 0.1 0.05 8.0E-03 1.0E-03 8.0623E-03 7.125\n"
+        " 3 2 0.2 0 0.1 0.05 -7.0E-03 1.0E-03 7.0711E-03 171.87\n"
         "\n"
         " RADIATION PATTERNS\n"
         " 0 0 -999.99 -999.99 -999.99 0 0\n"
@@ -709,11 +805,14 @@ void testNecOutputParsing()
     expect(necwb::analysis::standingWaveRatio({0.0, 0.0})
             == std::numeric_limits<double>::infinity(),
         "zero impedance reports infinite SWR");
-    expect(result.currents.size() == 2
+    expect(result.currents.size() == 3
             && result.currents[0].wireTag == 1
             && result.currents[0].segment == 1
             && result.currents[0].magnitude == 0.010198,
         "NEC output parser reads segment current distribution rows");
+    expect(result.currents[2].wireTag == 2 && result.currents[2].segment == 1
+            && result.currents[2].magnitude == 0.0070711,
+        "global NEC current segments map to local tag-relative segments");
     expect(result.radiation.size() == 4
             && result.radiation[1].thetaDegrees == 90.0
             && result.radiation[1].totalGainDb == 2.15
@@ -772,6 +871,8 @@ void testAverageGainTestPreparation()
 {
     const std::string source =
         "CM lossy test\n"
+        "CE\n"
+        "CM inline AGT note\n"
         "GW 1 11 -5 0 6 5 0 6 .001\n"
         "GE 1\n"
         "GN 2 0 0 0 13 .005\n"
@@ -785,9 +886,11 @@ void testAverageGainTestPreparation()
         "EN\n";
     const auto deck = necwb::analysis::prepareAverageGainTestInput(source, 7.1,
         necwb::analysis::AverageGainEnvironment::PerfectGround);
-    expect(deck.find("GE 1\nGN 1") != std::string::npos
+    expect(deck.find("CM lossy test") != std::string::npos
+            && deck.find("CM inline AGT note") == std::string::npos
+            && deck.find("GE 1\nGN 1") != std::string::npos
             && deck.find("GN 2") == std::string::npos,
-        "AGT preparation replaces finite ground with perfect ground");
+        "AGT preparation normalizes comments and replaces finite ground with perfect ground");
     expect(deck.find("LD 5") == std::string::npos
             && deck.find("LD 0 1 3 3 0 1e-6 0") != std::string::npos,
         "AGT preparation removes conductor loss and zeroes resistive loads");
@@ -817,6 +920,7 @@ void testSegmentationConvergencePreparation()
     const std::string source =
         "CM convergence model\n"
         "CE\n"
+        "CM inline convergence note\n"
         "GW 1 11 -5 0 6 5 0 6 .001\n"
         "GW 2 10 0 0 0 0 0 5 .001\n"
         "GE 0\n"
@@ -828,8 +932,9 @@ void testSegmentationConvergencePreparation()
         "EN\n";
     const auto prepared = necwb::analysis::prepareSegmentationConvergenceInput(
         source, 7.1, 1.5);
-    expect(prepared.ok() && prepared.totalSegments == 32,
-        "convergence preparation scales wire segment counts");
+    expect(prepared.ok() && prepared.totalSegments == 32
+            && prepared.deck.find("CM inline convergence note") == std::string::npos,
+        "convergence preparation normalizes comments and scales wire segment counts");
     const auto document = necwb::nec::NecParser{}.parse(prepared.deck);
     const auto model = necwb::nec::NecModelConverter{}.convert(document).model;
     const auto setup = necwb::nec::NecSetupConverter{}.convert(document);
@@ -870,6 +975,7 @@ auto main() -> int
     testRoundTripPreservesSource();
     testKnownCardsAreRecognized();
     testSymbolResolution();
+    testCardFieldEditingPreservesExpressions();
     testWireConversion();
     testInvalidWireIsDiagnosed();
     testGeometryScaleConversion();

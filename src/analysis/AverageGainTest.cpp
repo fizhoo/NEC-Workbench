@@ -1,5 +1,7 @@
 #include "analysis/AverageGainTest.h"
 
+#include "analysis/SolverInput.h"
+
 #include "nec/NecParser.h"
 
 #include <algorithm>
@@ -48,7 +50,7 @@ auto losslessCard(const nec::NecCard& card) -> std::string
 auto prepareAverageGainTestInput(std::string_view source, double frequencyMHz,
     AverageGainEnvironment environment) -> std::string
 {
-    const auto document = nec::NecParser{}.parse(source);
+    const auto document = nec::NecParser{}.parse(normalizeSolverDeck(source));
     std::vector<std::string> lines;
     lines.reserve(document.cards().size() + 4);
     auto insertedRequests = false;

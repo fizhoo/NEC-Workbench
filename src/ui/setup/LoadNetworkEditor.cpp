@@ -1,5 +1,7 @@
 #include "ui/setup/LoadNetworkEditor.h"
 
+#include "ui/DisplayFormat.h"
+
 #include <QHeaderView>
 #include <QLabel>
 #include <QPushButton>
@@ -86,12 +88,12 @@ void LoadNetworkEditor::setData(const model::AntennaModel& model, const model::M
     const auto selectedLine = sourceLineAt(lines_, lines_->currentRow());
     model_ = model; loads_->setRowCount(static_cast<int>(setup.loads.size()));
     for (auto row = 0; row < static_cast<int>(setup.loads.size()); ++row) {
-        const auto& value = setup.loads[row]; const QStringList cells{QString::number(value.type), QString::number(value.wireTag), QString::number(value.firstSegment), QString::number(value.lastSegment), QString::number(value.value1, 'g', 12), QString::number(value.value2, 'g', 12), QString::number(value.value3, 'g', 12)};
+        const auto& value = setup.loads[row]; const QStringList cells{QString::number(value.type), QString::number(value.wireTag), QString::number(value.firstSegment), QString::number(value.lastSegment), formatDecimal(value.value1), formatDecimal(value.value2), formatDecimal(value.value3)};
         for (auto column = 0; column < cells.size(); ++column) { auto* item = new QTableWidgetItem(cells[column]); item->setData(SourceLineRole, static_cast<qulonglong>(value.sourceLine)); loads_->setItem(row, column, item); }
     }
     lines_->setRowCount(static_cast<int>(setup.transmissionLines.size()));
     for (auto row = 0; row < static_cast<int>(setup.transmissionLines.size()); ++row) {
-        const auto& value = setup.transmissionLines[row]; const QStringList cells{QString::number(value.wireTag1), QString::number(value.segment1), QString::number(value.wireTag2), QString::number(value.segment2), QString::number(value.characteristicImpedance, 'g', 12), QString::number(value.lengthMeters, 'g', 12), QString::number(value.shuntReal1, 'g', 12), QString::number(value.shuntImaginary1, 'g', 12), QString::number(value.shuntReal2, 'g', 12), QString::number(value.shuntImaginary2, 'g', 12)};
+        const auto& value = setup.transmissionLines[row]; const QStringList cells{QString::number(value.wireTag1), QString::number(value.segment1), QString::number(value.wireTag2), QString::number(value.segment2), formatDecimal(value.characteristicImpedance), formatDecimal(value.lengthMeters), formatDecimal(value.shuntReal1), formatDecimal(value.shuntImaginary1), formatDecimal(value.shuntReal2), formatDecimal(value.shuntImaginary2)};
         for (auto column = 0; column < cells.size(); ++column) { auto* item = new QTableWidgetItem(cells[column]); item->setData(SourceLineRole, static_cast<qulonglong>(value.sourceLine)); lines_->setItem(row, column, item); }
     }
     selectLoad(selectedLoad);

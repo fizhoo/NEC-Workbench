@@ -1,5 +1,7 @@
 #include "ui/analysis/FieldResultsViews.h"
 
+#include "ui/DisplayFormat.h"
+
 #include <QComboBox>
 #include <QCheckBox>
 #include <QFile>
@@ -60,7 +62,7 @@ void selectFrequency(QComboBox* control, double frequencyMHz)
             return;
         }
     }
-    control->addItem(QStringLiteral("%1 MHz").arg(frequencyMHz, 0, 'g', 10), frequencyMHz);
+    control->addItem(QStringLiteral("%1 MHz").arg(formatDecimal(frequencyMHz)), frequencyMHz);
     control->setCurrentIndex(control->count() - 1);
 }
 
@@ -68,7 +70,7 @@ void populateFrequencies(QComboBox* control, const std::vector<double>& values)
 {
     control->clear();
     for (const auto value : values) {
-        control->addItem(QStringLiteral("%1 MHz").arg(value, 0, 'g', 10), value);
+        control->addItem(QStringLiteral("%1 MHz").arg(formatDecimal(value)), value);
     }
 }
 
@@ -82,7 +84,7 @@ void populateRadiationControls(QComboBox* component, QComboBox* scale, QComboBox
     scale->addItem(QObject::tr("Normalized dB"), static_cast<int>(analysis::RadiationScale::Normalized));
     scale->addItem(QObject::tr("Absolute dBi"), static_cast<int>(analysis::RadiationScale::Absolute));
     for (const auto value : {-20.0, -30.0, -40.0, -50.0, -60.0})
-        floor->addItem(QObject::tr("%1 dB").arg(value, 0, 'f', 0), value);
+        floor->addItem(QObject::tr("%1 dB").arg(formatDecimal(value)), value);
     floor->setCurrentIndex(2);
 }
 
@@ -192,12 +194,119 @@ auto resultModelExtentFromOrigin(const model::AntennaModel& model) -> double
     return extent;
 }
 
+auto radiationAnglesCoverCircle(const std::vector<QPointF>& samples) -> bool
+{
+    std::vector<double> angles;
+    angles.reserve(samples.size());
+    for (const auto& sample : samples) {
+        auto angle = std::fmod(sample.x(), 360.0);
+        if (angle < 0.0) angle += 360.0;
+        if (std::ranges::none_of(angles, [angle](double existing) {
+                return std::abs(existing - angle) < 1.0e-9;
+            })) {
+            angles.push_back(angle);
+        }
+    }
+    if (angles.size() < 3) return false;
+    std::ranges::sort(angles);
+    std::vector<double> gaps;
+    gaps.reserve(angles.size());
+    for (auto index = std::size_t{1}; index < angles.size(); ++index)
+        gaps.push_back(angles[index] - angles[index - 1]);
+    gaps.push_back(360.0 - angles.back() + angles.front());
+    auto sortedGaps = gaps;
+    std::ranges::sort(sortedGaps);
+    const auto typicalGap = sortedGaps[sortedGaps.size() / 2];
+    return typicalGap > 0.0
+        && std::ranges::max(gaps) <= typicalGap * 1.5 + 1.0e-9;
+}
+
+auto connectedCurrentPaths(const std::vector<analysis::SegmentCurrentResult>& samples,
+    const model::AntennaModel& model) -> std::vector<CurrentPlotPath>
+{
+    struct WireSeries {
+        CurrentPlotPath samples;
+        model::Point3D start;
+        model::Point3D end;
+        bool connected{};
+        bool used{};
+    };
+
+    std::map<int, CurrentPlotPath> samplesByTag;
+    for (const auto& sample : samples) samplesByTag[sample.wireTag].push_back(sample);
+
+    std::vector<WireSeries> series;
+    series.reserve(samplesByTag.size());
+    for (auto& [tag, wireSamples] : samplesByTag) {
+        std::ranges::sort(wireSamples, {}, &analysis::SegmentCurrentResult::segment);
+        if (const auto* wire = model.wireByTag(tag))
+            series.push_back({std::move(wireSamples), wire->start, wire->end, true});
+        else
+            series.push_back({std::move(wireSamples), {}, {}, false});
+    }
+
+    const auto tolerance = std::max(1.0, resultModelExtentFromOrigin(model)) * 1.0e-9;
+    const auto samePoint = [tolerance](const model::Point3D& first, const model::Point3D& second) {
+        return std::hypot(first.x - second.x, first.y - second.y, first.z - second.z) <= tolerance;
+    };
+    const auto oriented = [](const CurrentPlotPath& path, bool reverse) {
+        auto result = path;
+        if (reverse) std::ranges::reverse(result);
+        return result;
+    };
+
+    std::vector<CurrentPlotPath> paths;
+    for (auto& initial : series) {
+        if (initial.used) continue;
+        initial.used = true;
+        auto path = initial.samples;
+        if (!initial.connected) {
+            paths.push_back(std::move(path));
+            continue;
+        }
+        auto pathStart = initial.start;
+        auto pathEnd = initial.end;
+        auto attached = true;
+        while (attached) {
+            attached = false;
+            for (auto& candidate : series) {
+                if (candidate.used || !candidate.connected) continue;
+                CurrentPlotPath addition;
+                if (samePoint(candidate.start, pathEnd)) {
+                    addition = oriented(candidate.samples, false);
+                    pathEnd = candidate.end;
+                    path.insert(path.end(), addition.begin(), addition.end());
+                } else if (samePoint(candidate.end, pathEnd)) {
+                    addition = oriented(candidate.samples, true);
+                    pathEnd = candidate.start;
+                    path.insert(path.end(), addition.begin(), addition.end());
+                } else if (samePoint(candidate.start, pathStart)) {
+                    addition = oriented(candidate.samples, true);
+                    pathStart = candidate.end;
+                    path.insert(path.begin(), addition.begin(), addition.end());
+                } else if (samePoint(candidate.end, pathStart)) {
+                    addition = oriented(candidate.samples, false);
+                    pathStart = candidate.start;
+                    path.insert(path.begin(), addition.begin(), addition.end());
+                } else {
+                    continue;
+                }
+                candidate.used = true;
+                attached = true;
+                break;
+            }
+        }
+        paths.push_back(std::move(path));
+    }
+    return paths;
+}
+
 class CurrentPlotWidget final : public QWidget {
 public:
     explicit CurrentPlotWidget(QWidget* parent = nullptr) : QWidget(parent) { setMinimumHeight(220); }
-    void setSamples(std::vector<analysis::SegmentCurrentResult> samples)
+    void setPaths(std::vector<CurrentPlotPath> paths)
     {
-        samples_ = std::move(samples);
+        paths_ = std::move(paths);
         update();
     }
 protected:
@@ -207,52 +316,64 @@ protected:
         painter.setRenderHint(QPainter::Antialiasing);
         painter.fillRect(rect(), palette().brush(QPalette::Base));
         const QRectF area(65, 25, std::max(1, width() - 85), std::max(1, height() - 65));
-        if (samples_.empty()) {
+        const auto sampleCount = std::accumulate(paths_.begin(), paths_.end(), std::size_t{},
+            [](std::size_t count, const auto& path) { return count + path.size(); });
+        if (sampleCount == 0) {
             painter.drawText(area, Qt::AlignCenter, tr("No current samples"));
             return;
         }
-        const auto maximum = std::ranges::max(samples_, {}, &analysis::SegmentCurrentResult::magnitude).magnitude;
+        auto maximum = 0.0;
+        for (const auto& path : paths_)
+            for (const auto& sample : path) maximum = std::max(maximum, sample.magnitude);
         painter.setPen(palette().color(QPalette::Mid));
         for (auto tick = 0; tick <= 5; ++tick) {
             const auto y = area.bottom() - area.height() * tick / 5.0;
             painter.drawLine(QPointF(area.left(), y), QPointF(area.right(), y));
             painter.drawText(QRectF(2, y - 10, 58, 20), Qt::AlignRight | Qt::AlignVCenter,
-                QString::number(maximum * tick / 5.0, 'g', 4));
+                formatDecimal(maximum * tick / 5.0));
         }
         painter.setPen(palette().color(QPalette::Text));
         painter.drawRect(area);
-        QPainterPath path;
         painter.setPen(QPen(QColor(44, 132, 218), 2));
         painter.setBrush(QColor(44, 132, 218));
-        for (auto index = 0; index < static_cast<int>(samples_.size()); ++index) {
-            const auto x = area.left() + (index + 0.5) * area.width() / samples_.size();
-            const auto y = area.bottom() - samples_[index].magnitude / std::max(maximum, 1.0e-30) * area.height();
-            index == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
-            painter.drawEllipse(QPointF(x, y), 3, 3);
+        auto sampleIndex = std::size_t{};
+        for (const auto& samples : paths_) {
+            QPainterPath path;
+            for (auto pathIndex = std::size_t{}; pathIndex < samples.size(); ++pathIndex, ++sampleIndex) {
+                const auto x = area.left() + (sampleIndex + 0.5) * area.width() / sampleCount;
+                const auto y = area.bottom() - samples[pathIndex].magnitude
+                    / std::max(maximum, 1.0e-30) * area.height();
+                pathIndex == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
+                painter.drawEllipse(QPointF(x, y), 3, 3);
+            }
+            painter.setBrush(Qt::NoBrush);
+            painter.drawPath(path);
+            painter.setBrush(QColor(44, 132, 218));
         }
         painter.setBrush(Qt::NoBrush);
-        painter.drawPath(path);
         painter.setPen(palette().color(QPalette::Text));
         painter.drawText(QRectF(area.left(), height() - 30, area.width(), 20), Qt::AlignCenter,
-            tr("Segment order"));
+            tr("Connected wire path"));
         painter.save(); painter.translate(15, area.center().y()); painter.rotate(-90);
         painter.drawText(QRectF(-area.height() / 2, -10, area.height(), 20), Qt::AlignCenter,
             tr("Current magnitude (A)")); painter.restore();
     }
 private:
-    std::vector<analysis::SegmentCurrentResult> samples_;
+    std::vector<CurrentPlotPath> paths_;
 };
 
 class RadiationPolarWidget final : public QWidget {
 public:
     explicit RadiationPolarWidget(QWidget* parent = nullptr) : QWidget(parent)
     {
+        setObjectName(QStringLiteral("radiationPolarPlot"));
         setMinimumSize(360, 360);
         setMouseTracking(true);
     }
     void setSamples(std::vector<QPointF> samples)
     {
         samples_ = std::move(samples);
+        setProperty("closedPattern", radiationAnglesCoverCircle(samples_));
         tracking_ = false;
         update();
     }
@@ -294,7 +415,7 @@ protected:
             painter.drawEllipse(center, ringRadius, ringRadius);
             const auto ringDb = innerDb + (outerDb - innerDb) * ring / 4.0;
             painter.drawText(QPointF(center.x() + 5, center.y() - ringRadius - 2),
-                tr("%1 dB").arg(ringDb, 0, 'f', 0));
+                tr("%1 dB").arg(formatDecimal(ringDb)));
         }
         for (auto angle = 0; angle < 360; angle += 30) {
             const auto radians = angle * std::numbers::pi / 180.0;
@@ -302,7 +423,7 @@ protected:
             const auto labelPoint = center
                 + QPointF(std::sin(radians), -std::cos(radians)) * (radius + 18.0);
             painter.drawText(QRectF(labelPoint.x() - 22, labelPoint.y() - 9, 44, 18),
-                Qt::AlignCenter, tr("%1°").arg(angle));
+                Qt::AlignCenter, angle == 0 ? tr("0°/360°") : tr("%1°").arg(angle));
         }
         painter.setPen(QPen(palette().color(QPalette::Text), 1.5));
         painter.drawLine(center - QPointF(radius, 0), center + QPointF(radius, 0));
@@ -322,13 +443,14 @@ protected:
             started ? path.lineTo(point) : path.moveTo(point);
             started = true;
         }
+        if (radiationAnglesCoverCircle(samples_)) path.closeSubpath();
         painter.setPen(QPen(QColor(215, 70, 65), 2));
         painter.drawPath(path);
         painter.setPen(palette().color(QPalette::Text));
         painter.drawText(8, 20, tr("Angle: degrees · Radial: %1 · Peak %2 dBi")
             .arg(settings_.scale == analysis::RadiationScale::Normalized
                     ? tr("relative gain (dB)") : tr("absolute gain (dBi)"))
-            .arg(maxGain, 0, 'f', 2));
+            .arg(formatDecimal(maxGain)));
         if (tracking_) {
             auto cursorAngle = std::atan2(cursor_.x() - center.x(), center.y() - cursor_.y())
                 * 180.0 / std::numbers::pi;
@@ -354,9 +476,8 @@ protected:
             painter.setPen(palette().color(QPalette::Text));
             painter.drawText(readout.adjusted(7, 0, -7, 0), Qt::AlignVCenter | Qt::AlignLeft,
                 tr("Angle %1° · Gain %2 dBi · Relative %3 dB")
-                    .arg(nearest->x(), 0, 'f', 1)
-                    .arg(nearest->y(), 0, 'f', 2)
-                    .arg(nearest->y() - maxGain, 0, 'f', 2));
+                    .arg(formatDecimal(nearest->x()), formatDecimal(nearest->y()),
+                        formatDecimal(nearest->y() - maxGain)));
         }
     }
 private:
@@ -377,6 +498,7 @@ public:
     void setModel(const model::AntennaModel& model) { model_ = model; update(); }
     void setLayerVisibility(bool antenna, bool currents, bool radiation)
     { showAntenna_ = antenna; showCurrents_ = currents; showRadiation_ = radiation; update(); }
+    void setOverlayVisible(bool visible) { showOverlay_ = visible; update(); }
     void resetView()
     {
         yaw_ = -0.7;
@@ -435,11 +557,13 @@ protected:
         if (showCurrents_ && !currents_.empty())
             drawCurrents(painter, antennaScale, modelExtent);
         painter.setPen(palette().color(QPalette::Text));
-        auto status = tr("Drag to orbit · wheel to zoom · zoom %1×").arg(zoom_, 0, 'f', 2);
-        if (hasRadiation) status += tr(" · %1 peak %2 dBi")
-            .arg(componentName(settings_.component)).arg(maxGain, 0, 'f', 2);
-        painter.drawText(10, 22, status + tr(" · Shift/middle-drag to pan"));
-        if (hasRadiation) {
+        if (showOverlay_) {
+            auto status = tr("Drag to orbit · wheel to zoom · zoom %1×").arg(formatDecimal(zoom_));
+            if (hasRadiation) status += tr(" · %1 peak %2 dBi")
+                .arg(componentName(settings_.component), formatDecimal(maxGain));
+            painter.drawText(10, 22, status + tr(" · Shift/middle-drag to pan"));
+        }
+        if (hasRadiation && showOverlay_) {
             const QRectF legend(10, 42, 255, 24);
             painter.fillRect(legend, palette().brush(QPalette::AlternateBase));
             painter.setPen(QPen(QColor(80, 185, 105), 3));
@@ -451,7 +575,7 @@ protected:
                     .arg(componentName(settings_.component),
                         settings_.scale == analysis::RadiationScale::Normalized
                             ? tr("normalized") : tr("absolute"))
-                    .arg(settings_.floorDb, 0, 'f', 0));
+                    .arg(formatDecimal(settings_.floorDb)));
         }
         if ((!showRadiation_ || samples_.empty()) && (!showCurrents_ || currents_.empty()) && model_.empty())
             painter.drawText(rect(), Qt::AlignCenter, tr("No 3D result data"));
@@ -564,7 +688,7 @@ private:
         painter.setPen(palette().color(QPalette::Text));
         painter.drawText(QPointF(legend.left(), legend.bottom()+15), tr("0 A"));
         painter.drawText(QRectF(legend.right()-70, legend.bottom()+2, 70, 20), Qt::AlignRight,
-            tr("%1 A").arg(maximum, 0, 'g', 4));
+            tr("%1 A").arg(formatDecimal(maximum)));
         if (hovered != nullptr) {
             painter.setPen(QPen(Qt::white, 2)); painter.drawLine(hoveredStart, hoveredEnd);
             const QRectF readout(8, height()-31, width()-16, 23);
@@ -574,7 +698,7 @@ private:
             painter.drawText(readout.adjusted(7, 0, -7, 0), Qt::AlignVCenter | Qt::AlignLeft,
                 tr("Wire %1 · Segment %2 · Current %3 A · Phase %4°")
                     .arg(hovered->wireTag).arg(hovered->segment)
-                    .arg(hovered->magnitude, 0, 'g', 6).arg(hovered->phaseDegrees, 0, 'f', 2));
+                    .arg(formatDecimal(hovered->magnitude), formatDecimal(hovered->phaseDegrees)));
         }
     }
     model::AntennaModel model_;
@@ -593,6 +717,7 @@ private:
     bool showAntenna_{true};
     bool showCurrents_{true};
     bool showRadiation_{true};
+    bool showOverlay_{true};
 };
 
 CurrentDistributionView::CurrentDistributionView(QWidget* parent) : QWidget(parent)
@@ -608,6 +733,8 @@ CurrentDistributionView::CurrentDistributionView(QWidget* parent) : QWidget(pare
 }
 void CurrentDistributionView::setResults(const analysis::AnalysisResult& result, const QString& runDirectory)
 { result_ = result; runContext_ = runDirectory; populateFrequencies(frequency_, frequencies(result.currents)); refresh(); }
+void CurrentDistributionView::setModel(const model::AntennaModel& model)
+{ model_ = model; refresh(); }
 void CurrentDistributionView::setSelectedFrequency(double frequencyMHz)
 { selectFrequency(frequency_, frequencyMHz); refresh(); }
 void CurrentDistributionView::refresh()
@@ -616,12 +743,15 @@ void CurrentDistributionView::refresh()
     for (const auto& value : result_.currents) if (value.frequencyMHz == selectedFrequency(frequency_)) values.push_back(value);
     summary_->setText(values.empty()
         ? tr("%1 MHz · No segment-current data · %2")
-            .arg(selectedFrequency(frequency_), 0, 'g', 10).arg(runContext_)
+            .arg(formatDecimal(selectedFrequency(frequency_)), runContext_)
         : tr("%1 MHz · %2 current segment(s) · %3")
-            .arg(selectedFrequency(frequency_), 0, 'g', 10).arg(values.size()).arg(runContext_));
-    plot_->setSamples(values); table_->setRowCount(static_cast<int>(values.size()));
+            .arg(formatDecimal(selectedFrequency(frequency_))).arg(values.size()).arg(runContext_));
+    plot_->setPaths(connectedCurrentPaths(values, model_)); table_->setRowCount(static_cast<int>(values.size()));
     for (auto row = 0; row < static_cast<int>(values.size()); ++row) {
-        const QStringList cells{QString::number(values[row].wireTag), QString::number(values[row].segment), QString::number(values[row].magnitude, 'g', 8), QString::number(values[row].phaseDegrees, 'g', 8), QString::number(values[row].current.real(), 'g', 8), QString::number(values[row].current.imag(), 'g', 8)};
+        const QStringList cells{QString::number(values[row].wireTag),
+            QString::number(values[row].segment), formatDecimal(values[row].magnitude),
+            formatDecimal(values[row].phaseDegrees), formatDecimal(values[row].current.real()),
+            formatDecimal(values[row].current.imag())};
         for (auto column = 0; column < cells.size(); ++column) table_->setItem(row, column, new QTableWidgetItem(cells[column]));
     }
 }
@@ -715,7 +845,8 @@ void RadiationPatternView::refreshSelectors()
         }
         if (std::ranges::find(planes, angle) == planes.end()) planes.push_back(angle);
     }
-    std::ranges::sort(planes); for (auto plane : planes) phi_->addItem(QStringLiteral("%1°").arg(plane, 0, 'g', 8), plane);
+    std::ranges::sort(planes); for (auto plane : planes)
+        phi_->addItem(QStringLiteral("%1°").arg(formatDecimal(plane)), plane);
     const auto previousIndex = phi_->findData(previousValue); if (previousIndex >= 0) phi_->setCurrentIndex(previousIndex); refresh();
 }
 void RadiationPatternView::refresh()
@@ -740,12 +871,12 @@ void RadiationPatternView::refresh()
     const auto metrics = cutMetrics(values);
     if (metrics.valid) {
         summary_->setText(tr("%1 MHz · %2 · %3 peak %4 dBi at %5° · 3 dB beamwidth %6° · F/B %7 dB · Left/Right changes angle · Space changes cut")
-            .arg(settings.frequencyMHz, 0, 'g', 10).arg(runContext_, componentName(settings.component))
-            .arg(metrics.peakGain, 0, 'f', 2).arg(metrics.peakAngle, 0, 'f', 1)
-            .arg(metrics.beamwidth, 0, 'f', 1).arg(metrics.frontToBack, 0, 'f', 2));
+            .arg(formatDecimal(settings.frequencyMHz), runContext_, componentName(settings.component))
+            .arg(formatDecimal(metrics.peakGain), formatDecimal(metrics.peakAngle),
+                formatDecimal(metrics.beamwidth), formatDecimal(metrics.frontToBack)));
     } else {
         summary_->setText(tr("%1 MHz · No %2 samples for this cut · %3")
-            .arg(settings.frequencyMHz, 0, 'g', 10).arg(componentName(settings.component), runContext_));
+            .arg(formatDecimal(settings.frequencyMHz), componentName(settings.component), runContext_));
     }
     exportImageButton_->setEnabled(metrics.valid);
     exportDataButton_->setEnabled(metrics.valid);
@@ -854,7 +985,12 @@ void RadiationPatternView::exportData()
 
 Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
 {
-    auto* layout = new QVBoxLayout(this); auto* form = new QFormLayout;
+    auto* layout = new QVBoxLayout(this);
+    controls_ = new QWidget(this);
+    controls_->setObjectName(QStringLiteral("radiation3DControls"));
+    auto* controlsLayout = new QVBoxLayout(controls_);
+    controlsLayout->setContentsMargins(0, 0, 0, 0);
+    auto* form = new QFormLayout;
     frequency_ = new QComboBox(this); frequency_->setObjectName(QStringLiteral("radiation3DFrequency")); frequency_->hide();
     component_ = new QComboBox(this); component_->setObjectName(QStringLiteral("radiation3DComponent"));
     scale_ = new QComboBox(this); scale_->setObjectName(QStringLiteral("radiation3DScale"));
@@ -876,7 +1012,11 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
     summary_ = new QLabel(tr("Run a multi-phi RP analysis to populate the 3D pattern."), this);
     summary_->setObjectName(QStringLiteral("radiation3DSummary")); summary_->setWordWrap(true);
     surface_ = new RadiationSurfaceWidget(this);
-    layout->addLayout(form); layout->addLayout(layers); layout->addWidget(summary_); layout->addWidget(surface_, 1);
+    controlsLayout->addLayout(form);
+    controlsLayout->addLayout(layers);
+    layout->addWidget(controls_);
+    layout->addWidget(summary_);
+    layout->addWidget(surface_, 1);
     connect(frequency_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
     connect(component_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
     connect(scale_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
@@ -926,6 +1066,14 @@ void Radiation3DView::setDisplaySettings(const analysis::RadiationDisplaySetting
 }
 void Radiation3DView::setSettingsChangedCallback(SettingsChangedCallback callback)
 { settingsChangedCallback_ = std::move(callback); }
+void Radiation3DView::setOverviewMode(bool enabled)
+{
+    controls_->setVisible(!enabled);
+    summary_->setVisible(!enabled);
+    surface_->setOverlayVisible(!enabled);
+    layout()->setContentsMargins(enabled ? 0 : 11, enabled ? 0 : 11,
+        enabled ? 0 : 11, enabled ? 0 : 11);
+}
 void Radiation3DView::refresh()
 {
     const auto settings = displaySettings(frequency_, component_, scale_, floor_);
@@ -939,16 +1087,16 @@ void Radiation3DView::refresh()
         if (std::ranges::find(planes, sample.phiDegrees) == planes.end()) planes.push_back(sample.phiDegrees);
     if (metrics.valid) {
         auto text = tr("%1 MHz · %2 · %3 peak %4 dBi at θ %5°, φ %6° · F/B %7 dB · %8 phi plane(s)")
-            .arg(settings.frequencyMHz, 0, 'g', 10).arg(runContext_, componentName(settings.component))
-            .arg(metrics.peakGainDb, 0, 'f', 2)
-            .arg(metrics.peakThetaDegrees, 0, 'f', 1).arg(metrics.peakPhiDegrees, 0, 'f', 1)
-            .arg(metrics.frontToBackDb, 0, 'f', 2).arg(planes.size());
+            .arg(formatDecimal(settings.frequencyMHz), runContext_, componentName(settings.component))
+            .arg(formatDecimal(metrics.peakGainDb), formatDecimal(metrics.peakThetaDegrees),
+                formatDecimal(metrics.peakPhiDegrees), formatDecimal(metrics.frontToBackDb))
+            .arg(planes.size());
         if (planes.size() < 3)
             text += tr(" · Partial coverage; request Full 3D Pattern for a complete surface.");
         summary_->setText(text);
     } else {
         summary_->setText(tr("%1 MHz · %2 · No %3 radiation samples · %4 current segment(s)")
-            .arg(settings.frequencyMHz, 0, 'g', 10).arg(runContext_, componentName(settings.component))
+            .arg(formatDecimal(settings.frequencyMHz), runContext_, componentName(settings.component))
             .arg(currents.size()));
     }
     exportImageButton_->setEnabled(!radiation.empty() || !currents.empty() || !model_.empty());

@@ -14,6 +14,8 @@ enum class RadiationSweepMode {
     EveryFrequency
 };
 
+[[nodiscard]] auto normalizeSolverDeck(std::string_view source) -> std::string;
+
 [[nodiscard]] auto prepareSolverInput(std::string_view source,
     const model::ModelSetup& setup,
     RadiationSweepMode mode = RadiationSweepMode::CenterFrequencyOnly) -> std::string;

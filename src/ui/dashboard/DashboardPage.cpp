@@ -1,5 +1,7 @@
 #include "ui/dashboard/DashboardPage.h"
 
+#include "ui/DisplayFormat.h"
+
 #include "ui/analysis/FieldResultsViews.h"
 #include "ui/editor/NecEditor.h"
 
@@ -86,6 +88,7 @@ DashboardPage::DashboardPage(QTextDocument* document, QWidget* parent) : QWidget
     editor_->setMinimumSize(360, 240);
 
     view3D_ = new Radiation3DView(this);
+    view3D_->setOverviewMode(true);
     view3D_->setMinimumSize(420, 300);
 
     auto* modelPanel = new QWidget(this);
@@ -193,10 +196,10 @@ void DashboardPage::setModel(const model::AntennaModel& model, const model::Mode
     setValue(modelSummary_, 7, setup.frequency
         ? (setup.frequency->count > 1
             ? tr("%1–%2 MHz (%3 points)")
-                  .arg(setup.frequency->startMHz, 0, 'g', 8)
-                  .arg(model::frequencyEndMHz(*setup.frequency), 0, 'g', 8)
+                  .arg(formatDecimal(setup.frequency->startMHz))
+                  .arg(formatDecimal(model::frequencyEndMHz(*setup.frequency)))
                   .arg(setup.frequency->count)
-            : tr("%1 MHz").arg(setup.frequency->startMHz, 0, 'g', 8))
+            : tr("%1 MHz").arg(formatDecimal(setup.frequency->startMHz)))
         : tr("Not configured"));
     modelState_->setText(!checked ? tr("Model changed — validation required")
         : errors > 0 ? tr("Invalid model — %1 error(s), %2 warning(s)").arg(errors).arg(warnings)
@@ -213,16 +216,17 @@ void DashboardPage::setResults(const analysis::AnalysisResult& result,
     for (auto row = 0; row < quickResults_->rowCount(); ++row) setValue(quickResults_, row, QStringLiteral("—"));
     if (!result.feedpoints.empty()) {
         const auto& feedpoint = result.feedpoints.front();
-        setValue(quickResults_, 0, tr("%1 MHz").arg(feedpoint.frequencyMHz, 0, 'g', 10));
-        setValue(quickResults_, 1, tr("%1 Ω").arg(feedpoint.impedance.real(), 0, 'g', 8));
-        setValue(quickResults_, 2, tr("%1 Ω").arg(feedpoint.impedance.imag(), 0, 'g', 8));
+        setValue(quickResults_, 0, tr("%1 MHz").arg(formatDecimal(feedpoint.frequencyMHz)));
+        setValue(quickResults_, 1, tr("%1 Ω").arg(formatDecimal(feedpoint.impedance.real())));
+        setValue(quickResults_, 2, tr("%1 Ω").arg(formatDecimal(feedpoint.impedance.imag())));
         const auto swr = analysis::standingWaveRatio(feedpoint.impedance);
-        setValue(quickResults_, 3, std::isfinite(swr) ? QString::number(swr, 'f', 3) : tr("∞"));
+        setValue(quickResults_, 3, std::isfinite(swr) ? formatDecimal(swr) : tr("∞"));
     }
     if (!result.radiation.empty()) {
         const auto peak = std::ranges::max(result.radiation, {}, &analysis::RadiationSample::totalGainDb);
-        if (result.feedpoints.empty()) setValue(quickResults_, 0, tr("%1 MHz").arg(peak.frequencyMHz, 0, 'g', 10));
-        setValue(quickResults_, 4, tr("%1 dBi").arg(peak.totalGainDb, 0, 'f', 2));
+        if (result.feedpoints.empty())
+            setValue(quickResults_, 0, tr("%1 MHz").arg(formatDecimal(peak.frequencyMHz)));
+        setValue(quickResults_, 4, tr("%1 dBi").arg(formatDecimal(peak.totalGainDb)));
     }
     resultState_->setText(!hasResults_ ? tr("No supported results in %1").arg(context)
         : stale ? tr("STALE — model changed after %1").arg(context)
@@ -239,7 +243,7 @@ void DashboardPage::markResultsStale()
 
 void DashboardPage::setAverageGainRunning(double frequencyMHz)
 {
-    averageGainState_->setText(tr("AGT running at %1 MHz…").arg(frequencyMHz, 0, 'g', 12));
+    averageGainState_->setText(tr("AGT running at %1 MHz…").arg(formatDecimal(frequencyMHz)));
 }
 
 void DashboardPage::setAverageGainResult(
@@ -254,9 +258,9 @@ void DashboardPage::setAverageGainResult(
     case analysis::AverageGainClassification::Questionable: classification = tr("Questionable"); break;
     }
     averageGainState_->setText(tr("AGT %1 · %2 at %3 MHz")
-        .arg(assessment.normalizedGain, 0, 'f', 4)
+        .arg(formatDecimal(assessment.normalizedGain))
         .arg(classification)
-        .arg(frequencyMHz, 0, 'g', 12));
+        .arg(formatDecimal(frequencyMHz)));
 }
 
 void DashboardPage::setAverageGainFailure(const QString& message)

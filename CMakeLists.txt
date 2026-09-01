@@ -24,6 +24,8 @@ add_library(necwb_core
     src/model/ModelSetup.cpp
     src/model/WireGauge.cpp
     src/nec/NecDocument.cpp
+    src/nec/NecCardFieldEditor.cpp
+    src/nec/NecCardFieldEditor.h
     src/nec/DeckGeometryUnits.cpp
     src/nec/NecModelChecker.cpp
     src/nec/NecModelConverter.cpp
@@ -50,6 +52,8 @@ if(NECWB_BUILD_GUI)
         src/app/main.cpp
         src/ui/MainWindow.cpp
         src/ui/MainWindow.h
+        src/ui/DetachablePanel.cpp
+        src/ui/DetachablePanel.h
         src/ui/analysis/AnalysisSetupEditor.cpp
         src/ui/analysis/AnalysisSetupEditor.h
         src/ui/analysis/AnalysisRequestEditor.cpp
@@ -130,6 +134,8 @@ if(NECWB_BUILD_TESTS)
     if(NECWB_BUILD_GUI)
         add_executable(necwb_plot_tests
             tests/PlotSmokeTests.cpp
+            src/ui/DetachablePanel.cpp
+            src/ui/DetachablePanel.h
             src/ui/analysis/AnalysisRunStore.cpp
             src/ui/analysis/AnalysisRunStore.h
             src/ui/analysis/AverageGainResultsView.cpp
@@ -158,6 +164,8 @@ if(NECWB_BUILD_TESTS)
             src/ui/geometry/Geometry3DView.h
             src/ui/geometry/AutoSegmentationDialog.cpp
             src/ui/geometry/AutoSegmentationDialog.h
+            src/ui/optimization/OptimizationWorkspace.cpp
+            src/ui/optimization/OptimizationWorkspace.h
             src/ui/setup/LoadNetworkEditor.cpp
             src/ui/setup/LoadNetworkEditor.h
             src/ui/setup/SetupEditor.cpp

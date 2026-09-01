@@ -1,11 +1,15 @@
 #include "ui/MainWindow.h"
 
+#include "ui/DisplayFormat.h"
+#include "ui/DetachablePanel.h"
+
 #include "analysis/SolverCommand.h"
 #include "analysis/NecOutputParser.h"
 #include "analysis/SolverInput.h"
 #include "nec/NecModelChecker.h"
 #include "nec/DeckGeometryUnits.h"
 #include "nec/NecModelConverter.h"
+#include "nec/NecCardFieldEditor.h"
 #include "nec/NecParser.h"
 #include "nec/NecSetupConverter.h"
 #include "nec/NecSymbolResolver.h"
@@ -41,6 +45,7 @@
 
 #include <QAction>
 #include <QActionGroup>
+#include <QAbstractSpinBox>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QCoreApplication>
@@ -67,10 +72,13 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPlainTextEdit>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScrollArea>
 #include <QSettings>
 #include <QSignalBlocker>
+#include <QSizePolicy>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QStatusBar>
@@ -136,8 +144,8 @@ auto formatByteSize(qint64 bytes) -> QString
     if (bytes <= 0) return QObject::tr("—");
     constexpr auto kibibyte = 1024.0;
     constexpr auto mebibyte = kibibyte * 1024.0;
-    if (bytes >= mebibyte) return QObject::tr("%1 MB").arg(bytes / mebibyte, 0, 'f', 1);
-    if (bytes >= kibibyte) return QObject::tr("%1 KB").arg(bytes / kibibyte, 0, 'f', 1);
+    if (bytes >= mebibyte) return QObject::tr("%1 MB").arg(formatDecimal(bytes / mebibyte));
+    if (bytes >= kibibyte) return QObject::tr("%1 KB").arg(formatDecimal(bytes / kibibyte));
     return QObject::tr("%1 B").arg(bytes);
 }
 
@@ -325,6 +333,29 @@ auto createGeometryPane(const QString& title, GeometryView* view, QWidget* paren
     return pane;
 }
 
+auto scrollableEditor(QWidget* editor, QWidget* parent) -> QScrollArea*
+{
+    auto* scroll = new QScrollArea(parent);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    scroll->setWidget(editor);
+    return scroll;
+}
+
+void preserveControlHeights(QWidget* root)
+{
+    const auto preserve = [](QWidget* control) {
+        control->setMinimumHeight(std::max(control->minimumHeight(), control->sizeHint().height()));
+        auto policy = control->sizePolicy();
+        policy.setVerticalPolicy(QSizePolicy::Fixed);
+        control->setSizePolicy(policy);
+    };
+    for (auto* control : root->findChildren<QComboBox*>()) preserve(control);
+    for (auto* control : root->findChildren<QAbstractSpinBox*>()) preserve(control);
+    for (auto* control : root->findChildren<QLineEdit*>()) preserve(control);
+    for (auto* control : root->findChildren<QPushButton*>()) preserve(control);
+}
+
 }
 
 MainWindow::MainWindow()
@@ -344,6 +375,28 @@ MainWindow::MainWindow()
     statusBar()->addPermanentWidget(modelFileStatus_, 1);
     checkStatus_ = new QLabel(tr("No model loaded"), this);
     statusBar()->addPermanentWidget(checkStatus_);
+    solverActivityWidget_ = new QWidget(this);
+    solverActivityWidget_->setObjectName(QStringLiteral("solverActivityWidget"));
+    auto* solverActivityLayout = new QHBoxLayout(solverActivityWidget_);
+    solverActivityLayout->setContentsMargins(6, 0, 0, 0);
+    solverActivityLayout->setSpacing(6);
+    solverActivityProgress_ = new QProgressBar(solverActivityWidget_);
+    solverActivityProgress_->setObjectName(QStringLiteral("solverActivityProgress"));
+    solverActivityProgress_->setRange(0, 0);
+    solverActivityProgress_->setTextVisible(false);
+    solverActivityProgress_->setFixedWidth(72);
+    solverActivityLabel_ = new QLabel(solverActivityWidget_);
+    solverActivityLabel_->setObjectName(QStringLiteral("solverActivityLabel"));
+    solverActivityLabel_->setMinimumWidth(230);
+    solverActivityCancelButton_ = new QPushButton(tr("Cancel"), solverActivityWidget_);
+    solverActivityCancelButton_->setObjectName(QStringLiteral("solverActivityCancelButton"));
+    solverActivityLayout->addWidget(solverActivityProgress_);
+    solverActivityLayout->addWidget(solverActivityLabel_);
+    solverActivityLayout->addWidget(solverActivityCancelButton_);
+    statusBar()->addPermanentWidget(solverActivityWidget_);
+    solverActivityWidget_->hide();
+    connect(solverActivityCancelButton_, &QPushButton::clicked,
+        this, [this] { cancelAnalysis(); });
 
     connect(editor_, &QPlainTextEdit::textChanged, this, [this] { clearCheckResults(); });
     connect(editor_, &QPlainTextEdit::cursorPositionChanged, this, [this] {
@@ -485,6 +538,12 @@ void MainWindow::createActions()
     redoAction_->setShortcut(QKeySequence::Redo);
     connect(redoAction_, &QAction::triggered, this, [this] { performRedo(); });
 
+    detachResultsAction_ = new QAction(tr("Detach Results Window"), this);
+    detachResultsAction_->setObjectName(QStringLiteral("detachResultsAction"));
+    detachResultsAction_->setStatusTip(
+        tr("Move the existing Results workspace into a separate reusable window"));
+    connect(detachResultsAction_, &QAction::triggered, this, [this] { toggleResultsDetached(); });
+
     auto* moduleGroup = new QActionGroup(this);
     moduleGroup->setExclusive(true);
     homeModuleAction_ = moduleGroup->addAction(tr("&Home"));
@@ -537,6 +596,7 @@ void MainWindow::createWorkspace()
     moduleNavigation->addAction(visualizeModuleAction_);
     moduleNavigation->addAction(optimizeModuleAction_);
     moduleStack_ = new QStackedWidget(central);
+    moduleStack_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     centralLayout->addWidget(moduleNavigation);
     centralLayout->addWidget(moduleStack_, 1);
     setCentralWidget(central);
@@ -654,7 +714,7 @@ void MainWindow::createWorkspace()
     geometryToolbar->addWidget(lengthUnitControl_);
     geometryToolbar->addWidget(new QLabel(tr("Snap:"), geometryToolbar));
     snapSpacingControl_ = new EngineeringSpinBox(geometryToolbar);
-    snapSpacingControl_->setDecimals(6);
+    snapSpacingControl_->setDecimals(DisplayDecimalPlaces);
     snapSpacingControl_->setRange(0.000001, 1.0e9);
     snapSpacingControl_->setKeyboardTracking(false);
     snapSpacingControl_->setValue(0.1);
@@ -857,14 +917,16 @@ void MainWindow::createWorkspace()
                     : tr("Run the checked model with the selected NEC engine"));
             updateAnalysisReadiness();
         });
-    analysisWorkspace_->addTab(analysisSetupEditor_, tr("Solver"));
+    analysisWorkspace_->addTab(
+        scrollableEditor(analysisSetupEditor_, analysisWorkspace_), tr("Solver"));
     analysisRequestEditor_ = new AnalysisRequestEditor(analysisWorkspace_);
     connect(analysisRequestEditor_, &AnalysisRequestEditor::requestsChanged, this,
         [this](bool executionEnabled, model::ExecutionRequest execution,
             bool patternEnabled, model::RadiationPatternRequest pattern) {
             changeAnalysisRequests(executionEnabled, execution, patternEnabled, pattern);
         });
-    analysisWorkspace_->addTab(analysisRequestEditor_, tr("Requests"));
+    analysisWorkspace_->addTab(
+        scrollableEditor(analysisRequestEditor_, analysisWorkspace_), tr("Requests"));
 
     auto* runsPage = new QWidget(moduleStack_);
     auto* runsLayout = new QVBoxLayout(runsPage);
@@ -939,10 +1001,35 @@ void MainWindow::createWorkspace()
 
     analysisModuleIndex_ = moduleStack_->addWidget(analysisWorkspace_);
 
-    auto* resultsPage = new QWidget(moduleStack_);
-    auto* resultsLayout = new QVBoxLayout(resultsPage);
+    resultsHost_ = new QWidget(moduleStack_);
+    resultsHostLayout_ = new QVBoxLayout(resultsHost_);
+    resultsHostLayout_->setContentsMargins(0, 0, 0, 0);
+    detachedResultsPlaceholder_ = new QWidget(resultsHost_);
+    auto* detachedPlaceholderLayout = new QVBoxLayout(detachedResultsPlaceholder_);
+    detachedPlaceholderLayout->setAlignment(Qt::AlignCenter);
+    auto* detachedPlaceholderTitle = new QLabel(
+        tr("Results are open in a separate window."), detachedResultsPlaceholder_);
+    auto detachedPlaceholderFont = detachedPlaceholderTitle->font();
+    detachedPlaceholderFont.setBold(true);
+    detachedPlaceholderTitle->setFont(detachedPlaceholderFont);
+    auto* showDetachedResultsButton = new QPushButton(
+        tr("Show Results Window"), detachedResultsPlaceholder_);
+    auto* attachDetachedResultsButton = new QPushButton(
+        tr("Attach Results to Main Window"), detachedResultsPlaceholder_);
+    detachedPlaceholderLayout->addWidget(detachedPlaceholderTitle, 0, Qt::AlignCenter);
+    detachedPlaceholderLayout->addWidget(showDetachedResultsButton, 0, Qt::AlignCenter);
+    detachedPlaceholderLayout->addWidget(attachDetachedResultsButton, 0, Qt::AlignCenter);
+    detachedResultsPlaceholder_->hide();
+    connect(showDetachedResultsButton, &QPushButton::clicked,
+        this, [this] { showDetachedResults(); });
+    connect(attachDetachedResultsButton, &QPushButton::clicked, this, [this] { attachResults(); });
+
+    resultsContent_ = new QWidget(resultsHost_);
+    resultsContent_->setObjectName(QStringLiteral("resultsWorkspaceContent"));
+    resultsContent_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    auto* resultsLayout = new QVBoxLayout(resultsContent_);
     resultsLayout->setContentsMargins(0, 0, 0, 0);
-    auto* resultsContextFrame = new QFrame(resultsPage);
+    auto* resultsContextFrame = new QFrame(resultsContent_);
     resultsContextFrame->setObjectName(QStringLiteral("resultsContextBanner"));
     resultsContextFrame->setFrameShape(QFrame::StyledPanel);
     auto* resultsContextLayout = new QVBoxLayout(resultsContextFrame);
@@ -956,8 +1043,11 @@ void MainWindow::createWorkspace()
     returnToActiveResultsButton_ = new QPushButton(tr("Return to Current Work"), resultsContextFrame);
     returnToActiveResultsButton_->setObjectName(QStringLiteral("returnToActiveResultsButton"));
     returnToActiveResultsButton_->setVisible(false);
+    detachResultsButton_ = new QPushButton(tr("Detach Results"), resultsContextFrame);
+    detachResultsButton_->setObjectName(QStringLiteral("detachResultsButton"));
     resultsContextHeading->addWidget(resultsContextTitleLabel_, 1);
     resultsContextHeading->addWidget(returnToActiveResultsButton_);
+    resultsContextHeading->addWidget(detachResultsButton_);
     resultsContextDetailLabel_ = new QLabel(
         tr("Select a run from Results → Runs, or analyze the active model."), resultsContextFrame);
     resultsContextDetailLabel_->setObjectName(QStringLiteral("resultsContextDetailLabel"));
@@ -969,28 +1059,30 @@ void MainWindow::createWorkspace()
     resultsContextLayout->addWidget(activeModelResultsLabel_);
     connect(returnToActiveResultsButton_, &QPushButton::clicked,
         this, [this] { returnToCurrentWork(); });
-    resultsStatusLabel_ = new QLabel(tr("No analysis results are loaded."), resultsPage);
+    connect(detachResultsButton_, &QPushButton::clicked, this, [this] { toggleResultsDetached(); });
+    resultsStatusLabel_ = new QLabel(tr("No analysis results are loaded."), resultsContent_);
     resultsStatusLabel_->setContentsMargins(12, 7, 12, 7);
     resultsStatusLabel_->setWordWrap(true);
     auto* frequencyBar = new QHBoxLayout;
-    auto* frequencyLabel = new QLabel(tr("Result Frequency:"), resultsPage);
-    resultsFrequencyControl_ = new QComboBox(resultsPage);
+    auto* frequencyLabel = new QLabel(tr("Result Frequency:"), resultsContent_);
+    resultsFrequencyControl_ = new QComboBox(resultsContent_);
     resultsFrequencyControl_->setObjectName(QStringLiteral("resultsFrequencyControl"));
     resultsFrequencyControl_->setMinimumContentsLength(24);
     resultsFrequencyControl_->setEnabled(false);
-    resultsAvailabilityLabel_ = new QLabel(tr("No result data available."), resultsPage);
+    resultsAvailabilityLabel_ = new QLabel(tr("No result data available."), resultsContent_);
     resultsAvailabilityLabel_->setObjectName(QStringLiteral("resultsAvailabilityLabel"));
     frequencyBar->addWidget(frequencyLabel);
     frequencyBar->addWidget(resultsFrequencyControl_);
     frequencyBar->addSpacing(12);
     frequencyBar->addWidget(resultsAvailabilityLabel_, 1);
-    resultsWorkspace_ = new QTabWidget(resultsPage);
+    resultsWorkspace_ = new QTabWidget(resultsContent_);
     resultsWorkspace_->setDocumentMode(true);
     resultsSummaryView_ = new ResultsSummaryView(resultsWorkspace_);
     resultsSummaryTabIndex_ = resultsWorkspace_->addTab(resultsSummaryView_, tr("Summary"));
     validationWorkspace_ = new QTabWidget(resultsWorkspace_);
     validationWorkspace_->setDocumentMode(true);
     averageGainResultsView_ = new AverageGainResultsView(validationWorkspace_);
+    averageGainResultsView_->setRunAction(averageGainAction_);
     averageGainValidationTabIndex_ = validationWorkspace_->addTab(
         averageGainResultsView_, tr("Average Gain Test"));
     convergenceWorkspace_ = new ConvergenceWorkspace(validationWorkspace_);
@@ -1012,10 +1104,16 @@ void MainWindow::createWorkspace()
     impedanceTabs->addTab(analysisResultsView_, tr("Table"));
     visualizePlotsView_ = new SweepPlotsView(impedanceTabs);
     impedanceTabs->addTab(visualizePlotsView_, tr("Plots"));
-    resultsWorkspace_->addTab(impedanceTabs, tr("Impedance"));
+    auto* impedancePanel = new DetachablePanel(
+        QStringLiteral("impedance"), tr("Impedance Results"), resultsWorkspace_);
+    impedancePanel->setContent(impedanceTabs);
+    resultsWorkspace_->addTab(impedancePanel, tr("Impedance"));
 
-    currentResultsView_ = new CurrentDistributionView(resultsWorkspace_);
-    resultsWorkspace_->addTab(currentResultsView_, tr("Currents"));
+    auto* currentsPanel = new DetachablePanel(
+        QStringLiteral("currents"), tr("Current Distribution"), resultsWorkspace_);
+    currentResultsView_ = new CurrentDistributionView(currentsPanel);
+    currentsPanel->setContent(currentResultsView_);
+    resultsWorkspace_->addTab(currentsPanel, tr("Currents"));
 
     auto* radiationTabs = new QTabWidget(resultsWorkspace_);
     radiationTabs->setDocumentMode(true);
@@ -1023,7 +1121,10 @@ void MainWindow::createWorkspace()
     radiationTabs->addTab(radiationPatternView_, tr("2D Pattern"));
     radiation3DView_ = new Radiation3DView(radiationTabs);
     radiationTabs->addTab(radiation3DView_, tr("3D Pattern"));
-    resultsWorkspace_->addTab(radiationTabs, tr("Radiation"));
+    auto* radiationPanel = new DetachablePanel(
+        QStringLiteral("radiation"), tr("Radiation Results"), resultsWorkspace_);
+    radiationPanel->setContent(radiationTabs);
+    resultsWorkspace_->addTab(radiationPanel, tr("Radiation"));
     radiationPatternView_->setSettingsChangedCallback([this](const auto& settings) {
         radiation3DView_->setDisplaySettings(settings);
     });
@@ -1066,19 +1167,32 @@ void MainWindow::createWorkspace()
     resultsLayout->addWidget(resultsStatusLabel_);
     resultsLayout->addLayout(frequencyBar);
     resultsLayout->addWidget(resultsWorkspace_, 1);
-    visualizeModuleIndex_ = moduleStack_->addWidget(resultsPage);
+    resultsHostLayout_->addWidget(resultsContent_, 1);
+    resultsHostLayout_->addWidget(detachedResultsPlaceholder_, 1);
+    visualizeModuleIndex_ = moduleStack_->addWidget(resultsHost_);
 
     optimizationWorkspace_ = new OptimizationWorkspace(moduleStack_);
     optimizationWorkspace_->setRunsChangedCallback([this] { loadRunHistory(); });
     optimizationWorkspace_->setRunningChangedCallback([this] { synchronizeRunnerState(); });
     optimizationWorkspace_->setReturnToCurrentWorkCallback([this] { returnToCurrentWork(); });
     optimizeModuleIndex_ = moduleStack_->addWidget(optimizationWorkspace_);
+    preserveControlHeights(moduleStack_);
     showModule(homeModuleIndex_);
 }
 
 void MainWindow::showModule(int index)
 {
     if (moduleStack_ == nullptr || index < 0 || index >= moduleStack_->count()) {
+        return;
+    }
+    if (index == visualizeModuleIndex_ && resultsDetached_ && detachedResultsWindow_ != nullptr) {
+        showDetachedResults();
+        const auto current = moduleStack_->currentIndex();
+        if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
+        else if (current == modelModuleIndex_) modelModuleAction_->setChecked(true);
+        else if (current == sourceModuleIndex_) sourceModuleAction_->setChecked(true);
+        else if (current == analysisModuleIndex_) analysisModuleAction_->setChecked(true);
+        else if (current == optimizeModuleIndex_) optimizeModuleAction_->setChecked(true);
         return;
     }
     moduleStack_->setCurrentIndex(index);
@@ -1099,6 +1213,75 @@ void MainWindow::showModule(int index)
         optimizeModuleAction_->setChecked(true);
     }
     updateUndoActions();
+}
+
+void MainWindow::toggleResultsDetached()
+{
+    if (resultsDetached_) attachResults();
+    else detachResults();
+}
+
+void MainWindow::detachResults()
+{
+    if (resultsDetached_ || resultsContent_ == nullptr || resultsHostLayout_ == nullptr) return;
+    if (detachedResultsWindow_ == nullptr) {
+        detachedResultsWindow_ = new QDialog(this, Qt::Window);
+        detachedResultsWindow_->setObjectName(QStringLiteral("detachedResultsWindow"));
+        detachedResultsWindow_->setWindowTitle(tr("Results — NEC Workbench"));
+        detachedResultsWindow_->setModal(false);
+        detachedResultsWindow_->setWindowFlag(Qt::WindowMinimizeButtonHint, true);
+        detachedResultsWindow_->setWindowFlag(Qt::WindowMaximizeButtonHint, true);
+        auto* layout = new QVBoxLayout(detachedResultsWindow_);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSizeConstraint(QLayout::SetNoConstraint);
+        const auto geometry = QSettings{}.value(QStringLiteral("resultsWindow/geometry")).toByteArray();
+        if (!geometry.isEmpty()) detachedResultsWindow_->restoreGeometry(geometry);
+        else detachedResultsWindow_->resize(1000, 720);
+        connect(detachedResultsWindow_, &QDialog::finished, this, [this] { attachResults(); });
+    }
+
+    resultsHostLayout_->removeWidget(resultsContent_);
+    resultsContent_->setParent(detachedResultsWindow_);
+    detachedResultsWindow_->layout()->addWidget(resultsContent_);
+    detachedResultsPlaceholder_->show();
+    resultsDetached_ = true;
+    detachResultsAction_->setText(tr("Attach Results to Main Window"));
+    detachResultsButton_->setText(tr("Attach to Main Window"));
+    showDetachedResults();
+    if (moduleStack_->currentIndex() == visualizeModuleIndex_)
+        showModule(lastNonResultsModuleIndex_ >= 0 ? lastNonResultsModuleIndex_ : homeModuleIndex_);
+}
+
+void MainWindow::attachResults()
+{
+    if (!resultsDetached_ || resultsContent_ == nullptr || resultsHostLayout_ == nullptr) return;
+    if (detachedResultsWindow_ != nullptr) {
+        QSettings{}.setValue(QStringLiteral("resultsWindow/geometry"),
+            detachedResultsWindow_->saveGeometry());
+        detachedResultsWindow_->layout()->removeWidget(resultsContent_);
+    }
+    resultsContent_->setParent(resultsHost_);
+    resultsHostLayout_->insertWidget(0, resultsContent_, 1);
+    detachedResultsPlaceholder_->hide();
+    resultsContent_->show();
+    resultsDetached_ = false;
+    detachResultsAction_->setText(tr("Detach Results Window"));
+    detachResultsButton_->setText(tr("Detach Results"));
+    if (detachedResultsWindow_ != nullptr) detachedResultsWindow_->hide();
+}
+
+void MainWindow::showDetachedResults()
+{
+    if (detachedResultsWindow_ == nullptr) return;
+    if (!detachedResultsWindow_->isVisible()) detachedResultsWindow_->show();
+    detachedResultsWindow_->raise();
+    detachedResultsWindow_->activateWindow();
+}
+
+void MainWindow::presentCompletedAnalysisResults()
+{
+    if (resultsDetached_) showDetachedResults();
+    else detachResults();
 }
 
 void MainWindow::showModelTab(int index)
@@ -1148,7 +1331,7 @@ void MainWindow::updateDeckUnitControls(const nec::DeckGeometryUnitInfo& info)
         ? tr("Different GS scales apply to different wires")
         : !info.hasScaleCard && info.standardUnit == model::LengthUnit::Meter
             ? tr("Native meters · no GS card")
-            : tr("GS scale ×%1 to meters").arg(info.scaleToMeters, 0, 'g', 12));
+            : tr("GS scale ×%1 to meters").arg(formatDecimal(info.scaleToMeters)));
     deckUnitControl_->setToolTip(tr(
         "These are the coordinate and radius units written in NEC geometry cards. "
         "This setting is independent of Geometry display units."));
@@ -1312,7 +1495,7 @@ auto MainWindow::formatLength(double meters) const -> QString
 {
     const auto symbol = model::lengthUnitSymbol(geometrySettings_.lengthUnit);
     return QStringLiteral("%1 %2")
-        .arg(QString::number(model::fromMeters(meters, geometrySettings_.lengthUnit), 'g', 10))
+        .arg(formatDecimal(model::fromMeters(meters, geometrySettings_.lengthUnit)))
         .arg(QString::fromLatin1(symbol.data(), static_cast<qsizetype>(symbol.size())));
 }
 
@@ -1329,10 +1512,19 @@ void MainWindow::showAutoSegmentation()
         return;
     }
     const auto document = nec::NecParser{}.parse(editor_->toPlainText().toStdString());
-    const auto unsupportedAttachment = std::ranges::find_if(document.cards(), [](const auto& card) {
-        return card.kind == nec::NecCardKind::Load
-            || card.kind == nec::NecCardKind::TransmissionLine
-            || card.kind == nec::NecCardKind::Network;
+    const auto unsupportedAttachment = std::ranges::find_if(document.cards(), [this](const auto& card) {
+        if (card.kind == nec::NecCardKind::Network) return true;
+        if (card.kind == nec::NecCardKind::Load) {
+            return std::ranges::none_of(currentSetup_.loads,
+                [line = card.lineNumber](const auto& load) { return load.sourceLine == line; });
+        }
+        if (card.kind == nec::NecCardKind::TransmissionLine) {
+            return std::ranges::none_of(currentSetup_.transmissionLines,
+                [line = card.lineNumber](const auto& transmissionLine) {
+                    return transmissionLine.sourceLine == line;
+                });
+        }
+        return false;
     });
     const auto unsupportedExcitation = std::ranges::find_if(document.cards(), [this](const auto& card) {
         return card.kind == nec::NecCardKind::Excitation
@@ -1344,33 +1536,43 @@ void MainWindow::showAutoSegmentation()
     if (unsupportedAttachment != document.cards().end()
         || unsupportedExcitation != document.cards().end()) {
         QMessageBox::warning(this, tr("Automatic Segmentation"),
-            tr("This deck contains unsupported EX types or LD, TL, or NT attachment cards. Automatic segmentation is blocked until NEC Workbench can safely remap all segment references."));
+            tr("This deck contains an unsupported EX, LD, TL, or NT card. Supported EX 0, LD, and TL segment references are remapped automatically; NT networks remain unsupported."));
         return;
     }
     const auto maximumFrequencyMHz = std::max(currentSetup_.frequency->startMHz,
         model::frequencyEndMHz(*currentSetup_.frequency));
     AutoSegmentationDialog dialog(currentModel_, currentSetup_.excitations,
-        maximumFrequencyMHz, this);
+        currentSetup_.loads, currentSetup_.transmissionLines, maximumFrequencyMHz, this);
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
     const auto proposal = dialog.proposal();
     auto lines = editor_->toPlainText().split(QLatin1Char('\n'), Qt::KeepEmptyParts);
     auto changed = false;
-    const nec::NecWriter writer;
+    auto replacementFailed = false;
+    const auto replaceFields = [&lines, &changed, &replacementFailed](std::size_t sourceLine,
+        std::span<const nec::NecFieldReplacement> replacements) {
+        const auto lineIndex = static_cast<int>(sourceLine) - 1;
+        if (lineIndex < 0 || lineIndex >= lines.size()) {
+            replacementFailed = true;
+            return;
+        }
+        const auto updated = nec::replaceNecCardFields(lines[lineIndex].toStdString(), replacements);
+        if (!updated) {
+            replacementFailed = true;
+            return;
+        }
+        lines[lineIndex] = QString::fromStdString(*updated);
+        changed = true;
+    };
     for (const auto& wireProposal : proposal.wires) {
         const auto* original = currentModel_.wireByTag(wireProposal.wireTag);
         if (original == nullptr || original->segments == wireProposal.newSegments) {
             continue;
         }
-        auto updated = *original;
-        updated.segments = wireProposal.newSegments;
-        const auto lineIndex = static_cast<int>(updated.sourceLine) - 1;
-        if (lineIndex >= 0 && lineIndex < lines.size()) {
-            lines[lineIndex] = QString::fromStdString(
-                writer.writeWireCard(updated, deckScaleForSourceLine(updated.sourceLine)));
-            changed = true;
-        }
+        const std::array replacements{
+            nec::NecFieldReplacement{1, std::to_string(wireProposal.newSegments)}};
+        replaceFields(original->sourceLine, replacements);
     }
     for (std::size_t index = 0; index < currentSetup_.excitations.size(); ++index) {
         const auto& original = currentSetup_.excitations[index];
@@ -1378,11 +1580,34 @@ void MainWindow::showAutoSegmentation()
         if (original.segment == updated.segment) {
             continue;
         }
-        const auto lineIndex = static_cast<int>(updated.sourceLine) - 1;
-        if (lineIndex >= 0 && lineIndex < lines.size()) {
-            lines[lineIndex] = QString::fromStdString(writer.writeExcitationCard(updated));
-            changed = true;
-        }
+        const std::array replacements{
+            nec::NecFieldReplacement{2, std::to_string(updated.segment)}};
+        replaceFields(updated.sourceLine, replacements);
+    }
+    for (std::size_t index = 0; index < currentSetup_.loads.size(); ++index) {
+        const auto& original = currentSetup_.loads[index];
+        const auto& updated = proposal.remappedLoads[index];
+        if (original.firstSegment == updated.firstSegment
+            && original.lastSegment == updated.lastSegment) continue;
+        const std::array replacements{
+            nec::NecFieldReplacement{2, std::to_string(updated.firstSegment)},
+            nec::NecFieldReplacement{3, std::to_string(updated.lastSegment)}};
+        replaceFields(updated.sourceLine, replacements);
+    }
+    for (std::size_t index = 0; index < currentSetup_.transmissionLines.size(); ++index) {
+        const auto& original = currentSetup_.transmissionLines[index];
+        const auto& updated = proposal.remappedTransmissionLines[index];
+        if (original.segment1 == updated.segment1
+            && original.segment2 == updated.segment2) continue;
+        const std::array replacements{
+            nec::NecFieldReplacement{1, std::to_string(updated.segment1)},
+            nec::NecFieldReplacement{3, std::to_string(updated.segment2)}};
+        replaceFields(updated.sourceLine, replacements);
+    }
+    if (replacementFailed) {
+        QMessageBox::warning(this, tr("Automatic Segmentation"), tr(
+            "A segment-reference field could not be updated safely. No source changes were applied."));
+        return;
     }
     if (changed) {
         pushGeometrySourceEdit(tr("Automatically segment wires"), lines.join(QLatin1Char('\n')));
@@ -1409,6 +1634,8 @@ void MainWindow::createDocks()
     properties_->setHorizontalHeaderLabels({tr("Property"), tr("Value")});
     properties_->horizontalHeader()->setStretchLastSection(true);
     properties_->verticalHeader()->hide();
+    properties_->verticalHeader()->setMinimumSectionSize(
+        properties_->fontMetrics().height() + 12);
     properties_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     properties_->setSelectionMode(QAbstractItemView::NoSelection);
     propertiesDock_->setWidget(properties_);
@@ -1482,6 +1709,8 @@ void MainWindow::createMenusAndToolbar()
     viewMenu->addAction(propertiesDock_->toggleViewAction());
     viewMenu->addAction(diagnosticsDock_->toggleViewAction());
     viewMenu->addAction(solverOutputDock_->toggleViewAction());
+    viewMenu->addSeparator();
+    viewMenu->addAction(detachResultsAction_);
     viewMenu->addSeparator();
     viewMenu->addAction(fitGeometryAction_);
 
@@ -1985,6 +2214,13 @@ void MainWindow::commitEndpointMove(int tag, model::WireEndpoint endpoint,
         applyEndpointMove(tag, endpoint, original);
         return;
     }
+    if (wireHasSymbolicGeometry(wire->sourceLine)) {
+        (endpoint == model::WireEndpoint::Start ? wire->start : wire->end) = original;
+        refreshGeometryViews();
+        selectWireInProject(tag);
+        showSymbolicGeometryEditBlocked();
+        return;
+    }
     const auto endpointName = endpoint == model::WireEndpoint::Start ? tr("start") : tr("end");
     undoStack_->push(new MoveEndpointCommand(
         tr("Move wire %1 %2 endpoint").arg(tag).arg(endpointName), original, updated,
@@ -2024,6 +2260,15 @@ void MainWindow::commitWireMove(int tag, const model::Point3D& originalStart,
     const model::Point3D& updatedEnd)
 {
     if (originalStart == updatedStart && originalEnd == updatedEnd) {
+        return;
+    }
+    auto* wire = currentModel_.wireByTag(tag);
+    if (wire != nullptr && wireHasSymbolicGeometry(wire->sourceLine)) {
+        wire->start = originalStart;
+        wire->end = originalEnd;
+        refreshGeometryViews();
+        selectWireInProject(tag);
+        showSymbolicGeometryEditBlocked();
         return;
     }
     undoStack_->push(new MoveWireCommand(tr("Move wire %1").arg(tag), originalStart, originalEnd,
@@ -2114,6 +2359,10 @@ void MainWindow::splitWire(int tag, const model::Point3D& position)
 {
     const auto* wire = currentModel_.wireByTag(tag);
     if (wire == nullptr || position == wire->start || position == wire->end) {
+        return;
+    }
+    if (wireHasSymbolicGeometry(wire->sourceLine)) {
+        showSymbolicGeometryEditBlocked();
         return;
     }
     auto lines = editor_->toPlainText().split(QLatin1Char('\n'), Qt::KeepEmptyParts);
@@ -2617,7 +2866,7 @@ void MainWindow::startAverageGainTest()
     layout->addWidget(explanation);
     auto* form = new QFormLayout;
     auto* frequency = new QDoubleSpinBox(&dialog);
-    frequency->setDecimals(6);
+    frequency->setDecimals(DisplayDecimalPlaces);
     frequency->setRange(0.000001, 1.0e9);
     frequency->setSuffix(tr(" MHz"));
     frequency->setValue(currentSetup_.frequency->startMHz);
@@ -2718,12 +2967,28 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
 
     currentRunCanceled_ = false;
     currentRunTimedOut_ = false;
+    solverActivityName_ = activity;
+    solverActivityPhase_ = tr("Starting solver");
+    solverElapsed_.start();
+    solverActivityProgress_->setRange(0, 0);
+    solverActivityCancelButton_->setEnabled(true);
+    solverActivityWidget_->show();
+    updateSolverActivity();
+    if (solverActivityTimer_ == nullptr) {
+        solverActivityTimer_ = new QTimer(this);
+        solverActivityTimer_->setInterval(250);
+        connect(solverActivityTimer_, &QTimer::timeout,
+            this, [this] { updateSolverActivity(); });
+    }
+    solverActivityTimer_->start();
     solverProcess_ = new QProcess(this);
     synchronizeRunnerState();
     solverProcess_->setWorkingDirectory(currentRunDirectory_);
     solverProcess_->setProgram(program);
     solverProcess_->setArguments(arguments);
     connect(solverProcess_, &QProcess::started, this, [this] {
+        solverActivityPhase_ = tr("Solving");
+        updateSolverActivity();
         setCurrentRunStatus(tr("Running"));
         appendSolverOutput(tr("Solver started.\n"));
     });
@@ -2748,6 +3013,8 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
             return;
         }
         currentRunTimedOut_ = true;
+        solverActivityPhase_ = tr("Stopping after timeout");
+        updateSolverActivity();
         appendSolverOutput(tr("\nRun exceeded the %1-second timeout; stopping solver.\n")
             .arg(solverTimeoutSeconds_));
         solverProcess_->terminate();
@@ -2758,7 +3025,6 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
         });
     });
     solverTimeout_->start(solverTimeoutSeconds_ * 1000);
-    solverElapsed_.start();
     cancelRunButton_->setEnabled(true);
     openRunFolderButton_->setEnabled(true);
     runAction_->setEnabled(false);
@@ -2769,8 +3035,6 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
         dashboardPage_->setAverageGainRunning(currentAverageGainFrequencyMHz_);
         resultsWorkspace_->setCurrentIndex(averageGainResultsTabIndex_);
         validationWorkspace_->setCurrentIndex(averageGainValidationTabIndex_);
-    } else {
-        resultsWorkspace_->setCurrentIndex(analysisRunsTabIndex_);
     }
     updateRunSelectionActions();
     solverOutputDock_->show();
@@ -2785,6 +3049,9 @@ void MainWindow::cancelAnalysis()
         return;
     }
     currentRunCanceled_ = true;
+    solverActivityPhase_ = tr("Canceling");
+    solverActivityCancelButton_->setEnabled(false);
+    updateSolverActivity();
     appendSolverOutput(tr("\nCancellation requested; stopping solver.\n"));
     solverProcess_->terminate();
     QTimer::singleShot(2000, this, [this] {
@@ -2813,6 +3080,32 @@ void MainWindow::appendSolverOutput(const QString& text)
     }
 }
 
+void MainWindow::updateSolverActivity()
+{
+    if (solverActivityWidget_ == nullptr || !solverActivityWidget_->isVisible()) return;
+    auto detail = tr("%1 · %2 · %3 s")
+        .arg(solverActivityName_, solverActivityPhase_)
+        .arg(formatDecimal(solverElapsed_.isValid() ? solverElapsed_.elapsed() / 1000.0 : 0.0));
+    const QFileInfo output(currentRunOutputPath_);
+    if (output.exists() && output.size() > 0)
+        detail += tr(" · output %1").arg(formatByteSize(output.size()));
+    solverActivityLabel_->setText(detail);
+}
+
+void MainWindow::completeSolverActivity(const QString& status)
+{
+    if (solverActivityTimer_ != nullptr) solverActivityTimer_->stop();
+    solverActivityPhase_ = status;
+    solverActivityProgress_->setRange(0, 1);
+    solverActivityProgress_->setValue(status == tr("Completed") ? 1 : 0);
+    solverActivityCancelButton_->setEnabled(false);
+    updateSolverActivity();
+    QTimer::singleShot(5000, this, [this] {
+        if (solverProcess_ == nullptr && solverActivityWidget_ != nullptr)
+            solverActivityWidget_->hide();
+    });
+}
+
 void MainWindow::finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus)
 {
     if (solverProcess_ == nullptr) {
@@ -2825,8 +3118,11 @@ void MainWindow::finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus)
     }
     appendSolverOutput(solverProcess_->readAllStandardOutput());
     appendSolverOutput(solverProcess_->readAllStandardError());
+    solverActivityPhase_ = tr("Parsing results");
+    updateSolverActivity();
 
     auto averageGainParsed = false;
+    auto analysisResultsAvailable = false;
     QFile outputFile(currentRunOutputPath_);
     if (outputFile.open(QIODevice::ReadOnly)) {
         const auto outputBytes = outputFile.readAll();
@@ -2844,7 +3140,7 @@ void MainWindow::finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus)
                 const auto assessment = analysis::assessAverageGain(*result.averagePowerGain, expected);
                 averageGainParsed = true;
                 currentRunRecord_->summary = tr("AGT %1 · %2")
-                    .arg(assessment.normalizedGain, 0, 'f', 4)
+                    .arg(formatDecimal(assessment.normalizedGain))
                     .arg(averageGainClassificationName(assessment.classification));
                 averageGainResultsView_->setResult(assessment, currentAverageGainFrequencyMHz_,
                     currentAverageGainEnvironment_, result.averagingSolidAnglePi, context);
@@ -2864,8 +3160,8 @@ void MainWindow::finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus)
                 if (result.averagingSolidAnglePi
                     && std::abs(*result.averagingSolidAnglePi - expectedSolidAngle) > 0.01) {
                     appendSolverOutput(tr("\nWarning: solver reported a %1π averaging solid angle; expected %2π.\n")
-                        .arg(*result.averagingSolidAnglePi, 0, 'g', 8)
-                        .arg(expectedSolidAngle, 0, 'g', 8));
+                        .arg(formatDecimal(*result.averagingSolidAnglePi),
+                            formatDecimal(expectedSolidAngle)));
                 }
             } else {
                 averageGainResultsView_->setFailure(
@@ -2890,6 +3186,7 @@ void MainWindow::finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus)
             resultsSummaryView_->setResults(result, context);
             analysisResultsView_->setResults(result, context);
             visualizePlotsView_->setResults(result, context);
+            currentResultsView_->setModel(currentModel_);
             currentResultsView_->setResults(result, context);
             radiationPatternView_->setResults(result, context);
             radiation3DView_->setModel(currentModel_);
@@ -2904,10 +3201,8 @@ void MainWindow::finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus)
             resultsAvailable_ = true;
             resultsStatusLabel_->setText(tr("Current results — %1").arg(context));
             showActiveResultsContext(context);
-            if (!result.feedpoints.empty() || !result.currents.empty() || !result.radiation.empty()) {
-                showModule(visualizeModuleIndex_);
-                resultsWorkspace_->setCurrentIndex(resultsSummaryTabIndex_);
-            }
+            analysisResultsAvailable = !result.feedpoints.empty() || !result.currents.empty()
+                || !result.radiation.empty();
         }
     } else if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
         const auto message = tr("The solver did not produce a readable model.out file.");
@@ -2915,13 +3210,15 @@ void MainWindow::finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus)
         dashboardPage_->setAverageGainFailure(message);
     }
 
+    const auto runCompleted = !currentRunTimedOut_ && !currentRunCanceled_
+        && exitStatus == QProcess::NormalExit && exitCode == 0
+        && (currentRunPurpose_ != SolverRunPurpose::AverageGainTest || averageGainParsed);
     QString status;
     if (currentRunTimedOut_) {
         status = tr("Timed out");
     } else if (currentRunCanceled_) {
         status = tr("Canceled");
-    } else if (exitStatus == QProcess::NormalExit && exitCode == 0
-        && (currentRunPurpose_ != SolverRunPurpose::AverageGainTest || averageGainParsed)) {
+    } else if (runCompleted) {
         status = tr("Completed");
     } else if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest
         && exitStatus == QProcess::NormalExit && exitCode == 0) {
@@ -2929,22 +3226,26 @@ void MainWindow::finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus)
     } else {
         status = tr("Failed (exit %1)").arg(exitCode);
     }
+    if (currentRunPurpose_ == SolverRunPurpose::Analysis) {
+        if (runCompleted && analysisResultsAvailable) presentCompletedAnalysisResults();
+    }
     setCurrentRunStatus(status);
     if (currentRunRow_ >= 0) {
         const auto duration = solverElapsed_.elapsed() / 1000.0;
         analysisRuns_->setItem(currentRunRow_, RunDurationColumn,
-            new QTableWidgetItem(tr("%1 s").arg(duration, 0, 'f', 2)));
+            new QTableWidgetItem(tr("%1 s").arg(formatDecimal(duration))));
         if (currentRunRecord_) {
             currentRunRecord_->durationSeconds = duration;
             runStore_.save(*currentRunRecord_);
         }
     }
     appendSolverOutput(tr("\n\nRun status: %1\nElapsed: %2 seconds\n")
-        .arg(status).arg(solverElapsed_.elapsed() / 1000.0, 0, 'f', 2));
+        .arg(status).arg(formatDecimal(solverElapsed_.elapsed() / 1000.0)));
     const auto activity = currentRunPurpose_ == SolverRunPurpose::AverageGainTest
         ? tr("Average Gain Test") : tr("Analysis");
     statusBar()->showMessage(tr("%1 %2. Artifacts: %3")
         .arg(activity, status.toLower(), currentRunDirectory_), 10000);
+    completeSolverActivity(status);
     cancelRunButton_->setEnabled(false);
     solverProcess_->deleteLater();
     solverProcess_ = nullptr;
@@ -2968,7 +3269,7 @@ void MainWindow::failAnalysis(const QString& message)
     if (currentRunRow_ >= 0) {
         const auto duration = solverElapsed_.elapsed() / 1000.0;
         analysisRuns_->setItem(currentRunRow_, RunDurationColumn,
-            new QTableWidgetItem(tr("%1 s").arg(duration, 0, 'f', 2)));
+            new QTableWidgetItem(tr("%1 s").arg(formatDecimal(duration))));
         if (currentRunRecord_) {
             currentRunRecord_->durationSeconds = duration;
             runStore_.save(*currentRunRecord_);
@@ -2980,6 +3281,7 @@ void MainWindow::failAnalysis(const QString& message)
         solverTimeout_ = nullptr;
     }
     statusBar()->showMessage(tr("Solver failed to start."), 10000);
+    completeSolverActivity(tr("Failed to start"));
     cancelRunButton_->setEnabled(false);
     solverProcess_->deleteLater();
     solverProcess_ = nullptr;
@@ -3034,7 +3336,8 @@ void MainWindow::addRunRecord(const AnalysisRunRecord& record, bool prepend)
         formatByteSize(outputBytes),
         record.backend,
         record.status,
-        record.durationSeconds > 0.0 ? tr("%1 s").arg(record.durationSeconds, 0, 'f', 2) : tr("—"),
+        record.durationSeconds > 0.0
+            ? tr("%1 s").arg(formatDecimal(record.durationSeconds)) : tr("—"),
         record.directory,
     };
     for (auto column = 0; column < values.size(); ++column) {
@@ -3294,6 +3597,7 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
     resultsSummaryView_->setResults(result, context);
     analysisResultsView_->setResults(result, context);
     visualizePlotsView_->setResults(result, context);
+    currentResultsView_->setModel({});
     currentResultsView_->setResults(result, context);
     radiationPatternView_->setResults(result, context);
     radiation3DView_->setModel({});
@@ -3304,6 +3608,7 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
             QString::fromUtf8(inputFile.readAll()).toStdString());
         const auto conversion = nec::NecModelConverter{}.convert(runDocument);
         if (!conversion.model.empty()) {
+            currentResultsView_->setModel(conversion.model);
             radiation3DView_->setModel(conversion.model);
             archivedModelAvailable = true;
         }
@@ -3453,7 +3758,7 @@ void MainWindow::displayAverageGainTestArtifacts(const QString& directory, const
         if (selectedRow >= 0) {
             AnalysisRunRecord summary;
             summary.runType = QStringLiteral("average-gain-test");
-            summary.summary = tr("AGT %1 · %2").arg(assessment.normalizedGain, 0, 'f', 4)
+            summary.summary = tr("AGT %1 · %2").arg(formatDecimal(assessment.normalizedGain))
                 .arg(averageGainClassificationName(assessment.classification));
             analysisRuns_->setItem(selectedRow, RunResultsColumn,
                 new QTableWidgetItem(runResultsText(summary)));
@@ -3500,7 +3805,7 @@ void MainWindow::setDisplayedResults(const analysis::AnalysisResult& result)
         if (hasCurrents) available.append(tr("I"));
         if (hasRadiation) available.append(tr("RP"));
         resultsFrequencyControl_->addItem(tr("%1 MHz — %2")
-            .arg(frequencyMHz, 0, 'g', 10).arg(available.join(QStringLiteral(" · "))), frequencyMHz);
+            .arg(formatDecimal(frequencyMHz), available.join(QStringLiteral(" · "))), frequencyMHz);
     }
     resultsFrequencyControl_->setEnabled(!frequencies.empty());
     auto selectedIndex = 0;
@@ -3570,10 +3875,12 @@ void MainWindow::jumpRawOutputToSelectedFrequency()
         analysisOutput_->setTextCursor(cursor);
         analysisOutput_->centerCursor();
         resultsWorkspace_->setCurrentIndex(analysisOutputTabIndex_);
-        statusBar()->showMessage(tr("Raw output positioned at %1 MHz.").arg(target, 0, 'g', 10), 3000);
+        statusBar()->showMessage(
+            tr("Raw output positioned at %1 MHz.").arg(formatDecimal(target)), 3000);
         return;
     }
-    statusBar()->showMessage(tr("No raw-output section was found for %1 MHz.").arg(target, 0, 'g', 10), 5000);
+    statusBar()->showMessage(
+        tr("No raw-output section was found for %1 MHz.").arg(formatDecimal(target)), 5000);
 }
 
 void MainWindow::findInRawOutput()
@@ -3599,6 +3906,7 @@ void MainWindow::clearDisplayedResults()
     dashboardPage_->clearConvergence();
     analysisResultsView_->setResults(empty, context);
     visualizePlotsView_->setResults(empty, context);
+    currentResultsView_->setModel({});
     currentResultsView_->setResults(empty, context);
     radiationPatternView_->setResults(empty, context);
     radiation3DView_->setResults(empty, context);
@@ -3617,6 +3925,10 @@ void MainWindow::clearDisplayedResults()
 
 void MainWindow::editWire(const model::Wire& original, const model::Wire& updated)
 {
+    if (wireHasSymbolicGeometry(original.sourceLine)) {
+        showSymbolicGeometryEditBlocked();
+        return;
+    }
     auto lines = editor_->toPlainText().split(QLatin1Char('\n'), Qt::KeepEmptyParts);
     const auto lineIndex = static_cast<int>(original.sourceLine) - 1;
     if (lineIndex < 0 || lineIndex >= lines.size()) {
@@ -3748,6 +4060,23 @@ void MainWindow::replaceWireSourceLine(const model::Wire& wire)
     editor_->document()->setUndoRedoEnabled(true);
     editor_->document()->setModified(true);
     updateUndoActions();
+}
+
+auto MainWindow::wireHasSymbolicGeometry(std::size_t sourceLine) const -> bool
+{
+    const auto block = editor_->document()->findBlockByNumber(static_cast<int>(sourceLine) - 1);
+    if (!block.isValid()) return false;
+    const auto source = block.text().toStdString();
+    for (auto field = std::size_t{2}; field <= 8; ++field)
+        if (!nec::necCardFieldIsNumeric(source, field)) return true;
+    return false;
+}
+
+void MainWindow::showSymbolicGeometryEditBlocked()
+{
+    QMessageBox::information(this, tr("Symbolic Wire Geometry"), tr(
+        "This GW card uses symbolic coordinates or radius values. Edit its SY definitions or raw "
+        "NEC source instead; the graphical edit was canceled to preserve those expressions."));
 }
 
 void MainWindow::refreshGeometryViews()
@@ -3955,8 +4284,8 @@ void MainWindow::showProjectItemProperties(QTreeWidgetItem* item)
             addPropertyRow(properties_, tr("Object"), tr("Voltage Source (EX 0)"));
             addPropertyRow(properties_, tr("Wire Tag"), QString::number(found->wireTag));
             addPropertyRow(properties_, tr("Segment"), QString::number(found->segment));
-            addPropertyRow(properties_, tr("Magnitude"), QString::number(found->magnitude, 'g', 10));
-            addPropertyRow(properties_, tr("Phase"), tr("%1°").arg(found->phaseDegrees, 0, 'g', 10));
+            addPropertyRow(properties_, tr("Magnitude"), formatDecimal(found->magnitude));
+            addPropertyRow(properties_, tr("Phase"), tr("%1°").arg(formatDecimal(found->phaseDegrees)));
             addPropertyRow(properties_, tr("Source Line"), QString::number(found->sourceLine));
         }
     } else if (kind == QStringLiteral("load")) {
@@ -4027,13 +4356,13 @@ void MainWindow::populateWireProperties(const model::Wire& wire)
     const auto symbol = model::lengthUnitSymbol(geometrySettings_.lengthUnit);
     const auto unit = QString::fromLatin1(symbol.data(), static_cast<qsizetype>(symbol.size()));
     addPropertyRow(properties_, tr("Start"), tr("%1, %2, %3 %4")
-        .arg(model::fromMeters(wire.start.x, geometrySettings_.lengthUnit))
-        .arg(model::fromMeters(wire.start.y, geometrySettings_.lengthUnit))
-        .arg(model::fromMeters(wire.start.z, geometrySettings_.lengthUnit)).arg(unit));
+        .arg(formatDecimal(model::fromMeters(wire.start.x, geometrySettings_.lengthUnit)))
+        .arg(formatDecimal(model::fromMeters(wire.start.y, geometrySettings_.lengthUnit)))
+        .arg(formatDecimal(model::fromMeters(wire.start.z, geometrySettings_.lengthUnit))).arg(unit));
     addPropertyRow(properties_, tr("End"), tr("%1, %2, %3 %4")
-        .arg(model::fromMeters(wire.end.x, geometrySettings_.lengthUnit))
-        .arg(model::fromMeters(wire.end.y, geometrySettings_.lengthUnit))
-        .arg(model::fromMeters(wire.end.z, geometrySettings_.lengthUnit)).arg(unit));
+        .arg(formatDecimal(model::fromMeters(wire.end.x, geometrySettings_.lengthUnit)))
+        .arg(formatDecimal(model::fromMeters(wire.end.y, geometrySettings_.lengthUnit)))
+        .arg(formatDecimal(model::fromMeters(wire.end.z, geometrySettings_.lengthUnit))).arg(unit));
 
     const auto original = wire;
     auto* radiusControl = new QDoubleSpinBox(properties_);
@@ -4087,9 +4416,9 @@ void MainWindow::populateLoadProperties(const model::LoadDefinition& load)
         ? tr("%1 — %2").arg(load.type).arg(typeNames[load.type]) : QString::number(load.type));
     addPropertyRow(properties_, tr("Wire Tag"), QString::number(load.wireTag));
     addPropertyRow(properties_, tr("Segment Range"), tr("%1–%2").arg(load.firstSegment).arg(load.lastSegment));
-    addPropertyRow(properties_, tr("Value 1"), QString::number(load.value1, 'g', 10));
-    addPropertyRow(properties_, tr("Value 2"), QString::number(load.value2, 'g', 10));
-    addPropertyRow(properties_, tr("Value 3"), QString::number(load.value3, 'g', 10));
+    addPropertyRow(properties_, tr("Value 1"), formatDecimal(load.value1));
+    addPropertyRow(properties_, tr("Value 2"), formatDecimal(load.value2));
+    addPropertyRow(properties_, tr("Value 3"), formatDecimal(load.value3));
     addPropertyRow(properties_, tr("Source Line"), QString::number(load.sourceLine));
 }
 
@@ -4102,12 +4431,12 @@ void MainWindow::populateTransmissionLineProperties(
     addPropertyRow(properties_, tr("Endpoint 2"), tr("Wire %1, segment %2")
         .arg(line.wireTag2).arg(line.segment2));
     addPropertyRow(properties_, tr("Characteristic Z0"), tr("%1 Ω")
-        .arg(line.characteristicImpedance, 0, 'g', 10));
+        .arg(formatDecimal(line.characteristicImpedance)));
     addPropertyRow(properties_, tr("Length"), formatLength(line.lengthMeters));
     addPropertyRow(properties_, tr("Shunt 1"), tr("%1 + j%2")
-        .arg(line.shuntReal1, 0, 'g', 10).arg(line.shuntImaginary1, 0, 'g', 10));
+        .arg(formatDecimal(line.shuntReal1), formatDecimal(line.shuntImaginary1)));
     addPropertyRow(properties_, tr("Shunt 2"), tr("%1 + j%2")
-        .arg(line.shuntReal2, 0, 'g', 10).arg(line.shuntImaginary2, 0, 'g', 10));
+        .arg(formatDecimal(line.shuntReal2), formatDecimal(line.shuntImaginary2)));
     addPropertyRow(properties_, tr("Source Line"), QString::number(line.sourceLine));
 }
 
@@ -4129,15 +4458,14 @@ void MainWindow::setCurrentFile(QString path)
 void MainWindow::restoreWorkspaceLayout()
 {
     QSettings settings;
-    const auto normalGeometry = settings.value(QStringLiteral("mainWindow/normalGeometry")).toRect();
-    setWindowState(Qt::WindowNoState);
-    if (normalGeometry.isValid()) {
-        setGeometry(normalGeometry);
+    const auto savedGeometry = settings.value(QStringLiteral("mainWindow/geometry")).toByteArray();
+    if (!savedGeometry.isEmpty()) {
+        restoreGeometry(savedGeometry);
+    } else {
+        const auto normalGeometry = settings.value(QStringLiteral("mainWindow/normalGeometry")).toRect();
+        if (normalGeometry.isValid()) setGeometry(normalGeometry);
     }
     restoreState(settings.value(QStringLiteral("mainWindow/state")).toByteArray());
-    if (settings.value(QStringLiteral("mainWindow/maximized"), false).toBool()) {
-        QTimer::singleShot(0, this, [this] { showMaximized(); });
-    }
     auto geometrySettings = geometrySettings_;
     geometrySettings.lengthUnit = static_cast<model::LengthUnit>(settings.value(
         QStringLiteral("model/displayLengthUnit"), static_cast<int>(model::LengthUnit::Meter)).toInt());
@@ -4185,7 +4513,6 @@ void MainWindow::saveWorkspaceLayout()
     QSettings settings;
     settings.setValue(QStringLiteral("mainWindow/geometry"), saveGeometry());
     settings.setValue(QStringLiteral("mainWindow/normalGeometry"), normalGeometry());
-    settings.setValue(QStringLiteral("mainWindow/maximized"), isMaximized());
     settings.setValue(QStringLiteral("mainWindow/state"), saveState());
     settings.setValue(QStringLiteral("model/displayLengthUnit"), static_cast<int>(geometrySettings_.lengthUnit));
     settings.setValue(QStringLiteral("model/snapSpacingMeters"), geometrySettings_.snapSpacingMeters);
@@ -4202,6 +4529,9 @@ void MainWindow::saveWorkspaceLayout()
     settings.setValue(QStringLiteral("analysis/backendId"), solverBackendId_);
     settings.setValue(QStringLiteral("analysis/executablePath"), solverExecutablePath_);
     settings.setValue(QStringLiteral("analysis/timeoutSeconds"), solverTimeoutSeconds_);
+    if (detachedResultsWindow_ != nullptr)
+        settings.setValue(QStringLiteral("resultsWindow/geometry"),
+            detachedResultsWindow_->saveGeometry());
 }
 
 }

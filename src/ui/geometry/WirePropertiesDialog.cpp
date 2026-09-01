@@ -1,6 +1,7 @@
 #include "ui/geometry/WirePropertiesDialog.h"
 
 #include "model/WireGauge.h"
+#include "ui/DisplayFormat.h"
 
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -66,6 +67,7 @@ WirePropertiesDialog::WirePropertiesDialog(const model::Wire& wire,
         tr("End X"), tr("End Y"), tr("End Z")};
     for (auto index = std::size_t{0}; index < coordinateControls_.size(); ++index) {
         coordinateControls_[index] = createLengthControl(geometryGroup);
+        coordinateControls_[index]->setDecimals(DisplayDecimalPlaces);
         coordinateControls_[index]->setSuffix(suffix);
         coordinateControls_[index]->setValue(model::fromMeters(coordinates[index], lengthUnit_));
         geometryLayout->addRow(coordinateNames[index], coordinateControls_[index]);
@@ -168,7 +170,7 @@ void WirePropertiesDialog::selectGauge(int index)
 void WirePropertiesDialog::updateDiameterLabel()
 {
     diameterLabel_->setText(QStringLiteral("%1%2")
-        .arg(QString::number(radiusControl_->value() * 2.0, 'g', 9), unitSuffix(lengthUnit_)));
+        .arg(formatDecimal(radiusControl_->value() * 2.0), unitSuffix(lengthUnit_)));
 }
 
 }

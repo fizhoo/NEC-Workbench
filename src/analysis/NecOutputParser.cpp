@@ -5,6 +5,9 @@
 #include <cmath>
 #include <sstream>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace necwb::analysis {
 namespace {
@@ -115,6 +118,24 @@ auto parseRadiation(const std::string& source, double frequencyMHz,
     return true;
 }
 
+struct SourceResultKey {
+    int frequencyIndex{};
+    int wireTag{};
+    int segment{};
+
+    auto operator==(const SourceResultKey&) const -> bool = default;
+};
+
+struct SourceResultKeyHash {
+    auto operator()(const SourceResultKey& key) const noexcept -> std::size_t
+    {
+        auto value = std::hash<int>{}(key.frequencyIndex);
+        value ^= std::hash<int>{}(key.wireTag) + 0x9e3779b9U + (value << 6U) + (value >> 2U);
+        value ^= std::hash<int>{}(key.segment) + 0x9e3779b9U + (value << 6U) + (value >> 2U);
+        return value;
+    }
+};
+
 }
 
 auto NecOutputParser::parse(std::string_view output) const -> AnalysisResult
@@ -123,6 +144,11 @@ auto NecOutputParser::parse(std::string_view output) const -> AnalysisResult
     std::istringstream lines{std::string(output)};
     std::string line;
     double frequencyMHz{};
+    int frequencyIndex{-1};
+    std::vector<double> frequencies;
+    std::unordered_set<SourceResultKey, SourceResultKeyHash> feedpointKeys;
+    std::unordered_set<SourceResultKey, SourceResultKeyHash> currentKeys;
+    std::unordered_map<int, int> firstGlobalSegmentByTag;
     bool readingInputParameters{};
     bool foundInputRow{};
     bool readingCurrents{};
@@ -130,7 +156,17 @@ auto NecOutputParser::parse(std::string_view output) const -> AnalysisResult
     bool readingRadiation{};
     bool foundRadiationRow{};
     while (std::getline(lines, line)) {
-        parseFrequency(line, frequencyMHz);
+        if (parseFrequency(line, frequencyMHz)) {
+            const auto existing = std::ranges::find_if(frequencies, [frequencyMHz](double value) {
+                return sameFrequency(value, frequencyMHz);
+            });
+            if (existing == frequencies.end()) {
+                frequencyIndex = static_cast<int>(frequencies.size());
+                frequencies.push_back(frequencyMHz);
+            } else {
+                frequencyIndex = static_cast<int>(std::distance(frequencies.begin(), existing));
+            }
+        }
         double averagePowerGain{};
         if (parseLabeledValue(line, "AVERAGE POWER GAIN", averagePowerGain))
             result.averagePowerGain = averagePowerGain;
@@ -145,6 +181,7 @@ auto NecOutputParser::parse(std::string_view output) const -> AnalysisResult
         if (line.find("CURRENTS AND LOCATION") != std::string::npos) {
             readingCurrents = true;
             foundCurrentRow = false;
+            firstGlobalSegmentByTag.clear();
             continue;
         }
         if (line.find("RADIATION PATTERNS") != std::string::npos) {
@@ -155,11 +192,12 @@ auto NecOutputParser::parse(std::string_view output) const -> AnalysisResult
         if (readingCurrents) {
             SegmentCurrentResult current;
             if (parseCurrent(line, frequencyMHz, current)) {
-                const auto duplicate = std::ranges::any_of(result.currents, [&current](const auto& existing) {
-                    return sameFrequency(existing.frequencyMHz, current.frequencyMHz)
-                        && existing.wireTag == current.wireTag && existing.segment == current.segment;
-                });
-                if (!duplicate) result.currents.push_back(current);
+                const auto globalSegment = current.segment;
+                const auto first = firstGlobalSegmentByTag.try_emplace(
+                    current.wireTag, globalSegment).first;
+                current.segment = globalSegment - first->second + 1;
+                if (currentKeys.insert({frequencyIndex, current.wireTag, current.segment}).second)
+                    result.currents.push_back(current);
                 foundCurrentRow = true;
                 continue;
             }
@@ -183,11 +221,8 @@ auto NecOutputParser::parse(std::string_view output) const -> AnalysisResult
         }
         FeedpointResult feedpoint;
         if (parseFeedpoint(line, frequencyMHz, feedpoint)) {
-            const auto duplicate = std::ranges::any_of(result.feedpoints, [&feedpoint](const auto& existing) {
-                return sameFrequency(existing.frequencyMHz, feedpoint.frequencyMHz)
-                    && existing.wireTag == feedpoint.wireTag && existing.segment == feedpoint.segment;
-            });
-            if (!duplicate) result.feedpoints.push_back(feedpoint);
+            if (feedpointKeys.insert({frequencyIndex, feedpoint.wireTag, feedpoint.segment}).second)
+                result.feedpoints.push_back(feedpoint);
             foundInputRow = true;
         } else if (foundInputRow && line.find_first_not_of(" \t\r") == std::string::npos) {
             readingInputParameters = false;

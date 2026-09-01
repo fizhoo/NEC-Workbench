@@ -1,5 +1,7 @@
 #include "ui/geometry/Geometry3DView.h"
 
+#include "ui/DisplayFormat.h"
+
 #include <QContextMenuEvent>
 #include <QLineF>
 #include <QMenu>
@@ -559,7 +561,7 @@ auto Geometry3DView::formattedLength(double meters) const -> QString
 {
     const auto symbol = model::lengthUnitSymbol(lengthUnit_);
     return QStringLiteral("%1 %2")
-        .arg(QString::number(model::fromMeters(meters, lengthUnit_), 'g', 5))
+        .arg(formatDecimal(model::fromMeters(meters, lengthUnit_)))
         .arg(QString::fromLatin1(symbol.data(), static_cast<qsizetype>(symbol.size())));
 }
 

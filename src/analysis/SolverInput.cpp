@@ -36,14 +36,35 @@ auto splitLines(std::string_view source) -> std::vector<std::string>
 
 }
 
+auto normalizeSolverDeck(std::string_view source) -> std::string
+{
+    const auto document = nec::NecParser{}.parse(source);
+    auto openingCommentBlock = true;
+    std::ostringstream output;
+    const auto cards = document.cards();
+    for (std::size_t index = 0; index < cards.size(); ++index) {
+        const auto& card = cards[index];
+        const auto inlineComment = card.mnemonic == "CM" && !openingCommentBlock;
+        if (!inlineComment) output << card.sourceText;
+        if (card.mnemonic == "CE"
+            || (card.kind != nec::NecCardKind::Blank && card.mnemonic != "CM")) {
+            openingCommentBlock = false;
+        }
+        if (index + 1 < cards.size() || document.hasFinalLineEnding())
+            output << document.lineEnding();
+    }
+    return output.str();
+}
+
 auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
     RadiationSweepMode mode) -> std::string
 {
+    const auto compatibleSource = normalizeSolverDeck(source);
     if (!setup.frequency || !setup.radiationPattern || setup.frequency->count <= 1) {
-        return std::string(source);
+        return compatibleSource;
     }
 
-    auto lines = splitLines(source);
+    auto lines = splitLines(compatibleSource);
     const auto frequencyLine = setup.frequency->sourceLine;
     const auto patternLine = setup.radiationPattern->sourceLine;
     const auto executionLine = setup.executionRequest
@@ -82,9 +103,10 @@ auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
 
     std::vector<std::string> requests;
     requests.reserve(static_cast<std::size_t>(setup.frequency->count) * 2);
-    if (mode != RadiationSweepMode::EveryFrequency && setup.executionRequest) {
+    if (mode != RadiationSweepMode::EveryFrequency) {
         requests.push_back(writer.writeFrequencyCard(*setup.frequency));
-        requests.push_back(writer.writeExecutionCard(*setup.executionRequest));
+        requests.push_back(setup.executionRequest
+            ? writer.writeExecutionCard(*setup.executionRequest) : std::string{"XQ 0"});
     }
     for (const auto index : patternIndexes) {
         auto point = *setup.frequency;
@@ -108,7 +130,7 @@ auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
 
 auto prepareImpedanceInput(std::string_view source) -> std::string
 {
-    const auto document = nec::NecParser{}.parse(source);
+    const auto document = nec::NecParser{}.parse(normalizeSolverDeck(source));
     const auto hasExecution = std::ranges::any_of(document.cards(), [](const auto& card) {
         return card.kind == nec::NecCardKind::Execute;
     });
@@ -148,7 +170,7 @@ auto prepareExplicitFrequencyInput(std::string_view source,
     frequencies.erase(duplicates.begin(), duplicates.end());
     if (frequencies.empty()) return prepareImpedanceInput(source);
 
-    const auto document = nec::NecParser{}.parse(source);
+    const auto document = nec::NecParser{}.parse(normalizeSolverDeck(source));
     const nec::NecWriter writer;
     std::vector<std::string> requests;
     requests.reserve(frequencies.size() * 2);

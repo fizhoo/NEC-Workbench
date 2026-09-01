@@ -1,5 +1,7 @@
 #include "ui/setup/SetupEditor.h"
 
+#include "ui/DisplayFormat.h"
+
 #include <QAbstractItemView>
 #include <QComboBox>
 #include <QCheckBox>
@@ -59,12 +61,15 @@ SetupEditor::SetupEditor(QWidget* parent)
     frequencyModeControl_->addItem(tr("Linear / additive"), 0);
     frequencyModeControl_->addItem(tr("Multiplicative"), 1);
     startFrequencyControl_ = createDecimalControl(frequencyGroup);
+    startFrequencyControl_->setDecimals(DisplayDecimalPlaces);
     startFrequencyControl_->setRange(0.000001, 1.0e12);
     startFrequencyControl_->setSuffix(tr(" MHz"));
     endFrequencyControl_ = createDecimalControl(frequencyGroup);
+    endFrequencyControl_->setDecimals(DisplayDecimalPlaces);
     endFrequencyControl_->setRange(0.000001, 1.0e12);
     endFrequencyControl_->setSuffix(tr(" MHz"));
     frequencyStepControl_ = createDecimalControl(frequencyGroup);
+    frequencyStepControl_->setDecimals(DisplayDecimalPlaces);
     frequencyStepControl_->setRange(0.0, 1.0e12);
     startFrequencyLabel_ = new QLabel(tr("Frequency"), frequencyGroup);
     endFrequencyLabel_ = new QLabel(tr("End frequency"), frequencyGroup);
@@ -104,6 +109,7 @@ SetupEditor::SetupEditor(QWidget* parent)
     groundPresetControl_->addItem(tr("Custom"), 0);
     groundPresetControl_->addItem(tr("Average ground (εr 13, 0.005 S/m)"), 1);
     relativePermittivityControl_ = createDecimalControl(groundGroup);
+    relativePermittivityControl_->setDecimals(DisplayDecimalPlaces);
     relativePermittivityControl_->setRange(0.000001, 1.0e9);
     conductivityControl_ = createDecimalControl(groundGroup);
     conductivityControl_->setRange(0.0, 1.0e9);
@@ -133,8 +139,10 @@ SetupEditor::SetupEditor(QWidget* parent)
     segmentControl_ = new QSpinBox(excitationGroup);
     segmentControl_->setRange(1, 1);
     magnitudeControl_ = createDecimalControl(excitationGroup);
+    magnitudeControl_->setDecimals(DisplayDecimalPlaces);
     magnitudeControl_->setRange(0.0, 1.0e12);
     phaseControl_ = createDecimalControl(excitationGroup);
+    phaseControl_->setDecimals(DisplayDecimalPlaces);
     phaseControl_->setRange(-360.0, 360.0);
     phaseControl_->setSuffix(tr("°"));
     excitationForm->addRow(tr("Wire tag"), wireControl_);
@@ -317,8 +325,9 @@ void SetupEditor::setData(const model::AntennaModel& model, const model::ModelSe
     excitationTable_->setRowCount(static_cast<int>(setup_.excitations.size()));
     auto row = 0;
     for (const auto& excitation : setup_.excitations) {
-        const QStringList values{QString::number(excitation.wireTag), QString::number(excitation.segment),
-            QString::number(excitation.magnitude, 'g', 10), QString::number(excitation.phaseDegrees, 'g', 10)};
+        const QStringList values{QString::number(excitation.wireTag),
+            QString::number(excitation.segment), formatDecimal(excitation.magnitude),
+            formatDecimal(excitation.phaseDegrees)};
         for (auto column = 0; column < values.size(); ++column) {
             auto* item = new QTableWidgetItem(values[column]);
             item->setData(SourceLineRole, static_cast<qulonglong>(excitation.sourceLine));
@@ -387,7 +396,7 @@ void SetupEditor::updateFrequencyControls()
         startFrequencyControl_->value(), frequencyStepControl_->value(), 0};
     const auto actualEnd = model::frequencyEndMHz(frequency);
     frequencySummaryLabel_->setText(tr("%1 points; actual final frequency: %2 MHz")
-        .arg(*count).arg(actualEnd, 0, 'g', 12));
+        .arg(*count).arg(formatDecimal(actualEnd)));
 }
 
 void SetupEditor::updateGroundControls()

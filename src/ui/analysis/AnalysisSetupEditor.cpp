@@ -30,6 +30,7 @@ AnalysisSetupEditor::AnalysisSetupEditor(QWidget* parent)
 
     auto* backendGroup = new QGroupBox(tr("NEC Engine"), this);
     auto* backendLayout = new QFormLayout(backendGroup);
+    backendLayout->setRowWrapPolicy(QFormLayout::WrapLongRows);
     backendControl_ = new QComboBox(backendGroup);
     backendControl_->addItem(tr("NEC-2 / nec2c-compatible"), QStringLiteral("nec2"));
     backendControl_->addItem(tr("OpenNEC"), QStringLiteral("opennec"));

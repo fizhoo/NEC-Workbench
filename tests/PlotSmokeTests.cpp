@@ -1,4 +1,6 @@
 #include "analysis/AnalysisResult.h"
+#include "ui/DisplayFormat.h"
+#include "ui/DetachablePanel.h"
 #include "ui/analysis/SweepPlotsView.h"
 #include "ui/analysis/AnalysisRunStore.h"
 #include "ui/analysis/ResultsSummaryView.h"
@@ -12,6 +14,7 @@
 #include "ui/geometry/AutoSegmentationDialog.h"
 #include "ui/geometry/GeometryView.h"
 #include "ui/geometry/Geometry3DView.h"
+#include "ui/optimization/OptimizationWorkspace.h"
 #include "ui/setup/LoadNetworkEditor.h"
 #include "ui/setup/SetupEditor.h"
 #include "ui/welcome/WelcomePage.h"
@@ -22,6 +25,8 @@
 #include <QAction>
 #include <QComboBox>
 #include <QDebug>
+#include <QDoubleSpinBox>
+#include <QDialog>
 #include <QImage>
 #include <QFileInfo>
 #include <QLabel>
@@ -30,7 +35,9 @@
 #include <QTemporaryDir>
 #include <QTextDocument>
 #include <QTableWidget>
+#include <QToolButton>
 #include <QPushButton>
+#include <QSettings>
 #include <QSplitter>
 
 #include <cstdlib>
@@ -41,6 +48,10 @@
 auto main(int argc, char* argv[]) -> int
 {
     QApplication application(argc, argv);
+    if (necwb::ui::formatDecimal(1.2) != QStringLiteral("1.200")
+        || necwb::ui::formatDecimal(0.0004) != QStringLiteral("4.000e-04")) {
+        return EXIT_FAILURE;
+    }
     necwb::analysis::AnalysisResult result;
     result.feedpoints = {
         {14.0, 1, 6, {1.0, 0.0}, {0.01, 0.0}, {40.0, -12.0}, 0.005},
@@ -74,6 +85,17 @@ auto main(int argc, char* argv[]) -> int
     QPainter painter(&image);
     view.render(&painter);
     painter.end();
+    auto* impedanceSweepPlot = view.findChild<QWidget*>(QStringLiteral("impedanceSweepPlot"));
+    auto* swrSweepPlot = view.findChild<QWidget*>(QStringLiteral("swrSweepPlot"));
+    const auto wholeNumberAxes = impedanceSweepPlot != nullptr && swrSweepPlot != nullptr
+        && impedanceSweepPlot->property("yTickStep").toDouble() >= 1.0
+        && swrSweepPlot->property("yTickStep").toDouble() >= 1.0
+        && std::floor(impedanceSweepPlot->property("yTickStep").toDouble())
+            == impedanceSweepPlot->property("yTickStep").toDouble()
+        && std::floor(swrSweepPlot->property("yTickStep").toDouble())
+            == swrSweepPlot->property("yTickStep").toDouble()
+        && impedanceSweepPlot->property("plotLeftMargin").toDouble() >= 100.0
+        && swrSweepPlot->property("plotLeftMargin").toDouble() >= 100.0;
     necwb::ui::ResultsSummaryView resultsSummary;
     resultsSummary.resize(700, 420);
     resultsSummary.setResults(result, QStringLiteral("test-run"));
@@ -86,12 +108,26 @@ auto main(int argc, char* argv[]) -> int
     resultsSummary.render(&summaryPainter);
     summaryPainter.end();
     necwb::ui::AverageGainResultsView averageGainResults;
+    QAction runAverageGain(QStringLiteral("Run Average Gain Test"), &averageGainResults);
+    auto averageGainTriggered = false;
+    QObject::connect(&runAverageGain, &QAction::triggered,
+        [&averageGainTriggered] { averageGainTriggered = true; });
+    averageGainResults.setRunAction(&runAverageGain);
     averageGainResults.resize(700, 420);
     averageGainResults.setResult(necwb::analysis::assessAverageGain(0.98, 1.0), 14.1,
         necwb::analysis::AverageGainEnvironment::FreeSpace, 4.0,
         QStringLiteral("Model: test.nec · Run: AGT"));
     averageGainResults.show();
     application.processEvents();
+    auto* averageGainTable = averageGainResults.findChild<QTableWidget*>();
+    auto* runAverageGainButton = averageGainResults.findChild<QToolButton*>(
+        QStringLiteral("runAverageGainFromValidationButton"));
+    if (runAverageGainButton != nullptr) runAverageGainButton->click();
+    if (averageGainTable == nullptr || averageGainTable->item(1, 1) == nullptr
+        || averageGainTable->item(1, 1)->text() != QStringLiteral("0.980")
+        || runAverageGainButton == nullptr || !averageGainTriggered) {
+        return EXIT_FAILURE;
+    }
     QImage averageGainImage(averageGainResults.size(), QImage::Format_ARGB32_Premultiplied);
     averageGainImage.fill(Qt::transparent);
     QPainter averageGainPainter(&averageGainImage);
@@ -117,15 +153,78 @@ auto main(int argc, char* argv[]) -> int
     QPainter convergencePainter(&convergenceImage);
     convergence.render(&convergencePainter);
     convergencePainter.end();
+    necwb::ui::OptimizationWorkspace optimization;
+    optimization.resize(1000, 700);
+    optimization.show();
+    application.processEvents();
+    auto* optimizationConfiguration = optimization.findChild<QSplitter*>(
+        QStringLiteral("optimizationConfigurationSplitter"));
+    auto* optimizationVariables = optimization.findChild<QTableWidget*>(
+        QStringLiteral("optimizationVariablesTable"));
+    auto* optimizationSweepSettings = optimization.findChild<QTableWidget*>(
+        QStringLiteral("optimizationSweepSettingsTable"));
+    auto* optimizationVariablesHeading = optimization.findChild<QLabel*>(
+        QStringLiteral("optimizationVariablesHeading"));
+    auto* optimizationSweepHeading = optimization.findChild<QLabel*>(
+        QStringLiteral("optimizationSweepHeading"));
+    const auto optimizationDecimalControls = optimization.findChildren<QDoubleSpinBox*>();
+    const auto optimizerUsesThreeDecimals = std::ranges::all_of(
+        optimizationDecimalControls, [](const auto* control) { return control->decimals() == 3; });
+    if (optimizationConfiguration == nullptr
+        || optimizationConfiguration->orientation() != Qt::Horizontal
+        || optimizationConfiguration->count() != 2
+        || optimizationVariables == nullptr
+        || optimizationSweepSettings == nullptr
+        || optimizationVariablesHeading == nullptr
+        || optimizationSweepHeading == nullptr
+        || optimizationVariablesHeading->height() != optimizationSweepHeading->height()
+        || optimizationVariables->mapTo(&optimization, QPoint{}).y()
+            != optimizationSweepSettings->mapTo(&optimization, QPoint{}).y()
+        || !optimizerUsesThreeDecimals
+        || optimizationSweepSettings->rowCount() != 4
+        || qobject_cast<QComboBox*>(optimizationSweepSettings->cellWidget(0, 1)) == nullptr) {
+        return EXIT_FAILURE;
+    }
     necwb::ui::CurrentDistributionView currents;
     necwb::ui::RadiationPatternView radiation2D;
     necwb::ui::Radiation3DView radiation3D;
     for (auto* resultView : std::vector<QWidget*>{&currents, &radiation2D, &radiation3D}) {
         resultView->resize(800, 600);
     }
+    necwb::model::AntennaModel currentAntenna;
+    currentAntenna.addWire({1, {0.0, 0.0, 0.0}, {5.0, 0.0, 0.0}, 2, 0.001, 1});
+    currentAntenna.addWire({2, {0.0, 0.0, 0.0}, {-3.0, 0.0, 0.0}, 2, 0.001, 2});
+    const std::vector<necwb::analysis::SegmentCurrentResult> unorderedCurrents{
+        {.segment = 1, .wireTag = 1, .magnitude = 5.0},
+        {.segment = 2, .wireTag = 1, .magnitude = 1.0},
+        {.segment = 1, .wireTag = 2, .magnitude = 4.0},
+        {.segment = 2, .wireTag = 2, .magnitude = 2.0}};
+    const auto currentPaths = necwb::ui::connectedCurrentPaths(unorderedCurrents, currentAntenna);
+    if (currentPaths.size() != 1
+        || currentPaths.front().front().wireTag != 2
+        || currentPaths.front().front().segment != 2
+        || currentPaths.front()[1].segment != 1
+        || currentPaths.front()[2].wireTag != 1
+        || currentPaths.front()[2].segment != 1
+        || currentPaths.front().back().segment != 2) {
+        return EXIT_FAILURE;
+    }
+    currents.setModel(currentAntenna);
     currents.setResults(result, QStringLiteral("test-run"));
     currents.setSelectedFrequency(14.1);
     radiation2D.setResults(result, QStringLiteral("test-run"));
+    auto* radiationPolarPlot = radiation2D.findChild<QWidget*>(
+        QStringLiteral("radiationPolarPlot"));
+    std::vector<QPointF> fullCircle;
+    for (auto angle = 0; angle < 360; angle += 10) fullCircle.emplace_back(angle, 1.0);
+    std::vector<QPointF> partialCircle;
+    for (auto angle = 0; angle <= 90; angle += 10) partialCircle.emplace_back(angle, 1.0);
+    if (radiationPolarPlot == nullptr
+        || !radiationPolarPlot->property("closedPattern").toBool()
+        || !necwb::ui::radiationAnglesCoverCircle(fullCircle)
+        || necwb::ui::radiationAnglesCoverCircle(partialCircle)) {
+        return EXIT_FAILURE;
+    }
     necwb::model::AntennaModel antenna;
     antenna.addWire({1, {0.0, 0.0, -0.5}, {0.0, 0.0, 0.5}, 11, 0.001, 1});
     radiation3D.setModel(antenna);
@@ -184,10 +283,10 @@ auto main(int argc, char* argv[]) -> int
     application.processEvents();
     const auto maxGainCutSelected = radiation2DOrientation->text() == QStringLiteral("Vertical Cut")
         && radiation2DCutPlane->currentData().toDouble() == 60.0
-        && radiation2DSummary->text().contains(QStringLiteral("20.00 dBi"));
+        && radiation2DSummary->text().contains(QStringLiteral("20.000 dBi"));
     radiation2D.setSelectedFrequency(14.0);
     application.processEvents();
-    const auto missingRadiationReported = radiation2DSummary->text().contains(QStringLiteral("14 MHz"))
+    const auto missingRadiationReported = radiation2DSummary->text().contains(QStringLiteral("14.000 MHz"))
         && radiation2DSummary->text().contains(QStringLiteral("No"))
         && !radiation2DExportData->isEnabled();
     radiation2D.setSelectedFrequency(14.2);
@@ -233,6 +332,35 @@ auto main(int argc, char* argv[]) -> int
     const auto dashboardStateVisible = dashboardFileState != nullptr
         && dashboardFileState->text().contains(QStringLiteral("test.nec"))
         && dashboardFileState->text().contains(QStringLiteral("Unsaved"));
+    const auto* dashboard3DControls = dashboard.findChild<QWidget*>(
+        QStringLiteral("radiation3DControls"));
+    const auto* dashboard3DSummary = dashboard.findChild<QLabel*>(
+        QStringLiteral("radiation3DSummary"));
+    const auto dashboard3DIsOverview = dashboard3DControls != nullptr
+        && dashboard3DControls->isHidden() && dashboard3DSummary != nullptr
+        && dashboard3DSummary->isHidden();
+    QSettings{}.remove(QStringLiteral("resultWindows/smoke-test"));
+    necwb::ui::DetachablePanel detachablePanel(
+        QStringLiteral("smoke-test"), QStringLiteral("Smoke Results"));
+    auto* detachableContent = new QLabel(QStringLiteral("Live result content"));
+    detachablePanel.setContent(detachableContent);
+    detachablePanel.show();
+    application.processEvents();
+    auto* popOutButton = detachablePanel.findChild<QPushButton*>(
+        QStringLiteral("smoke-testPopOutButton"));
+    if (popOutButton == nullptr) return EXIT_FAILURE;
+    popOutButton->click();
+    application.processEvents();
+    auto* resultWindow = detachablePanel.findChild<QDialog*>(
+        QStringLiteral("smoke-testResultWindow"));
+    const auto resultPanelDetached = detachablePanel.isDetached()
+        && resultWindow != nullptr && resultWindow->isVisible()
+        && detachableContent->window() == resultWindow;
+    resultWindow->close();
+    application.processEvents();
+    const auto resultPanelReattached = !detachablePanel.isDetached()
+        && detachableContent->parentWidget() == &detachablePanel;
+    QSettings{}.remove(QStringLiteral("resultWindows/smoke-test"));
     QAction welcomeNew(QStringLiteral("New NEC Model"));
     QAction welcomeOpen(QStringLiteral("Open NEC File"));
     QString recentOpened;
@@ -406,6 +534,8 @@ auto main(int argc, char* argv[]) -> int
     auto* loadValidation = loadNetwork.findChild<QLabel*>(QStringLiteral("loadNetworkValidation"));
     if (loadTable == nullptr || lineTable == nullptr || applyLoad == nullptr || applyLine == nullptr
         || loadValidation == nullptr) return EXIT_FAILURE;
+    if (loadTable->item(0, 4)->text() != QStringLiteral("50.000")
+        || lineTable->item(0, 4)->text() != QStringLiteral("50.000")) return EXIT_FAILURE;
     auto validLoadEmitted = false;
     auto validLineEmitted = false;
     QObject::connect(&loadNetwork, &necwb::ui::LoadNetworkEditor::loadChanged,
@@ -460,9 +590,10 @@ auto main(int argc, char* argv[]) -> int
         && store.removeGroup(session.id, session.directory)
         && !QFileInfo::exists(session.directory) && !QFileInfo::exists(candidate.directory)
         && store.remove(run.directory) && !QFileInfo::exists(run.directory);
-    const auto passed = !image.isNull() && !summaryImage.isNull()
+    const auto passed = !image.isNull() && wholeNumberAxes && !summaryImage.isNull()
         && !fieldImage.isNull() && !currentImage.isNull()
-        && !dashboardImage.isNull() && dashboardStateVisible
+        && !dashboardImage.isNull() && dashboardStateVisible && dashboard3DIsOverview
+        && resultPanelDetached && resultPanelReattached
         && !welcomeImage.isNull() && welcomeStateValid && !examplesOpened && storeValid
         && runDeletionSafe
         && !structuredImage.isNull() && invalidEditBlocked && duplicateFrequencyBlocked

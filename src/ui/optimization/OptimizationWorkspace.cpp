@@ -1,5 +1,7 @@
 #include "ui/optimization/OptimizationWorkspace.h"
 
+#include "ui/DisplayFormat.h"
+
 #include "analysis/AnalysisResult.h"
 #include "analysis/NecOutputParser.h"
 #include "analysis/OptimizationObjective.h"
@@ -16,7 +18,6 @@
 #include <QDoubleSpinBox>
 #include <QFile>
 #include <QFileInfo>
-#include <QFormLayout>
 #include <QFrame>
 #include <QHeaderView>
 #include <QHBoxLayout>
@@ -60,9 +61,9 @@ enum ResultColumn {
     ResultColumnCount
 };
 
-auto numericItem(double value, int precision = 6) -> QTableWidgetItem*
+auto numericItem(double value) -> QTableWidgetItem*
 {
-    auto* item = new QTableWidgetItem(QString::number(value, 'g', precision));
+    auto* item = new QTableWidgetItem(formatDecimal(value));
     item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
     return item;
 }
@@ -150,15 +151,15 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     headingFont.setBold(true);
     heading->setFont(headingFont);
     auto* description = new QLabel(tr(
-        "Evaluate a bounded set of values for one SY variable and rank the candidates by SWR. "
-        "This is an exhaustive parameter sweep, not an iterative optimizer. Optimizer convergence "
-        "and post-design tolerance analysis are separate future tools."), this);
+        "Sweep one SY variable across bounded candidates and rank the results by SWR. "
+        "This is an exhaustive parameter sweep, not an iterative optimizer."), this);
     description->setWordWrap(true);
 
     variablesTable_ = new QTableWidget(this);
+    variablesTable_->setObjectName(QStringLiteral("optimizationVariablesTable"));
     variablesTable_->setColumnCount(4);
     variablesTable_->setHorizontalHeaderLabels(
-        {tr("Symbol"), tr("Expression"), tr("Current Value"), tr("Line")});
+        {tr("Symbol"), tr("Expression"), tr("Value"), tr("Line")});
     variablesTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     variablesTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     variablesTable_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -168,7 +169,6 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     variablesTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     variablesTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
 
-    auto* controls = new QFormLayout;
     variableControl_ = new QComboBox(this);
     objectiveControl_ = new QComboBox(this);
     objectiveControl_->addItem(tr("Minimize Worst SWR Across Frequencies"),
@@ -177,7 +177,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         static_cast<int>(analysis::OptimizationObjectiveKind::SwrAtFrequency));
     targetFrequencyControl_ = new QDoubleSpinBox(this);
     targetFrequencyControl_->setRange(0.000001, 1.0e9);
-    targetFrequencyControl_->setDecimals(6);
+    targetFrequencyControl_->setDecimals(DisplayDecimalPlaces);
     targetFrequencyControl_->setValue(14.175);
     targetFrequencyControl_->setSuffix(tr(" MHz"));
     frequencyModeControl_ = new QComboBox(this);
@@ -192,22 +192,49 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     referenceImpedanceControl_ = new QDoubleSpinBox(this);
     for (auto* control : {minimumControl_, maximumControl_}) {
         control->setRange(-1.0e12, 1.0e12);
-        control->setDecimals(9);
+        control->setDecimals(DisplayDecimalPlaces);
     }
     pointsControl_->setRange(2, 101);
     pointsControl_->setValue(7);
     referenceImpedanceControl_->setRange(1.0, 10000.0);
-    referenceImpedanceControl_->setDecimals(2);
+    referenceImpedanceControl_->setDecimals(DisplayDecimalPlaces);
     referenceImpedanceControl_->setValue(50.0);
     referenceImpedanceControl_->setSuffix(QStringLiteral(" Ω"));
-    controls->addRow(tr("Variable:"), variableControl_);
-    controls->addRow(tr("Objective:"), objectiveControl_);
-    controls->addRow(tr("Selected frequency:"), targetFrequencyControl_);
-    controls->addRow(tr("Frequency source:"), frequencyModeControl_);
-    controls->addRow(tr("Minimum:"), minimumControl_);
-    controls->addRow(tr("Maximum:"), maximumControl_);
-    controls->addRow(tr("Candidate points:"), pointsControl_);
-    controls->addRow(tr("Reference impedance:"), referenceImpedanceControl_);
+    auto* sweepSettingsTable = new QTableWidget(4, 4, this);
+    sweepSettingsTable->setObjectName(QStringLiteral("optimizationSweepSettingsTable"));
+    sweepSettingsTable->setHorizontalHeaderLabels(
+        {tr("Setting"), tr("Value"), tr("Setting"), tr("Value")});
+    sweepSettingsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    sweepSettingsTable->setSelectionMode(QAbstractItemView::NoSelection);
+    sweepSettingsTable->verticalHeader()->hide();
+    sweepSettingsTable->horizontalHeader()->setSectionResizeMode(
+        0, QHeaderView::ResizeToContents);
+    sweepSettingsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    sweepSettingsTable->horizontalHeader()->setSectionResizeMode(
+        2, QHeaderView::ResizeToContents);
+    sweepSettingsTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
+    const auto addSetting = [sweepSettingsTable](int row, int column,
+                                const QString& label, QWidget* editor) {
+        auto* labelItem = new QTableWidgetItem(label);
+        labelItem->setFlags(Qt::ItemIsEnabled);
+        sweepSettingsTable->setItem(row, column, labelItem);
+        sweepSettingsTable->setCellWidget(row, column + 1, editor);
+    };
+    addSetting(0, 0, tr("Variable"), variableControl_);
+    addSetting(1, 0, tr("Objective"), objectiveControl_);
+    addSetting(2, 0, tr("Frequency source"), frequencyModeControl_);
+    addSetting(3, 0, tr("Selected frequency"), targetFrequencyControl_);
+    addSetting(0, 2, tr("Minimum"), minimumControl_);
+    addSetting(1, 2, tr("Maximum"), maximumControl_);
+    addSetting(2, 2, tr("Candidate points"), pointsControl_);
+    addSetting(3, 2, tr("Reference impedance"), referenceImpedanceControl_);
+    sweepSettingsTable->resizeRowsToContents();
+    auto settingsHeight = sweepSettingsTable->horizontalHeader()->sizeHint().height()
+        + 2 * sweepSettingsTable->frameWidth();
+    for (auto row = 0; row < sweepSettingsTable->rowCount(); ++row) {
+        settingsHeight += sweepSettingsTable->rowHeight(row);
+    }
+    sweepSettingsTable->setFixedHeight(settingsHeight);
 
     explicitFrequencyPanel_ = new QWidget(this);
     auto* frequencyLayout = new QHBoxLayout(explicitFrequencyPanel_);
@@ -220,12 +247,12 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     frequencyTable_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     frequencyTable_->verticalHeader()->hide();
     frequencyTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    frequencyTable_->setMaximumHeight(132);
+    frequencyTable_->setMaximumHeight(108);
     auto* frequencyButtons = new QVBoxLayout;
     frequencyEntryControl_ = new QDoubleSpinBox(explicitFrequencyPanel_);
     frequencyEntryControl_->setObjectName(QStringLiteral("optimizationFrequencyEntry"));
     frequencyEntryControl_->setRange(0.000001, 1.0e9);
-    frequencyEntryControl_->setDecimals(6);
+    frequencyEntryControl_->setDecimals(DisplayDecimalPlaces);
     frequencyEntryControl_->setValue(14.175);
     frequencyEntryControl_->setSuffix(tr(" MHz"));
     addFrequencyButton_ = new QPushButton(tr("Add Frequency"), explicitFrequencyPanel_);
@@ -243,6 +270,48 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     frequencyLayout->addLayout(frequencyButtons);
     workloadLabel_ = new QLabel(this);
     workloadLabel_->setObjectName(QStringLiteral("optimizationWorkload"));
+
+    auto* variablesPanel = new QWidget(this);
+    variablesPanel->setObjectName(QStringLiteral("optimizationVariablesPanel"));
+    auto* variablesLayout = new QVBoxLayout(variablesPanel);
+    variablesLayout->setContentsMargins(0, 0, 0, 0);
+    auto* variablesHeading = new QLabel(tr("Symbols & Expressions"), variablesPanel);
+    variablesHeading->setObjectName(QStringLiteral("optimizationVariablesHeading"));
+    auto variablesHeadingFont = variablesHeading->font();
+    variablesHeadingFont.setBold(true);
+    variablesHeading->setFont(variablesHeadingFont);
+    variablesLayout->addWidget(variablesHeading);
+    variablesLayout->addWidget(variablesTable_, 1);
+
+    auto* sweepPanel = new QWidget(this);
+    sweepPanel->setObjectName(QStringLiteral("optimizationSweepPanel"));
+    auto* sweepLayout = new QVBoxLayout(sweepPanel);
+    sweepLayout->setContentsMargins(0, 0, 0, 0);
+    auto* sweepHeading = new QLabel(tr("Sweep & Frequencies"), sweepPanel);
+    sweepHeading->setObjectName(QStringLiteral("optimizationSweepHeading"));
+    auto sweepHeadingFont = sweepHeading->font();
+    sweepHeadingFont.setBold(true);
+    sweepHeading->setFont(sweepHeadingFont);
+    const auto sectionHeadingHeight = std::max(
+        variablesHeading->sizeHint().height(), sweepHeading->sizeHint().height());
+    variablesHeading->setFixedHeight(sectionHeadingHeight);
+    sweepHeading->setFixedHeight(sectionHeadingHeight);
+    variablesHeading->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    sweepHeading->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    sweepLayout->addWidget(sweepHeading);
+    sweepLayout->addWidget(sweepSettingsTable);
+    sweepLayout->addWidget(explicitFrequencyPanel_);
+    sweepLayout->addWidget(workloadLabel_);
+
+    auto* configurationSplitter = new QSplitter(Qt::Horizontal, this);
+    configurationSplitter->setObjectName(
+        QStringLiteral("optimizationConfigurationSplitter"));
+    configurationSplitter->addWidget(variablesPanel);
+    configurationSplitter->addWidget(sweepPanel);
+    configurationSplitter->setStretchFactor(0, 2);
+    configurationSplitter->setStretchFactor(1, 3);
+    configurationSplitter->setSizes({360, 540});
+    configurationSplitter->setMaximumHeight(300);
 
     auto* buttons = new QHBoxLayout;
     runButton_ = new QPushButton(tr("Run Parameter Sweep"), this);
@@ -295,14 +364,11 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     layout->addWidget(historicalBanner_);
     layout->addWidget(heading);
     layout->addWidget(description);
-    layout->addWidget(variablesTable_, 1);
-    layout->addLayout(controls);
-    layout->addWidget(explicitFrequencyPanel_);
-    layout->addWidget(workloadLabel_);
+    layout->addWidget(configurationSplitter);
     layout->addLayout(buttons);
     layout->addWidget(statusLabel_);
     layout->addWidget(bestLabel_);
-    layout->addWidget(resultSplitter, 2);
+    layout->addWidget(resultSplitter, 1);
 
     connect(variableControl_, &QComboBox::currentIndexChanged, this, [this] { updateBounds(); });
     connect(objectiveControl_, &QComboBox::currentIndexChanged,
@@ -468,7 +534,7 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         if (selectedSymbol_.isEmpty()) selectedSymbol_ = metadata.value(QStringLiteral("variable")).toString();
         selectedValueSuffix_ = metadata.value(QStringLiteral("unit")).toString();
         if (!selectedValueSuffix_.isEmpty()) selectedValueSuffix_.prepend(' ');
-        resultsTable_->setItem(row, ValueColumn, numericItem(value, 12));
+        resultsTable_->setItem(row, ValueColumn, numericItem(value));
         QFile outputFile(QDir(candidateRecords[index].directory).filePath(QStringLiteral("model.out")));
         analysis::AnalysisResult result;
         if (outputFile.open(QIODevice::ReadOnly))
@@ -486,13 +552,13 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         const auto evaluation = analysis::evaluateOptimizationObjective(
             result.feedpoints, restoredObjective);
         if (evaluation && evaluation->feedpoint) {
-            resultsTable_->setItem(row, SwrColumn, numericItem(evaluation->swr, 8));
+            resultsTable_->setItem(row, SwrColumn, numericItem(evaluation->swr));
             resultsTable_->setItem(row, FrequencyColumn,
-                numericItem(evaluation->feedpoint->frequencyMHz, 10));
+                numericItem(evaluation->feedpoint->frequencyMHz));
             resultsTable_->setItem(row, ResistanceColumn,
-                numericItem(evaluation->feedpoint->impedance.real(), 8));
+                numericItem(evaluation->feedpoint->impedance.real()));
             resultsTable_->setItem(row, ReactanceColumn,
-                numericItem(evaluation->feedpoint->impedance.imag(), 8));
+                numericItem(evaluation->feedpoint->impedance.imag()));
             if (evaluation->score < bestScore_) {
                 bestScore_ = evaluation->score;
                 bestRow_ = row;
@@ -555,11 +621,12 @@ void OptimizationWorkspace::populateVariables(const nec::SymbolResolution& resol
         const auto row = static_cast<int>(index);
         variablesTable_->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(definition.name)));
         variablesTable_->setItem(row, 1, new QTableWidgetItem(QString::fromStdString(definition.expression)));
-        auto* valueItem = numericItem(definition.value, 12);
+        auto* valueItem = numericItem(definition.value);
         const auto isGeometry = geometrySymbols_.contains(asciiLower(definition.name));
         if (isGeometry) valueItem->setText(valueItem->text() + deckLengthSuffix_);
         variablesTable_->setItem(row, 2, valueItem);
-        variablesTable_->setItem(row, 3, numericItem(static_cast<double>(definition.lineNumber), 12));
+        variablesTable_->setItem(row, 3,
+            new QTableWidgetItem(QString::number(definition.lineNumber)));
         variableControl_->addItem(QString::fromStdString(definition.name), definition.value);
         variableControl_->setItemData(row, isGeometry, Qt::UserRole + 1);
     }
@@ -586,6 +653,7 @@ void OptimizationWorkspace::updateBounds()
     if (first > second) std::swap(first, second);
     minimumControl_->setValue(first);
     maximumControl_->setValue(second);
+    updateWorkload();
     updateReadiness();
 }
 
@@ -636,7 +704,7 @@ void OptimizationWorkspace::setExplicitFrequencies(
     frequencyTable_->setRowCount(static_cast<int>(frequenciesMHz.size()));
     for (std::size_t index = 0; index < frequenciesMHz.size(); ++index)
         frequencyTable_->setItem(static_cast<int>(index), 0,
-            numericItem(frequenciesMHz[index], 12));
+            numericItem(frequenciesMHz[index]));
     updateWorkload();
     updateReadiness();
 }
@@ -646,7 +714,7 @@ void OptimizationWorkspace::addExplicitFrequency(double frequencyMHz)
     if (!std::isfinite(frequencyMHz) || frequencyMHz <= 0.0) return;
     const auto row = frequencyTable_->rowCount();
     frequencyTable_->insertRow(row);
-    frequencyTable_->setItem(row, 0, numericItem(frequencyMHz, 12));
+    frequencyTable_->setItem(row, 0, numericItem(frequencyMHz));
 }
 
 void OptimizationWorkspace::pasteExplicitFrequencies()
@@ -688,11 +756,11 @@ void OptimizationWorkspace::updateCandidateDetails()
     for (std::size_t index = 0; index < feedpoints.size(); ++index) {
         const auto& feedpoint = feedpoints[index];
         const auto detailRow = static_cast<int>(index);
-        candidateDetailsTable_->setItem(detailRow, 0, numericItem(feedpoint.frequencyMHz, 10));
+        candidateDetailsTable_->setItem(detailRow, 0, numericItem(feedpoint.frequencyMHz));
         candidateDetailsTable_->setItem(detailRow, 1, numericItem(
-            analysis::standingWaveRatio(feedpoint.impedance, activeObjective_.referenceImpedance), 8));
-        candidateDetailsTable_->setItem(detailRow, 2, numericItem(feedpoint.impedance.real(), 8));
-        candidateDetailsTable_->setItem(detailRow, 3, numericItem(feedpoint.impedance.imag(), 8));
+            analysis::standingWaveRatio(feedpoint.impedance, activeObjective_.referenceImpedance)));
+        candidateDetailsTable_->setItem(detailRow, 2, numericItem(feedpoint.impedance.real()));
+        candidateDetailsTable_->setItem(detailRow, 3, numericItem(feedpoint.impedance.imag()));
         if (evaluation && evaluation->feedpoint
             && std::abs(evaluation->feedpoint->frequencyMHz - feedpoint.frequencyMHz) < 1.0e-9) {
             for (auto column = 0; column < candidateDetailsTable_->columnCount(); ++column) {
@@ -705,7 +773,7 @@ void OptimizationWorkspace::updateCandidateDetails()
     }
     candidateDetailLabel_->setText(tr("Candidate %1 = %2%3 · %4 frequencies · objective point bold")
         .arg(selectedSymbol_.isEmpty() ? tr("value") : selectedSymbol_)
-        .arg(candidate.value, 0, 'g', 12)
+        .arg(candidate.value, 0, 'f', 3)
         .arg(selectedValueSuffix_)
         .arg(feedpoints.size()));
 }
@@ -796,7 +864,7 @@ void OptimizationWorkspace::startSweep()
         const auto fraction = static_cast<double>(index) / static_cast<double>(count - 1);
         Candidate candidate{minimum + fraction * (maximum - minimum), index, {}, {}};
         candidates_.push_back(candidate);
-        auto* valueItem = numericItem(candidate.value, 12);
+        auto* valueItem = numericItem(candidate.value);
         valueItem->setText(valueItem->text() + selectedValueSuffix_);
         resultsTable_->setItem(index, ValueColumn, valueItem);
         setCandidateStatus(index, tr("Pending"));
@@ -933,13 +1001,13 @@ void OptimizationWorkspace::finishCurrentCandidate(bool processSucceeded, const 
         const auto evaluation = analysis::evaluateOptimizationObjective(
             result.feedpoints, activeObjective_);
         if (evaluation && evaluation->feedpoint) {
-            resultsTable_->setItem(candidate.row, SwrColumn, numericItem(evaluation->swr, 8));
+            resultsTable_->setItem(candidate.row, SwrColumn, numericItem(evaluation->swr));
             resultsTable_->setItem(candidate.row, FrequencyColumn,
-                numericItem(evaluation->feedpoint->frequencyMHz, 10));
+                numericItem(evaluation->feedpoint->frequencyMHz));
             resultsTable_->setItem(candidate.row, ResistanceColumn,
-                numericItem(evaluation->feedpoint->impedance.real(), 8));
+                numericItem(evaluation->feedpoint->impedance.real()));
             resultsTable_->setItem(candidate.row, ReactanceColumn,
-                numericItem(evaluation->feedpoint->impedance.imag(), 8));
+                numericItem(evaluation->feedpoint->impedance.imag()));
             setCandidateStatus(candidate.row, tr("Completed"));
             candidate.record.status = QStringLiteral("Completed");
             candidate.record.frequencyCount = static_cast<int>(frequencies.size());
@@ -990,10 +1058,10 @@ void OptimizationWorkspace::finishSweep()
         }
         bestLabel_->setText(tr("Best candidate: %1 = %2%3, %4 %5")
             .arg(selectedSymbol_)
-            .arg(candidates_[static_cast<std::size_t>(bestRow_)].value, 0, 'g', 12)
+            .arg(candidates_[static_cast<std::size_t>(bestRow_)].value, 0, 'f', 3)
             .arg(selectedValueSuffix_)
             .arg(objectiveName(activeObjective_.kind))
-            .arg(bestScore_, 0, 'g', 8));
+            .arg(bestScore_, 0, 'f', 3));
     } else {
         bestLabel_->setText(tr("No successful candidate produced impedance results."));
     }

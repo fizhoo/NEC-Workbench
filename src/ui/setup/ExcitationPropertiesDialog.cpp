@@ -1,5 +1,7 @@
 #include "ui/setup/ExcitationPropertiesDialog.h"
 
+#include "ui/DisplayFormat.h"
+
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -34,12 +36,12 @@ ExcitationPropertiesDialog::ExcitationPropertiesDialog(const model::Excitation& 
     segmentControl_->setMaximum(initialWire == nullptr ? 1 : initialWire->segments);
     segmentControl_->setValue(excitation.segment);
     magnitudeControl_ = new QDoubleSpinBox(this);
-    magnitudeControl_->setDecimals(9);
+    magnitudeControl_->setDecimals(DisplayDecimalPlaces);
     magnitudeControl_->setRange(0.0, 1.0e12);
     magnitudeControl_->setValue(excitation.magnitude);
     magnitudeControl_->setKeyboardTracking(false);
     phaseControl_ = new QDoubleSpinBox(this);
-    phaseControl_->setDecimals(6);
+    phaseControl_->setDecimals(DisplayDecimalPlaces);
     phaseControl_->setRange(-360.0, 360.0);
     phaseControl_->setSuffix(tr("°"));
     phaseControl_->setValue(excitation.phaseDegrees);

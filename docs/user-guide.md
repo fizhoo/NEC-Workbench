@@ -64,6 +64,11 @@ most recent results.
 Home does not own a separate copy of the model. Its source preview and summary
 reflect the same document used by every other workspace.
 
+The **3D Overview** is a clean interactive preview of the latest antenna and
+radiation result. Drag to orbit, use Shift-drag or the middle mouse button to
+pan, and use the wheel to zoom. Detailed layer, scale, export, and component
+controls remain in **Results → Radiation → 3D Pattern**.
+
 ### Average Gain Test
 
 Path: **Home → Model Quality → Run Average Gain Test** or
@@ -164,8 +169,15 @@ Path: **Model → Automatic Segmentation**
 
 Automatic Segmentation previews wavelength-based segment counts before changing
 the model. You can choose segments per wavelength and request odd counts for
-excited wires. Supported voltage sources are remapped to the nearest equivalent
-normalized position. Apply the preview only after reviewing the proposed changes.
+excited wires. Supported `EX 0` sources, `LD` segment ranges, and both endpoints
+of `TL` cards are remapped to the nearest equivalent normalized wire position.
+TL-connected wires count as excited for the odd-center policy. Apply the preview
+only after reviewing the proposed changes. `NT` network cards and unsupported
+EX, LD, or TL forms still block automatic segmentation.
+
+Automatic Segmentation edits only segment-count and segment-reference fields.
+Symbolic `GW` coordinates and radii, plus unrelated symbolic EX, LD, and TL
+values, remain unchanged in the authored source.
 
 ## NEC Source
 
@@ -173,6 +185,10 @@ normalized position. Apply the preview only after reviewing the proposed changes
 
 NEC Source is the authoritative representation of the model. Graphical and
 structured editors always map their changes back to this text.
+
+Graphical movement, splitting, and wire-property replacement are blocked when a
+`GW` uses symbolic coordinates or radius. Edit its `SY` definitions or raw source
+instead; Workbench does not silently replace those expressions with numbers.
 
 Path: **NEC Source** on the top workspace bar
 
@@ -261,6 +277,11 @@ table remains full width. Use the nested **Frequency, Ground & Sources** and
 **Loads & Transmission Lines** tabs to switch between compact forms and the
 wider attachment tables.
 
+Linear sweeps include the starting point and every complete step through the
+requested end. For example, 14.000–14.350 MHz in 0.010 MHz steps produces 36
+frequencies. NEC stores that number in the second `FR` integer field; the end
+frequency itself is derived rather than written directly on the card.
+
 ### Loads & Lines
 
 Path: **Analysis → Model Setup → Loads & Transmission Lines**
@@ -290,6 +311,10 @@ Choose the data the solver should produce:
 - 2D elevation-cut or full-3D pattern presets
 - Which frequencies in a sweep receive radiation calculations
 
+Center-only and representative radiation modes limit the expensive `RP`
+calculations only. The complete `FR` sweep is still executed for feedpoint
+impedance and SWR, even when the authored model has no explicit `XQ` card.
+
 The readiness panel explains anything still blocking a run.
 
 ### Run analysis
@@ -299,7 +324,14 @@ Path: **Analysis → Run Analysis**, the main toolbar, or the Analysis menu
 NEC Workbench checks the model again, writes an archived `model.nec`, launches
 the selected solver asynchronously, and preserves `model.nec`, `model.out`,
 `run.log`, and JSON metadata in a unique run directory. Active runs can be
-canceled and are subject to the configured timeout.
+canceled and are subject to the configured timeout. While a run is active, the
+status bar shows an indeterminate activity indicator, the current phase, elapsed
+time, growing output-file size, and a Cancel button. The Solver Output dock
+continues to show process messages as they become available.
+
+Solver and Requests pages scroll when the window is smaller than their usable
+content. Input controls retain their normal text height rather than collapsing;
+reduce the content area or use the page scroll bars to reach additional fields.
 
 ## Results
 
@@ -309,6 +341,31 @@ Results displays current or historical solver output. Results and Run History
 are available even when no model is currently open.
 
 Path: **Results** on the top workspace bar
+
+### Detachable Results Window
+
+Use **Detach Results** in the Results banner or **View → Detach Results Window**
+to move the complete Results workspace into one reusable top-level window. The
+main window returns to the previous modeling workspace, so Geometry or NEC Source
+can remain visible while plots update. Selecting Results while detached raises
+that window instead of replacing the main workspace.
+
+The detached window can be resized, minimized, maximized, or tiled normally and
+remembers its last geometry. Completing or opening another run updates that same
+window without changing its size or position. Choose **Attach to Main Window**, use the placeholder
+in the main Results page, or close the detached window to return the same Results
+workspace to the main application. Detaching does not create another result copy
+or another window per run.
+
+A successful standard analysis automatically detaches or raises this Results
+window. The selected Results tab and its nested tab—such as **Radiation → 3D
+Pattern** or **Impedance → Plots**—remain selected when the new result replaces
+the previous one. Failed and canceled runs do not open the window automatically.
+
+The **Impedance**, **Currents**, and **Radiation** pages also provide **Pop Out**.
+Each opens one reusable live category window, so selected plots can remain beside
+Geometry while subsequent analyses update them in place. Closing a category
+window or choosing **Attach Here** returns the same widget to Results.
 
 ### Runs
 
@@ -351,7 +408,9 @@ temporary transformed test deck as the editable model.
 
 Path: **Results → Validation**
 
-The **Average Gain Test** page shows the normalized lossless-model test. The
+The **Average Gain Test** page shows the normalized lossless-model test and
+includes **Run Average Gain Test…**, which launches the same checked workflow as
+the Model menu and Home dashboard. The
 **Segmentation Convergence** page configures, runs, and restores mesh-refinement
 studies. These are model-adequacy tools, not optimization algorithms.
 
@@ -380,7 +439,8 @@ Path: **Results → Impedance**
 The **Table** page shows feedpoint frequency, source location, resistance,
 reactance, impedance magnitude and phase, input power, and 50-ohm SWR. The
 **Plots** page shows resistance/reactance and SWR over frequency, with exact
-pointer values.
+pointer values. Y axes use automatically selected whole-number intervals, and a
+separate label gutter keeps the impedance and SWR axis titles clear of tick values.
 
 ### Currents
 
@@ -424,6 +484,13 @@ Path: **Optimize** on the top workspace bar
 Optimize provides a basic bounded sweep for one `SY` variable. Choose the
 variable, minimum, maximum, number of candidate points, reference impedance, and
 SWR objective, then select **Run Parameter Sweep**.
+
+The compact setup band keeps **Symbols & Expressions** beside **Sweep &
+Frequencies**. Sweep settings use an interactive grid whose value cells contain
+the appropriate dropdown or numeric control. The divider can be dragged
+horizontally, while the candidate and per-frequency result tables retain most of
+the workspace below. Decimal values are displayed and entered to three places
+throughout the optimizer; archived raw solver output remains unchanged.
 
 **Frequency Source** controls the frequencies calculated for every candidate:
 
@@ -486,6 +553,16 @@ Structured or geometry edits can replace an expression with its resolved numeric
 value.
 
 ## Global Docks and Controls
+
+### Numeric Display
+
+Workbench values use three digits after the decimal throughout Geometry, Analyze,
+Results, Optimize, setup panels, properties, and dialogs. Very small or very
+large values use scientific notation with three decimal places so meaningful
+wire and component values do not appear as zero. Authored NEC source, raw solver
+output, and exported result data retain their original precision. Precision-sensitive
+radius and conductivity editors also retain the additional entry precision needed
+to represent their values safely.
 
 ### Project
 

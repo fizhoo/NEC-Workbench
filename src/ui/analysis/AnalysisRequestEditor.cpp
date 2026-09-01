@@ -53,6 +53,7 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent)
     patternControl_ = new QCheckBox(tr("Request a normal far-field pattern (RP)"), patternGroup);
     patternControls_ = new QWidget(patternGroup);
     auto* patternForm = new QFormLayout(patternControls_);
+    patternForm->setRowWrapPolicy(QFormLayout::WrapLongRows);
     thetaStartControl_ = angleControl(patternControls_, 0.0, 180.0);
     thetaEndControl_ = angleControl(patternControls_, 0.0, 180.0);
     thetaStepControl_ = angleControl(patternControls_, 0.001, 180.0);
@@ -67,6 +68,8 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent)
         static_cast<int>(analysis::RadiationSweepMode::RepresentativeFrequencies));
     radiationSweepControl_->addItem(tr("Every frequency"),
         static_cast<int>(analysis::RadiationSweepMode::EveryFrequency));
+    radiationSweepControl_->setMinimumContentsLength(36);
+    radiationSweepControl_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     const auto savedSweepMode = QSettings{}.value(QStringLiteral("analysis/radiationSweepMode"),
         static_cast<int>(analysis::RadiationSweepMode::CenterFrequencyOnly)).toInt();
     const auto savedSweepIndex = radiationSweepControl_->findData(savedSweepMode);

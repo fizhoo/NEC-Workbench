@@ -1,16 +1,16 @@
 CE 40m Center-Fed Dipole at 35 ft
-SY freq = 7.15
+SY freq = 7.25
 SY h_ft = 35.0
 SY len_ft = 66.0
 SY rad_in = 0.04025
 SY height = h_ft*0.3048
 SY hlen = len_ft*0.3048/2
 SY rad = rad_in*0.0254
-GW 1 11 0 -hlen 10.668 0 hlen 10.668 0.00102235
+GW 1 29 0 -10.0584 10.668 0 10.0584 10.668 0.00102235
 GE 1
 GN 2 0 0 0 13 0.005
-EX 0 1 6 0 1 0
-FR 0 16 0 0 7 0.02
+EX 0 1 15 0 1 0
+FR 0 144 0 0 7 0.1
 RP 0 37 37 1000 0 0 5 10 0 0
 XQ 0
 EN

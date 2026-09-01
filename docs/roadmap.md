@@ -6,6 +6,9 @@ configured by the user and are not bundled.
 
 ## Current Foundation
 
+- Evaluate the reusable detachable Results-window prototype before applying the
+  same task-window pattern to optimization monitoring.
+
 - Raw and structured NEC source editing with validation and source mapping
 - Synchronized 2D and 3D wire geometry inspection and editing
 - Frequency, ground, source, load, transmission-line, and request setup
@@ -44,7 +47,7 @@ authored parameterized source and the generated NEC input. The remaining
 sequence is:
 
 1. Show resolved values and expression errors in structured editors.
-2. Apply a selected optimization candidate back to the parameterized model.
+2. Apply a selected optimization candidate back into the active model.
 3. Add safe expression-aware structured and graphical editing.
 
 Parameterization is the required foundation for both model templates and

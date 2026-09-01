@@ -1,5 +1,6 @@
 #include "ui/geometry/GeometrySettingsDialog.h"
 
+#include "ui/DisplayFormat.h"
 #include "ui/geometry/EngineeringSpinBox.h"
 
 #include <QCheckBox>
@@ -29,7 +30,7 @@ auto createLengthControl(QWidget* parent) -> QComboBox*
 auto createLengthSpinBox(QWidget* parent) -> QDoubleSpinBox*
 {
     auto* control = new EngineeringSpinBox(parent);
-    control->setDecimals(6);
+    control->setDecimals(DisplayDecimalPlaces);
     control->setRange(0.000001, 1.0e9);
     return control;
 }

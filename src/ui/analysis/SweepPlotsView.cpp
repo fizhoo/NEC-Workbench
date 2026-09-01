@@ -1,5 +1,7 @@
 #include "ui/analysis/SweepPlotsView.h"
 
+#include "ui/DisplayFormat.h"
+
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
@@ -27,7 +29,17 @@ struct PlotSeries {
 
 auto formatAxisValue(double value) -> QString
 {
-    return QString::number(value, 'g', 6);
+    return formatDecimal(value);
+}
+
+auto wholeNumberTickStep(double range) -> double
+{
+    const auto rawStep = std::max(1.0, range / 5.0);
+    const auto magnitude = std::pow(10.0, std::floor(std::log10(rawStep)));
+    const auto normalized = rawStep / magnitude;
+    const auto multiplier = normalized <= 1.0 ? 1.0
+        : normalized <= 2.0 ? 2.0 : normalized <= 5.0 ? 5.0 : 10.0;
+    return std::max(1.0, multiplier * magnitude);
 }
 
 }
@@ -74,7 +86,7 @@ protected:
         titleFont.setBold(false);
         painter.setFont(titleFont);
 
-        plotRect_ = QRectF(72, 44, std::max(1, width() - 94), std::max(1, height() - 92));
+        plotRect_ = QRectF(110, 44, std::max(1, width() - 132), std::max(1, height() - 92));
         if (!calculateBounds()) {
             painter.setPen(palette().color(QPalette::Mid));
             painter.drawText(plotRect_, Qt::AlignCenter,
@@ -84,31 +96,38 @@ protected:
 
         const auto gridColor = palette().color(QPalette::Mid);
         painter.setPen(QPen(gridColor, 1, Qt::DotLine));
-        constexpr auto tickCount = 5;
-        for (auto tick = 0; tick <= tickCount; ++tick) {
-            const auto fraction = static_cast<double>(tick) / tickCount;
+        constexpr auto xTickCount = 5;
+        for (auto tick = 0; tick <= xTickCount; ++tick) {
+            const auto fraction = static_cast<double>(tick) / xTickCount;
             const auto x = plotRect_.left() + fraction * plotRect_.width();
-            const auto y = plotRect_.bottom() - fraction * plotRect_.height();
             painter.drawLine(QPointF(x, plotRect_.top()), QPointF(x, plotRect_.bottom()));
+        }
+        for (auto tick = 0; tick <= yTickCount_; ++tick) {
+            const auto fraction = static_cast<double>(tick) / yTickCount_;
+            const auto y = plotRect_.bottom() - fraction * plotRect_.height();
             painter.drawLine(QPointF(plotRect_.left(), y), QPointF(plotRect_.right(), y));
         }
         painter.setPen(palette().color(QPalette::Text));
         painter.drawRect(plotRect_);
-        for (auto tick = 0; tick <= tickCount; ++tick) {
-            const auto fraction = static_cast<double>(tick) / tickCount;
+        for (auto tick = 0; tick <= xTickCount; ++tick) {
+            const auto fraction = static_cast<double>(tick) / xTickCount;
             const auto xValue = xMinimum_ + fraction * (xMaximum_ - xMinimum_);
-            const auto yValue = yMinimum_ + fraction * (yMaximum_ - yMinimum_);
             const auto x = plotRect_.left() + fraction * plotRect_.width();
-            const auto y = plotRect_.bottom() - fraction * plotRect_.height();
             painter.drawText(QRectF(x - 42, plotRect_.bottom() + 5, 84, 20),
                 Qt::AlignHCenter | Qt::AlignTop, formatAxisValue(xValue));
-            painter.drawText(QRectF(3, y - 10, plotRect_.left() - 10, 20),
-                Qt::AlignRight | Qt::AlignVCenter, formatAxisValue(yValue));
+        }
+        for (auto tick = 0; tick <= yTickCount_; ++tick) {
+            const auto fraction = static_cast<double>(tick) / yTickCount_;
+            const auto yValue = yMinimum_ + tick * yTickStep_;
+            const auto y = plotRect_.bottom() - fraction * plotRect_.height();
+            painter.drawText(QRectF(34, y - 10, plotRect_.left() - 46, 20),
+                Qt::AlignRight | Qt::AlignVCenter,
+                QString::number(static_cast<qlonglong>(std::llround(yValue))));
         }
         painter.drawText(QRectF(plotRect_.left(), height() - 25, plotRect_.width(), 20),
             Qt::AlignCenter, tr("Frequency (MHz)"));
         painter.save();
-        painter.translate(17, plotRect_.center().y());
+        painter.translate(15, plotRect_.center().y());
         painter.rotate(-90);
         painter.drawText(QRectF(-plotRect_.height() / 2, -11, plotRect_.height(), 22),
             Qt::AlignCenter, yAxisLabel_);
@@ -157,7 +176,7 @@ protected:
             painter.drawLine(QPointF(x, plotRect_.top()), QPointF(x, plotRect_.bottom()));
             painter.setPen(palette().color(QPalette::Text));
             painter.drawText(QRectF(x - 60, plotRect_.top() + 27, 120, 20), Qt::AlignCenter,
-                tr("Selected %1 MHz").arg(selectedFrequencyMHz_, 0, 'g', 8));
+                tr("Selected %1 MHz").arg(formatDecimal(selectedFrequencyMHz_)));
         }
     }
 
@@ -250,6 +269,21 @@ private:
             yMinimum_ = std::max(minimumY_, yMinimum_ - padding);
             yMaximum_ += padding;
         }
+        yTickStep_ = wholeNumberTickStep(yMaximum_ - yMinimum_);
+        if (std::isfinite(minimumY_)) {
+            yMinimum_ = minimumY_;
+            yTickCount_ = std::max(1, static_cast<int>(std::ceil(
+                (yMaximum_ - yMinimum_) / yTickStep_)));
+            yMaximum_ = yMinimum_ + yTickCount_ * yTickStep_;
+        } else {
+            yMinimum_ = std::floor(yMinimum_ / yTickStep_) * yTickStep_;
+            yMaximum_ = std::ceil(yMaximum_ / yTickStep_) * yTickStep_;
+            if (yMaximum_ <= yMinimum_) yMaximum_ = yMinimum_ + yTickStep_;
+            yTickCount_ = std::max(1, static_cast<int>(std::llround(
+                (yMaximum_ - yMinimum_) / yTickStep_)));
+        }
+        setProperty("yTickStep", yTickStep_);
+        setProperty("plotLeftMargin", plotRect_.left());
         return true;
     }
 
@@ -269,10 +303,12 @@ private:
     double xMaximum_{};
     double yMinimum_{};
     double yMaximum_{};
+    double yTickStep_{1.0};
     double minimumY_{-std::numeric_limits<double>::infinity()};
     double selectedFrequencyMHz_{std::numeric_limits<double>::quiet_NaN()};
     bool includeZero_{};
     bool boundsValid_{};
+    int yTickCount_{1};
     int hoveredSeries_{-1};
     int hoveredPoint_{-1};
 };
@@ -291,7 +327,9 @@ SweepPlotsView::SweepPlotsView(QWidget* parent)
     summary_->setWordWrap(true);
     auto* splitter = new QSplitter(Qt::Vertical, this);
     impedancePlot_ = new SweepPlotWidget(splitter);
+    impedancePlot_->setObjectName(QStringLiteral("impedanceSweepPlot"));
     swrPlot_ = new SweepPlotWidget(splitter);
+    swrPlot_->setObjectName(QStringLiteral("swrSweepPlot"));
     splitter->addWidget(impedancePlot_);
     splitter->addWidget(swrPlot_);
     splitter->setStretchFactor(0, 1);

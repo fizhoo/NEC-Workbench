@@ -9,6 +9,8 @@
 
 class QLabel;
 class QTableWidget;
+class QAction;
+class QToolButton;
 
 namespace necwb::ui {
 
@@ -16,6 +18,7 @@ class AverageGainResultsView final : public QWidget {
 public:
     explicit AverageGainResultsView(QWidget* parent = nullptr);
 
+    void setRunAction(QAction* action);
     void clear();
     void setRunning(double frequencyMHz, analysis::AverageGainEnvironment environment,
         const QString& context);
@@ -30,6 +33,7 @@ private:
 
     QLabel* status_{};
     QTableWidget* details_{};
+    QToolButton* runButton_{};
     bool hasResult_{};
 };
 

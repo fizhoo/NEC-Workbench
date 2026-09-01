@@ -1,5 +1,7 @@
 #include "ui/analysis/ImpedanceResultsView.h"
 
+#include "ui/DisplayFormat.h"
+
 #include <QHeaderView>
 #include <QLabel>
 #include <QTableWidget>
@@ -53,15 +55,15 @@ void ImpedanceResultsView::setResults(const analysis::AnalysisResult& result,
         table_->insertRow(row);
         const auto swr = analysis::standingWaveRatio(feedpoint.impedance);
         const QStringList values{
-            QString::number(feedpoint.frequencyMHz, 'g', 10),
+            formatDecimal(feedpoint.frequencyMHz),
             QString::number(feedpoint.wireTag),
             QString::number(feedpoint.segment),
-            QString::number(feedpoint.impedance.real(), 'g', 10),
-            QString::number(feedpoint.impedance.imag(), 'g', 10),
-            QString::number(std::abs(feedpoint.impedance), 'g', 10),
-            QString::number(std::arg(feedpoint.impedance) * 180.0 / std::acos(-1.0), 'g', 8),
-            std::isfinite(swr) ? QString::number(swr, 'f', 3) : tr("∞"),
-            QString::number(feedpoint.inputPowerWatts, 'g', 10),
+            formatDecimal(feedpoint.impedance.real()),
+            formatDecimal(feedpoint.impedance.imag()),
+            formatDecimal(std::abs(feedpoint.impedance)),
+            formatDecimal(std::arg(feedpoint.impedance) * 180.0 / std::acos(-1.0)),
+            std::isfinite(swr) ? formatDecimal(swr) : tr("∞"),
+            formatDecimal(feedpoint.inputPowerWatts),
         };
         for (auto column = 0; column < values.size(); ++column) {
             auto* item = new QTableWidgetItem(values[column]);

@@ -1,5 +1,7 @@
 #include "analysis/SegmentationConvergence.h"
 
+#include "analysis/SolverInput.h"
+
 #include "model/ModelSetup.h"
 #include "nec/NecModelConverter.h"
 #include "nec/DeckGeometryUnits.h"
@@ -40,7 +42,7 @@ auto prepareSegmentationConvergenceInput(std::string_view source, double frequen
         return result;
     }
 
-    const auto document = nec::NecParser{}.parse(source);
+    const auto document = nec::NecParser{}.parse(normalizeSolverDeck(source));
     const auto conversion = nec::NecModelConverter{}.convert(document);
     const auto setup = nec::NecSetupConverter{}.convert(document);
     if (conversion.model.empty()) {

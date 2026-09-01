@@ -1,5 +1,7 @@
 #include "ui/geometry/GeometryView.h"
 
+#include "ui/DisplayFormat.h"
+
 #include <QContextMenuEvent>
 #include <QMenu>
 #include <QMouseEvent>
@@ -487,7 +489,7 @@ auto GeometryView::formattedDistance(double meters) const -> QString
 {
     const auto symbol = model::lengthUnitSymbol(settings_.lengthUnit);
     return QStringLiteral("%1 %2")
-        .arg(QString::number(model::fromMeters(meters, settings_.lengthUnit), 'g', 5))
+        .arg(formatDecimal(model::fromMeters(meters, settings_.lengthUnit)))
         .arg(QString::fromLatin1(symbol.data(), static_cast<qsizetype>(symbol.size())));
 }
 
@@ -522,7 +524,7 @@ void GeometryView::drawGrid(QPainter& painter) const
             if (settings_.showLabels && x >= 4.0 && x <= width() - 40.0) {
                 painter.setPen(palette().placeholderText().color());
                 painter.drawText(QPointF{x + 3.0, height() - 7.0},
-                    QString::number(model::fromMeters(horizontal, settings_.lengthUnit), 'g', 4));
+                    formatDecimal(model::fromMeters(horizontal, settings_.lengthUnit)));
                 painter.setPen(QPen(palette().midlight().color(), 1.0));
             }
         }
@@ -532,7 +534,7 @@ void GeometryView::drawGrid(QPainter& painter) const
             if (settings_.showLabels && y >= 15.0 && y <= height() - 8.0) {
                 painter.setPen(palette().placeholderText().color());
                 painter.drawText(QPointF{5.0, y - 3.0},
-                    QString::number(model::fromMeters(vertical, settings_.lengthUnit), 'g', 4));
+                    formatDecimal(model::fromMeters(vertical, settings_.lengthUnit)));
                 painter.setPen(QPen(palette().midlight().color(), 1.0));
             }
         }

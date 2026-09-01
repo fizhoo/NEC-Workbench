@@ -23,11 +23,13 @@
 class QAction;
 class QCloseEvent;
 class QDockWidget;
+class QDialog;
 class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
+class QProgressBar;
 class QPushButton;
 class QTableWidget;
 class QTabWidget;
@@ -36,6 +38,8 @@ class QTreeWidget;
 class QTreeWidgetItem;
 class QUndoStack;
 class QTimer;
+class QVBoxLayout;
+class QWidget;
 
 namespace necwb::ui {
 
@@ -78,6 +82,11 @@ private:
     void createDocks();
     void createMenusAndToolbar();
     void showModule(int index);
+    void toggleResultsDetached();
+    void detachResults();
+    void attachResults();
+    void showDetachedResults();
+    void presentCompletedAnalysisResults();
     void showModelTab(int index);
     void setDisplayLengthUnit(model::LengthUnit unit);
     void changeDeckLengthUnit(model::LengthUnit unit);
@@ -154,6 +163,8 @@ private:
     void startSolverProcess(const analysis::SolverCommand& command, const QString& activity);
     void cancelAnalysis();
     void appendSolverOutput(const QString& text);
+    void updateSolverActivity();
+    void completeSolverActivity(const QString& status);
     void finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus);
     void failAnalysis(const QString& message);
     void setCurrentRunStatus(const QString& status);
@@ -184,6 +195,8 @@ private:
     void applyGeometrySource(const QString& source, int targetTabIndex);
     [[nodiscard]] auto nextWireTag() const -> int;
     void replaceWireSourceLine(const model::Wire& wire);
+    [[nodiscard]] auto wireHasSymbolicGeometry(std::size_t sourceLine) const -> bool;
+    void showSymbolicGeometryEditBlocked();
     void refreshGeometryViews();
     void performUndo();
     void performRedo();
@@ -219,6 +232,7 @@ private:
     QAction* analysisModuleAction_{};
     QAction* visualizeModuleAction_{};
     QAction* optimizeModuleAction_{};
+    QAction* detachResultsAction_{};
     QUndoStack* undoStack_{};
     QComboBox* lengthUnitControl_{};
     QComboBox* deckUnitControl_{};
@@ -229,6 +243,11 @@ private:
     QTabWidget* workspace_{};
     QTabWidget* sourceWorkspace_{};
     QTabWidget* resultsWorkspace_{};
+    QWidget* resultsHost_{};
+    QWidget* resultsContent_{};
+    QWidget* detachedResultsPlaceholder_{};
+    QVBoxLayout* resultsHostLayout_{};
+    QDialog* detachedResultsWindow_{};
     QComboBox* resultsFrequencyControl_{};
     QLineEdit* rawOutputFindControl_{};
     DashboardPage* dashboardPage_{};
@@ -275,11 +294,16 @@ private:
     QLabel* validationSummary_{};
     QLabel* validationScope_{};
     QLabel* checkStatus_{};
+    QWidget* solverActivityWidget_{};
+    QLabel* solverActivityLabel_{};
+    QProgressBar* solverActivityProgress_{};
+    QPushButton* solverActivityCancelButton_{};
     QLabel* modelFileStatus_{};
     QLabel* resultsContextTitleLabel_{};
     QLabel* resultsContextDetailLabel_{};
     QLabel* activeModelResultsLabel_{};
     QPushButton* returnToActiveResultsButton_{};
+    QPushButton* detachResultsButton_{};
     QLabel* resultsStatusLabel_{};
     QLabel* resultsAvailabilityLabel_{};
     analysis::AnalysisResult displayedResults_;
@@ -294,7 +318,10 @@ private:
     int solverTimeoutSeconds_{120};
     QProcess* solverProcess_{};
     QTimer* solverTimeout_{};
+    QTimer* solverActivityTimer_{};
     QElapsedTimer solverElapsed_;
+    QString solverActivityName_;
+    QString solverActivityPhase_;
     QString currentRunDirectory_;
     QString currentRunOutputPath_;
     QString displayedRunDirectory_;
@@ -338,6 +365,7 @@ private:
     bool displayingHistoricalResults_{};
     bool historicalReviewActive_{};
     bool historicalSessionViewActive_{};
+    bool resultsDetached_{};
     std::optional<std::pair<int, int>> pendingTransmissionLineEndpoint_;
 };
 

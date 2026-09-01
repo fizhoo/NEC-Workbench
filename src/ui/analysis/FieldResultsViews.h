@@ -3,9 +3,11 @@
 #include "analysis/AnalysisResult.h"
 #include "model/AntennaModel.h"
 
+#include <QPointF>
 #include <QWidget>
 
 #include <functional>
+#include <vector>
 
 class QComboBox;
 class QCheckBox;
@@ -20,16 +22,23 @@ class RadiationPolarWidget;
 class RadiationSurfaceWidget;
 
 [[nodiscard]] auto resultModelExtentFromOrigin(const model::AntennaModel& model) -> double;
+[[nodiscard]] auto radiationAnglesCoverCircle(const std::vector<QPointF>& samples) -> bool;
+using CurrentPlotPath = std::vector<analysis::SegmentCurrentResult>;
+[[nodiscard]] auto connectedCurrentPaths(
+    const std::vector<analysis::SegmentCurrentResult>& samples,
+    const model::AntennaModel& model) -> std::vector<CurrentPlotPath>;
 
 class CurrentDistributionView final : public QWidget {
 public:
     explicit CurrentDistributionView(QWidget* parent = nullptr);
     void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
+    void setModel(const model::AntennaModel& model);
     void setSelectedFrequency(double frequencyMHz);
 
 private:
     void refresh();
     analysis::AnalysisResult result_;
+    model::AntennaModel model_;
     QComboBox* frequency_{};
     QLabel* summary_{};
     CurrentPlotWidget* plot_{};
@@ -84,6 +93,7 @@ public:
     void setSelectedFrequency(double frequencyMHz);
     void setDisplaySettings(const analysis::RadiationDisplaySettings& settings);
     void setSettingsChangedCallback(SettingsChangedCallback callback);
+    void setOverviewMode(bool enabled);
 
 private:
     void refresh();
@@ -96,6 +106,7 @@ private:
     QComboBox* component_{};
     QComboBox* scale_{};
     QComboBox* floor_{};
+    QWidget* controls_{};
     QLabel* summary_{};
     QCheckBox* antennaControl_{};
     QCheckBox* currentControl_{};

@@ -1,5 +1,7 @@
 #include "ui/analysis/ConvergenceWorkspace.h"
 
+#include "ui/DisplayFormat.h"
+
 #include "analysis/NecOutputParser.h"
 #include "analysis/SegmentationConvergence.h"
 #include "analysis/SolverCommand.h"
@@ -57,16 +59,16 @@ auto writeFile(const QString& path, const QByteArray& contents) -> bool
         && file.write(contents) == contents.size();
 }
 
-auto numericItem(double value, int precision = 8) -> QTableWidgetItem*
+auto numericItem(double value) -> QTableWidgetItem*
 {
-    auto* item = new QTableWidgetItem(QString::number(value, 'g', precision));
+    auto* item = new QTableWidgetItem(formatDecimal(value));
     item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
     return item;
 }
 
-auto optionalItem(const std::optional<double>& value, int precision = 8) -> QTableWidgetItem*
+auto optionalItem(const std::optional<double>& value) -> QTableWidgetItem*
 {
-    return value ? numericItem(*value, precision) : new QTableWidgetItem(QStringLiteral("—"));
+    return value ? numericItem(*value) : new QTableWidgetItem(QStringLiteral("—"));
 }
 
 auto nearestFeedpoint(const analysis::AnalysisResult& result, double frequencyMHz)
@@ -123,7 +125,7 @@ ConvergenceWorkspace::ConvergenceWorkspace(QWidget* parent) : QWidget(parent)
     auto* controls = new QFormLayout;
     frequencyControl_ = new QDoubleSpinBox(this);
     frequencyControl_->setRange(0.000001, 1.0e9);
-    frequencyControl_->setDecimals(6);
+    frequencyControl_->setDecimals(DisplayDecimalPlaces);
     frequencyControl_->setSuffix(tr(" MHz"));
     increaseControl_ = new QSpinBox(this);
     increaseControl_->setRange(10, 100);
@@ -134,12 +136,12 @@ ConvergenceWorkspace::ConvergenceWorkspace(QWidget* parent) : QWidget(parent)
     levelsControl_->setValue(4);
     impedanceToleranceControl_ = new QDoubleSpinBox(this);
     impedanceToleranceControl_->setRange(0.01, 25.0);
-    impedanceToleranceControl_->setDecimals(2);
+    impedanceToleranceControl_->setDecimals(DisplayDecimalPlaces);
     impedanceToleranceControl_->setValue(1.0);
     impedanceToleranceControl_->setSuffix(tr(" %"));
     gainToleranceControl_ = new QDoubleSpinBox(this);
     gainToleranceControl_->setRange(0.001, 5.0);
-    gainToleranceControl_->setDecimals(3);
+    gainToleranceControl_->setDecimals(DisplayDecimalPlaces);
     gainToleranceControl_->setValue(0.05);
     gainToleranceControl_->setSuffix(tr(" dB"));
     controls->addRow(tr("Test frequency:"), frequencyControl_);
@@ -300,7 +302,7 @@ void ConvergenceWorkspace::startStudy()
     sessionRecord_->status = QStringLiteral("Running");
     sessionRecord_->candidateCount = levels;
     sessionRecord_->summary = tr("Segmentation convergence · %1 MHz · %2 levels")
-        .arg(frequencyControl_->value(), 0, 'g', 12).arg(levels);
+        .arg(formatDecimal(frequencyControl_->value())).arg(levels);
     runStore_.save(*sessionRecord_);
     const QJsonObject metadata{{QStringLiteral("version"), 1},
         {QStringLiteral("frequencyMHz"), frequencyControl_->value()},
@@ -315,8 +317,9 @@ void ConvergenceWorkspace::startStudy()
         source_.toUtf8());
     resetTable(levels);
     for (const auto& step : steps_) {
-        resultsTable_->setItem(step.row, ScaleColumn, numericItem(step.scale, 5));
-        resultsTable_->setItem(step.row, SegmentsColumn, numericItem(step.totalSegments, 12));
+        resultsTable_->setItem(step.row, ScaleColumn, numericItem(step.scale));
+        resultsTable_->setItem(step.row, SegmentsColumn,
+            new QTableWidgetItem(QString::number(step.totalSegments)));
         setStepStatus(step.row, tr("Pending"));
     }
     stepIndex_ = 0;
@@ -326,7 +329,7 @@ void ConvergenceWorkspace::startStudy()
     progress_->setValue(0);
     conclusionLabel_->setText(tr("Study in progress…"));
     statusLabel_->setText(tr("Running %1 segmentation levels at %2 MHz.")
-        .arg(levels).arg(frequencyControl_->value(), 0, 'g', 12));
+        .arg(levels).arg(formatDecimal(frequencyControl_->value())));
     if (summaryChangedCallback_) summaryChangedCallback_(tr("Convergence study running…"));
     updateReadiness();
     if (runningChangedCallback_) runningChangedCallback_();
@@ -522,8 +525,8 @@ void ConvergenceWorkspace::populateStepResult(Step& step, const QByteArray& outp
             : step.withinTolerance ? tr("Within selected tolerances") : tr("Still changing"));
     }
     step.record.summary = tr("%1 segments · R %2 Ω · X %3 Ω")
-        .arg(step.totalSegments).arg(step.impedance->real(), 0, 'g', 8)
-        .arg(step.impedance->imag(), 0, 'g', 8);
+        .arg(step.totalSegments).arg(formatDecimal(step.impedance->real()),
+            formatDecimal(step.impedance->imag()));
 }
 
 void ConvergenceWorkspace::finishStudy()
@@ -624,8 +627,9 @@ auto ConvergenceWorkspace::loadSession(const QString& sessionId) -> bool
         restoredStep.warning = stepMetadata.value(QStringLiteral("warning")).toString();
         steps_.push_back(std::move(restoredStep));
         auto& step = steps_.back();
-        resultsTable_->setItem(step.row, ScaleColumn, numericItem(step.scale, 5));
-        resultsTable_->setItem(step.row, SegmentsColumn, numericItem(step.totalSegments, 12));
+        resultsTable_->setItem(step.row, ScaleColumn, numericItem(step.scale));
+        resultsTable_->setItem(step.row, SegmentsColumn,
+            new QTableWidgetItem(QString::number(step.totalSegments)));
         QFile outputFile(QDir(step.record.directory).filePath(QStringLiteral("model.out")));
         if (outputFile.open(QIODevice::ReadOnly)) {
             stepIndex_ = index;

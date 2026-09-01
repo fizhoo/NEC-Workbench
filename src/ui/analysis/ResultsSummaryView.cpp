@@ -1,5 +1,7 @@
 #include "ui/analysis/ResultsSummaryView.h"
 
+#include "ui/DisplayFormat.h"
+
 #include <QFormLayout>
 #include <QLabel>
 #include <QVBoxLayout>
@@ -97,9 +99,9 @@ void ResultsSummaryView::refresh()
     for (const auto& value : result_.radiation) addFrequency(value.frequencyMHz);
     std::ranges::sort(frequencies);
     frequencyLabel_->setText(frequencies.empty() ? tr("None")
-        : frequencies.size() == 1 ? tr("%1 MHz").arg(frequencies.front(), 0, 'g', 10)
+        : frequencies.size() == 1 ? tr("%1 MHz").arg(formatDecimal(frequencies.front()))
         : tr("%1 points · %2 to %3 MHz").arg(frequencies.size())
-            .arg(frequencies.front(), 0, 'g', 10).arg(frequencies.back(), 0, 'g', 10));
+            .arg(formatDecimal(frequencies.front()), formatDecimal(frequencies.back())));
 
     const analysis::FeedpointResult* selectedFeedpoint{};
     auto minimumSwr = std::numeric_limits<double>::infinity();
@@ -113,15 +115,15 @@ void ResultsSummaryView::refresh()
         if (sameFrequency(feedpoint.frequencyMHz, selectedFrequency_)) selectedFeedpoint = &feedpoint;
     }
     impedanceLabel_->setText(selectedFeedpoint == nullptr ? tr("No feedpoint row at %1 MHz")
-            .arg(selectedFrequency_, 0, 'g', 10)
+            .arg(formatDecimal(selectedFrequency_))
         : tr("%1 %2 j%3 Ω · wire %4, segment %5")
-            .arg(selectedFeedpoint->impedance.real(), 0, 'g', 8)
+            .arg(formatDecimal(selectedFeedpoint->impedance.real()))
             .arg(selectedFeedpoint->impedance.imag() < 0.0 ? QStringLiteral("−") : QStringLiteral("+"))
-            .arg(std::abs(selectedFeedpoint->impedance.imag()), 0, 'g', 8)
+            .arg(formatDecimal(std::abs(selectedFeedpoint->impedance.imag())))
             .arg(selectedFeedpoint->wireTag).arg(selectedFeedpoint->segment));
     swrLabel_->setText(std::isfinite(minimumSwr)
         ? tr("%1 minimum · %2 maximum · 50 Ω reference")
-            .arg(minimumSwr, 0, 'f', 3).arg(maximumSwr, 0, 'f', 3)
+            .arg(formatDecimal(minimumSwr), formatDecimal(maximumSwr))
         : tr("No finite SWR values"));
 
     std::vector<analysis::RadiationSample> selectedRadiation;
@@ -131,10 +133,10 @@ void ResultsSummaryView::refresh()
     const auto metrics = analysis::radiationMetrics(selectedRadiation, analysis::RadiationComponent::Total);
     radiationLabel_->setText(metrics.valid
         ? tr("Peak %1 dBi at θ %2°, φ %3°")
-            .arg(metrics.peakGainDb, 0, 'f', 2)
-            .arg(metrics.peakThetaDegrees, 0, 'g', 7)
-            .arg(metrics.peakPhiDegrees, 0, 'g', 7)
-        : tr("No radiation pattern at %1 MHz").arg(selectedFrequency_, 0, 'g', 10));
+            .arg(formatDecimal(metrics.peakGainDb))
+            .arg(formatDecimal(metrics.peakThetaDegrees))
+            .arg(formatDecimal(metrics.peakPhiDegrees))
+        : tr("No radiation pattern at %1 MHz").arg(formatDecimal(selectedFrequency_)));
 
     QStringList available;
     if (!result_.feedpoints.empty()) available.append(tr("Impedance"));
