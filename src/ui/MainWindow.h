@@ -96,7 +96,6 @@ private:
     void applyGeometrySettings(const GeometrySettings& settings);
     void showGeometrySettings();
     void showAutoSegmentation();
-    [[nodiscard]] auto formatLength(double meters) const -> QString;
     void newModel();
     void openFile();
     void openFileAtPath(const QString& path);
@@ -198,15 +197,12 @@ private:
     [[nodiscard]] auto wireHasSymbolicGeometry(std::size_t sourceLine) const -> bool;
     void showSymbolicGeometryEditBlocked();
     void refreshGeometryViews();
+    void updateWireCardEditor();
     void performUndo();
     void performRedo();
     void updateUndoActions();
     void updateProjectTree(const model::AntennaModel& model, const nec::NecDocument& document);
-    void showProjectItemProperties(QTreeWidgetItem* item);
-    void showCardProperties(std::size_t sourceLine);
-    void populateWireProperties(const model::Wire& wire);
-    void populateLoadProperties(const model::LoadDefinition& load);
-    void populateTransmissionLineProperties(const model::TransmissionLineDefinition& line);
+    void synchronizeProjectItemSelection(QTreeWidgetItem* item);
     void setCurrentFile(QString path);
     void restoreWorkspaceLayout();
     void saveWorkspaceLayout();
@@ -284,11 +280,9 @@ private:
     QPushButton* openRunSnapshotButton_{};
     QPushButton* deleteRunButton_{};
     QTreeWidget* projectTree_{};
-    QTableWidget* properties_{};
     QTreeWidget* diagnostics_{};
     QPlainTextEdit* solverOutput_{};
     QDockWidget* projectDock_{};
-    QDockWidget* propertiesDock_{};
     QDockWidget* diagnosticsDock_{};
     QDockWidget* solverOutputDock_{};
     QLabel* validationSummary_{};

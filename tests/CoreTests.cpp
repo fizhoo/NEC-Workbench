@@ -79,8 +79,20 @@ void testSymbolResolution()
     expect(resolution.definitions.size() == 4, "all symbol assignments are retained");
     expect(resolution.definitions[0].name == "half" && resolution.definitions[0].value == 5.0,
         "symbol definitions retain names and evaluated values");
+    expect(resolution.definitions[0].expression == "5"
+            && resolution.definitions[0].adjustable,
+        "plain numeric assignments are retained and marked adjustable");
+    expect(!resolution.definitions[1].adjustable && !resolution.definitions[2].adjustable,
+        "calculated and symbol-derived expressions remain read-only");
     expect(resolution.definitions[3].name == "segments" && resolution.definitions[3].value == 21.0,
         "later assignments can use arithmetic and earlier symbols");
+    const auto scientificLiteral = necwb::nec::NecSymbolResolver{}.resolve(
+        "SY radius=1.0e-3, offset=+2.5\n");
+    expect(scientificLiteral.ok()
+            && scientificLiteral.definitions.size() == 2
+            && scientificLiteral.definitions[0].adjustable
+            && scientificLiteral.definitions[1].adjustable,
+        "signed and scientific numeric assignments remain adjustable");
     expect(resolution.generatedDeck.find("SY ") == std::string::npos,
         "generated numeric deck omits Workbench symbol declarations");
     expect(resolution.resolvedSource.find("CE\r\n\r\n\r\n\r\nGW") != std::string::npos,

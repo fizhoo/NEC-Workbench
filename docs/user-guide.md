@@ -119,7 +119,7 @@ Path: **Geometry → 2D Geometry**
 
 The XY, XZ, and YZ planes show the same wires from three orthographic views.
 
-- Click a wire to select it and populate the Properties dock.
+- Click a wire to synchronize selection across the geometry views and Project tree.
 - Drag a wire endpoint to reshape the wire in the active plane.
 - Drag the wire body to move the complete wire in the active plane.
 - Use the mouse wheel to zoom and drag the background to pan.
@@ -149,7 +149,7 @@ Path: **Geometry → 3D Geometry**
 - Use the mouse wheel to zoom.
 - Use **Fit** to frame the model.
 - Use **Isometric** to restore the standard 3D orientation.
-- Click wires and attached markers to synchronize selection and Properties.
+- Click wires and attached markers to synchronize selection across views and editors.
 - Right-click wires and markers for the same source/load actions available in 2D.
 
 The 3D geometry view currently supports selection and contextual editing; direct
@@ -198,8 +198,7 @@ Path: **NEC Source → NEC Source**
 
 Use the raw editor for direct NEC card editing, comments, unsupported cards, and
 complete deck review. Line numbers, syntax highlighting, and diagnostics help
-locate card errors. Moving the cursor updates the Properties dock with the
-selected card and its fields.
+locate card errors.
 
 After direct text edits, run **Check Model** before analysis.
 
@@ -235,12 +234,20 @@ family and use the shared Undo/Redo history.
 Unsupported cards remain preserved in raw source rather than being forced into
 an unsafe generic editor.
 
+The **Wires (GW)** table includes both the NEC radius field and a **Wire Gauge**
+convenience selector. It offers every AWG size from 10 through 30, including odd
+sizes. Selecting a gauge writes its nominal bare-conductor radius through the
+normal wire-edit path; a manually entered nonstandard radius displays as
+**Custom radius**. Gauge selection is disabled for symbolic GW geometry so an
+`SY` radius expression is never silently replaced.
+
 ### Project tree navigation
 
 The Project dock lists cards under Geometry, Environment, Frequency & Sources,
 Loads & Networks, Requests & Execution, Comments, Other Cards, and All Cards.
 
-- Single-click any card to inspect it in Properties.
+- Single-click wires, sources, loads, and transmission lines to synchronize their
+  graphical and structured-editor selections.
 - Double-click `GW` to open the structured wire editor.
 - Double-click `FR`, `GN`, `GE`, or `EX` to open Model Setup.
 - Double-click `LD` or `TL` to open **Model Setup → Loads & Transmission Lines**.
@@ -287,9 +294,8 @@ frequency itself is derived rather than written directly on the card.
 Path: **Analysis → Model Setup → Loads & Transmission Lines**
 
 Edit supported `LD` loads and `TL` transmission lines in structured tables.
-Selections synchronize with their markers in Geometry and with the Properties
-dock. Invalid wire or segment references are rejected before source changes are
-applied.
+Selections synchronize with their markers in Geometry. Invalid wire or segment
+references are rejected before source changes are applied.
 
 ### Solver
 
@@ -502,10 +508,19 @@ throughout the optimizer; archived raw solver output remains unchanged.
 
 The workload summary shows candidate count × frequency count before the sweep.
 
-Symbols used directly in `GW` coordinate or radius fields are labeled with the
-detected NEC deck geometry unit. Candidate values remain source values; the
-deck's `GS` card performs the conversion to meters. Frequency and unitless
-symbols do not receive a geometry-unit suffix.
+The symbol table keeps authored and evaluated values separate:
+
+- **Expression** is the exact text authored after `=` on the `SY` card.
+- **Resolved Value** is the unit-neutral numeric result of evaluating that
+  expression.
+
+Workbench does not infer a physical unit merely because a symbol appears in a
+`GW` field. For example, `SY LONG_FT=95` remains the raw value `95.000`; its
+meaning as feet comes from the author's later expression such as `LONG_FT*FT`.
+Likewise, `GS` scales geometry at the NEC-card usage site and does not change the
+raw `SY` value. The initial parameter sweep therefore offers only direct numeric
+assignments in its variable selector. Other expressions remain visible but are
+resolved read-only.
 
 This tool exhaustively evaluates the requested candidate points. “Complete”
 means every candidate was attempted; it is not optimizer convergence. A future
@@ -566,13 +581,9 @@ to represent their values safely.
 
 ### Project
 
-Shows the active model and categorized NEC cards. Single-click updates
-Properties; double-click navigates to the most appropriate editor.
-
-### Properties
-
-Shows contextual data for the current wire, source, load, transmission line, or
-NEC card. Supported wire selections include direct radius and AWG controls.
+Shows the active model and categorized NEC cards. Single-click synchronizes
+supported model-object selections; double-click navigates to the most appropriate
+editor. Wire radius and AWG remain available through the wire Properties dialog.
 
 ### Model Adequacy
 

@@ -12,7 +12,6 @@
 
 #include <functional>
 #include <optional>
-#include <unordered_set>
 #include <vector>
 
 class QComboBox;
@@ -124,8 +123,6 @@ private:
     QString executable_;
     QString selectedSymbol_;
     QString selectedValueSuffix_;
-    QString deckLengthSuffix_;
-    std::unordered_set<std::string> geometrySymbols_;
     analysis::OptimizationObjectiveSpec activeObjective_;
     int timeoutSeconds_{120};
     std::size_t candidateIndex_{};

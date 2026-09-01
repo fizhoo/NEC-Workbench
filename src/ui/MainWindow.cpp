@@ -14,7 +14,6 @@
 #include "nec/NecSetupConverter.h"
 #include "nec/NecSymbolResolver.h"
 #include "nec/NecWriter.h"
-#include "model/WireGauge.h"
 #include "ui/commands/GeometrySourceCommand.h"
 #include "ui/commands/MoveEndpointCommand.h"
 #include "ui/commands/MoveWireCommand.h"
@@ -107,6 +106,7 @@
 #include <exception>
 #include <span>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 
 namespace necwb::ui {
@@ -247,52 +247,6 @@ auto writeAverageGainMetadata(const QString& directory, double frequencyMHz,
     return file.write(contents) == contents.size();
 }
 
-auto cardPropertyLabels(const QString& mnemonic) -> QStringList
-{
-    if (mnemonic == QStringLiteral("GW")) return {QObject::tr("Tag"), QObject::tr("Segments"),
-        QObject::tr("X1"), QObject::tr("Y1"), QObject::tr("Z1"), QObject::tr("X2"),
-        QObject::tr("Y2"), QObject::tr("Z2"), QObject::tr("Radius")};
-    if (mnemonic == QStringLiteral("GS")) return {QObject::tr("I1 (unused)"),
-        QObject::tr("I2 (unused)"), QObject::tr("Scale to meters")};
-    if (mnemonic == QStringLiteral("EX")) return {QObject::tr("Type"), QObject::tr("Wire Tag"),
-        QObject::tr("Segment"), QObject::tr("I4"), QObject::tr("Real"), QObject::tr("Imaginary"),
-        QObject::tr("F7"), QObject::tr("F8"), QObject::tr("F9"), QObject::tr("F10")};
-    if (mnemonic == QStringLiteral("FR")) return {QObject::tr("Mode"), QObject::tr("Count"),
-        QObject::tr("I3"), QObject::tr("I4"), QObject::tr("Start MHz"), QObject::tr("Step/Ratio")};
-    if (mnemonic == QStringLiteral("GN")) return {QObject::tr("Type"), QObject::tr("I2"),
-        QObject::tr("I3"), QObject::tr("I4"), QObject::tr("Permittivity"), QObject::tr("Conductivity"),
-        QObject::tr("F3"), QObject::tr("F4"), QObject::tr("F5"), QObject::tr("F6")};
-    if (mnemonic == QStringLiteral("GE")) return {QObject::tr("Ground Flag")};
-    if (mnemonic == QStringLiteral("LD")) return {QObject::tr("Type"), QObject::tr("Wire Tag"),
-        QObject::tr("First Segment"), QObject::tr("Last Segment"), QObject::tr("Value 1"),
-        QObject::tr("Value 2"), QObject::tr("Value 3")};
-    if (mnemonic == QStringLiteral("TL")) return {QObject::tr("Wire 1"), QObject::tr("Segment 1"),
-        QObject::tr("Wire 2"), QObject::tr("Segment 2"), QObject::tr("Z0"), QObject::tr("Length"),
-        QObject::tr("Shunt R1"), QObject::tr("Shunt X1"), QObject::tr("Shunt R2"), QObject::tr("Shunt X2")};
-    if (mnemonic == QStringLiteral("RP")) return {QObject::tr("Mode"), QObject::tr("Theta Count"),
-        QObject::tr("Phi Count"), QObject::tr("Format"), QObject::tr("Theta Start"),
-        QObject::tr("Phi Start"), QObject::tr("Theta Step"), QObject::tr("Phi Step"),
-        QObject::tr("Distance"), QObject::tr("Normalization")};
-    if (mnemonic == QStringLiteral("XQ")) return {QObject::tr("Option")};
-    return {};
-}
-
-void addPropertyRow(QTableWidget* table, const QString& name, const QString& value)
-{
-    const auto row = table->rowCount();
-    table->insertRow(row);
-    table->setItem(row, 0, new QTableWidgetItem(name));
-    table->setItem(row, 1, new QTableWidgetItem(value));
-}
-
-void addPropertyWidgetRow(QTableWidget* table, const QString& name, QWidget* editor)
-{
-    const auto row = table->rowCount();
-    table->insertRow(row);
-    table->setItem(row, 0, new QTableWidgetItem(name));
-    table->setCellWidget(row, 1, editor);
-}
-
 auto findProjectItem(QTreeWidget* tree, const QString& kind, int role,
     const QVariant& value) -> QTreeWidgetItem*
 {
@@ -399,9 +353,6 @@ MainWindow::MainWindow()
         this, [this] { cancelAnalysis(); });
 
     connect(editor_, &QPlainTextEdit::textChanged, this, [this] { clearCheckResults(); });
-    connect(editor_, &QPlainTextEdit::cursorPositionChanged, this, [this] {
-        showCardProperties(static_cast<std::size_t>(editor_->textCursor().blockNumber()+1));
-    });
     connect(editor_->document(), &QTextDocument::modificationChanged, this, [this](bool modified) {
         saveAction_->setEnabled(modified);
         setWindowModified(modified);
@@ -669,10 +620,7 @@ void MainWindow::createWorkspace()
     connect(wireCardEditor_, &WireCardEditor::deleteWireRequested, this,
         [this](int tag) { deleteWire(tag); });
     connect(structuredCardEditor_, &StructuredCardEditor::cardSelected, this,
-        [this](std::size_t sourceLine) {
-            editor_->goToLine(sourceLine);
-            showCardProperties(sourceLine);
-        });
+        [this](std::size_t sourceLine) { editor_->goToLine(sourceLine); });
     connect(structuredCardEditor_, &StructuredCardEditor::cardEdited, this,
         [this](std::size_t sourceLine, const QString& cardText) {
             editStructuredCard(sourceLine, cardText);
@@ -1478,9 +1426,6 @@ void MainWindow::applyGeometrySettings(const GeometrySettings& settings)
     if (geometry3DView_ != nullptr) {
         geometry3DView_->setLengthUnit(geometrySettings_.lengthUnit);
     }
-    if (projectTree_ != nullptr && projectTree_->currentItem() != nullptr) {
-        showProjectItemProperties(projectTree_->currentItem());
-    }
 }
 
 void MainWindow::showGeometrySettings()
@@ -1489,14 +1434,6 @@ void MainWindow::showGeometrySettings()
     if (dialog.exec() == QDialog::Accepted) {
         applyGeometrySettings(dialog.settings());
     }
-}
-
-auto MainWindow::formatLength(double meters) const -> QString
-{
-    const auto symbol = model::lengthUnitSymbol(geometrySettings_.lengthUnit);
-    return QStringLiteral("%1 %2")
-        .arg(formatDecimal(model::fromMeters(meters, geometrySettings_.lengthUnit)))
-        .arg(QString::fromLatin1(symbol.data(), static_cast<qsizetype>(symbol.size())));
 }
 
 void MainWindow::showAutoSegmentation()
@@ -1626,21 +1563,6 @@ void MainWindow::createDocks()
     projectDock_->setWidget(projectTree_);
     addDockWidget(Qt::LeftDockWidgetArea, projectDock_);
 
-    propertiesDock_ = new QDockWidget(tr("Properties"), this);
-    propertiesDock_->setObjectName(QStringLiteral("propertiesDock"));
-    properties_ = new QTableWidget(propertiesDock_);
-    properties_->setObjectName(QStringLiteral("propertiesTable"));
-    properties_->setColumnCount(2);
-    properties_->setHorizontalHeaderLabels({tr("Property"), tr("Value")});
-    properties_->horizontalHeader()->setStretchLastSection(true);
-    properties_->verticalHeader()->hide();
-    properties_->verticalHeader()->setMinimumSectionSize(
-        properties_->fontMetrics().height() + 12);
-    properties_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    properties_->setSelectionMode(QAbstractItemView::NoSelection);
-    propertiesDock_->setWidget(properties_);
-    addDockWidget(Qt::RightDockWidgetArea, propertiesDock_);
-
     diagnosticsDock_ = new QDockWidget(tr("Model Adequacy"), this);
     diagnosticsDock_->setObjectName(QStringLiteral("modelDiagnosticsDock"));
     auto* validationPanel = new QWidget(diagnosticsDock_);
@@ -1684,7 +1606,7 @@ void MainWindow::createDocks()
     connect(diagnostics_, &QTreeWidget::itemClicked, this,
         [this](QTreeWidgetItem* item) { goToDiagnostic(item); });
     connect(projectTree_, &QTreeWidget::itemClicked, this,
-        [this](QTreeWidgetItem* item) { showProjectItemProperties(item); });
+        [this](QTreeWidgetItem* item) { synchronizeProjectItemSelection(item); });
     connect(projectTree_, &QTreeWidget::itemDoubleClicked, this,
         [this](QTreeWidgetItem* item) { activateProjectItem(item); });
 
@@ -1706,7 +1628,6 @@ void MainWindow::createMenusAndToolbar()
 
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
     viewMenu->addAction(projectDock_->toggleViewAction());
-    viewMenu->addAction(propertiesDock_->toggleViewAction());
     viewMenu->addAction(diagnosticsDock_->toggleViewAction());
     viewMenu->addAction(solverOutputDock_->toggleViewAction());
     viewMenu->addSeparator();
@@ -1950,7 +1871,7 @@ void MainWindow::checkModel()
 
     editor_->setDiagnostics(result.diagnostics);
     updateDeckUnitControls(deckUnitInfo);
-    wireCardEditor_->setModel(currentModel_);
+    updateWireCardEditor();
     xyView_->setModel(currentModel_);
     xzView_->setModel(currentModel_);
     yzView_->setModel(currentModel_);
@@ -2104,15 +2025,13 @@ void MainWindow::selectWireInProject(int tag)
     setupEditor_->selectExcitation(0);
     if (tag < 0) {
         projectTree_->clearSelection();
-        properties_->setRowCount(0);
         return;
     }
 
     if (auto* item = findProjectItem(projectTree_, QStringLiteral("wire"),
             WireTagRole, tag)) {
         projectTree_->setCurrentItem(item);
-        showProjectItemProperties(item);
-        propertiesDock_->show();
+        synchronizeProjectItemSelection(item);
     }
 }
 
@@ -2128,8 +2047,7 @@ void MainWindow::selectExcitation(std::size_t sourceLine)
     if (auto* item = findProjectItem(projectTree_, QStringLiteral("excitation"),
             SourceLineRole, QVariant::fromValue(static_cast<qulonglong>(sourceLine)))) {
         projectTree_->setCurrentItem(item);
-        showProjectItemProperties(item);
-        propertiesDock_->show();
+        synchronizeProjectItemSelection(item);
     }
 }
 
@@ -2142,13 +2060,6 @@ void MainWindow::selectLoad(std::size_t sourceLine)
     wireCardEditor_->selectWire(-1);
     setupEditor_->selectExcitation(0);
     loadNetworkEditor_->selectLoad(sourceLine);
-    const auto found = std::ranges::find(currentSetup_.loads, sourceLine,
-        &model::LoadDefinition::sourceLine);
-    if (found == currentSetup_.loads.end()) return;
-    properties_->setRowCount(0);
-    populateLoadProperties(*found);
-    properties_->resizeColumnToContents(0);
-    propertiesDock_->show();
     if (auto* item = findProjectItem(projectTree_, QStringLiteral("load"),
             SourceLineRole, QVariant::fromValue(static_cast<qulonglong>(sourceLine))))
         projectTree_->setCurrentItem(item);
@@ -2163,13 +2074,6 @@ void MainWindow::selectTransmissionLine(std::size_t sourceLine)
     wireCardEditor_->selectWire(-1);
     setupEditor_->selectExcitation(0);
     loadNetworkEditor_->selectTransmissionLine(sourceLine);
-    const auto found = std::ranges::find(currentSetup_.transmissionLines, sourceLine,
-        &model::TransmissionLineDefinition::sourceLine);
-    if (found == currentSetup_.transmissionLines.end()) return;
-    properties_->setRowCount(0);
-    populateTransmissionLineProperties(*found);
-    properties_->resizeColumnToContents(0);
-    propertiesDock_->show();
     if (auto* item = findProjectItem(projectTree_, QStringLiteral("transmissionLine"),
             SourceLineRole, QVariant::fromValue(static_cast<qulonglong>(sourceLine))))
         projectTree_->setCurrentItem(item);
@@ -4081,11 +3985,21 @@ void MainWindow::showSymbolicGeometryEditBlocked()
 
 void MainWindow::refreshGeometryViews()
 {
-    wireCardEditor_->setModel(currentModel_);
+    updateWireCardEditor();
     xyView_->updateModel(currentModel_);
     xzView_->updateModel(currentModel_);
     yzView_->updateModel(currentModel_);
     geometry3DView_->updateModel(currentModel_);
+}
+
+void MainWindow::updateWireCardEditor()
+{
+    std::unordered_set<std::size_t> symbolicLines;
+    for (const auto& wire : currentModel_.wires()) {
+        if (wireHasSymbolicGeometry(wire.sourceLine)) symbolicLines.insert(wire.sourceLine);
+    }
+    wireCardEditor_->setSymbolicGeometryLines(std::move(symbolicLines));
+    wireCardEditor_->setModel(currentModel_);
 }
 
 void MainWindow::performUndo()
@@ -4261,15 +4175,14 @@ void MainWindow::updateProjectTree(const model::AntennaModel& antennaModel, cons
     projectTree_->expandItem(requests);
 }
 
-void MainWindow::showProjectItemProperties(QTreeWidgetItem* item)
+void MainWindow::synchronizeProjectItemSelection(QTreeWidgetItem* item)
 {
-    properties_->setRowCount(0);
+    if (item == nullptr) return;
     const auto kind = item->data(0, ItemKindRole).toString();
     if (kind == QStringLiteral("wire")) {
         const auto tag = item->data(0, WireTagRole).toInt();
         synchronizeGeometrySelection(tag);
         setupEditor_->selectExcitation(0);
-        if (const auto* wire = currentModel_.wireByTag(tag)) populateWireProperties(*wire);
     } else if (kind == QStringLiteral("excitation")) {
         const auto sourceLine = item->data(0, SourceLineRole).toULongLong();
         const auto found = std::ranges::find(currentSetup_.excitations, sourceLine,
@@ -4281,12 +4194,6 @@ void MainWindow::showProjectItemProperties(QTreeWidgetItem* item)
             geometry3DView_->selectExcitation(sourceLine);
             wireCardEditor_->selectWire(-1);
             setupEditor_->selectExcitation(sourceLine);
-            addPropertyRow(properties_, tr("Object"), tr("Voltage Source (EX 0)"));
-            addPropertyRow(properties_, tr("Wire Tag"), QString::number(found->wireTag));
-            addPropertyRow(properties_, tr("Segment"), QString::number(found->segment));
-            addPropertyRow(properties_, tr("Magnitude"), formatDecimal(found->magnitude));
-            addPropertyRow(properties_, tr("Phase"), tr("%1°").arg(formatDecimal(found->phaseDegrees)));
-            addPropertyRow(properties_, tr("Source Line"), QString::number(found->sourceLine));
         }
     } else if (kind == QStringLiteral("load")) {
         const auto sourceLine = item->data(0, SourceLineRole).toULongLong();
@@ -4296,7 +4203,6 @@ void MainWindow::showProjectItemProperties(QTreeWidgetItem* item)
             xyView_->selectLoad(sourceLine); xzView_->selectLoad(sourceLine);
             yzView_->selectLoad(sourceLine); geometry3DView_->selectLoad(sourceLine);
             loadNetworkEditor_->selectLoad(sourceLine);
-            populateLoadProperties(*found);
         }
     } else if (kind == QStringLiteral("transmissionLine")) {
         const auto sourceLine = item->data(0, SourceLineRole).toULongLong();
@@ -4306,138 +4212,8 @@ void MainWindow::showProjectItemProperties(QTreeWidgetItem* item)
             xyView_->selectTransmissionLine(sourceLine); xzView_->selectTransmissionLine(sourceLine);
             yzView_->selectTransmissionLine(sourceLine); geometry3DView_->selectTransmissionLine(sourceLine);
             loadNetworkEditor_->selectTransmissionLine(sourceLine);
-            populateTransmissionLineProperties(*found);
-        }
-    } else if (kind == QStringLiteral("card")) {
-        showCardProperties(item->data(0, SourceLineRole).toULongLong());
-    } else {
-        addPropertyRow(properties_, tr("Selection"), item->text(0));
-    }
-    properties_->resizeColumnToContents(0);
-}
-
-void MainWindow::showCardProperties(std::size_t sourceLine)
-{
-    if (properties_ == nullptr || editor_ == nullptr || sourceLine == 0) return;
-    const auto document = nec::NecParser{}.parse(editor_->toPlainText().toStdString());
-    const auto found = std::ranges::find(document.cards(), sourceLine, &nec::NecCard::lineNumber);
-    properties_->setRowCount(0);
-    if (found == document.cards().end()) {
-        addPropertyRow(properties_, tr("Source Line"), QString::number(sourceLine));
-        properties_->resizeColumnToContents(0);
-        return;
-    }
-    if (found->kind == nec::NecCardKind::GeometryWire) {
-        const auto wire = std::ranges::find(currentModel_.wires(), sourceLine, &model::Wire::sourceLine);
-        if (wire != currentModel_.wires().end()) {
-            populateWireProperties(*wire);
-            properties_->resizeColumnToContents(0);
-            return;
         }
     }
-    const auto mnemonic = QString::fromStdString(found->mnemonic);
-    addPropertyRow(properties_, tr("Object"), mnemonic.isEmpty() ? tr("Blank Line") : tr("NEC Card %1").arg(mnemonic));
-    addPropertyRow(properties_, tr("Source Line"), QString::number(found->lineNumber));
-    addPropertyRow(properties_, tr("Raw Card"), QString::fromStdString(found->sourceText));
-    const auto labels = cardPropertyLabels(mnemonic);
-    for (std::size_t index = 0; index < found->fields.size(); ++index) {
-        const auto label = static_cast<int>(index) < labels.size()
-            ? labels[static_cast<int>(index)] : tr("Field %1").arg(index+1);
-        addPropertyRow(properties_, label, QString::fromStdString(found->fields[index]));
-    }
-    properties_->resizeColumnToContents(0);
-}
-
-void MainWindow::populateWireProperties(const model::Wire& wire)
-{
-    addPropertyRow(properties_, tr("Object"), tr("Wire (GW)"));
-    addPropertyRow(properties_, tr("Tag"), QString::number(wire.tag));
-    addPropertyRow(properties_, tr("Segments"), QString::number(wire.segments));
-    const auto symbol = model::lengthUnitSymbol(geometrySettings_.lengthUnit);
-    const auto unit = QString::fromLatin1(symbol.data(), static_cast<qsizetype>(symbol.size()));
-    addPropertyRow(properties_, tr("Start"), tr("%1, %2, %3 %4")
-        .arg(formatDecimal(model::fromMeters(wire.start.x, geometrySettings_.lengthUnit)))
-        .arg(formatDecimal(model::fromMeters(wire.start.y, geometrySettings_.lengthUnit)))
-        .arg(formatDecimal(model::fromMeters(wire.start.z, geometrySettings_.lengthUnit))).arg(unit));
-    addPropertyRow(properties_, tr("End"), tr("%1, %2, %3 %4")
-        .arg(formatDecimal(model::fromMeters(wire.end.x, geometrySettings_.lengthUnit)))
-        .arg(formatDecimal(model::fromMeters(wire.end.y, geometrySettings_.lengthUnit)))
-        .arg(formatDecimal(model::fromMeters(wire.end.z, geometrySettings_.lengthUnit))).arg(unit));
-
-    const auto original = wire;
-    auto* radiusControl = new QDoubleSpinBox(properties_);
-    radiusControl->setObjectName(QStringLiteral("wireRadiusPropertyEditor"));
-    radiusControl->setDecimals(9);
-    radiusControl->setRange(model::fromMeters(1.0e-9, geometrySettings_.lengthUnit),
-        model::fromMeters(1.0e12, geometrySettings_.lengthUnit));
-    radiusControl->setSuffix(QStringLiteral(" %1").arg(unit));
-    radiusControl->setKeyboardTracking(false);
-    radiusControl->setValue(model::fromMeters(wire.radius, geometrySettings_.lengthUnit));
-    connect(radiusControl, &QDoubleSpinBox::editingFinished, this, [this, radiusControl, original] {
-        const auto radius = model::toMeters(radiusControl->value(), geometrySettings_.lengthUnit);
-        if (radius == original.radius) return;
-        QTimer::singleShot(0, this, [this, original, radius] {
-            auto updated = original;
-            updated.radius = radius;
-            editWire(original, updated);
-        });
-    });
-    addPropertyWidgetRow(properties_, tr("Radius"), radiusControl);
-
-    auto* gaugeControl = new QComboBox(properties_);
-    gaugeControl->setObjectName(QStringLiteral("wireGaugePropertyEditor"));
-    gaugeControl->addItem(tr("Custom radius"));
-    for (auto gauge = -3; gauge <= 40; ++gauge)
-        gaugeControl->addItem(QString::fromStdString(model::awgLabel(gauge)), gauge);
-    if (const auto gauge = model::matchingAwg(wire.radius))
-        gaugeControl->setCurrentIndex(gaugeControl->findData(*gauge));
-    connect(gaugeControl, &QComboBox::currentIndexChanged, this, [this, gaugeControl, original] {
-        if (!gaugeControl->currentData().isValid()) return;
-        const auto gauge = gaugeControl->currentData().toInt();
-        QTimer::singleShot(0, this, [this, original, gauge] {
-            auto updated = original;
-            updated.radius = model::awgRadiusMeters(gauge);
-            editWire(original, updated);
-        });
-    });
-    gaugeControl->setToolTip(tr("Nominal bare-conductor American Wire Gauge; selection updates radius"));
-    addPropertyWidgetRow(properties_, tr("Wire Gauge"), gaugeControl);
-    addPropertyRow(properties_, tr("Source Line"), QString::number(wire.sourceLine));
-}
-
-void MainWindow::populateLoadProperties(const model::LoadDefinition& load)
-{
-    static const QStringList typeNames{
-        tr("Series RLC"), tr("Parallel RLC"), tr("Distributed series RLC"),
-        tr("Distributed parallel RLC"), tr("Fixed complex impedance"),
-        tr("Wire conductivity")};
-    addPropertyRow(properties_, tr("Object"), tr("Load (LD)"));
-    addPropertyRow(properties_, tr("Type"), load.type >= 0 && load.type < typeNames.size()
-        ? tr("%1 — %2").arg(load.type).arg(typeNames[load.type]) : QString::number(load.type));
-    addPropertyRow(properties_, tr("Wire Tag"), QString::number(load.wireTag));
-    addPropertyRow(properties_, tr("Segment Range"), tr("%1–%2").arg(load.firstSegment).arg(load.lastSegment));
-    addPropertyRow(properties_, tr("Value 1"), formatDecimal(load.value1));
-    addPropertyRow(properties_, tr("Value 2"), formatDecimal(load.value2));
-    addPropertyRow(properties_, tr("Value 3"), formatDecimal(load.value3));
-    addPropertyRow(properties_, tr("Source Line"), QString::number(load.sourceLine));
-}
-
-void MainWindow::populateTransmissionLineProperties(
-    const model::TransmissionLineDefinition& line)
-{
-    addPropertyRow(properties_, tr("Object"), tr("Transmission Line (TL)"));
-    addPropertyRow(properties_, tr("Endpoint 1"), tr("Wire %1, segment %2")
-        .arg(line.wireTag1).arg(line.segment1));
-    addPropertyRow(properties_, tr("Endpoint 2"), tr("Wire %1, segment %2")
-        .arg(line.wireTag2).arg(line.segment2));
-    addPropertyRow(properties_, tr("Characteristic Z0"), tr("%1 Ω")
-        .arg(formatDecimal(line.characteristicImpedance)));
-    addPropertyRow(properties_, tr("Length"), formatLength(line.lengthMeters));
-    addPropertyRow(properties_, tr("Shunt 1"), tr("%1 + j%2")
-        .arg(formatDecimal(line.shuntReal1), formatDecimal(line.shuntImaginary1)));
-    addPropertyRow(properties_, tr("Shunt 2"), tr("%1 + j%2")
-        .arg(formatDecimal(line.shuntReal2), formatDecimal(line.shuntImaginary2)));
-    addPropertyRow(properties_, tr("Source Line"), QString::number(line.sourceLine));
 }
 
 void MainWindow::setCurrentFile(QString path)

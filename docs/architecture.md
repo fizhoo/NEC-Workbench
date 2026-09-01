@@ -26,8 +26,8 @@ source, ground, loads/lines, solver, and result-request controls. Results owns
 summary, grouped run history, impedance tables and plots, currents, nested 2D/3D
 radiation, and immutable raw solver output. Optimize provides bounded
 single-variable SWR sweeps.
-Project and Properties remain global docks. Bottom-tabbed Validation and Solver
-Output docks preserve diagnostics and process logs across every workspace.
+Project remains a global dock. Bottom-tabbed Validation and Solver Output docks
+preserve diagnostics and process logs across every workspace.
 
 Results uses one movable content widget rather than duplicated views. A stable
 host remains in the main module stack while the same widget is reparented into a
@@ -60,9 +60,7 @@ and synchronization path. Supported families provide safe default Add actions
 and selection-aware Delete actions; both are undoable source edits, and new
 control cards are inserted before `XQ`/`EN` as appropriate. Unsupported cards
 remain untouched and available in Raw Source rather than being coerced into an
-unsafe generic schema. Selecting a structured row or moving the Raw Source
-cursor updates the global Properties dock with the card mnemonic, source line,
-raw text, and mnemonic-specific field names and values.
+unsafe generic schema.
 
 Model validation also enforces NEC section ordering: all `GW` geometry cards
 must precede a terminating `GE`, and `GN`, `EX`, `FR`, loads, requests, and other
@@ -99,7 +97,7 @@ divisions, grid/axis/label visibility, grid and endpoint snapping, and endpoint
 tolerance. Preferences persist between sessions.
 
 The XY, XZ, and YZ geometry views consume the checked semantic model and share
-wire selection with each other and the Project and Properties docks. Wire
+wire selection with each other and the Project dock. Wire
 overlays report live cursor coordinates for the two axes represented by each
 orthographic plane; model extents remain available internally for Fit Geometry.
 endpoints and whole wires can be dragged in any orthographic plane while
@@ -110,8 +108,10 @@ through atomic source-deck commands. Wire Properties edits tags, segments,
 endpoints, and radius in the active display unit, with optional nominal bare-wire
 sizes from 4/0 through 40 AWG. These edits use the same source command path, so
 the card table, raw source, plane views, project tree, and undo stack remain
-synchronized. The contextual Properties dock also offers AWG as a quick radius
-editor, while the modal dialog handles the complete wire definition.
+synchronized. The modal dialog includes both precise radius and AWG controls.
+The structured GW table also provides a focused 10–30 AWG convenience selector;
+it converts the selected nominal gauge to the canonical radius and delegates to
+the same wire-edit command. Symbolic GW rows disable this convenience control.
 
 Field-only transforms preserve authored expressions. Automatic Segmentation
 replaces only the `GW` segment count and the affected EX, LD, and TL segment
@@ -146,10 +146,10 @@ than an end value, so the UI calculates the count without exceeding the requeste
 end and displays the actual final frequency before applying the `FR` card.
 
 Feed markers are selectable geometry objects rather than passive annotations.
-Selection synchronizes the 2D and 3D views, Setup source table, Project tree, and
-contextual Properties dock. Marker context menus open the Setup editor or delete
-the source. Wire context menus can create a default voltage source on the segment
-nearest the click in either an orthographic or 3D projection.
+Selection synchronizes the 2D and 3D views, Setup source table, and Project tree.
+Marker context menus open the Setup editor or delete the source. Wire context
+menus can create a default voltage source on the segment nearest the click in
+either an orthographic or 3D projection.
 
 Single-source editing uses a modal EX Properties dialog consistent with wire
 properties, while Edit in Setup opens the batch source table. Ground setup
@@ -304,16 +304,16 @@ runs archive the authored source as `model.source.nec` and pass a generated,
 numeric `model.nec` to the selected backend. Native NEC solvers therefore do not
 need to understand Workbench symbols.
 
+Each retained symbol definition includes its exact authored expression, resolved
+numeric value, source line, and whether it is a direct numeric assignment that
+the current Parameter Sweep may adjust. Raw SY values are unit-neutral. Geometry units and `GS` scaling apply
+where expressions are consumed by NEC cards; they are not inferred back onto a
+symbol merely because its name appears in a geometry field.
+
 Raw source is currently authoritative for symbolic fields. Structured or
 graphical edits may replace an expression with its current numeric value. The
 Optimize workspace can inspect definitions and override one value across a
 bounded linear sweep without modifying the authored source.
-
-Optimizer values remain in authored source units. Symbols referenced directly
-by `GW` coordinate or radius expressions receive the detected deck-unit suffix;
-the solver still applies `GS` when evaluating each generated candidate. This
-avoids applying geometry scaling to frequency, angle, integer, or unitless
-symbols.
 
 Optimization candidates use the same external solver adapter and durable run
 store as ordinary analysis. Objective evaluation is centralized in the core

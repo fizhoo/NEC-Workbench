@@ -157,12 +157,22 @@ auto main(int argc, char* argv[]) -> int
     optimization.resize(1000, 700);
     optimization.show();
     application.processEvents();
+    optimization.setContext(
+        QStringLiteral("SY LONG_FT=95\n"
+                       "SY FT=0.3048\n"
+                       "SY HALF=LONG_FT*FT/2\n"
+                       "GW 1 21 -HALF 0 10 HALF 0 10 0.001\n"
+                       "GE 0\nEX 0 1 11 0 1 0\nFR 0 1 0 0 7.15 0\nEN\n"),
+        QStringLiteral("symbol-units.nec"), QStringLiteral("nec2"), {}, 120, false);
+    application.processEvents();
     auto* optimizationConfiguration = optimization.findChild<QSplitter*>(
         QStringLiteral("optimizationConfigurationSplitter"));
     auto* optimizationVariables = optimization.findChild<QTableWidget*>(
         QStringLiteral("optimizationVariablesTable"));
     auto* optimizationSweepSettings = optimization.findChild<QTableWidget*>(
         QStringLiteral("optimizationSweepSettingsTable"));
+    auto* optimizationVariableControl = optimization.findChild<QComboBox*>(
+        QStringLiteral("optimizationVariableControl"));
     auto* optimizationVariablesHeading = optimization.findChild<QLabel*>(
         QStringLiteral("optimizationVariablesHeading"));
     auto* optimizationSweepHeading = optimization.findChild<QLabel*>(
@@ -174,6 +184,7 @@ auto main(int argc, char* argv[]) -> int
         || optimizationConfiguration->orientation() != Qt::Horizontal
         || optimizationConfiguration->count() != 2
         || optimizationVariables == nullptr
+        || optimizationVariableControl == nullptr
         || optimizationSweepSettings == nullptr
         || optimizationVariablesHeading == nullptr
         || optimizationSweepHeading == nullptr
@@ -182,6 +193,12 @@ auto main(int argc, char* argv[]) -> int
             != optimizationSweepSettings->mapTo(&optimization, QPoint{}).y()
         || !optimizerUsesThreeDecimals
         || optimizationSweepSettings->rowCount() != 4
+        || optimizationVariables->columnCount() != 4
+        || optimizationVariables->rowCount() != 3
+        || optimizationVariables->item(0, 1)->text() != QStringLiteral("95")
+        || optimizationVariables->item(0, 2)->text() != QStringLiteral("95.000")
+        || optimizationVariableControl->count() != 2
+        || optimizationVariableControl->findText(QStringLiteral("HALF")) >= 0
         || qobject_cast<QComboBox*>(optimizationSweepSettings->cellWidget(0, 1)) == nullptr) {
         return EXIT_FAILURE;
     }
@@ -464,17 +481,40 @@ auto main(int argc, char* argv[]) -> int
     wireModel.addWire({1, {-1.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, 11, 0.001, 1});
     wireEditor.setModel(wireModel);
     auto wireEditCommitted = false;
+    auto structuredGaugeRadius = 0.0;
     QObject::connect(&wireEditor, &necwb::ui::WireCardEditor::wireEdited,
-        [&wireEditor, &wireEditCommitted](const necwb::model::Wire&, const necwb::model::Wire& updated) {
+        [&wireEditor, &wireEditCommitted, &structuredGaugeRadius](
+            const necwb::model::Wire&, const necwb::model::Wire& updated) {
             necwb::model::AntennaModel refreshed;
             refreshed.addWire(updated);
             wireEditor.setModel(refreshed);
             wireEditCommitted = true;
+            structuredGaugeRadius = updated.radius;
         });
-    auto* wireTable = wireEditor.findChild<QTableWidget*>();
+    auto* wireTable = wireEditor.findChild<QTableWidget*>(QStringLiteral("wireCardTable"));
     if (wireTable == nullptr || wireTable->rowCount() != 1) return EXIT_FAILURE;
-    wireTable->item(0, 8)->setText(QStringLiteral("0.002"));
+    auto* structuredGauge = qobject_cast<QComboBox*>(wireTable->cellWidget(0, 9));
+    if (structuredGauge == nullptr) return EXIT_FAILURE;
+    auto structuredGaugeRangeValid = structuredGauge->count() == 22;
+    for (auto index = 1; index < structuredGauge->count(); ++index)
+        structuredGaugeRangeValid = structuredGaugeRangeValid
+            && structuredGauge->itemData(index).toInt() == index + 9;
+    structuredGauge->setCurrentIndex(structuredGauge->findData(20));
     wireEditor.show(); application.processEvents();
+    const auto structuredGaugeCommitted = std::abs(
+        structuredGaugeRadius - necwb::model::awgRadiusMeters(20)) < 1.0e-12;
+    wireTable->item(0, 8)->setText(QStringLiteral("0.002"));
+    application.processEvents();
+    auto* customGauge = qobject_cast<QComboBox*>(wireTable->cellWidget(0, 9));
+    const auto customRadiusPreserved = customGauge != nullptr && customGauge->currentIndex() == 0;
+    necwb::ui::WireCardEditor symbolicWireEditor;
+    symbolicWireEditor.setSymbolicGeometryLines({1});
+    symbolicWireEditor.setModel(wireModel);
+    auto* symbolicWireTable = symbolicWireEditor.findChild<QTableWidget*>(
+        QStringLiteral("wireCardTable"));
+    auto* symbolicGauge = symbolicWireTable == nullptr ? nullptr
+        : qobject_cast<QComboBox*>(symbolicWireTable->cellWidget(0, 9));
+    const auto symbolicGaugeDisabled = symbolicGauge != nullptr && !symbolicGauge->isEnabled();
     QImage wireImage(900, 400, QImage::Format_ARGB32_Premultiplied);
     wireImage.fill(Qt::transparent); QPainter wirePainter(&wireImage);
     wireEditor.render(&wirePainter); wirePainter.end();
@@ -603,6 +643,8 @@ auto main(int argc, char* argv[]) -> int
         && editedCard == QStringLiteral("EX 0 1 7 0 1 0 2.5")
         && addedCard == QStringLiteral("LD 0 1 1 11 0 0 0") && deletedLine == 3
         && !wireImage.isNull() && wireEditCommitted && gaugeDropdownValid
+        && structuredGaugeRangeValid && structuredGaugeCommitted && customRadiusPreserved
+        && symbolicGaugeDisabled
         && setupColumnsValid
         && convergenceHistoryControlsValid
         && segmentationApplyAccepted

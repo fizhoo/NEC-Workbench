@@ -15,7 +15,7 @@ configured by the user and are not bundled.
 - External `nec2c` execution with durable run artifacts and history
 - Impedance, SWR, current-distribution, and 2D/3D radiation results
 - Historical run snapshots that restore the exact archived input deck
-- Categorized Project tree with contextual Properties and editor navigation
+- Categorized Project tree with synchronized selection and editor navigation
 - Solver-independent `SY` expressions with numeric NEC run-deck generation
 - Ordered `GS` geometry scaling with separate display and deck-unit controls
 - One-variable bounded sweeps with model-sweep or explicit-frequency SWR objectives
@@ -46,7 +46,8 @@ diagnostics, and produces a numeric solver deck. Each run retains both the
 authored parameterized source and the generated NEC input. The remaining
 sequence is:
 
-1. Show resolved values and expression errors in structured editors.
+1. Extend the clarified expression and resolved-value presentation into
+   structured editors.
 2. Apply a selected optimization candidate back into the active model.
 3. Add safe expression-aware structured and graphical editing.
 

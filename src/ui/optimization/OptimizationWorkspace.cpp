@@ -8,7 +8,6 @@
 #include "analysis/SolverCommand.h"
 #include "analysis/SolverInput.h"
 #include "nec/NecModelChecker.h"
-#include "nec/DeckGeometryUnits.h"
 #include "nec/NecParser.h"
 #include "nec/NecSetupConverter.h"
 
@@ -38,13 +37,10 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <cctype>
-#include <charconv>
 #include <cmath>
 #include <exception>
 #include <limits>
 #include <set>
-#include <unordered_map>
 #include <utility>
 
 namespace necwb::ui {
@@ -72,42 +68,6 @@ auto writeFile(const QString& path, const QByteArray& data) -> bool
 {
     QFile file(path);
     return file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(data) == data.size();
-}
-
-auto asciiLower(std::string value) -> std::string
-{
-    std::ranges::transform(value, value.begin(), [](unsigned char character) {
-        return static_cast<char>(std::tolower(character));
-    });
-    return value;
-}
-
-auto directGeometrySymbols(const nec::NecDocument& document) -> std::unordered_set<std::string>
-{
-    std::unordered_set<std::string> result;
-    for (const auto& card : document.cards()) {
-        if (card.kind != nec::NecCardKind::GeometryWire) continue;
-        for (auto fieldIndex = std::size_t{2}; fieldIndex < card.fields.size(); ++fieldIndex) {
-            const auto& field = card.fields[fieldIndex];
-            double numericValue{};
-            const auto [numericEnd, numericError] = std::from_chars(
-                field.data(), field.data() + field.size(), numericValue);
-            if (numericError == std::errc{} && numericEnd == field.data() + field.size()) continue;
-            for (auto position = std::size_t{}; position < field.size();) {
-                if (!std::isalpha(static_cast<unsigned char>(field[position]))
-                    && field[position] != '_') {
-                    ++position;
-                    continue;
-                }
-                const auto start = position++;
-                while (position < field.size()
-                    && (std::isalnum(static_cast<unsigned char>(field[position]))
-                        || field[position] == '_')) ++position;
-                result.insert(asciiLower(field.substr(start, position - start)));
-            }
-        }
-    }
-    return result;
 }
 
 auto frequencyAt(const model::FrequencyDefinition& frequency, int index) -> double
@@ -159,7 +119,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     variablesTable_->setObjectName(QStringLiteral("optimizationVariablesTable"));
     variablesTable_->setColumnCount(4);
     variablesTable_->setHorizontalHeaderLabels(
-        {tr("Symbol"), tr("Expression"), tr("Value"), tr("Line")});
+        {tr("Symbol"), tr("Expression"), tr("Resolved Value"), tr("Line")});
     variablesTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     variablesTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     variablesTable_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -170,6 +130,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     variablesTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
 
     variableControl_ = new QComboBox(this);
+    variableControl_->setObjectName(QStringLiteral("optimizationVariableControl"));
     objectiveControl_ = new QComboBox(this);
     objectiveControl_->addItem(tr("Minimize Worst SWR Across Frequencies"),
         static_cast<int>(analysis::OptimizationObjectiveKind::MaximumSwr));
@@ -419,19 +380,6 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
     timeoutSeconds_ = timeoutSeconds;
     modelValid_ = modelValid;
     const auto resolution = nec::NecSymbolResolver{}.resolve(source_.toStdString());
-    geometrySymbols_ = directGeometrySymbols(nec::NecParser{}.parse(source_.toStdString()));
-    deckLengthSuffix_.clear();
-    if (resolution.ok()) {
-        const auto units = nec::inspectDeckGeometryUnits(
-            nec::NecParser{}.parse(resolution.resolvedSource));
-        if (units.uniform && units.standardUnit) {
-            const auto symbol = model::lengthUnitSymbol(*units.standardUnit);
-            deckLengthSuffix_ = QStringLiteral(" %1").arg(QString::fromLatin1(
-                symbol.data(), static_cast<qsizetype>(symbol.size())));
-        } else if (units.uniform) {
-            deckLengthSuffix_ = tr(" deck units");
-        }
-    }
     populateVariables(resolution);
     if (resolution.ok()) {
         const auto setup = nec::NecSetupConverter{}.convert(
@@ -616,23 +564,29 @@ void OptimizationWorkspace::populateVariables(const nec::SymbolResolution& resol
     definitions_ = resolution.definitions;
     variablesTable_->setRowCount(static_cast<int>(definitions_.size()));
     variableControl_->clear();
+    selectedValueSuffix_.clear();
+    minimumControl_->setSuffix({});
+    maximumControl_->setSuffix({});
+    resultsTable_->horizontalHeaderItem(ValueColumn)->setText(tr("Value"));
     for (std::size_t index = 0; index < definitions_.size(); ++index) {
         const auto& definition = definitions_[index];
         const auto row = static_cast<int>(index);
         variablesTable_->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(definition.name)));
         variablesTable_->setItem(row, 1, new QTableWidgetItem(QString::fromStdString(definition.expression)));
         auto* valueItem = numericItem(definition.value);
-        const auto isGeometry = geometrySymbols_.contains(asciiLower(definition.name));
-        if (isGeometry) valueItem->setText(valueItem->text() + deckLengthSuffix_);
+        valueItem->setToolTip(tr(
+            "Resolved numeric SY value. No physical unit is inferred from where the symbol is used."));
         variablesTable_->setItem(row, 2, valueItem);
         variablesTable_->setItem(row, 3,
             new QTableWidgetItem(QString::number(definition.lineNumber)));
-        variableControl_->addItem(QString::fromStdString(definition.name), definition.value);
-        variableControl_->setItemData(row, isGeometry, Qt::UserRole + 1);
+        if (definition.adjustable)
+            variableControl_->addItem(QString::fromStdString(definition.name), definition.value);
     }
     statusLabel_->setText(resolution.ok()
         ? definitions_.empty() ? tr("Add SY declarations to enable parameter optimization.")
-                               : tr("Choose one symbol and a bounded range.")
+        : variableControl_->count() == 0
+            ? tr("Add an independent numeric SY assignment to enable a parameter sweep.")
+            : tr("Choose one independent literal symbol and a bounded range.")
         : tr("Resolve the model's SY expression errors before optimizing."));
     updateBounds();
 }
@@ -641,13 +595,10 @@ void OptimizationWorkspace::updateBounds()
 {
     if (variableControl_->currentIndex() < 0) return;
     const auto value = variableControl_->currentData().toDouble();
-    selectedValueSuffix_ = variableControl_->currentData(Qt::UserRole + 1).toBool()
-        ? deckLengthSuffix_ : QString{};
-    minimumControl_->setSuffix(selectedValueSuffix_);
-    maximumControl_->setSuffix(selectedValueSuffix_);
-    resultsTable_->horizontalHeaderItem(ValueColumn)->setText(
-        selectedValueSuffix_.isEmpty() ? tr("Value")
-                                       : tr("Value (%1)").arg(selectedValueSuffix_.trimmed()));
+    selectedValueSuffix_.clear();
+    minimumControl_->setSuffix({});
+    maximumControl_->setSuffix({});
+    resultsTable_->horizontalHeaderItem(ValueColumn)->setText(tr("Value"));
     auto first = value == 0.0 ? -1.0 : value * 0.8;
     auto second = value == 0.0 ? 1.0 : value * 1.2;
     if (first > second) std::swap(first, second);
@@ -783,7 +734,8 @@ void OptimizationWorkspace::updateReadiness()
     const auto executable = QFileInfo(executable_);
     const auto hasFrequencies = selectedFrequencyMode() == FrequencyMode::Explicit
         ? !explicitFrequencies().empty() : !modelFrequenciesMHz_.empty();
-    const auto ready = !historicalSession_ && modelValid_ && !definitions_.empty() && !externalRunActive_
+    const auto ready = !historicalSession_ && modelValid_ && variableControl_->count() > 0
+        && !externalRunActive_
         && hasFrequencies
         && !isRunning() && analysis::isBackendRunnable(backend_.toStdString())
         && executable.exists() && executable.isFile() && executable.isExecutable();

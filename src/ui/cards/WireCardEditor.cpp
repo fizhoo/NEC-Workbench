@@ -1,8 +1,11 @@
 #include "ui/cards/WireCardEditor.h"
 
+#include "model/WireGauge.h"
+
 #include <QAbstractItemView>
 #include <QHeaderView>
 #include <QHBoxLayout>
+#include <QComboBox>
 #include <QLabel>
 #include <QPalette>
 #include <QPushButton>
@@ -27,6 +30,7 @@ enum Column {
     Y2,
     Z2,
     Radius,
+    Gauge,
     ColumnCount
 };
 
@@ -64,6 +68,7 @@ WireCardEditor::WireCardEditor(QWidget* parent)
     actions->addStretch();
 
     table_ = new QTableWidget(this);
+    table_->setObjectName(QStringLiteral("wireCardTable"));
     table_->setColumnCount(ColumnCount);
     table_->setAlternatingRowColors(true);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -122,16 +127,44 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
             number(wire.end.y / scaleToMeters_),
             number(wire.end.z / scaleToMeters_),
             number(wire.radius / scaleToMeters_)};
-        for (auto column = 0; column < ColumnCount; ++column) {
+        for (auto column = 0; column <= Radius; ++column) {
             auto* item = new QTableWidgetItem(values[column]);
             item->setData(WireTagRole, wire.tag);
             table_->setItem(row, column, item);
         }
+        auto* gaugeControl = new QComboBox(table_);
+        gaugeControl->setObjectName(QStringLiteral("wireGaugeEditor"));
+        gaugeControl->addItem(tr("Custom radius"));
+        for (auto gauge = 10; gauge <= 30; ++gauge)
+            gaugeControl->addItem(QString::fromStdString(model::awgLabel(gauge)), gauge);
+        if (const auto gauge = model::matchingAwg(wire.radius); gauge && *gauge >= 10 && *gauge <= 30)
+            gaugeControl->setCurrentIndex(gaugeControl->findData(*gauge));
+        if (symbolicGeometryLines_.contains(wire.sourceLine)) {
+            gaugeControl->setEnabled(false);
+            gaugeControl->setToolTip(tr(
+                "This GW line contains symbolic geometry. Edit its SY expression or raw source."));
+        } else {
+            gaugeControl->setToolTip(tr(
+                "Selecting AWG updates the NEC wire radius; manual radius values remain Custom."));
+        }
+        connect(gaugeControl, &QComboBox::currentIndexChanged, this,
+            [this, gaugeControl, row, tag = wire.tag](int) {
+                if (updating_ || !gaugeControl->currentData().isValid()) return;
+                table_->selectRow(row);
+                applyGauge(tag, gaugeControl->currentData().toInt());
+            });
+        table_->setCellWidget(row, Gauge, gaugeControl);
         ++row;
     }
     updating_ = false;
     selectWire(previousTag);
     updateActionStates();
+}
+
+void WireCardEditor::setSymbolicGeometryLines(
+    std::unordered_set<std::size_t> sourceLines)
+{
+    symbolicGeometryLines_ = std::move(sourceLines);
 }
 
 void WireCardEditor::setLengthUnit(model::LengthUnit unit)
@@ -181,9 +214,22 @@ void WireCardEditor::updateUnitLabels()
     table_->setHorizontalHeaderLabels({tr("Tag"), tr("Segments"), tr("X1 (%1)").arg(unitLabel_),
         tr("Y1 (%1)").arg(unitLabel_), tr("Z1 (%1)").arg(unitLabel_),
         tr("X2 (%1)").arg(unitLabel_), tr("Y2 (%1)").arg(unitLabel_),
-        tr("Z2 (%1)").arg(unitLabel_), tr("Radius (%1)").arg(unitLabel_)});
+        tr("Z2 (%1)").arg(unitLabel_), tr("Radius (%1)").arg(unitLabel_), tr("Wire Gauge")});
     instructions_->setText(tr("Double-click a cell to edit it. Values use the NEC deck geometry unit (%1); GS converts them to meters for the solver.")
             .arg(unitLabel_));
+}
+
+void WireCardEditor::applyGauge(int tag, int gauge)
+{
+    const auto* original = model_.wireByTag(tag);
+    if (original == nullptr || gauge < 10 || gauge > 30) return;
+    auto updated = *original;
+    updated.radius = model::awgRadiusMeters(gauge);
+    if (updated.radius == original->radius) return;
+    const auto originalWire = *original;
+    QTimer::singleShot(0, this, [this, originalWire, updated] {
+        emit wireEdited(originalWire, updated);
+    });
 }
 
 void WireCardEditor::validateAndCommitRow(int row, int changedColumn)

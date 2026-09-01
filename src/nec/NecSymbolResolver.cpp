@@ -41,6 +41,18 @@ auto validName(std::string_view name) -> bool
     });
 }
 
+auto isNumericLiteral(std::string_view expression) -> bool
+{
+    expression = trim(expression);
+    if (!expression.empty() && expression.front() == '+') expression.remove_prefix(1);
+    if (expression.empty()) return false;
+    double value{};
+    const auto [end, error] = std::from_chars(
+        expression.data(), expression.data() + expression.size(), value);
+    return error == std::errc{} && end == expression.data() + expression.size()
+        && std::isfinite(value);
+}
+
 class ExpressionParser final {
 public:
     ExpressionParser(std::string_view expression,
@@ -251,7 +263,8 @@ void readDefinitions(const NecCard& card, std::unordered_map<std::string, double
                 ? ExpressionParser(expression, symbols).parse() : overridden->second;
             if (!std::isfinite(value)) throw std::runtime_error("override is not finite");
             symbols.emplace(key, value);
-            resolution.definitions.push_back({std::string(name), std::string(expression), value, card.lineNumber});
+            resolution.definitions.push_back({std::string(name), std::string(expression), value,
+                card.lineNumber, isNumericLiteral(expression)});
         } catch (const std::runtime_error& error) {
             resolution.diagnostics.push_back({card.lineNumber,
                 "Cannot define symbol " + std::string(name) + ": " + error.what()});
