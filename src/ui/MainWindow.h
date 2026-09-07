@@ -63,9 +63,16 @@ class StructuredCardEditor;
 class DashboardPage;
 class WelcomePage;
 class OptimizationWorkspace;
+class ParameterEditor;
 
 class MainWindow final : public QMainWindow {
 public:
+    enum class WorkspaceDensity {
+        Compact,
+        Standard,
+        Spacious
+    };
+
     MainWindow();
 
 protected:
@@ -81,6 +88,12 @@ private:
     void createWorkspace();
     void createDocks();
     void createMenusAndToolbar();
+    void resetWorkspaceLayout();
+    void setWorkspaceDensity(WorkspaceDensity density);
+    void applyWorkspaceDensity();
+    void showGettingStarted();
+    void openUserGuide();
+    void showAboutDialog();
     void showModule(int index);
     void toggleResultsDetached();
     void detachResults();
@@ -136,6 +149,10 @@ private:
     void deleteStructuredCard(std::size_t sourceLine);
     void changeFrequency(const model::FrequencyDefinition& frequency);
     void deleteFrequency(std::size_t sourceLine);
+    void changeParameter(std::size_t sourceLine, const QString& originalName,
+        const QString& name, const QString& expression);
+    void deleteParameter(std::size_t sourceLine, const QString& name);
+    auto applyOptimizedParameter(const QString& name, double value) -> bool;
     void changeGround(const model::GroundDefinition& ground);
     void changeExcitation(const model::Excitation& excitation);
     void addExcitationAt(int wireTag, int segment);
@@ -150,8 +167,8 @@ private:
     void upsertSetupCard(const QString& description, std::size_t sourceLine,
         const QString& cardText, bool frequencyCard);
     void deleteSetupCard(const QString& description, std::size_t sourceLine);
-    void changeAnalysisRequests(bool executionEnabled, const model::ExecutionRequest& execution,
-        bool patternEnabled, const model::RadiationPatternRequest& pattern);
+    void changeExecutionRequest(bool enabled, const model::ExecutionRequest& execution);
+    void changeRadiationPattern(const model::RadiationPatternRequest& pattern);
     void changeLoad(const model::LoadDefinition& load);
     void changeTransmissionLine(const model::TransmissionLineDefinition& line);
     void updateAnalysisReadiness();
@@ -191,7 +208,8 @@ private:
     void findInRawOutput();
     void clearDisplayedResults();
     void pushGeometrySourceEdit(const QString& description, QString updatedSource);
-    void applyGeometrySource(const QString& source, int targetTabIndex);
+    void applyGeometrySource(const QString& source, int targetTabIndex,
+        int targetAnalysisTabIndex);
     [[nodiscard]] auto nextWireTag() const -> int;
     void replaceWireSourceLine(const model::Wire& wire);
     [[nodiscard]] auto wireHasSymbolicGeometry(std::size_t sourceLine) const -> bool;
@@ -211,8 +229,13 @@ private:
     QAction* openAction_{};
     QAction* saveAction_{};
     QAction* saveAsAction_{};
+    QAction* exitAction_{};
+    QAction* cutAction_{};
+    QAction* copyAction_{};
+    QAction* pasteAction_{};
     QAction* checkAction_{};
     QAction* runAction_{};
+    QAction* stopAction_{};
     QAction* averageGainAction_{};
     QAction* convergenceAction_{};
     QAction* fitGeometryAction_{};
@@ -224,11 +247,17 @@ private:
     QAction* redoAction_{};
     QAction* homeModuleAction_{};
     QAction* modelModuleAction_{};
-    QAction* sourceModuleAction_{};
     QAction* analysisModuleAction_{};
     QAction* visualizeModuleAction_{};
     QAction* optimizeModuleAction_{};
     QAction* detachResultsAction_{};
+    QAction* resetLayoutAction_{};
+    QAction* compactDensityAction_{};
+    QAction* standardDensityAction_{};
+    QAction* spaciousDensityAction_{};
+    QAction* gettingStartedAction_{};
+    QAction* userGuideAction_{};
+    QAction* aboutAction_{};
     QUndoStack* undoStack_{};
     QComboBox* lengthUnitControl_{};
     QComboBox* deckUnitControl_{};
@@ -236,6 +265,7 @@ private:
     QDoubleSpinBox* snapSpacingControl_{};
     QStackedWidget* moduleStack_{};
     QStackedWidget* dashboardStack_{};
+    QTabWidget* modelWorkspace_{};
     QTabWidget* workspace_{};
     QTabWidget* sourceWorkspace_{};
     QTabWidget* resultsWorkspace_{};
@@ -268,8 +298,8 @@ private:
     RadiationPatternView* radiationPatternView_{};
     Radiation3DView* radiation3DView_{};
     OptimizationWorkspace* optimizationWorkspace_{};
+    ParameterEditor* parameterEditor_{};
     QTabWidget* analysisWorkspace_{};
-    QTabWidget* modelSetupWorkspace_{};
     QTabWidget* validationWorkspace_{};
     QTableWidget* analysisRuns_{};
     QPlainTextEdit* analysisOutput_{};
@@ -304,6 +334,7 @@ private:
     model::AntennaModel currentModel_;
     model::ModelSetup currentSetup_;
     GeometrySettings geometrySettings_;
+    WorkspaceDensity workspaceDensity_{WorkspaceDensity::Compact};
     double deckScaleToMeters_{1.0};
     bool updatingDeckUnitControl_{};
     QString currentFile_;
@@ -337,8 +368,13 @@ private:
     int loadNetworkTabIndex_{};
     int homeModuleIndex_{};
     int modelModuleIndex_{};
-    int sourceModuleIndex_{};
+    int modelGeometryWorkspaceIndex_{};
+    int modelParametersWorkspaceIndex_{};
+    int modelSourcesWorkspaceIndex_{};
+    int modelEnvironmentWorkspaceIndex_{};
+    int modelDeckWorkspaceIndex_{};
     int analysisModuleIndex_{};
+    int analysisFrequencyTabIndex_{};
     int analysisRunsTabIndex_{};
     int resultsSummaryTabIndex_{};
     int averageGainResultsTabIndex_{};

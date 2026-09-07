@@ -16,6 +16,7 @@
 #include <QPushButton>
 #include <QShortcut>
 #include <QSignalBlocker>
+#include <QStringList>
 #include <QTableWidget>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -23,6 +24,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <numbers>
@@ -88,6 +90,67 @@ void populateRadiationControls(QComboBox* component, QComboBox* scale, QComboBox
     floor->setCurrentIndex(2);
 }
 
+struct PatternDatasetStats {
+    int samples{};
+    std::vector<double> theta;
+    std::vector<double> phi;
+};
+
+auto patternDatasets(const analysis::AnalysisResult& result, double frequencyMHz)
+    -> std::map<int, PatternDatasetStats>
+{
+    std::map<int, PatternDatasetStats> datasets;
+    for (const auto& sample : result.radiation) {
+        if (!sameFrequency(sample.frequencyMHz, frequencyMHz)) continue;
+        auto& stats = datasets[sample.patternIndex];
+        ++stats.samples;
+        if (std::ranges::find(stats.theta, sample.thetaDegrees) == stats.theta.end())
+            stats.theta.push_back(sample.thetaDegrees);
+        if (std::ranges::find(stats.phi, sample.phiDegrees) == stats.phi.end())
+            stats.phi.push_back(sample.phiDegrees);
+    }
+    return datasets;
+}
+
+auto patternDatasetLabel(int index, const PatternDatasetStats& stats) -> QString
+{
+    QString kind;
+    if (stats.theta.size() == 1 && stats.phi.size() > 1) kind = QObject::tr("Horizontal cut");
+    else if (stats.theta.size() > 1 && stats.phi.size() <= 2) kind = QObject::tr("Vertical cut");
+    else if (stats.theta.size() > 1 && stats.phi.size() > 2) kind = QObject::tr("Full grid");
+    else kind = QObject::tr("Partial grid");
+    return QObject::tr("RP %1 — %2 (%3×%4)").arg(index + 1).arg(kind)
+        .arg(stats.theta.size()).arg(stats.phi.size());
+}
+
+void populatePatternDatasets(QComboBox* control, const analysis::AnalysisResult& result,
+    double frequencyMHz, bool preferSurface)
+{
+    const auto previous = control->currentData();
+    const QSignalBlocker blocker(control);
+    control->clear();
+    const auto datasets = patternDatasets(result, frequencyMHz);
+    auto preferredIndex = -1;
+    auto preferredCoverage = std::size_t{};
+    for (const auto& [index, stats] : datasets) {
+        control->addItem(patternDatasetLabel(index, stats), index);
+        const auto coverage = stats.theta.size() * stats.phi.size();
+        if (preferSurface && stats.theta.size() > 1 && stats.phi.size() > 2
+            && coverage > preferredCoverage) {
+            preferredCoverage = coverage;
+            preferredIndex = index;
+        }
+    }
+    const auto previousIndex = control->findData(previous);
+    if (previousIndex >= 0) control->setCurrentIndex(previousIndex);
+    else if (preferredIndex >= 0) control->setCurrentIndex(control->findData(preferredIndex));
+}
+
+auto selectedPatternIndex(QComboBox* control) -> int
+{
+    return control->currentData().isValid() ? control->currentData().toInt() : -1;
+}
+
 auto displaySettings(QComboBox* frequency, QComboBox* component, QComboBox* scale,
     QComboBox* floor) -> analysis::RadiationDisplaySettings
 {
@@ -124,53 +187,6 @@ void applyDisplaySettings(const analysis::RadiationDisplaySettings& settings,
     if (scaleIndex >= 0) scale->setCurrentIndex(scaleIndex);
     const auto floorIndex = floor->findData(settings.floorDb);
     if (floorIndex >= 0) floor->setCurrentIndex(floorIndex);
-}
-
-struct CutMetrics {
-    bool valid{};
-    double peakAngle{};
-    double peakGain{};
-    double beamwidth{};
-    double frontToBack{};
-};
-
-auto cutMetrics(const std::vector<QPointF>& values) -> CutMetrics
-{
-    CutMetrics metrics;
-    if (values.empty()) return metrics;
-    const auto peak = std::ranges::max_element(values, {}, [](const QPointF& point) { return point.y(); });
-    metrics.valid = true;
-    metrics.peakAngle = peak->x();
-    metrics.peakGain = peak->y();
-    const auto circularDistance = [](double first, double second) {
-        const auto difference = std::fmod(std::abs(first - second), 360.0);
-        return std::min(difference, 360.0 - difference);
-    };
-    const auto backAngle = std::fmod(metrics.peakAngle + 180.0, 360.0);
-    const auto back = std::ranges::min_element(values, {}, [backAngle, circularDistance](const QPointF& point) {
-        return circularDistance(point.x(), backAngle);
-    });
-    metrics.frontToBack = metrics.peakGain - back->y();
-    const auto threshold = metrics.peakGain - 3.0;
-    const auto peakIndex = static_cast<std::size_t>(std::distance(values.begin(), peak));
-    auto leftIndex = peakIndex;
-    auto rightIndex = peakIndex;
-    auto included = std::size_t{1};
-    while (included < values.size()) {
-        const auto candidate = (leftIndex + values.size() - 1) % values.size();
-        if (values[candidate].y() < threshold) break;
-        leftIndex = candidate;
-        ++included;
-    }
-    while (included < values.size()) {
-        const auto candidate = (rightIndex + 1) % values.size();
-        if (values[candidate].y() < threshold) break;
-        rightIndex = candidate;
-        ++included;
-    }
-    metrics.beamwidth = included == values.size()
-        ? 360.0 : circularDistance(values[leftIndex].x(), values[rightIndex].x());
-    return metrics;
 }
 
 auto pointToSegmentDistance(const QPointF& point, const QPointF& start, const QPointF& end) -> double
@@ -760,12 +776,14 @@ RadiationPatternView::RadiationPatternView(QWidget* parent) : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this); auto* form = new QFormLayout;
     frequency_ = new QComboBox(this); frequency_->setObjectName(QStringLiteral("radiation2DFrequency")); frequency_->hide();
+    dataset_ = new QComboBox(this); dataset_->setObjectName(QStringLiteral("radiation2DDataset"));
     phi_ = new QComboBox(this); phi_->setObjectName(QStringLiteral("radiation2DCutPlane"));
     cutLabel_ = new QLabel(tr("Phi plane"), this);
     component_ = new QComboBox(this); component_->setObjectName(QStringLiteral("radiation2DComponent"));
     scale_ = new QComboBox(this); scale_->setObjectName(QStringLiteral("radiation2DScale"));
     floor_ = new QComboBox(this); floor_->setObjectName(QStringLiteral("radiation2DFloor"));
     populateRadiationControls(component_, scale_, floor_);
+    form->addRow(tr("Pattern dataset"), dataset_);
     form->addRow(tr("Component"), component_);
     form->addRow(tr("Scale"), scale_); form->addRow(tr("Dynamic range"), floor_);
     form->addRow(cutLabel_, phi_);
@@ -787,7 +805,8 @@ RadiationPatternView::RadiationPatternView(QWidget* parent) : QWidget(parent)
     summary_->setObjectName(QStringLiteral("radiation2DSummary"));
     summary_->setWordWrap(true); plot_ = new RadiationPolarWidget(this);
     layout->addLayout(form); layout->addLayout(navigation); layout->addWidget(summary_); layout->addWidget(plot_, 1);
-    connect(frequency_, &QComboBox::currentIndexChanged, this, [this] { refreshSelectors(); settingsChanged(); });
+    connect(frequency_, &QComboBox::currentIndexChanged, this, [this] { refreshDatasets(); settingsChanged(); });
+    connect(dataset_, &QComboBox::currentIndexChanged, this, [this] { refreshCutControls(); });
     connect(component_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
     connect(scale_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
     connect(floor_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
@@ -815,74 +834,160 @@ void RadiationPatternView::setResults(const analysis::AnalysisResult& result, co
     const QSignalBlocker blocker(frequency_);
     populateFrequencies(frequency_, frequencies(result.radiation));
     applyDisplaySettings(previous, frequency_, component_, scale_, floor_);
-    refreshSelectors();
+    refreshDatasets();
 }
 void RadiationPatternView::setSelectedFrequency(double frequencyMHz)
 {
     const QSignalBlocker blocker(frequency_);
     selectFrequency(frequency_, frequencyMHz);
-    refreshSelectors();
+    refreshDatasets();
 }
 void RadiationPatternView::setDisplaySettings(const analysis::RadiationDisplaySettings& settings)
 {
     updatingSettings_ = true;
     applyDisplaySettings(settings, frequency_, component_, scale_, floor_);
     updatingSettings_ = false;
-    refreshSelectors();
+    refreshDatasets();
 }
 void RadiationPatternView::setSettingsChangedCallback(SettingsChangedCallback callback)
 { settingsChangedCallback_ = std::move(callback); }
+auto RadiationPatternView::availableCutPlanes(CutOrientation orientation) const -> std::vector<double>
+{
+    struct PlaneSamples {
+        double plane{};
+        std::vector<double> sweepAngles;
+    };
+    std::vector<PlaneSamples> samplesByPlane;
+    for (const auto& value : result_.radiation) {
+        if (!sameFrequency(value.frequencyMHz, selectedFrequency(frequency_))) continue;
+        if (value.patternIndex != selectedPatternIndex(dataset_)) continue;
+        auto plane = orientation == CutOrientation::Vertical ? value.phiDegrees : value.thetaDegrees;
+        const auto sweepAngle = orientation == CutOrientation::Vertical
+            ? value.thetaDegrees : value.phiDegrees;
+        if (orientation == CutOrientation::Vertical) {
+            plane = std::fmod(plane + 360.0, 360.0);
+            if (plane >= 180.0) plane -= 180.0;
+        } else if (sameFrequency(plane, 0.0) || sameFrequency(plane, 180.0)) {
+            continue;
+        }
+        auto matchingPlane = std::ranges::find_if(samplesByPlane, [plane](const auto& existing) {
+            return sameFrequency(existing.plane, plane);
+        });
+        if (matchingPlane == samplesByPlane.end()) {
+            samplesByPlane.push_back({plane, {}});
+            matchingPlane = std::prev(samplesByPlane.end());
+        }
+        if (std::ranges::none_of(matchingPlane->sweepAngles, [sweepAngle](double existing) {
+                return std::abs(existing - sweepAngle) < 1.0e-9;
+            })) {
+            matchingPlane->sweepAngles.push_back(sweepAngle);
+        }
+    }
+    std::vector<double> planes;
+    for (const auto& samples : samplesByPlane) {
+        if (samples.sweepAngles.size() >= 2) planes.push_back(samples.plane);
+    }
+    std::ranges::sort(planes);
+    return planes;
+}
+void RadiationPatternView::refreshCutControls()
+{
+    const auto verticalAvailable = !availableCutPlanes(CutOrientation::Vertical).empty();
+    const auto horizontalAvailable = !availableCutPlanes(CutOrientation::Horizontal).empty();
+    if (orientation_ == CutOrientation::Vertical && !verticalAvailable && horizontalAvailable)
+        orientation_ = CutOrientation::Horizontal;
+    else if (orientation_ == CutOrientation::Horizontal && !horizontalAvailable && verticalAvailable)
+        orientation_ = CutOrientation::Vertical;
+    orientationButton_->setText(orientation_ == CutOrientation::Vertical
+        ? tr("Vertical Cut") : tr("Horizontal Cut"));
+    cutLabel_->setText(orientation_ == CutOrientation::Vertical
+        ? tr("Phi plane") : tr("Theta angle"));
+    orientationButton_->setEnabled(verticalAvailable && horizontalAvailable);
+    if (verticalAvailable && horizontalAvailable)
+        orientationButton_->setToolTip(tr("Switch between vertical and horizontal cuts."));
+    else if (verticalAvailable || horizontalAvailable)
+        orientationButton_->setToolTip(tr("The selected RP dataset supports only this cut orientation."));
+    else
+        orientationButton_->setToolTip(tr("The selected RP dataset has insufficient samples for a 2D cut."));
+    refreshSelectors();
+}
 void RadiationPatternView::refreshSelectors()
 {
     const auto previousValue = phi_->currentData().toDouble();
-    phi_->clear(); std::vector<double> planes;
-    for (const auto& value : result_.radiation) {
-        if (value.frequencyMHz != selectedFrequency(frequency_)) continue;
-        auto angle = orientation_ == CutOrientation::Vertical ? value.phiDegrees : value.thetaDegrees;
-        if (orientation_ == CutOrientation::Vertical) {
-            angle = std::fmod(angle + 360.0, 360.0);
-            if (angle >= 180.0) continue;
-        }
-        if (std::ranges::find(planes, angle) == planes.end()) planes.push_back(angle);
-    }
-    std::ranges::sort(planes); for (auto plane : planes)
+    phi_->clear();
+    for (const auto plane : availableCutPlanes(orientation_))
         phi_->addItem(QStringLiteral("%1°").arg(formatDecimal(plane)), plane);
     const auto previousIndex = phi_->findData(previousValue); if (previousIndex >= 0) phi_->setCurrentIndex(previousIndex); refresh();
+}
+void RadiationPatternView::refreshDatasets()
+{
+    populatePatternDatasets(dataset_, result_, selectedFrequency(frequency_), false);
+    refreshCutControls();
 }
 void RadiationPatternView::refresh()
 {
     const auto settings = displaySettings(frequency_, component_, scale_, floor_);
-    std::vector<QPointF> values; const auto angle = phi_->currentData().toDouble();
+    std::vector<analysis::RadiationCutPoint> cutSamples;
+    const auto angle = phi_->currentData().toDouble();
     for (const auto& value : result_.radiation) {
-        if (value.frequencyMHz != selectedFrequency(frequency_)) continue;
+        if (!sameFrequency(value.frequencyMHz, selectedFrequency(frequency_))) continue;
+        if (value.patternIndex != selectedPatternIndex(dataset_)) continue;
         if (orientation_ == CutOrientation::Horizontal && value.thetaDegrees == angle)
-            values.emplace_back(value.phiDegrees, analysis::radiationGainDb(value, settings.component));
+            cutSamples.push_back({value.phiDegrees, value.thetaDegrees, value.phiDegrees,
+                analysis::radiationGainDb(value, settings.component)});
         if (orientation_ == CutOrientation::Vertical) {
             const auto normalizedPhi = std::fmod(value.phiDegrees + 360.0, 360.0);
             if (std::abs(normalizedPhi - angle) < 1.0e-9)
-                values.emplace_back(value.thetaDegrees, analysis::radiationGainDb(value, settings.component));
+                cutSamples.push_back({value.thetaDegrees, value.thetaDegrees, value.phiDegrees,
+                    analysis::radiationGainDb(value, settings.component)});
             const auto opposite = std::fmod(angle + 180.0, 360.0);
             if (std::abs(normalizedPhi - opposite) < 1.0e-9)
-                values.emplace_back(360.0 - value.thetaDegrees, analysis::radiationGainDb(value, settings.component));
+                cutSamples.push_back({360.0 - value.thetaDegrees, value.thetaDegrees, value.phiDegrees,
+                    analysis::radiationGainDb(value, settings.component)});
         }
     }
-    std::erase_if(values, [](const QPointF& point) { return !std::isfinite(point.y()) || point.y() <= -900.0; });
+    std::erase_if(cutSamples, [](const auto& sample) {
+        return !std::isfinite(sample.gainDb) || sample.gainDb <= -900.0;
+    });
+    std::vector<QPointF> values;
+    values.reserve(cutSamples.size());
+    for (const auto& sample : cutSamples) values.emplace_back(sample.angleDegrees, sample.gainDb);
     std::ranges::sort(values, {}, [](const QPointF& point) { return point.x(); });
-    const auto metrics = cutMetrics(values);
+    const auto metrics = analysis::radiationCutMetrics(cutSamples, radiationAnglesCoverCircle(values));
     if (metrics.valid) {
-        summary_->setText(tr("%1 MHz · %2 · %3 peak %4 dBi at %5° · 3 dB beamwidth %6° · F/B %7 dB · Left/Right changes angle · Space changes cut")
-            .arg(formatDecimal(settings.frequencyMHz), runContext_, componentName(settings.component))
-            .arg(formatDecimal(metrics.peakGain), formatDecimal(metrics.peakAngle),
-                formatDecimal(metrics.beamwidth), formatDecimal(metrics.frontToBack)));
+        auto peakText = tr("%1 peak %2 dBi at %3°")
+            .arg(componentName(settings.component), formatDecimal(metrics.peakGainDb),
+                formatDecimal(metrics.peakAngleDegrees));
+        if (metrics.tiedPeakAnglesDegrees.size() > 1) {
+            QStringList tiedAngles;
+            for (const auto tiedAngle : metrics.tiedPeakAnglesDegrees) {
+                if (!sameFrequency(tiedAngle, metrics.peakAngleDegrees))
+                    tiedAngles.append(QStringLiteral("%1°").arg(formatDecimal(tiedAngle)));
+            }
+            if (!tiedAngles.empty()) peakText += tr("; tied at %1").arg(tiedAngles.join(QStringLiteral(", ")));
+        }
+        const auto beamwidthText = metrics.interpolatedBeamwidthDegrees
+            ? tr("3 dB HPBW %1° interpolated (%2° sampled)")
+                .arg(formatDecimal(*metrics.interpolatedBeamwidthDegrees),
+                    formatDecimal(*metrics.sampledBeamwidthDegrees))
+            : tr("3 dB HPBW unavailable");
+        const auto frontToBackText = metrics.frontToBackDb
+            ? tr("F/B %1 dB").arg(formatDecimal(*metrics.frontToBackDb))
+            : tr("F/B unavailable");
+        summary_->setText(tr("%1 MHz · %2 · %3 · %4 · %5 · Left/Right changes angle · Space changes cut")
+            .arg(formatDecimal(settings.frequencyMHz), runContext_, peakText,
+                beamwidthText, frontToBackText));
     } else {
         summary_->setText(tr("%1 MHz · No %2 samples for this cut · %3")
             .arg(formatDecimal(settings.frequencyMHz), componentName(settings.component), runContext_));
     }
     exportImageButton_->setEnabled(metrics.valid);
     exportDataButton_->setEnabled(metrics.valid);
-    maxGainCutButton_->setEnabled(std::ranges::any_of(result_.radiation, [settings](const auto& sample) {
+    const auto patternIndex = selectedPatternIndex(dataset_);
+    maxGainCutButton_->setEnabled(std::ranges::any_of(result_.radiation, [settings, patternIndex](const auto& sample) {
         const auto gain = analysis::radiationGainDb(sample, settings.component);
         return sameFrequency(sample.frequencyMHz, settings.frequencyMHz)
+            && sample.patternIndex == patternIndex
             && std::isfinite(gain) && gain > -900.0;
     }));
     plot_->setDisplaySettings(settings);
@@ -890,10 +995,11 @@ void RadiationPatternView::refresh()
 }
 void RadiationPatternView::toggleOrientation()
 {
-    orientation_ = orientation_ == CutOrientation::Vertical ? CutOrientation::Horizontal : CutOrientation::Vertical;
-    orientationButton_->setText(orientation_ == CutOrientation::Vertical ? tr("Vertical Cut") : tr("Horizontal Cut"));
-    cutLabel_->setText(orientation_ == CutOrientation::Vertical ? tr("Phi plane") : tr("Theta angle"));
-    refreshSelectors();
+    const auto next = orientation_ == CutOrientation::Vertical
+        ? CutOrientation::Horizontal : CutOrientation::Vertical;
+    if (availableCutPlanes(next).empty()) return;
+    orientation_ = next;
+    refreshCutControls();
 }
 void RadiationPatternView::stepAngle(int offset)
 {
@@ -903,8 +1009,10 @@ void RadiationPatternView::stepAngle(int offset)
 void RadiationPatternView::showMaxGainCut()
 {
     const auto settings = displaySettings(frequency_, component_, scale_, floor_);
-    const auto peak = std::ranges::max_element(result_.radiation, {}, [settings](const auto& sample) {
-        if (!sameFrequency(sample.frequencyMHz, settings.frequencyMHz))
+    const auto patternIndex = selectedPatternIndex(dataset_);
+    const auto peak = std::ranges::max_element(result_.radiation, {}, [settings, patternIndex](const auto& sample) {
+        if (!sameFrequency(sample.frequencyMHz, settings.frequencyMHz)
+            || sample.patternIndex != patternIndex)
             return -std::numeric_limits<double>::infinity();
         const auto gain = analysis::radiationGainDb(sample, settings.component);
         return std::isfinite(gain) && gain > -900.0
@@ -913,12 +1021,16 @@ void RadiationPatternView::showMaxGainCut()
     if (peak == result_.radiation.end()
         || !sameFrequency(peak->frequencyMHz, settings.frequencyMHz)) return;
 
-    orientation_ = CutOrientation::Vertical;
-    orientationButton_->setText(tr("Vertical Cut"));
-    cutLabel_->setText(tr("Phi plane"));
-    refreshSelectors();
-    auto peakPlane = std::fmod(peak->phiDegrees + 360.0, 360.0);
-    if (peakPlane >= 180.0) peakPlane -= 180.0;
+    if (!availableCutPlanes(CutOrientation::Vertical).empty())
+        orientation_ = CutOrientation::Vertical;
+    else if (!availableCutPlanes(CutOrientation::Horizontal).empty())
+        orientation_ = CutOrientation::Horizontal;
+    else
+        return;
+    refreshCutControls();
+    auto peakPlane = orientation_ == CutOrientation::Vertical
+        ? std::fmod(peak->phiDegrees + 360.0, 360.0) : peak->thetaDegrees;
+    if (orientation_ == CutOrientation::Vertical && peakPlane >= 180.0) peakPlane -= 180.0;
     auto nearestIndex = -1;
     auto nearestDistance = std::numeric_limits<double>::infinity();
     for (auto index = 0; index < phi_->count(); ++index) {
@@ -953,6 +1065,7 @@ void RadiationPatternView::exportData()
     QString output = QStringLiteral("frequency_mhz,cut,plane_degrees,angle_degrees,gain_dbi\n");
     for (const auto& sample : result_.radiation) {
         if (!sameFrequency(sample.frequencyMHz, settings.frequencyMHz)) continue;
+        if (sample.patternIndex != selectedPatternIndex(dataset_)) continue;
         auto included = false;
         auto angle = 0.0;
         if (orientation_ == CutOrientation::Horizontal
@@ -992,10 +1105,12 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
     controlsLayout->setContentsMargins(0, 0, 0, 0);
     auto* form = new QFormLayout;
     frequency_ = new QComboBox(this); frequency_->setObjectName(QStringLiteral("radiation3DFrequency")); frequency_->hide();
+    dataset_ = new QComboBox(this); dataset_->setObjectName(QStringLiteral("radiation3DDataset"));
     component_ = new QComboBox(this); component_->setObjectName(QStringLiteral("radiation3DComponent"));
     scale_ = new QComboBox(this); scale_->setObjectName(QStringLiteral("radiation3DScale"));
     floor_ = new QComboBox(this); floor_->setObjectName(QStringLiteral("radiation3DFloor"));
     populateRadiationControls(component_, scale_, floor_);
+    form->addRow(tr("Pattern dataset"), dataset_);
     form->addRow(tr("Component"), component_);
     form->addRow(tr("Scale"), scale_); form->addRow(tr("Dynamic range"), floor_);
     auto* layers = new QHBoxLayout;
@@ -1017,7 +1132,8 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
     layout->addWidget(controls_);
     layout->addWidget(summary_);
     layout->addWidget(surface_, 1);
-    connect(frequency_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
+    connect(frequency_, &QComboBox::currentIndexChanged, this, [this] { refreshDatasets(); settingsChanged(); });
+    connect(dataset_, &QComboBox::currentIndexChanged, this, [this] { refresh(); });
     connect(component_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
     connect(scale_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
     connect(floor_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
@@ -1043,11 +1159,7 @@ void Radiation3DView::setResults(const analysis::AnalysisResult& result, const Q
     const QSignalBlocker blocker(frequency_);
     populateFrequencies(frequency_, availableFrequencies);
     applyDisplaySettings(previous, frequency_, component_, scale_, floor_);
-    std::vector<double> planes;
-    for (const auto& sample : result.radiation) if (std::ranges::find(planes, sample.phiDegrees) == planes.end()) planes.push_back(sample.phiDegrees);
-    radiationControl_->setToolTip(planes.size() < 3
-        ? tr("This run has partial radiation coverage. Use Analyze Requests → Full 3D Pattern for a complete surface.") : QString{});
-    refresh();
+    refreshDatasets();
 }
 void Radiation3DView::setModel(const model::AntennaModel& model)
 { model_ = model; surface_->setModel(model_); }
@@ -1055,14 +1167,14 @@ void Radiation3DView::setSelectedFrequency(double frequencyMHz)
 {
     const QSignalBlocker blocker(frequency_);
     selectFrequency(frequency_, frequencyMHz);
-    refresh();
+    refreshDatasets();
 }
 void Radiation3DView::setDisplaySettings(const analysis::RadiationDisplaySettings& settings)
 {
     updatingSettings_ = true;
     applyDisplaySettings(settings, frequency_, component_, scale_, floor_);
     updatingSettings_ = false;
-    refresh();
+    refreshDatasets();
 }
 void Radiation3DView::setSettingsChangedCallback(SettingsChangedCallback callback)
 { settingsChangedCallback_ = std::move(callback); }
@@ -1079,18 +1191,28 @@ void Radiation3DView::refresh()
     const auto settings = displaySettings(frequency_, component_, scale_, floor_);
     std::vector<analysis::RadiationSample> radiation;
     std::vector<analysis::SegmentCurrentResult> currents;
-    for (const auto& value : result_.radiation) if (value.frequencyMHz == selectedFrequency(frequency_)) radiation.push_back(value);
+    for (const auto& value : result_.radiation)
+        if (sameFrequency(value.frequencyMHz, selectedFrequency(frequency_))
+            && value.patternIndex == selectedPatternIndex(dataset_)) radiation.push_back(value);
     for (const auto& value : result_.currents) if (value.frequencyMHz == selectedFrequency(frequency_)) currents.push_back(value);
     const auto metrics = analysis::radiationMetrics(radiation, settings.component);
     std::vector<double> planes;
     for (const auto& sample : radiation)
         if (std::ranges::find(planes, sample.phiDegrees) == planes.end()) planes.push_back(sample.phiDegrees);
+    radiationControl_->setToolTip(planes.size() < 3
+        ? tr("This dataset has partial radiation coverage. Select a Full grid dataset for a complete surface.")
+        : QString{});
     if (metrics.valid) {
-        auto text = tr("%1 MHz · %2 · %3 peak %4 dBi at θ %5°, φ %6° · F/B %7 dB · %8 phi plane(s)")
+        const auto frontToBackText = metrics.frontToBackDb
+            ? tr("F/B %1 dB").arg(formatDecimal(*metrics.frontToBackDb))
+            : tr("F/B unavailable");
+        auto text = tr("%1 MHz · %2 · %3 peak %4 dBi at θ %5°, φ %6° · %7 · %8 phi plane(s)")
             .arg(formatDecimal(settings.frequencyMHz), runContext_, componentName(settings.component))
             .arg(formatDecimal(metrics.peakGainDb), formatDecimal(metrics.peakThetaDegrees),
-                formatDecimal(metrics.peakPhiDegrees), formatDecimal(metrics.frontToBackDb))
+                formatDecimal(metrics.peakPhiDegrees), frontToBackText)
             .arg(planes.size());
+        if (metrics.tiedPeaks.size() > 1)
+            text += tr(" · %1 tied peak directions").arg(metrics.tiedPeaks.size());
         if (planes.size() < 3)
             text += tr(" · Partial coverage; request Full 3D Pattern for a complete surface.");
         summary_->setText(text);
@@ -1103,6 +1225,11 @@ void Radiation3DView::refresh()
     exportDataButton_->setEnabled(!radiation.empty());
     surface_->setDisplaySettings(settings);
     surface_->setSamples(std::move(radiation)); surface_->setCurrents(std::move(currents));
+}
+void Radiation3DView::refreshDatasets()
+{
+    populatePatternDatasets(dataset_, result_, selectedFrequency(frequency_), true);
+    refresh();
 }
 void Radiation3DView::settingsChanged()
 {
@@ -1127,6 +1254,7 @@ void Radiation3DView::exportData()
         "frequency_mhz,theta_degrees,phi_degrees,selected_gain_dbi,total_gain_dbi,vertical_gain_dbi,horizontal_gain_dbi\n");
     for (const auto& sample : result_.radiation) {
         if (!sameFrequency(sample.frequencyMHz, settings.frequencyMHz)) continue;
+        if (sample.patternIndex != selectedPatternIndex(dataset_)) continue;
         const auto gain = analysis::radiationGainDb(sample, settings.component);
         output += QStringLiteral("%1,%2,%3,%4,%5,%6,%7\n")
             .arg(sample.frequencyMHz, 0, 'g', 15).arg(sample.thetaDegrees, 0, 'g', 15)

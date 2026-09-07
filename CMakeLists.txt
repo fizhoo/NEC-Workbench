@@ -12,6 +12,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_library(necwb_core
     src/analysis/AnalysisResult.cpp
     src/analysis/AverageGainTest.cpp
+    src/analysis/FrequencyPlan.cpp
     src/analysis/NecOutputParser.cpp
     src/analysis/OptimizationObjective.cpp
     src/analysis/SegmentationConvergence.cpp
@@ -31,6 +32,7 @@ add_library(necwb_core
     src/nec/NecModelConverter.cpp
     src/nec/NecParser.cpp
     src/nec/NecSetupConverter.cpp
+    src/nec/NecSymbolEditor.cpp
     src/nec/NecSymbolResolver.cpp
     src/nec/NecWriter.cpp
 )
@@ -103,6 +105,10 @@ if(NECWB_BUILD_GUI)
         src/ui/geometry/WirePropertiesDialog.h
         src/ui/optimization/OptimizationWorkspace.cpp
         src/ui/optimization/OptimizationWorkspace.h
+        src/ui/optimization/CandidateEvaluator.cpp
+        src/ui/optimization/CandidateEvaluator.h
+        src/ui/model/ParameterEditor.cpp
+        src/ui/model/ParameterEditor.h
         src/ui/setup/SetupEditor.cpp
         src/ui/setup/SetupEditor.h
         src/ui/setup/LoadNetworkEditor.cpp
@@ -138,6 +144,8 @@ if(NECWB_BUILD_TESTS)
             src/ui/DetachablePanel.h
             src/ui/analysis/AnalysisRunStore.cpp
             src/ui/analysis/AnalysisRunStore.h
+            src/ui/analysis/AnalysisRequestEditor.cpp
+            src/ui/analysis/AnalysisRequestEditor.h
             src/ui/analysis/AverageGainResultsView.cpp
             src/ui/analysis/AverageGainResultsView.h
             src/ui/analysis/ConvergenceWorkspace.cpp
@@ -166,6 +174,10 @@ if(NECWB_BUILD_TESTS)
             src/ui/geometry/AutoSegmentationDialog.h
             src/ui/optimization/OptimizationWorkspace.cpp
             src/ui/optimization/OptimizationWorkspace.h
+            src/ui/optimization/CandidateEvaluator.cpp
+            src/ui/optimization/CandidateEvaluator.h
+            src/ui/model/ParameterEditor.cpp
+            src/ui/model/ParameterEditor.h
             src/ui/setup/LoadNetworkEditor.cpp
             src/ui/setup/LoadNetworkEditor.h
             src/ui/setup/SetupEditor.cpp

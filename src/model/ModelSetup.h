@@ -56,6 +56,13 @@ struct ExecutionRequest {
     auto operator==(const ExecutionRequest&) const -> bool = default;
 };
 
+struct ReferenceImpedanceDefinition {
+    double ohms{50.0};
+    std::size_t sourceLine{};
+
+    auto operator==(const ReferenceImpedanceDefinition&) const -> bool = default;
+};
+
 struct RadiationPatternRequest {
     int thetaCount{91};
     int phiCount{1};
@@ -99,11 +106,14 @@ struct ModelSetup {
     std::optional<FrequencyDefinition> frequency;
     std::optional<GroundDefinition> ground;
     std::optional<ExecutionRequest> executionRequest;
-    std::optional<RadiationPatternRequest> radiationPattern;
+    std::optional<ReferenceImpedanceDefinition> referenceImpedance;
+    std::vector<RadiationPatternRequest> radiationPatterns;
     std::vector<Excitation> excitations;
     std::vector<LoadDefinition> loads;
     std::vector<TransmissionLineDefinition> transmissionLines;
 };
+
+[[nodiscard]] auto referenceImpedanceOhms(const ModelSetup& setup) -> double;
 
 [[nodiscard]] auto frequencyEndMHz(const FrequencyDefinition& frequency) -> double;
 [[nodiscard]] auto frequencyPointCount(int steppingMode, double startMHz,

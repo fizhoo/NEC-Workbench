@@ -5,6 +5,7 @@
 #include <QWidget>
 
 class QLabel;
+class QComboBox;
 
 namespace necwb::ui {
 
@@ -19,6 +20,8 @@ public:
 
 private:
     QLabel* summary_{};
+    QComboBox* impedanceScaleControl_{};
+    QComboBox* swrScaleControl_{};
     SweepPlotWidget* impedancePlot_{};
     SweepPlotWidget* swrPlot_{};
 };

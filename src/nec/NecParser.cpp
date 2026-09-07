@@ -35,6 +35,8 @@ auto classify(std::string_view mnemonic) -> NecCardKind
         {"XQ", NecCardKind::Execute},
         {"TL", NecCardKind::TransmissionLine},
         {"NT", NecCardKind::Network},
+        {"Z0", NecCardKind::ReferenceImpedance},
+        {"ZO", NecCardKind::ReferenceImpedance},
         {"EN", NecCardKind::End},
     };
 

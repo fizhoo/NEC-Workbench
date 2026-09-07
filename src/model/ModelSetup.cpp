@@ -8,6 +8,11 @@
 
 namespace necwb::model {
 
+auto referenceImpedanceOhms(const ModelSetup& setup) -> double
+{
+    return setup.referenceImpedance ? setup.referenceImpedance->ohms : 50.0;
+}
+
 auto frequencyEndMHz(const FrequencyDefinition& frequency) -> double
 {
     if (frequency.count <= 1) {

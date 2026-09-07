@@ -13,7 +13,6 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QSignalBlocker>
-#include <QSplitter>
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -41,20 +40,13 @@ auto createDecimalControl(QWidget* parent) -> QDoubleSpinBox*
 SetupEditor::SetupEditor(QWidget* parent)
     : QWidget(parent)
 {
-    auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(12, 12, 12, 12);
-    layout->setSpacing(10);
+    hide();
 
-    auto* heading = new QLabel(tr("Model Setup"), this);
-    auto headingFont = heading->font();
-    headingFont.setBold(true);
-    headingFont.setPointSize(headingFont.pointSize() + 2);
-    heading->setFont(headingFont);
-    auto* description = new QLabel(
-        tr("Configure frequency, ground, and voltage sources without editing raw NEC cards."), this);
-    description->setWordWrap(true);
-
-    auto* frequencyGroup = new QGroupBox(tr("Frequency (FR)"), this);
+    frequencyPage_ = new QWidget(this);
+    frequencyPage_->setObjectName(QStringLiteral("frequencyEditorPage"));
+    auto* frequencyPageLayout = new QVBoxLayout(frequencyPage_);
+    frequencyPageLayout->setContentsMargins(12, 12, 12, 12);
+    auto* frequencyGroup = new QGroupBox(tr("Frequency (FR)"), frequencyPage_);
     auto* frequencyLayout = new QFormLayout(frequencyGroup);
     frequencySweepControl_ = new QCheckBox(tr("Enable frequency sweep"), frequencyGroup);
     frequencyModeControl_ = new QComboBox(frequencyGroup);
@@ -96,7 +88,11 @@ SetupEditor::SetupEditor(QWidget* parent)
     frequencyButtons->addStretch();
     frequencyLayout->addRow(frequencyButtons);
 
-    auto* groundGroup = new QGroupBox(tr("Ground Environment (GN / GE)"), this);
+    environmentPage_ = new QWidget(this);
+    environmentPage_->setObjectName(QStringLiteral("environmentEditorPage"));
+    auto* environmentPageLayout = new QVBoxLayout(environmentPage_);
+    environmentPageLayout->setContentsMargins(12, 12, 12, 12);
+    auto* groundGroup = new QGroupBox(tr("Ground Environment (GN / GE)"), environmentPage_);
     auto* groundLayout = new QFormLayout(groundGroup);
     groundTypeControl_ = new QComboBox(groundGroup);
     groundTypeControl_->addItem(tr("Free space / no ground"), static_cast<int>(model::GroundType::FreeSpace));
@@ -123,7 +119,11 @@ SetupEditor::SetupEditor(QWidget* parent)
     groundLayout->addRow({}, connectGroundEndsControl_);
     groundLayout->addRow(applyGroundButton);
 
-    auto* excitationGroup = new QGroupBox(tr("Voltage Sources (EX 0)"), this);
+    sourcesPage_ = new QWidget(this);
+    sourcesPage_->setObjectName(QStringLiteral("sourcesEditorPage"));
+    auto* sourcesPageLayout = new QVBoxLayout(sourcesPage_);
+    sourcesPageLayout->setContentsMargins(12, 12, 12, 12);
+    auto* excitationGroup = new QGroupBox(tr("Voltage Sources (EX 0)"), sourcesPage_);
     auto* excitationLayout = new QVBoxLayout(excitationGroup);
     excitationTable_ = new QTableWidget(excitationGroup);
     excitationTable_->setColumnCount(4);
@@ -163,17 +163,11 @@ SetupEditor::SetupEditor(QWidget* parent)
     excitationLayout->addLayout(excitationForm);
     excitationLayout->addLayout(excitationButtons);
 
-    layout->addWidget(heading);
-    layout->addWidget(description);
-    auto* compactSetup = new QSplitter(Qt::Horizontal, this);
-    compactSetup->setObjectName(QStringLiteral("modelSetupCompactSplitter"));
-    compactSetup->setChildrenCollapsible(false);
-    compactSetup->addWidget(frequencyGroup);
-    compactSetup->addWidget(groundGroup);
-    compactSetup->setStretchFactor(0, 1);
-    compactSetup->setStretchFactor(1, 1);
-    layout->addWidget(compactSetup);
-    layout->addWidget(excitationGroup, 1);
+    frequencyPageLayout->addWidget(frequencyGroup);
+    frequencyPageLayout->addStretch();
+    environmentPageLayout->addWidget(groundGroup);
+    environmentPageLayout->addStretch();
+    sourcesPageLayout->addWidget(excitationGroup, 1);
 
     connect(frequencySweepControl_, &QCheckBox::toggled, this, [this] { updateFrequencyControls(); });
     connect(frequencyModeControl_, &QComboBox::currentIndexChanged, this, [this] { updateFrequencyControls(); });
@@ -269,6 +263,21 @@ SetupEditor::SetupEditor(QWidget* parent)
     updateFrequencyControls();
     updateGroundControls();
     updateExcitationActions();
+}
+
+auto SetupEditor::frequencyPage() const -> QWidget*
+{
+    return frequencyPage_;
+}
+
+auto SetupEditor::sourcesPage() const -> QWidget*
+{
+    return sourcesPage_;
+}
+
+auto SetupEditor::environmentPage() const -> QWidget*
+{
+    return environmentPage_;
 }
 
 void SetupEditor::selectExcitation(std::size_t sourceLine)

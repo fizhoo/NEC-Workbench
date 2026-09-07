@@ -9,7 +9,6 @@
 #include <QIntValidator>
 #include <QLabel>
 #include <QLineEdit>
-#include <QListWidget>
 #include <QHBoxLayout>
 #include <QPainter>
 #include <QPushButton>
@@ -19,6 +18,8 @@
 #include <QStyleOptionComboBox>
 #include <QTableWidget>
 #include <QTimer>
+#include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -31,8 +32,10 @@ namespace {
 
 constexpr auto SourceLineRole = Qt::UserRole;
 constexpr auto CardIndexRole = Qt::UserRole + 1;
+constexpr auto FamilyIndexRole = Qt::UserRole + 2;
 
 struct CardFamily {
+    QString category;
     QString title;
     QString description;
     std::vector<nec::NecCardKind> kinds;
@@ -43,46 +46,57 @@ struct CardFamily {
 
 const auto& families()
 {
-    static const std::array<CardFamily, 8> values{{
-        {QObject::tr("Sources (EX)"), QObject::tr("Voltage and other excitation cards."),
-            {nec::NecCardKind::Excitation},
-            {QObject::tr("Type"), QObject::tr("Wire Tag"), QObject::tr("Segment"), QObject::tr("I4"),
-                QObject::tr("Real"), QObject::tr("Imaginary"), QObject::tr("F7"), QObject::tr("F8"),
-                QObject::tr("F9"), QObject::tr("F10")}, QStringLiteral("EX"), false},
-        {QObject::tr("Frequency (FR)"), QObject::tr("Single-frequency and sweep definitions."),
-            {nec::NecCardKind::Frequency},
-            {QObject::tr("Mode"), QObject::tr("Count"), QObject::tr("I3"), QObject::tr("I4"),
-                QObject::tr("Start MHz"), QObject::tr("Step/Ratio"), QObject::tr("F3"), QObject::tr("F4")},
-            QStringLiteral("FR"), true},
-        {QObject::tr("Ground (GN/GE)"), QObject::tr("Ground environment and geometry-end ground flag."),
+    static const std::array<CardFamily, 9> values{{
+        {QObject::tr("Geometry"), QObject::tr("GS — Scale"),
+            QObject::tr("Convert geometry coordinates and wire radii to meters for NEC."),
+            {nec::NecCardKind::GeometryScale},
+            {QObject::tr("I1 (unused)"), QObject::tr("I2 (unused)"),
+                QObject::tr("Scale to meters")}, QStringLiteral("GS"), true},
+        {QObject::tr("Environment"), QObject::tr("GN / GE — Ground"),
+            QObject::tr("Ground environment and geometry-end ground flag."),
             {nec::NecCardKind::Ground, nec::NecCardKind::GeometryEnd},
             {QObject::tr("Type/Flag"), QObject::tr("I2"), QObject::tr("I3"), QObject::tr("I4"),
                 QObject::tr("Permittivity"), QObject::tr("Conductivity"), QObject::tr("F3"),
                 QObject::tr("F4"), QObject::tr("F5"), QObject::tr("F6")}, QStringLiteral("GN"), true},
-        {QObject::tr("Loads (LD)"), QObject::tr("Segment or wire loading definitions."),
+        {QObject::tr("Sources"), QObject::tr("EX — Excitation"),
+            QObject::tr("Voltage and other excitation cards."),
+            {nec::NecCardKind::Excitation},
+            {QObject::tr("Type"), QObject::tr("Wire Tag"), QObject::tr("Segment"), QObject::tr("I4"),
+                QObject::tr("Real"), QObject::tr("Imaginary"), QObject::tr("F7"), QObject::tr("F8"),
+                QObject::tr("F9"), QObject::tr("F10")}, QStringLiteral("EX"), false},
+        {QObject::tr("Loads & Networks"), QObject::tr("LD — Loads"),
+            QObject::tr("Segment or wire loading definitions."),
             {nec::NecCardKind::Load},
             {QObject::tr("Type"), QObject::tr("Wire Tag"), QObject::tr("First Segment"),
                 QObject::tr("Last Segment"), QObject::tr("Value 1"), QObject::tr("Value 2"),
                 QObject::tr("Value 3")}, QStringLiteral("LD"), false},
-        {QObject::tr("Transmission Lines (TL)"), QObject::tr("Two-port transmission-line connections."),
+        {QObject::tr("Loads & Networks"), QObject::tr("TL — Transmission Lines"),
+            QObject::tr("Two-port transmission-line connections."),
             {nec::NecCardKind::TransmissionLine},
             {QObject::tr("Wire 1"), QObject::tr("Segment 1"), QObject::tr("Wire 2"),
                 QObject::tr("Segment 2"), QObject::tr("Z0"), QObject::tr("Length"),
                 QObject::tr("Shunt R1"), QObject::tr("Shunt X1"), QObject::tr("Shunt R2"),
                 QObject::tr("Shunt X2")}, QStringLiteral("TL"), false},
-        {QObject::tr("Radiation Requests (RP)"), QObject::tr("Far-field sampling requests."),
+        {QObject::tr("Analysis & Requests"), QObject::tr("FR — Frequency"),
+            QObject::tr("Single-frequency and sweep definitions."),
+            {nec::NecCardKind::Frequency},
+            {QObject::tr("Mode"), QObject::tr("Count"), QObject::tr("I3"), QObject::tr("I4"),
+                QObject::tr("Start MHz"), QObject::tr("Step/Ratio"), QObject::tr("F3"), QObject::tr("F4")},
+            QStringLiteral("FR"), true},
+        {QObject::tr("Analysis & Requests"), QObject::tr("RP — Radiation Pattern"),
+            QObject::tr("Far-field sampling requests."),
             {nec::NecCardKind::RadiationPattern},
             {QObject::tr("Mode"), QObject::tr("Theta Count"), QObject::tr("Phi Count"),
                 QObject::tr("Format"), QObject::tr("Theta Start"), QObject::tr("Phi Start"),
                 QObject::tr("Theta Step"), QObject::tr("Phi Step"), QObject::tr("Distance"),
                 QObject::tr("Normalization")}, QStringLiteral("RP"), false},
-        {QObject::tr("Execution (XQ)"), QObject::tr("Calculation execution requests."),
+        {QObject::tr("Analysis & Requests"), QObject::tr("Z0 / ZO — Reference Impedance"),
+            QObject::tr("xnec2c-compatible SWR reference impedance; omitted from standard nec2c solver input."),
+            {nec::NecCardKind::ReferenceImpedance}, {QObject::tr("Reference Ohms")},
+            QStringLiteral("Z0"), true},
+        {QObject::tr("Program Control"), QObject::tr("XQ — Execute"),
+            QObject::tr("Calculation execution requests."),
             {nec::NecCardKind::Execute}, {QObject::tr("Option")}, QStringLiteral("XQ"), true},
-        {QObject::tr("Geometry Scale (GS)"),
-            QObject::tr("Convert geometry coordinates and wire radii to meters for NEC."),
-            {nec::NecCardKind::GeometryScale},
-            {QObject::tr("I1 (unused)"), QObject::tr("I2 (unused)"),
-                QObject::tr("Scale to meters")}, QStringLiteral("GS"), true},
     }};
     return values;
 }
@@ -101,6 +115,8 @@ struct FieldChoice {
 
 auto fieldType(const QString& mnemonic, int fieldIndex) -> FieldType
 {
+    if (mnemonic == QStringLiteral("Z0") || mnemonic == QStringLiteral("ZO"))
+        return FieldType::Number;
     if (mnemonic == QStringLiteral("GS"))
         return fieldIndex < 2 ? FieldType::Integer : FieldType::Number;
     if (mnemonic == QStringLiteral("GE") || mnemonic == QStringLiteral("XQ"))
@@ -161,6 +177,7 @@ auto requiredFieldCount(const QString& mnemonic, const QStringList& fields) -> i
     if (mnemonic == QStringLiteral("EX") || mnemonic == QStringLiteral("FR")) return 6;
     if (mnemonic == QStringLiteral("GS")) return 3;
     if (mnemonic == QStringLiteral("GE") || mnemonic == QStringLiteral("XQ")) return 1;
+    if (mnemonic == QStringLiteral("Z0") || mnemonic == QStringLiteral("ZO")) return 1;
     if (mnemonic == QStringLiteral("LD")) return 7;
     if (mnemonic == QStringLiteral("TL")) return 10;
     if (mnemonic == QStringLiteral("RP")) return 8;
@@ -272,8 +289,10 @@ StructuredCardEditor::StructuredCardEditor(QWidget* parent) : QWidget(parent)
     actions->addWidget(deleteButton_);
     actions->addStretch();
     auto* splitter = new QSplitter(Qt::Horizontal, this);
-    families_ = new QListWidget(splitter);
+    families_ = new QTreeWidget(splitter);
     families_->setObjectName(QStringLiteral("structuredCardFamilies"));
+    families_->setHeaderHidden(true);
+    families_->setIndentation(14);
     families_->setMinimumWidth(190);
     families_->setMaximumWidth(280);
     table_ = new QTableWidget(splitter);
@@ -294,7 +313,15 @@ StructuredCardEditor::StructuredCardEditor(QWidget* parent) : QWidget(parent)
     layout->addLayout(actions);
     layout->addWidget(splitter, 1);
 
-    connect(families_, &QListWidget::currentRowChanged, this, [this] { refreshTable(); });
+    connect(families_, &QTreeWidget::currentItemChanged, this,
+        [this](QTreeWidgetItem* current) {
+            if (current != nullptr && current->childCount() > 0
+                && !current->data(0, FamilyIndexRole).isValid()) {
+                families_->setCurrentItem(current->child(0));
+                return;
+            }
+            refreshTable();
+        });
     connect(table_, &QTableWidget::itemSelectionChanged, this, [this] {
         if (updating_ || table_->currentRow() < 0) return;
         emit cardSelected(table_->item(table_->currentRow(), 0)->data(SourceLineRole).toULongLong());
@@ -304,7 +331,7 @@ StructuredCardEditor::StructuredCardEditor(QWidget* parent) : QWidget(parent)
         if (!updating_) commitCell(item);
     });
     connect(addButton_, &QPushButton::clicked, this, [this] {
-        const auto familyIndex = families_->currentRow();
+        const auto familyIndex = currentFamilyIndex();
         if (familyIndex < 0) return;
         const auto cardText = defaultCard(familyIndex);
         if (cardText.isEmpty()) return;
@@ -333,7 +360,7 @@ auto StructuredCardEditor::selectCard(std::size_t sourceLine) -> bool
         return belongsTo(*card, candidate);
     });
     if (family == families().end()) return false;
-    families_->setCurrentRow(static_cast<int>(std::distance(families().begin(), family)));
+    families_->setCurrentItem(familyItem(static_cast<int>(std::distance(families().begin(), family))));
     for (auto row = 0; row < table_->rowCount(); ++row) {
         const auto* item = table_->item(row, 0);
         if (item != nullptr && item->data(SourceLineRole).toULongLong() == sourceLine) {
@@ -347,22 +374,40 @@ auto StructuredCardEditor::selectCard(std::size_t sourceLine) -> bool
 
 void StructuredCardEditor::refreshFamilies()
 {
-    const auto previous = families_->currentRow();
+    const auto previous = currentFamilyIndex();
     const QSignalBlocker blocker(families_);
     families_->clear();
-    for (const auto& family : families()) {
+    for (std::size_t index = 0; index < families().size(); ++index) {
+        const auto& family = families()[index];
         const auto count = std::ranges::count_if(document_.cards(), [&family](const auto& card) {
             return belongsTo(card, family);
         });
-        families_->addItem(QStringLiteral("%1 (%2)").arg(family.title).arg(count));
+        QTreeWidgetItem* category{};
+        for (auto top = 0; top < families_->topLevelItemCount(); ++top) {
+            if (families_->topLevelItem(top)->text(0) == family.category) {
+                category = families_->topLevelItem(top);
+                break;
+            }
+        }
+        if (category == nullptr) category = new QTreeWidgetItem(families_, {family.category});
+        auto* item = new QTreeWidgetItem(category,
+            {QStringLiteral("%1 (%2)").arg(family.title).arg(count)});
+        item->setData(0, FamilyIndexRole, static_cast<int>(index));
     }
-    families_->setCurrentRow(previous >= 0 ? std::min(previous, families_->count()-1) : 0);
+    families_->expandAll();
+    families_->setCurrentItem(familyItem(previous >= 0 ? previous : 0));
 }
 
 void StructuredCardEditor::refreshTable()
 {
-    const auto familyIndex = families_->currentRow();
-    if (familyIndex < 0) return;
+    const auto familyIndex = currentFamilyIndex();
+    if (familyIndex < 0) {
+        table_->clear();
+        table_->setRowCount(0);
+        description_->setText(tr("Choose a NEC card type."));
+        updateActions();
+        return;
+    }
     const auto& family = families()[static_cast<std::size_t>(familyIndex)];
     updating_ = true;
     const QSignalBlocker blocker(table_);
@@ -408,7 +453,7 @@ void StructuredCardEditor::refreshTable()
 
 void StructuredCardEditor::updateActions()
 {
-    const auto familyIndex = families_->currentRow();
+    const auto familyIndex = currentFamilyIndex();
     auto addEnabled = familyIndex >= 0;
     QString disabledReason;
     if (familyIndex >= 0) {
@@ -535,7 +580,26 @@ auto StructuredCardEditor::defaultCard(int familyIndex) const -> QString
     }
     if (family.mnemonic == QStringLiteral("RP")) return QStringLiteral("RP 0 37 1 1000 0 0 5 0 0 0");
     if (family.mnemonic == QStringLiteral("XQ")) return QStringLiteral("XQ 0");
+    if (family.mnemonic == QStringLiteral("Z0")) return QStringLiteral("Z0 50");
     return {};
+}
+
+auto StructuredCardEditor::currentFamilyIndex() const -> int
+{
+    const auto* item = families_->currentItem();
+    return item == nullptr || !item->data(0, FamilyIndexRole).isValid()
+        ? -1 : item->data(0, FamilyIndexRole).toInt();
+}
+
+auto StructuredCardEditor::familyItem(int familyIndex) const -> QTreeWidgetItem*
+{
+    QTreeWidgetItemIterator item(families_);
+    while (*item != nullptr) {
+        if ((*item)->data(0, FamilyIndexRole).isValid()
+            && (*item)->data(0, FamilyIndexRole).toInt() == familyIndex) return *item;
+        ++item;
+    }
+    return nullptr;
 }
 
 }

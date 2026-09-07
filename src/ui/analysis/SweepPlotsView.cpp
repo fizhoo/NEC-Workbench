@@ -2,12 +2,15 @@
 
 #include "ui/DisplayFormat.h"
 
+#include <QComboBox>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPalette>
 #include <QSplitter>
+#include <QSettings>
 #include <QToolTip>
 #include <QVBoxLayout>
 
@@ -25,6 +28,13 @@ struct PlotSeries {
     QString name;
     QColor color;
     std::vector<QPointF> points;
+};
+
+enum class ScaleMode {
+    AutoLinear,
+    Logarithmic,
+    LimitThree,
+    LimitFive,
 };
 
 auto formatAxisValue(double value) -> QString
@@ -69,6 +79,15 @@ public:
     void setSelectedFrequency(double frequencyMHz)
     {
         selectedFrequencyMHz_ = frequencyMHz;
+        update();
+    }
+
+    void setScaleMode(ScaleMode mode)
+    {
+        scaleMode_ = mode;
+        hoveredSeries_ = -1;
+        hoveredPoint_ = -1;
+        setProperty("scaleMode", static_cast<int>(mode));
         update();
     }
 
@@ -118,11 +137,14 @@ protected:
         }
         for (auto tick = 0; tick <= yTickCount_; ++tick) {
             const auto fraction = static_cast<double>(tick) / yTickCount_;
-            const auto yValue = yMinimum_ + tick * yTickStep_;
+            const auto transformedValue = yMinimum_ + tick * yTickStep_;
+            const auto yValue = inverseY(transformedValue);
             const auto y = plotRect_.bottom() - fraction * plotRect_.height();
             painter.drawText(QRectF(34, y - 10, plotRect_.left() - 46, 20),
                 Qt::AlignRight | Qt::AlignVCenter,
-                QString::number(static_cast<qlonglong>(std::llround(yValue))));
+                scaleMode_ == ScaleMode::Logarithmic
+                    ? formatAxisValue(yValue)
+                    : QString::number(static_cast<qlonglong>(std::llround(yValue))));
         }
         painter.drawText(QRectF(plotRect_.left(), height() - 25, plotRect_.width(), 20),
             Qt::AlignCenter, tr("Frequency (MHz)"));
@@ -157,6 +179,8 @@ protected:
                     continue;
                 }
                 const auto screenPoint = mapPoint(point);
+                const auto clippedHigh = transformedY(point.y()) > yMaximum_;
+                const auto clippedLow = transformedY(point.y()) < yMinimum_;
                 if (!started) {
                     path.moveTo(screenPoint);
                     started = true;
@@ -165,6 +189,14 @@ protected:
                 }
                 const auto radius = seriesIndex == hoveredSeries_ && pointIndex == hoveredPoint_ ? 5.0 : 3.0;
                 painter.drawEllipse(screenPoint, radius, radius);
+                if (clippedHigh || clippedLow) {
+                    QPolygonF marker;
+                    const auto direction = clippedHigh ? 1.0 : -1.0;
+                    marker << QPointF(screenPoint.x(), screenPoint.y())
+                           << QPointF(screenPoint.x() - 5, screenPoint.y() + direction * 7)
+                           << QPointF(screenPoint.x() + 5, screenPoint.y() + direction * 7);
+                    painter.drawPolygon(marker);
+                }
             }
             painter.setBrush(Qt::NoBrush);
             painter.drawPath(path);
@@ -242,8 +274,10 @@ private:
                 }
                 xMinimum_ = std::min(xMinimum_, point.x());
                 xMaximum_ = std::max(xMaximum_, point.x());
-                yMinimum_ = std::min(yMinimum_, point.y());
-                yMaximum_ = std::max(yMaximum_, point.y());
+                const auto transformed = transformedY(point.y());
+                if (!std::isfinite(transformed)) continue;
+                yMinimum_ = std::min(yMinimum_, transformed);
+                yMaximum_ = std::max(yMaximum_, transformed);
             }
         }
         boundsValid_ = std::isfinite(xMinimum_) && std::isfinite(yMinimum_);
@@ -251,27 +285,45 @@ private:
             return false;
         }
         if (includeZero_) {
-            yMinimum_ = std::min(0.0, yMinimum_);
-            yMaximum_ = std::max(0.0, yMaximum_);
+            yMinimum_ = std::min(transformedY(0.0), yMinimum_);
+            yMaximum_ = std::max(transformedY(0.0), yMaximum_);
         }
-        yMinimum_ = std::max(yMinimum_, minimumY_);
+        const auto transformedMinimum = transformedY(minimumY_);
+        yMinimum_ = std::max(yMinimum_, transformedMinimum);
         if (xMinimum_ == xMaximum_) {
             const auto padding = std::max(0.1, std::abs(xMinimum_) * 0.01);
             xMinimum_ -= padding;
             xMaximum_ += padding;
         }
+        if (scaleMode_ == ScaleMode::LimitThree || scaleMode_ == ScaleMode::LimitFive) {
+            yMinimum_ = transformedMinimum;
+            yMaximum_ = scaleMode_ == ScaleMode::LimitThree ? 3.0 : 5.0;
+            yTickStep_ = 1.0;
+            yTickCount_ = static_cast<int>(yMaximum_ - yMinimum_);
+            setPlotProperties();
+            return true;
+        }
         if (yMinimum_ == yMaximum_) {
             const auto padding = std::max(0.1, std::abs(yMinimum_) * 0.05);
-            yMinimum_ = std::max(minimumY_, yMinimum_ - padding);
+            yMinimum_ = std::max(transformedMinimum, yMinimum_ - padding);
             yMaximum_ += padding;
         } else {
             const auto padding = (yMaximum_ - yMinimum_) * 0.08;
-            yMinimum_ = std::max(minimumY_, yMinimum_ - padding);
+            yMinimum_ = std::max(transformedMinimum, yMinimum_ - padding);
             yMaximum_ += padding;
+        }
+        if (scaleMode_ == ScaleMode::Logarithmic) {
+            yMinimum_ = std::floor(yMinimum_);
+            yMaximum_ = std::ceil(yMaximum_);
+            if (yMaximum_ <= yMinimum_) yMaximum_ = yMinimum_ + 1.0;
+            yTickCount_ = 5;
+            yTickStep_ = (yMaximum_ - yMinimum_) / yTickCount_;
+            setPlotProperties();
+            return true;
         }
         yTickStep_ = wholeNumberTickStep(yMaximum_ - yMinimum_);
         if (std::isfinite(minimumY_)) {
-            yMinimum_ = minimumY_;
+            yMinimum_ = transformedMinimum;
             yTickCount_ = std::max(1, static_cast<int>(std::ceil(
                 (yMaximum_ - yMinimum_) / yTickStep_)));
             yMaximum_ = yMinimum_ + yTickCount_ * yTickStep_;
@@ -282,16 +334,38 @@ private:
             yTickCount_ = std::max(1, static_cast<int>(std::llround(
                 (yMaximum_ - yMinimum_) / yTickStep_)));
         }
+        setPlotProperties();
+        return true;
+    }
+
+    void setPlotProperties()
+    {
         setProperty("yTickStep", yTickStep_);
         setProperty("plotLeftMargin", plotRect_.left());
-        return true;
+        setProperty("yMinimum", inverseY(yMinimum_));
+        setProperty("yMaximum", inverseY(yMaximum_));
+    }
+
+    [[nodiscard]] auto transformedY(double value) const -> double
+    {
+        if (scaleMode_ != ScaleMode::Logarithmic) return value;
+        if (includeZero_) return std::copysign(std::log10(1.0 + std::abs(value)), value);
+        return value > 0.0 ? std::log10(value) : std::numeric_limits<double>::quiet_NaN();
+    }
+
+    [[nodiscard]] auto inverseY(double value) const -> double
+    {
+        if (scaleMode_ != ScaleMode::Logarithmic) return value;
+        if (includeZero_) return std::copysign(std::pow(10.0, std::abs(value)) - 1.0, value);
+        return std::pow(10.0, value);
     }
 
     [[nodiscard]] auto mapPoint(const QPointF& point) const -> QPointF
     {
         return {
             plotRect_.left() + (point.x() - xMinimum_) / (xMaximum_ - xMinimum_) * plotRect_.width(),
-            plotRect_.bottom() - (point.y() - yMinimum_) / (yMaximum_ - yMinimum_) * plotRect_.height(),
+            plotRect_.bottom() - (std::clamp(transformedY(point.y()), yMinimum_, yMaximum_)
+                - yMinimum_) / (yMaximum_ - yMinimum_) * plotRect_.height(),
         };
     }
 
@@ -307,6 +381,7 @@ private:
     double minimumY_{-std::numeric_limits<double>::infinity()};
     double selectedFrequencyMHz_{std::numeric_limits<double>::quiet_NaN()};
     bool includeZero_{};
+    ScaleMode scaleMode_{ScaleMode::AutoLinear};
     bool boundsValid_{};
     int yTickCount_{1};
     int hoveredSeries_{-1};
@@ -326,17 +401,67 @@ SweepPlotsView::SweepPlotsView(QWidget* parent)
     summary_ = new QLabel(tr("Run an analysis to populate sweep plots."), this);
     summary_->setWordWrap(true);
     auto* splitter = new QSplitter(Qt::Vertical, this);
-    impedancePlot_ = new SweepPlotWidget(splitter);
+    auto* impedancePanel = new QWidget(splitter);
+    auto* impedanceLayout = new QVBoxLayout(impedancePanel);
+    impedanceLayout->setContentsMargins(0, 0, 0, 0);
+    auto* impedanceControls = new QHBoxLayout;
+    impedanceControls->addStretch();
+    impedanceControls->addWidget(new QLabel(tr("Scale:"), impedancePanel));
+    impedanceScaleControl_ = new QComboBox(impedancePanel);
+    impedanceScaleControl_->setObjectName(QStringLiteral("impedanceScaleControl"));
+    impedanceScaleControl_->addItem(tr("Auto Linear"), static_cast<int>(ScaleMode::AutoLinear));
+    impedanceScaleControl_->addItem(tr("Symmetric Log"), static_cast<int>(ScaleMode::Logarithmic));
+    impedanceControls->addWidget(impedanceScaleControl_);
+    impedanceLayout->addLayout(impedanceControls);
+    impedancePlot_ = new SweepPlotWidget(impedancePanel);
     impedancePlot_->setObjectName(QStringLiteral("impedanceSweepPlot"));
-    swrPlot_ = new SweepPlotWidget(splitter);
+    impedanceLayout->addWidget(impedancePlot_, 1);
+
+    auto* swrPanel = new QWidget(splitter);
+    auto* swrLayout = new QVBoxLayout(swrPanel);
+    swrLayout->setContentsMargins(0, 0, 0, 0);
+    auto* swrControls = new QHBoxLayout;
+    swrControls->addStretch();
+    swrControls->addWidget(new QLabel(tr("Scale:"), swrPanel));
+    swrScaleControl_ = new QComboBox(swrPanel);
+    swrScaleControl_->setObjectName(QStringLiteral("swrScaleControl"));
+    swrScaleControl_->addItem(tr("Auto Linear"), static_cast<int>(ScaleMode::AutoLinear));
+    swrScaleControl_->addItem(tr("Logarithmic"), static_cast<int>(ScaleMode::Logarithmic));
+    swrScaleControl_->addItem(tr("Limit 1–3"), static_cast<int>(ScaleMode::LimitThree));
+    swrScaleControl_->addItem(tr("Limit 1–5"), static_cast<int>(ScaleMode::LimitFive));
+    swrControls->addWidget(swrScaleControl_);
+    swrLayout->addLayout(swrControls);
+    swrPlot_ = new SweepPlotWidget(swrPanel);
     swrPlot_->setObjectName(QStringLiteral("swrSweepPlot"));
-    splitter->addWidget(impedancePlot_);
-    splitter->addWidget(swrPlot_);
+    swrLayout->addWidget(swrPlot_, 1);
+    splitter->addWidget(impedancePanel);
+    splitter->addWidget(swrPanel);
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 1);
     layout->addWidget(heading);
     layout->addWidget(summary_);
     layout->addWidget(splitter, 1);
+
+    QSettings settings;
+    impedanceScaleControl_->setCurrentIndex(std::clamp(
+        settings.value(QStringLiteral("results/impedanceScaleMode"), 0).toInt(), 0, 1));
+    swrScaleControl_->setCurrentIndex(std::clamp(
+        settings.value(QStringLiteral("results/swrScaleMode"), 0).toInt(), 0, 3));
+    const auto applyImpedanceScale = [this](int index) {
+        const auto mode = static_cast<ScaleMode>(impedanceScaleControl_->itemData(index).toInt());
+        impedancePlot_->setScaleMode(mode);
+        QSettings{}.setValue(QStringLiteral("results/impedanceScaleMode"), index);
+    };
+    const auto applySwrScale = [this](int index) {
+        const auto mode = static_cast<ScaleMode>(swrScaleControl_->itemData(index).toInt());
+        swrPlot_->setScaleMode(mode);
+        QSettings{}.setValue(QStringLiteral("results/swrScaleMode"), index);
+    };
+    connect(impedanceScaleControl_, &QComboBox::currentIndexChanged,
+        this, applyImpedanceScale);
+    connect(swrScaleControl_, &QComboBox::currentIndexChanged, this, applySwrScale);
+    applyImpedanceScale(impedanceScaleControl_->currentIndex());
+    applySwrScale(swrScaleControl_->currentIndex());
 }
 
 void SweepPlotsView::setResults(const analysis::AnalysisResult& result, const QString& runDirectory)
@@ -362,7 +487,7 @@ void SweepPlotsView::setResults(const analysis::AnalysisResult& result, const QS
             resistance.points.emplace_back(point.frequencyMHz, point.impedance.real());
             reactance.points.emplace_back(point.frequencyMHz, point.impedance.imag());
             swr.points.emplace_back(point.frequencyMHz,
-                analysis::standingWaveRatio(point.impedance));
+                analysis::standingWaveRatio(point.impedance, result.referenceImpedanceOhms));
         }
         impedanceSeries.push_back(std::move(resistance));
         impedanceSeries.push_back(std::move(reactance));
@@ -371,7 +496,8 @@ void SweepPlotsView::setResults(const analysis::AnalysisResult& result, const QS
     }
     impedancePlot_->setPlot(tr("Feedpoint Resistance and Reactance"), tr("Impedance (Ω)"),
         std::move(impedanceSeries), true);
-    swrPlot_->setPlot(tr("Standing-Wave Ratio"), tr("SWR (50 Ω)"),
+    swrPlot_->setPlot(tr("Standing-Wave Ratio"),
+        tr("SWR (%1 Ω)").arg(formatDecimal(result.referenceImpedanceOhms)),
         std::move(swrSeries), false, 1.0);
     summary_->setText(result.feedpoints.empty()
             ? tr("No supported feedpoint results were found in %1.").arg(runDirectory)

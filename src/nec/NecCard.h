@@ -21,6 +21,7 @@ enum class NecCardKind {
     Execute,
     TransmissionLine,
     Network,
+    ReferenceImpedance,
     End,
     Unknown
 };

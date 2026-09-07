@@ -12,6 +12,7 @@
 #include "nec/NecCardFieldEditor.h"
 #include "nec/NecParser.h"
 #include "nec/NecSetupConverter.h"
+#include "nec/NecSymbolEditor.h"
 #include "nec/NecSymbolResolver.h"
 #include "nec/NecWriter.h"
 #include "ui/commands/GeometrySourceCommand.h"
@@ -37,6 +38,7 @@
 #include "ui/geometry/GeometrySettingsDialog.h"
 #include "ui/geometry/WirePropertiesDialog.h"
 #include "ui/optimization/OptimizationWorkspace.h"
+#include "ui/model/ParameterEditor.h"
 #include "ui/setup/SetupEditor.h"
 #include "ui/setup/LoadNetworkEditor.h"
 #include "ui/setup/ExcitationPropertiesDialog.h"
@@ -45,8 +47,10 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QAbstractSpinBox>
+#include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QCommandLinkButton>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDockWidget>
@@ -64,10 +68,12 @@
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
+#include <QLayout>
 #include <QLineEdit>
 #include <QStringList>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMargins>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPlainTextEdit>
@@ -88,6 +94,7 @@
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextEdit>
 #include <QTimer>
 #include <QUrl>
 #include <QVariant>
@@ -112,9 +119,39 @@
 namespace necwb::ui {
 namespace {
 
+constexpr int SourcesEditorTarget = -3;
+constexpr int LoadsEditorTarget = -4;
+constexpr int EnvironmentEditorTarget = -5;
+constexpr int ParametersEditorTarget = -6;
+
 constexpr auto ItemKindRole = Qt::UserRole;
 constexpr auto WireTagRole = Qt::UserRole + 1;
 constexpr auto SourceLineRole = Qt::UserRole + 2;
+
+void invokeFocusedEditCommand(const char* command)
+{
+    for (auto* widget = QApplication::focusWidget(); widget != nullptr;
+         widget = widget->parentWidget()) {
+        if (auto* lineEdit = qobject_cast<QLineEdit*>(widget)) {
+            if (qstrcmp(command, "cut") == 0) lineEdit->cut();
+            else if (qstrcmp(command, "copy") == 0) lineEdit->copy();
+            else if (qstrcmp(command, "paste") == 0) lineEdit->paste();
+            return;
+        }
+        if (auto* plainTextEdit = qobject_cast<QPlainTextEdit*>(widget)) {
+            if (qstrcmp(command, "cut") == 0) plainTextEdit->cut();
+            else if (qstrcmp(command, "copy") == 0) plainTextEdit->copy();
+            else if (qstrcmp(command, "paste") == 0) plainTextEdit->paste();
+            return;
+        }
+        if (auto* textEdit = qobject_cast<QTextEdit*>(widget)) {
+            if (qstrcmp(command, "cut") == 0) textEdit->cut();
+            else if (qstrcmp(command, "copy") == 0) textEdit->copy();
+            else if (qstrcmp(command, "paste") == 0) textEdit->paste();
+            return;
+        }
+    }
+}
 
 auto sameResultFrequency(double first, double second) -> bool
 {
@@ -125,6 +162,43 @@ constexpr auto RunContextRole = Qt::UserRole + 4;
 constexpr auto CardMnemonicRole = Qt::UserRole + 5;
 constexpr auto RunTypeRole = Qt::UserRole + 6;
 constexpr auto RunIdRole = Qt::UserRole + 7;
+
+auto workspaceDensityFromId(const QString& id) -> MainWindow::WorkspaceDensity
+{
+    if (id == QStringLiteral("spacious")) return MainWindow::WorkspaceDensity::Spacious;
+    if (id == QStringLiteral("standard")) return MainWindow::WorkspaceDensity::Standard;
+    return MainWindow::WorkspaceDensity::Compact;
+}
+
+auto workspaceDensityId(MainWindow::WorkspaceDensity density) -> QString
+{
+    switch (density) {
+    case MainWindow::WorkspaceDensity::Compact: return QStringLiteral("compact");
+    case MainWindow::WorkspaceDensity::Standard: return QStringLiteral("standard");
+    case MainWindow::WorkspaceDensity::Spacious: return QStringLiteral("spacious");
+    }
+    return QStringLiteral("compact");
+}
+
+auto workspaceDensityScale(MainWindow::WorkspaceDensity density) -> qreal
+{
+    switch (density) {
+    case MainWindow::WorkspaceDensity::Compact: return 1.0 / 3.0;
+    case MainWindow::WorkspaceDensity::Standard: return 0.5;
+    case MainWindow::WorkspaceDensity::Spacious: return 5.0 / 6.0;
+    }
+    return 1.0 / 3.0;
+}
+
+auto workspaceDensityFontSize(MainWindow::WorkspaceDensity density) -> int
+{
+    switch (density) {
+    case MainWindow::WorkspaceDensity::Compact: return 9;
+    case MainWindow::WorkspaceDensity::Standard: return 10;
+    case MainWindow::WorkspaceDensity::Spacious: return 11;
+    }
+    return 9;
+}
 
 enum RunColumn {
     RunStartedColumn,
@@ -323,6 +397,8 @@ MainWindow::MainWindow()
     createWorkspace();
     createDocks();
     createMenusAndToolbar();
+    setWorkspaceDensity(workspaceDensityFromId(QSettings{}.value(
+        QStringLiteral("appearance/workspaceDensity"), QStringLiteral("compact")).toString()));
 
     modelFileStatus_ = new QLabel(this);
     modelFileStatus_->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -356,7 +432,7 @@ MainWindow::MainWindow()
     connect(editor_->document(), &QTextDocument::modificationChanged, this, [this](bool modified) {
         saveAction_->setEnabled(modified);
         setWindowModified(modified);
-        sourceWorkspace_->setTabText(0, modified ? tr("NEC Source *") : tr("NEC Source"));
+        sourceWorkspace_->setTabText(0, modified ? tr("Raw Source *") : tr("Raw Source"));
         if (dashboardPage_ != nullptr)
             dashboardPage_->setDocumentState(currentFile_.isEmpty()
                     ? QString{} : QFileInfo(currentFile_).fileName(), modified);
@@ -366,6 +442,7 @@ MainWindow::MainWindow()
     connect(undoStack_, &QUndoStack::canUndoChanged, this, [this] { updateUndoActions(); });
     connect(undoStack_, &QUndoStack::canRedoChanged, this, [this] { updateUndoActions(); });
     connect(workspace_, &QTabWidget::currentChanged, this, [this] { updateUndoActions(); });
+    connect(modelWorkspace_, &QTabWidget::currentChanged, this, [this] { updateUndoActions(); });
     connect(sourceWorkspace_, &QTabWidget::currentChanged, this, [this] { updateUndoActions(); });
     connect(moduleStack_, &QStackedWidget::currentChanged, this, [this] { updateUndoActions(); });
 
@@ -423,6 +500,27 @@ void MainWindow::createActions()
     saveAsAction_->setShortcut(QKeySequence::SaveAs);
     connect(saveAsAction_, &QAction::triggered, this, [this] { saveFileAs(); });
 
+    exitAction_ = new QAction(tr("E&xit"), this);
+    exitAction_->setObjectName(QStringLiteral("exitAction"));
+    exitAction_->setShortcut(QKeySequence::Quit);
+    connect(exitAction_, &QAction::triggered, this, &QWidget::close);
+
+    cutAction_ = new QAction(tr("Cu&t"), this);
+    cutAction_->setObjectName(QStringLiteral("cutAction"));
+    cutAction_->setShortcut(QKeySequence::Cut);
+    connect(cutAction_, &QAction::triggered, this,
+        [] { invokeFocusedEditCommand("cut"); });
+    copyAction_ = new QAction(tr("&Copy"), this);
+    copyAction_->setObjectName(QStringLiteral("copyAction"));
+    copyAction_->setShortcut(QKeySequence::Copy);
+    connect(copyAction_, &QAction::triggered, this,
+        [] { invokeFocusedEditCommand("copy"); });
+    pasteAction_ = new QAction(tr("&Paste"), this);
+    pasteAction_->setObjectName(QStringLiteral("pasteAction"));
+    pasteAction_->setShortcut(QKeySequence::Paste);
+    connect(pasteAction_, &QAction::triggered, this,
+        [] { invokeFocusedEditCommand("paste"); });
+
     checkAction_ = new QAction(tr("&Check Model"), this);
     checkAction_->setIcon(style()->standardIcon(QStyle::SP_DialogApplyButton));
     checkAction_->setShortcut(QKeySequence(Qt::Key_F7));
@@ -434,6 +532,17 @@ void MainWindow::createActions()
     runAction_->setEnabled(false);
     runAction_->setStatusTip(tr("Run the checked model with the selected NEC engine"));
     connect(runAction_, &QAction::triggered, this, [this] { startAnalysis(); });
+
+    stopAction_ = new QAction(tr("&Stop"), this);
+    stopAction_->setObjectName(QStringLiteral("stopAnalysisAction"));
+    stopAction_->setIcon(style()->standardIcon(QStyle::SP_MediaStop));
+    stopAction_->setEnabled(false);
+    stopAction_->setStatusTip(tr("Stop the active analysis or validation solver process"));
+    connect(stopAction_, &QAction::triggered, this, [this] {
+        if (solverProcess_ != nullptr) cancelAnalysis();
+        else if (optimizationWorkspace_->isRunning()) optimizationWorkspace_->cancel();
+        else if (convergenceWorkspace_->isRunning()) convergenceWorkspace_->cancel();
+    });
 
     averageGainAction_ = new QAction(tr("Run &Average Gain Test…"), this);
     averageGainAction_->setIcon(style()->standardIcon(QStyle::SP_DialogApplyButton));
@@ -495,11 +604,53 @@ void MainWindow::createActions()
         tr("Move the existing Results workspace into a separate reusable window"));
     connect(detachResultsAction_, &QAction::triggered, this, [this] { toggleResultsDetached(); });
 
+    resetLayoutAction_ = new QAction(tr("&Reset Layout"), this);
+    resetLayoutAction_->setObjectName(QStringLiteral("resetLayoutAction"));
+    connect(resetLayoutAction_, &QAction::triggered, this,
+        [this] { resetWorkspaceLayout(); });
+
+    auto* densityGroup = new QActionGroup(this);
+    densityGroup->setExclusive(true);
+    compactDensityAction_ = densityGroup->addAction(tr("&Compact"));
+    standardDensityAction_ = densityGroup->addAction(tr("&Standard"));
+    spaciousDensityAction_ = densityGroup->addAction(tr("&Spacious"));
+    compactDensityAction_->setCheckable(true);
+    standardDensityAction_->setCheckable(true);
+    spaciousDensityAction_->setCheckable(true);
+    compactDensityAction_->setObjectName(QStringLiteral("compactWorkspaceDensityAction"));
+    standardDensityAction_->setObjectName(QStringLiteral("standardWorkspaceDensityAction"));
+    spaciousDensityAction_->setObjectName(QStringLiteral("spaciousWorkspaceDensityAction"));
+    const auto savedDensity = workspaceDensityFromId(QSettings{}.value(
+        QStringLiteral("appearance/workspaceDensity"), QStringLiteral("compact")).toString());
+    switch (savedDensity) {
+    case WorkspaceDensity::Compact: compactDensityAction_->setChecked(true); break;
+    case WorkspaceDensity::Standard: standardDensityAction_->setChecked(true); break;
+    case WorkspaceDensity::Spacious: spaciousDensityAction_->setChecked(true); break;
+    }
+    connect(compactDensityAction_, &QAction::triggered, this,
+        [this] { setWorkspaceDensity(WorkspaceDensity::Compact); });
+    connect(standardDensityAction_, &QAction::triggered, this,
+        [this] { setWorkspaceDensity(WorkspaceDensity::Standard); });
+    connect(spaciousDensityAction_, &QAction::triggered, this,
+        [this] { setWorkspaceDensity(WorkspaceDensity::Spacious); });
+
+    gettingStartedAction_ = new QAction(tr("&Getting Started"), this);
+    gettingStartedAction_->setObjectName(QStringLiteral("gettingStartedAction"));
+    connect(gettingStartedAction_, &QAction::triggered, this,
+        [this] { showGettingStarted(); });
+    userGuideAction_ = new QAction(tr("&User Guide"), this);
+    userGuideAction_->setObjectName(QStringLiteral("userGuideAction"));
+    connect(userGuideAction_, &QAction::triggered, this,
+        [this] { openUserGuide(); });
+    aboutAction_ = new QAction(tr("&About NEC Workbench"), this);
+    aboutAction_->setObjectName(QStringLiteral("aboutAction"));
+    connect(aboutAction_, &QAction::triggered, this,
+        [this] { showAboutDialog(); });
+
     auto* moduleGroup = new QActionGroup(this);
     moduleGroup->setExclusive(true);
     homeModuleAction_ = moduleGroup->addAction(tr("&Home"));
-    modelModuleAction_ = moduleGroup->addAction(tr("&Geometry"));
-    sourceModuleAction_ = moduleGroup->addAction(tr("NEC &Source"));
+    modelModuleAction_ = moduleGroup->addAction(tr("&Model"));
     analysisModuleAction_ = moduleGroup->addAction(tr("&Analysis"));
     visualizeModuleAction_ = moduleGroup->addAction(tr("&Results"));
     optimizeModuleAction_ = moduleGroup->addAction(tr("&Optimize"));
@@ -508,13 +659,11 @@ void MainWindow::createActions()
     }
     homeModuleAction_->setChecked(true);
     modelModuleAction_->setEnabled(false);
-    sourceModuleAction_->setEnabled(false);
     analysisModuleAction_->setEnabled(false);
     visualizeModuleAction_->setEnabled(true);
     optimizeModuleAction_->setEnabled(false);
     connect(homeModuleAction_, &QAction::triggered, this, [this] { showModule(homeModuleIndex_); });
     connect(modelModuleAction_, &QAction::triggered, this, [this] { showModule(modelModuleIndex_); });
-    connect(sourceModuleAction_, &QAction::triggered, this, [this] { showModule(sourceModuleIndex_); });
     connect(analysisModuleAction_, &QAction::triggered, this, [this] { showModule(analysisModuleIndex_); });
     connect(visualizeModuleAction_, &QAction::triggered, this, [this] {
         showModule(visualizeModuleIndex_);
@@ -542,7 +691,6 @@ void MainWindow::createWorkspace()
     moduleNavigation->addAction(homeModuleAction_);
     moduleNavigation->addSeparator();
     moduleNavigation->addAction(modelModuleAction_);
-    moduleNavigation->addAction(sourceModuleAction_);
     moduleNavigation->addAction(analysisModuleAction_);
     moduleNavigation->addAction(visualizeModuleAction_);
     moduleNavigation->addAction(optimizeModuleAction_);
@@ -552,12 +700,16 @@ void MainWindow::createWorkspace()
     centralLayout->addWidget(moduleStack_, 1);
     setCentralWidget(central);
 
-    sourceWorkspace_ = new QTabWidget(moduleStack_);
+    modelWorkspace_ = new QTabWidget(moduleStack_);
+    modelWorkspace_->setObjectName(QStringLiteral("modelWorkspace"));
+    modelWorkspace_->setDocumentMode(true);
+    sourceWorkspace_ = new QTabWidget(modelWorkspace_);
+    sourceWorkspace_->setObjectName(QStringLiteral("necDeckWorkspace"));
     sourceWorkspace_->setDocumentMode(true);
     editor_ = new NecEditor(sourceWorkspace_);
     editor_->setObjectName(QStringLiteral("necSourceEditor"));
     new NecHighlighter(editor_->document());
-    sourceWorkspace_->addTab(editor_, tr("NEC Source"));
+    sourceWorkspace_->addTab(editor_, tr("Raw Source"));
     sourceTabIndex_ = -1;
 
     dashboardStack_ = new QStackedWidget(moduleStack_);
@@ -567,8 +719,7 @@ void MainWindow::createWorkspace()
     welcomePage_->setRecentFiles(recentFiles());
     dashboardStack_->addWidget(welcomePage_);
     dashboardPage_ = new DashboardPage(editor_->document(), dashboardStack_);
-    dashboardPage_->setQuickActions(modelModuleAction_, sourceModuleAction_, checkAction_,
-        runAction_, visualizeModuleAction_);
+    dashboardPage_->setQuickActions(checkAction_, runAction_);
     dashboardPage_->setAverageGainAction(averageGainAction_);
     dashboardPage_->setConvergenceAction(convergenceAction_);
     dashboardStack_->addWidget(dashboardPage_);
@@ -630,7 +781,8 @@ void MainWindow::createWorkspace()
     connect(structuredCardEditor_, &StructuredCardEditor::cardDeleteRequested, this,
         [this](std::size_t sourceLine) { deleteStructuredCard(sourceLine); });
 
-    workspace_ = new QTabWidget(moduleStack_);
+    workspace_ = new QTabWidget(modelWorkspace_);
+    workspace_->setObjectName(QStringLiteral("geometryWorkspace"));
     workspace_->setDocumentMode(true);
     workspace_->setMovable(true);
 
@@ -802,20 +954,26 @@ void MainWindow::createWorkspace()
     connect(geometry3DView_, &Geometry3DView::deleteTransmissionLineRequested, this,
         [this](std::size_t sourceLine) { deleteSetupCard(tr("Delete transmission line"), sourceLine); });
     workspace_->addTab(geometry3DPage, tr("3D Geometry"));
-    modelModuleIndex_ = moduleStack_->addWidget(workspace_);
-    sourceModuleIndex_ = moduleStack_->addWidget(sourceWorkspace_);
+    modelGeometryWorkspaceIndex_ = modelWorkspace_->addTab(workspace_, tr("Geometry"));
+    modelModuleIndex_ = moduleStack_->addWidget(modelWorkspace_);
+
+    parameterEditor_ = new ParameterEditor(modelWorkspace_);
+    connect(parameterEditor_, &ParameterEditor::parameterChanged, this,
+        [this](std::size_t sourceLine, QString originalName, QString name, QString expression) {
+            changeParameter(sourceLine, originalName, name, expression);
+        });
+    connect(parameterEditor_, &ParameterEditor::parameterDeleteRequested, this,
+        [this](std::size_t sourceLine, QString name) { deleteParameter(sourceLine, name); });
+    connect(parameterEditor_, &ParameterEditor::parameterSelected, this,
+        [this](std::size_t sourceLine) { editor_->goToLine(sourceLine); });
+    modelParametersWorkspaceIndex_ = modelWorkspace_->addTab(parameterEditor_, tr("Parameters"));
 
     analysisWorkspace_ = new QTabWidget(moduleStack_);
     analysisWorkspace_->setObjectName(QStringLiteral("analysisWorkspace"));
     analysisWorkspace_->setDocumentMode(true);
-
-    modelSetupWorkspace_ = new QTabWidget(analysisWorkspace_);
-    modelSetupWorkspace_->setObjectName(QStringLiteral("modelSetupWorkspace"));
-    modelSetupWorkspace_->setDocumentMode(true);
-    analysisWorkspace_->addTab(modelSetupWorkspace_, tr("Model Setup"));
     setupTabIndex_ = -2;
 
-    setupEditor_ = new SetupEditor(modelSetupWorkspace_);
+    setupEditor_ = new SetupEditor(modelWorkspace_);
     connect(setupEditor_, &SetupEditor::frequencyChanged, this,
         [this](model::FrequencyDefinition frequency) { changeFrequency(frequency); });
     connect(setupEditor_, &SetupEditor::frequencyDeleteRequested, this,
@@ -828,23 +986,53 @@ void MainWindow::createWorkspace()
         [this](std::size_t sourceLine) { deleteExcitation(sourceLine); });
     connect(setupEditor_, &SetupEditor::excitationSelected, this,
         [this](std::size_t sourceLine) { selectExcitation(sourceLine); });
-    modelSetupWorkspace_->addTab(setupEditor_, tr("Frequency, Ground && Sources"));
+    modelSourcesWorkspaceIndex_ = modelWorkspace_->addTab(
+        setupEditor_->sourcesPage(), tr("Sources"));
 
-    loadNetworkEditor_ = new LoadNetworkEditor(modelSetupWorkspace_);
+    loadNetworkEditor_ = new LoadNetworkEditor(modelWorkspace_);
+    loadNetworkEditor_->setLengthUnit(geometrySettings_.lengthUnit);
     connect(loadNetworkEditor_, &LoadNetworkEditor::loadChanged, this,
-        [this](model::LoadDefinition load) { changeLoad(load); });
+        [this](model::LoadDefinition load) {
+            const auto isNew = load.sourceLine == 0;
+            changeLoad(load);
+            if (!isNew) return;
+            const auto found = std::ranges::find_if(currentSetup_.loads.rbegin(),
+                currentSetup_.loads.rend(), [&load](const auto& candidate) {
+                    return candidate.type == load.type && candidate.wireTag == load.wireTag
+                        && candidate.firstSegment == load.firstSegment
+                        && candidate.lastSegment == load.lastSegment;
+                });
+            if (found != currentSetup_.loads.rend()) selectLoad(found->sourceLine);
+        });
     connect(loadNetworkEditor_, &LoadNetworkEditor::loadDeleteRequested, this,
         [this](std::size_t sourceLine) { deleteSetupCard(tr("Delete load"), sourceLine); });
     connect(loadNetworkEditor_, &LoadNetworkEditor::transmissionLineChanged, this,
-        [this](model::TransmissionLineDefinition line) { changeTransmissionLine(line); });
+        [this](model::TransmissionLineDefinition line) {
+            const auto isNew = line.sourceLine == 0;
+            changeTransmissionLine(line);
+            if (!isNew) return;
+            const auto found = std::ranges::find_if(currentSetup_.transmissionLines.rbegin(),
+                currentSetup_.transmissionLines.rend(), [&line](const auto& candidate) {
+                    return candidate.wireTag1 == line.wireTag1
+                        && candidate.segment1 == line.segment1
+                        && candidate.wireTag2 == line.wireTag2
+                        && candidate.segment2 == line.segment2;
+                });
+            if (found != currentSetup_.transmissionLines.rend()) {
+                selectTransmissionLine(found->sourceLine);
+            }
+        });
     connect(loadNetworkEditor_, &LoadNetworkEditor::transmissionLineDeleteRequested, this,
         [this](std::size_t sourceLine) { deleteSetupCard(tr("Delete transmission line"), sourceLine); });
     connect(loadNetworkEditor_, &LoadNetworkEditor::loadSelected, this,
         [this](std::size_t sourceLine) { selectLoad(sourceLine); });
     connect(loadNetworkEditor_, &LoadNetworkEditor::transmissionLineSelected, this,
         [this](std::size_t sourceLine) { selectTransmissionLine(sourceLine); });
-    loadNetworkTabIndex_ = modelSetupWorkspace_->addTab(
+    loadNetworkTabIndex_ = modelWorkspace_->addTab(
         loadNetworkEditor_, tr("Loads && Transmission Lines"));
+    modelEnvironmentWorkspaceIndex_ = modelWorkspace_->addTab(
+        setupEditor_->environmentPage(), tr("Environment"));
+    modelDeckWorkspaceIndex_ = modelWorkspace_->addTab(sourceWorkspace_, tr("NEC Deck"));
 
     analysisSetupEditor_ = new AnalysisSetupEditor(analysisWorkspace_);
     connect(analysisSetupEditor_, &AnalysisSetupEditor::settingsChanged, this,
@@ -861,17 +1049,39 @@ void MainWindow::createWorkspace()
             dashboardPage_->setModel(currentModel_, currentSetup_, solverBackendId_, modelChecked_,
                 modelErrorCount_, modelWarningCount_);
             runAction_->setStatusTip(solverExecutablePath_.isEmpty()
-                    ? tr("Select a NEC engine executable in Analyze Setup")
+                    ? tr("Select a NEC engine executable under Analysis → Solver")
                     : tr("Run the checked model with the selected NEC engine"));
             updateAnalysisReadiness();
         });
     analysisWorkspace_->addTab(
         scrollableEditor(analysisSetupEditor_, analysisWorkspace_), tr("Solver"));
+    analysisFrequencyTabIndex_ = analysisWorkspace_->addTab(
+        setupEditor_->frequencyPage(), tr("Frequency"));
     analysisRequestEditor_ = new AnalysisRequestEditor(analysisWorkspace_);
-    connect(analysisRequestEditor_, &AnalysisRequestEditor::requestsChanged, this,
-        [this](bool executionEnabled, model::ExecutionRequest execution,
-            bool patternEnabled, model::RadiationPatternRequest pattern) {
-            changeAnalysisRequests(executionEnabled, execution, patternEnabled, pattern);
+    connect(analysisRequestEditor_, &AnalysisRequestEditor::executionChanged, this,
+        [this](bool enabled, model::ExecutionRequest execution) {
+            changeExecutionRequest(enabled, execution);
+        });
+    connect(analysisRequestEditor_, &AnalysisRequestEditor::patternChanged, this,
+        [this](model::RadiationPatternRequest pattern) {
+            const auto isNew = pattern.sourceLine == 0;
+            changeRadiationPattern(pattern);
+            if (!isNew) return;
+            const auto found = std::ranges::find_if(currentSetup_.radiationPatterns.rbegin(),
+                currentSetup_.radiationPatterns.rend(), [&pattern](const auto& candidate) {
+                    return candidate.thetaCount == pattern.thetaCount
+                        && candidate.phiCount == pattern.phiCount
+                        && candidate.thetaStart == pattern.thetaStart
+                        && candidate.phiStart == pattern.phiStart
+                        && candidate.thetaStep == pattern.thetaStep
+                        && candidate.phiStep == pattern.phiStep;
+                });
+            if (found != currentSetup_.radiationPatterns.rend())
+                analysisRequestEditor_->selectPattern(found->sourceLine);
+        });
+    connect(analysisRequestEditor_, &AnalysisRequestEditor::patternDeleteRequested, this,
+        [this](std::size_t sourceLine) {
+            deleteSetupCard(tr("Delete radiation pattern"), sourceLine);
         });
     analysisWorkspace_->addTab(
         scrollableEditor(analysisRequestEditor_, analysisWorkspace_), tr("Requests"));
@@ -1123,6 +1333,8 @@ void MainWindow::createWorkspace()
     optimizationWorkspace_->setRunsChangedCallback([this] { loadRunHistory(); });
     optimizationWorkspace_->setRunningChangedCallback([this] { synchronizeRunnerState(); });
     optimizationWorkspace_->setReturnToCurrentWorkCallback([this] { returnToCurrentWork(); });
+    optimizationWorkspace_->setApplyParameterCallback(
+        [this](const QString& name, double value) { return applyOptimizedParameter(name, value); });
     optimizeModuleIndex_ = moduleStack_->addWidget(optimizationWorkspace_);
     preserveControlHeights(moduleStack_);
     showModule(homeModuleIndex_);
@@ -1138,7 +1350,6 @@ void MainWindow::showModule(int index)
         const auto current = moduleStack_->currentIndex();
         if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
         else if (current == modelModuleIndex_) modelModuleAction_->setChecked(true);
-        else if (current == sourceModuleIndex_) sourceModuleAction_->setChecked(true);
         else if (current == analysisModuleIndex_) analysisModuleAction_->setChecked(true);
         else if (current == optimizeModuleIndex_) optimizeModuleAction_->setChecked(true);
         return;
@@ -1151,8 +1362,6 @@ void MainWindow::showModule(int index)
         dashboardStack_->setCurrentIndex(hasNecModel_ ? 1 : 0);
     } else if (index == modelModuleIndex_) {
         modelModuleAction_->setChecked(true);
-    } else if (index == sourceModuleIndex_) {
-        sourceModuleAction_->setChecked(true);
     } else if (index == analysisModuleIndex_) {
         analysisModuleAction_->setChecked(true);
     } else if (index == visualizeModuleIndex_) {
@@ -1235,14 +1444,27 @@ void MainWindow::presentCompletedAnalysisResults()
 void MainWindow::showModelTab(int index)
 {
     if (index == sourceTabIndex_) {
-        showModule(sourceModuleIndex_);
+        showModule(modelModuleIndex_);
+        modelWorkspace_->setCurrentIndex(modelDeckWorkspaceIndex_);
         sourceWorkspace_->setCurrentIndex(0);
     } else if (index == setupTabIndex_) {
         showModule(analysisModuleIndex_);
-        analysisWorkspace_->setCurrentIndex(0);
-        modelSetupWorkspace_->setCurrentIndex(0);
+        analysisWorkspace_->setCurrentIndex(analysisFrequencyTabIndex_);
+    } else if (index == SourcesEditorTarget) {
+        showModule(modelModuleIndex_);
+        modelWorkspace_->setCurrentIndex(modelSourcesWorkspaceIndex_);
+    } else if (index == LoadsEditorTarget) {
+        showModule(modelModuleIndex_);
+        modelWorkspace_->setCurrentIndex(loadNetworkTabIndex_);
+    } else if (index == EnvironmentEditorTarget) {
+        showModule(modelModuleIndex_);
+        modelWorkspace_->setCurrentIndex(modelEnvironmentWorkspaceIndex_);
+    } else if (index == ParametersEditorTarget) {
+        showModule(modelModuleIndex_);
+        modelWorkspace_->setCurrentIndex(modelParametersWorkspaceIndex_);
     } else {
         showModule(modelModuleIndex_);
+        modelWorkspace_->setCurrentIndex(modelGeometryWorkspaceIndex_);
         workspace_->setCurrentIndex(index);
     }
 }
@@ -1425,6 +1647,9 @@ void MainWindow::applyGeometrySettings(const GeometrySettings& settings)
     yzView_->setSettings(geometrySettings_);
     if (geometry3DView_ != nullptr) {
         geometry3DView_->setLengthUnit(geometrySettings_.lengthUnit);
+    }
+    if (loadNetworkEditor_ != nullptr) {
+        loadNetworkEditor_->setLengthUnit(geometrySettings_.lengthUnit);
     }
 }
 
@@ -1616,35 +1841,63 @@ void MainWindow::createDocks()
 void MainWindow::createMenusAndToolbar()
 {
     auto* fileMenu = menuBar()->addMenu(tr("&File"));
+    fileMenu->setObjectName(QStringLiteral("fileMenu"));
     fileMenu->addAction(newAction_);
     fileMenu->addAction(openAction_);
     fileMenu->addSeparator();
     fileMenu->addAction(saveAction_);
     fileMenu->addAction(saveAsAction_);
+    fileMenu->addSeparator();
+    fileMenu->addAction(exitAction_);
 
     auto* editMenu = menuBar()->addMenu(tr("&Edit"));
+    editMenu->setObjectName(QStringLiteral("editMenu"));
     editMenu->addAction(undoAction_);
     editMenu->addAction(redoAction_);
+    editMenu->addSeparator();
+    editMenu->addAction(cutAction_);
+    editMenu->addAction(copyAction_);
+    editMenu->addAction(pasteAction_);
 
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
+    viewMenu->setObjectName(QStringLiteral("viewMenu"));
+    auto* densityMenu = viewMenu->addMenu(tr("&Workspace Density"));
+    densityMenu->setObjectName(QStringLiteral("workspaceDensityMenu"));
+    densityMenu->addAction(compactDensityAction_);
+    densityMenu->addAction(standardDensityAction_);
+    densityMenu->addAction(spaciousDensityAction_);
+    viewMenu->addSeparator();
     viewMenu->addAction(projectDock_->toggleViewAction());
     viewMenu->addAction(diagnosticsDock_->toggleViewAction());
     viewMenu->addAction(solverOutputDock_->toggleViewAction());
+    viewMenu->addSeparator();
+    viewMenu->addAction(resetLayoutAction_);
     viewMenu->addSeparator();
     viewMenu->addAction(detachResultsAction_);
     viewMenu->addSeparator();
     viewMenu->addAction(fitGeometryAction_);
 
     auto* modelMenu = menuBar()->addMenu(tr("&Model"));
+    modelMenu->setObjectName(QStringLiteral("modelMenu"));
     modelMenu->addAction(checkAction_);
+    modelMenu->addAction(autoSegmentationAction_);
+    modelMenu->addSeparator();
     modelMenu->addAction(averageGainAction_);
     modelMenu->addAction(convergenceAction_);
     modelMenu->addSeparator();
-    modelMenu->addAction(autoSegmentationAction_);
     modelMenu->addAction(geometrySettingsAction_);
 
-    auto* analysisMenu = menuBar()->addMenu(tr("&Analysis"));
-    analysisMenu->addAction(runAction_);
+    auto* runMenu = menuBar()->addMenu(tr("&Run"));
+    runMenu->setObjectName(QStringLiteral("runMenu"));
+    runMenu->addAction(runAction_);
+    runMenu->addAction(stopAction_);
+
+    auto* helpMenu = menuBar()->addMenu(tr("&Help"));
+    helpMenu->setObjectName(QStringLiteral("helpMenu"));
+    helpMenu->addAction(gettingStartedAction_);
+    helpMenu->addAction(userGuideAction_);
+    helpMenu->addSeparator();
+    helpMenu->addAction(aboutAction_);
 
     auto* toolbar = addToolBar(tr("Main"));
     toolbar->setObjectName(QStringLiteral("mainToolbar"));
@@ -1656,8 +1909,159 @@ void MainWindow::createMenusAndToolbar()
     toolbar->addAction(redoAction_);
     toolbar->addSeparator();
     toolbar->addAction(checkAction_);
-    toolbar->addAction(autoSegmentationAction_);
     toolbar->addAction(runAction_);
+    toolbar->addAction(stopAction_);
+}
+
+void MainWindow::resetWorkspaceLayout()
+{
+    if (resultsDetached_) attachResults();
+    for (auto* dock : {projectDock_, diagnosticsDock_, solverOutputDock_}) {
+        removeDockWidget(dock);
+        dock->show();
+    }
+    addDockWidget(Qt::LeftDockWidgetArea, projectDock_);
+    addDockWidget(Qt::BottomDockWidgetArea, diagnosticsDock_);
+    addDockWidget(Qt::BottomDockWidgetArea, solverOutputDock_);
+    tabifyDockWidget(diagnosticsDock_, solverOutputDock_);
+    const auto projectWidth = workspaceDensity_ == WorkspaceDensity::Compact ? 220
+        : workspaceDensity_ == WorkspaceDensity::Standard ? 260 : 300;
+    const auto bottomHeight = workspaceDensity_ == WorkspaceDensity::Compact ? 180
+        : workspaceDensity_ == WorkspaceDensity::Standard ? 220 : 260;
+    resizeDocks({projectDock_}, {projectWidth}, Qt::Horizontal);
+    resizeDocks({diagnosticsDock_, solverOutputDock_}, {bottomHeight, bottomHeight}, Qt::Vertical);
+    diagnosticsDock_->raise();
+    statusBar()->showMessage(tr("Workspace layout reset."), 4000);
+}
+
+void MainWindow::setWorkspaceDensity(WorkspaceDensity density)
+{
+    workspaceDensity_ = density;
+    QSettings{}.setValue(QStringLiteral("appearance/workspaceDensity"), workspaceDensityId(density));
+    applyWorkspaceDensity();
+
+    switch (density) {
+    case WorkspaceDensity::Compact: compactDensityAction_->setChecked(true); break;
+    case WorkspaceDensity::Standard: standardDensityAction_->setChecked(true); break;
+    case WorkspaceDensity::Spacious: spaciousDensityAction_->setChecked(true); break;
+    }
+}
+
+void MainWindow::applyWorkspaceDensity()
+{
+    const auto baseFontSize = workspaceDensityFontSize(workspaceDensity_);
+    const auto initialBaseFontSize = QApplication::font().pointSize();
+    const auto updateFont = [baseFontSize, initialBaseFontSize](QWidget* widget) {
+        if (!widget->property("workspaceDensityFontDelta").isValid()) {
+            const auto pointSize = widget->font().pointSize();
+            if (pointSize > 0)
+                widget->setProperty("workspaceDensityFontDelta", pointSize - initialBaseFontSize);
+        }
+        const auto delta = widget->property("workspaceDensityFontDelta").toInt();
+        auto font = widget->font();
+        font.setPointSize(std::max(6, baseFontSize + delta));
+        widget->setFont(font);
+    };
+    updateFont(this);
+    for (auto* widget : findChildren<QWidget*>()) updateFont(widget);
+
+    auto applicationFont = QApplication::font();
+    applicationFont.setPointSize(baseFontSize);
+    QApplication::setFont(applicationFont);
+
+    const auto scale = workspaceDensityScale(workspaceDensity_);
+    for (auto* layout : findChildren<QLayout*>()) {
+        if (!layout->property("workspaceDensityMargins").isValid()) {
+            const auto margins = layout->contentsMargins();
+            layout->setProperty("workspaceDensityMargins", QVariantList{
+                margins.left(), margins.top(), margins.right(), margins.bottom()});
+            layout->setProperty("workspaceDensitySpacing", layout->spacing());
+        }
+        const auto margins = layout->property("workspaceDensityMargins").toList();
+        if (margins.size() == 4) {
+            layout->setContentsMargins(qRound(margins[0].toInt() * scale),
+                qRound(margins[1].toInt() * scale), qRound(margins[2].toInt() * scale),
+                qRound(margins[3].toInt() * scale));
+        }
+        const auto spacing = layout->property("workspaceDensitySpacing").toInt();
+        if (spacing >= 0) layout->setSpacing(qRound(spacing * scale));
+    }
+
+    const auto minimumScale = workspaceDensity_ == WorkspaceDensity::Compact ? 0.75
+        : workspaceDensity_ == WorkspaceDensity::Standard ? 0.9 : 1.0;
+    const auto updateMinimumSize = [minimumScale](QWidget* widget) {
+        if (!widget->property("workspaceDensityMinimumSize").isValid()) {
+            const auto minimumSize = widget->minimumSize();
+            widget->setProperty("workspaceDensityMinimumSize", QVariantList{
+                minimumSize.width(), minimumSize.height()});
+        }
+        const auto minimumSize = widget->property("workspaceDensityMinimumSize").toList();
+        if (minimumSize.size() != 2) return;
+        widget->setMinimumSize(qRound(minimumSize[0].toInt() * minimumScale),
+            qRound(minimumSize[1].toInt() * minimumScale));
+    };
+    for (auto* button : findChildren<QCommandLinkButton*>()) updateMinimumSize(button);
+    for (auto* view : findChildren<GeometryView*>()) updateMinimumSize(view);
+    for (auto* view : findChildren<Geometry3DView*>()) updateMinimumSize(view);
+    for (auto* widget : findChildren<QWidget*>()) {
+        if (dynamic_cast<Radiation3DView*>(widget) != nullptr) updateMinimumSize(widget);
+    }
+
+    const auto controlHeight = workspaceDensity_ == WorkspaceDensity::Compact ? 20
+        : workspaceDensity_ == WorkspaceDensity::Standard ? 24 : 28;
+    const auto horizontalPadding = workspaceDensity_ == WorkspaceDensity::Compact ? 4
+        : workspaceDensity_ == WorkspaceDensity::Standard ? 6 : 8;
+    const auto tabPadding = workspaceDensity_ == WorkspaceDensity::Compact ? 3
+        : workspaceDensity_ == WorkspaceDensity::Standard ? 5 : 7;
+    const auto toolbarHeight = workspaceDensity_ == WorkspaceDensity::Compact ? 24
+        : workspaceDensity_ == WorkspaceDensity::Standard ? 29 : 34;
+    qApp->setStyleSheet(QStringLiteral(
+        "QToolBar { spacing: 2px; padding: 0px 2px; min-height: %1px; }"
+        "QToolButton { padding: 1px %2px; }"
+        "QPushButton, QComboBox, QLineEdit, QAbstractSpinBox { min-height: %3px; padding: 1px %2px; }"
+        "QTabBar::tab { padding: %4px %5px; }"
+        "QHeaderView::section { padding: 2px %2px; }"
+        "QTableView::item, QTreeView::item, QListView::item { padding: 1px %2px; }"
+        "QDockWidget::title { padding: 2px %2px; }"
+        "QStatusBar { min-height: %3px; }"
+    ).arg(toolbarHeight).arg(horizontalPadding).arg(controlHeight).arg(tabPadding).arg(tabPadding + 4));
+}
+
+void MainWindow::showGettingStarted()
+{
+    QMessageBox::information(this, tr("Getting Started"),
+        tr("1. Create or open a NEC model.\n"
+           "2. Edit geometry and electrical model data under Model.\n"
+           "3. Run Check Model and resolve blocking errors.\n"
+           "4. Configure the solver and requested outputs under Analysis.\n"
+           "5. Run Analysis, then inspect Results."));
+}
+
+void MainWindow::openUserGuide()
+{
+    const QStringList candidates{
+        QDir(QCoreApplication::applicationDirPath()).filePath(
+            QStringLiteral("../docs/user-guide.md")),
+        QDir(QCoreApplication::applicationDirPath()).filePath(
+            QStringLiteral("docs/user-guide.md")),
+        QDir::current().filePath(QStringLiteral("docs/user-guide.md")),
+    };
+    for (const auto& path : candidates) {
+        if (!QFileInfo::exists(path)) continue;
+        if (QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath())))
+            return;
+    }
+    QMessageBox::information(this, tr("User Guide"),
+        tr("The local user guide could not be opened.\n"
+           "Look for docs/user-guide.md in the NEC Workbench installation or source tree."));
+}
+
+void MainWindow::showAboutDialog()
+{
+    QMessageBox::about(this, tr("About NEC Workbench"),
+        tr("NEC Workbench\n\n"
+           "A cross-platform desktop workbench for creating, checking, analyzing, "
+           "visualizing, and optimizing NEC antenna models."));
 }
 
 void MainWindow::newModel()
@@ -1672,7 +2076,6 @@ void MainWindow::newModel()
     editor_->setPlainText(tr("CM New NEC Workbench model\nCE\nGE 0\nEN\n"));
     hasNecModel_ = true;
     modelModuleAction_->setEnabled(true);
-    sourceModuleAction_->setEnabled(true);
     analysisModuleAction_->setEnabled(true);
     visualizeModuleAction_->setEnabled(true);
     dashboardStack_->setCurrentIndex(1);
@@ -1708,7 +2111,6 @@ void MainWindow::openFileAtPath(const QString& path)
     editor_->setPlainText(QString::fromUtf8(file.readAll()));
     hasNecModel_ = true;
     modelModuleAction_->setEnabled(true);
-    sourceModuleAction_->setEnabled(true);
     analysisModuleAction_->setEnabled(true);
     visualizeModuleAction_->setEnabled(true);
     dashboardStack_->setCurrentIndex(1);
@@ -1884,6 +2286,7 @@ void MainWindow::checkModel()
     xzView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines);
     yzView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines);
     geometry3DView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines);
+    parameterEditor_->setResolution(resolution);
     setupEditor_->setData(currentModel_, currentSetup_);
     loadNetworkEditor_->setData(currentModel_, currentSetup_);
     analysisRequestEditor_->setData(currentSetup_);
@@ -1951,8 +2354,12 @@ void MainWindow::activateProjectItem(QTreeWidgetItem* item)
         showModelTab(geometryTabIndex_);
         return;
     }
+    if (kind == QStringLiteral("parameters")) {
+        showModelTab(ParametersEditorTarget);
+        return;
+    }
     if (kind == QStringLiteral("excitation")) {
-        showModelTab(setupTabIndex_);
+        showModelTab(SourcesEditorTarget);
         setupEditor_->selectExcitation(item->data(0, SourceLineRole).toULongLong());
         return;
     }
@@ -1966,7 +2373,7 @@ void MainWindow::activateProjectItem(QTreeWidgetItem* item)
     }
     if (kind == QStringLiteral("source") || kind == QStringLiteral("wire")) {
         if (kind == QStringLiteral("wire")) {
-            showModule(sourceModuleIndex_);
+            showModelTab(sourceTabIndex_);
             sourceWorkspace_->setCurrentIndex(structuredSourceTabIndex_);
             if (auto* tabs = qobject_cast<QTabWidget*>(wireCardEditor_->parentWidget()))
                 tabs->setCurrentWidget(wireCardEditor_);
@@ -1980,10 +2387,22 @@ void MainWindow::activateProjectItem(QTreeWidgetItem* item)
     if (kind != QStringLiteral("card") || sourceLine == 0) return;
 
     const auto mnemonic = item->data(0, CardMnemonicRole).toString();
-    if (mnemonic == QStringLiteral("FR") || mnemonic == QStringLiteral("GN")
-        || mnemonic == QStringLiteral("GE") || mnemonic == QStringLiteral("EX")) {
+    if (mnemonic == QStringLiteral("FR")) {
         showModelTab(setupTabIndex_);
-        if (mnemonic == QStringLiteral("EX")) setupEditor_->selectExcitation(sourceLine);
+        return;
+    }
+    if (mnemonic == QStringLiteral("SY")) {
+        showModelTab(ParametersEditorTarget);
+        parameterEditor_->selectParameter(sourceLine);
+        return;
+    }
+    if (mnemonic == QStringLiteral("GN") || mnemonic == QStringLiteral("GE")) {
+        showModelTab(EnvironmentEditorTarget);
+        return;
+    }
+    if (mnemonic == QStringLiteral("EX")) {
+        showModelTab(SourcesEditorTarget);
+        setupEditor_->selectExcitation(sourceLine);
         return;
     }
     if (mnemonic == QStringLiteral("LD")) {
@@ -2000,7 +2419,7 @@ void MainWindow::activateProjectItem(QTreeWidgetItem* item)
         return;
     }
     if (mnemonic == QStringLiteral("GW")) {
-        showModule(sourceModuleIndex_);
+        showModelTab(sourceTabIndex_);
         sourceWorkspace_->setCurrentIndex(structuredSourceTabIndex_);
         if (auto* tabs = qobject_cast<QTabWidget*>(wireCardEditor_->parentWidget()))
             tabs->setCurrentWidget(wireCardEditor_);
@@ -2008,7 +2427,7 @@ void MainWindow::activateProjectItem(QTreeWidgetItem* item)
         return;
     }
     if (structuredCardEditor_->selectCard(sourceLine)) {
-        showModule(sourceModuleIndex_);
+        showModelTab(sourceTabIndex_);
         sourceWorkspace_->setCurrentIndex(structuredSourceTabIndex_);
         if (auto* tabs = qobject_cast<QTabWidget*>(structuredCardEditor_->parentWidget()))
             tabs->setCurrentWidget(structuredCardEditor_);
@@ -2350,6 +2769,75 @@ void MainWindow::deleteFrequency(std::size_t sourceLine)
     deleteSetupCard(tr("Delete frequency definition"), sourceLine);
 }
 
+void MainWindow::changeParameter(std::size_t sourceLine, const QString& originalName,
+    const QString& name, const QString& expression)
+{
+    const auto source = editor_->toPlainText().toStdString();
+    const auto updated = sourceLine == 0
+        ? std::optional{nec::insertSymbolDefinition(source, name.toStdString(), expression.toStdString())}
+        : nec::replaceSymbolDefinition(source, sourceLine, originalName.toStdString(),
+            name.toStdString(), expression.toStdString());
+    if (!updated) {
+        statusBar()->showMessage(tr("The selected SY definition could not be updated."), 5000);
+        return;
+    }
+    const auto resolution = nec::NecSymbolResolver{}.resolve(*updated);
+    if (!resolution.ok()) {
+        parameterEditor_->showEditError(tr("Change not applied: %1")
+            .arg(QString::fromStdString(resolution.diagnostics.front().message)));
+        return;
+    }
+    pushGeometrySourceEdit(sourceLine == 0 ? tr("Add parameter %1").arg(name)
+                                          : tr("Edit parameter %1").arg(originalName),
+        QString::fromStdString(*updated));
+    const auto found = std::ranges::find_if(resolution.definitions, [&name](const auto& definition) {
+        return QString::fromStdString(definition.name).compare(name, Qt::CaseInsensitive) == 0;
+    });
+    if (found != resolution.definitions.end())
+        parameterEditor_->selectParameter(found->lineNumber, name);
+}
+
+void MainWindow::deleteParameter(std::size_t sourceLine, const QString& name)
+{
+    const auto updated = nec::removeSymbolDefinition(editor_->toPlainText().toStdString(),
+        sourceLine, name.toStdString());
+    if (!updated) {
+        statusBar()->showMessage(tr("The selected SY definition could not be deleted."), 5000);
+        return;
+    }
+    const auto resolution = nec::NecSymbolResolver{}.resolve(*updated);
+    if (!resolution.ok()) {
+        parameterEditor_->showEditError(tr("Delete not applied: %1")
+            .arg(QString::fromStdString(resolution.diagnostics.front().message)));
+        return;
+    }
+    pushGeometrySourceEdit(tr("Delete parameter %1").arg(name),
+        QString::fromStdString(*updated));
+}
+
+auto MainWindow::applyOptimizedParameter(const QString& name, double value) -> bool
+{
+    const auto resolution = nec::NecSymbolResolver{}.resolve(editor_->toPlainText().toStdString());
+    const auto found = std::ranges::find_if(resolution.definitions, [&name](const auto& definition) {
+        return QString::fromStdString(definition.name).compare(name, Qt::CaseInsensitive) == 0;
+    });
+    if (found == resolution.definitions.end()) {
+        statusBar()->showMessage(tr("Parameter %1 no longer exists in the active model.").arg(name), 5000);
+        return false;
+    }
+    const auto originalSource = editor_->toPlainText();
+    showModelTab(ParametersEditorTarget);
+    changeParameter(found->lineNumber, QString::fromStdString(found->name),
+        QString::fromStdString(found->name), QString::number(value, 'g', 15));
+    const auto applied = editor_->toPlainText() != originalSource;
+    if (applied) {
+        parameterEditor_->selectParameter(found->lineNumber, QString::fromStdString(found->name));
+        statusBar()->showMessage(tr("Applied sweep winner to %1. Use Undo to restore its expression.")
+            .arg(name), 5000);
+    }
+    return applied;
+}
+
 void MainWindow::changeGround(const model::GroundDefinition& ground)
 {
     auto lines = editor_->toPlainText().split(QLatin1Char('\n'), Qt::KeepEmptyParts);
@@ -2437,7 +2925,7 @@ void MainWindow::showExcitationEditor(std::size_t sourceLine)
 
 void MainWindow::showExcitationInSetup(std::size_t sourceLine)
 {
-    showModelTab(setupTabIndex_);
+    showModelTab(SourcesEditorTarget);
     selectExcitation(sourceLine);
 }
 
@@ -2497,17 +2985,13 @@ void MainWindow::setPendingTransmissionLineEndpoint(
 
 void MainWindow::showLoadInEditor(std::size_t sourceLine)
 {
-    showModule(analysisModuleIndex_);
-    analysisWorkspace_->setCurrentIndex(0);
-    modelSetupWorkspace_->setCurrentIndex(loadNetworkTabIndex_);
+    showModelTab(LoadsEditorTarget);
     selectLoad(sourceLine);
 }
 
 void MainWindow::showTransmissionLineInEditor(std::size_t sourceLine)
 {
-    showModule(analysisModuleIndex_);
-    analysisWorkspace_->setCurrentIndex(0);
-    modelSetupWorkspace_->setCurrentIndex(loadNetworkTabIndex_);
+    showModelTab(LoadsEditorTarget);
     selectTransmissionLine(sourceLine);
 }
 
@@ -2549,44 +3033,19 @@ void MainWindow::deleteSetupCard(const QString& description, std::size_t sourceL
     pushGeometrySourceEdit(description, lines.join(QLatin1Char('\n')));
 }
 
-void MainWindow::changeAnalysisRequests(bool executionEnabled,
-    const model::ExecutionRequest& execution, bool patternEnabled,
-    const model::RadiationPatternRequest& pattern)
+void MainWindow::changeExecutionRequest(bool enabled,
+    const model::ExecutionRequest& execution)
 {
     auto lines = editor_->toPlainText().split(QLatin1Char('\n'), Qt::KeepEmptyParts);
     const nec::NecWriter writer;
-    std::vector<int> removals;
     if (currentSetup_.executionRequest) {
         const auto index = static_cast<int>(currentSetup_.executionRequest->sourceLine) - 1;
-        if (executionEnabled) {
+        if (enabled) {
             lines[index] = QString::fromStdString(writer.writeExecutionCard(execution));
         } else {
-            removals.push_back(index);
-        }
-    }
-    if (currentSetup_.radiationPattern) {
-        const auto index = static_cast<int>(currentSetup_.radiationPattern->sourceLine) - 1;
-        if (patternEnabled) {
-            lines[index] = QString::fromStdString(writer.writeRadiationPatternCard(pattern));
-        } else {
-            removals.push_back(index);
-        }
-    }
-    std::ranges::sort(removals, std::greater{});
-    for (const auto index : removals) {
-        if (index >= 0 && index < lines.size()) {
             lines.removeAt(index);
         }
-    }
-
-    QStringList additions;
-    if (executionEnabled && !currentSetup_.executionRequest) {
-        additions.append(QString::fromStdString(writer.writeExecutionCard(execution)));
-    }
-    if (patternEnabled && !currentSetup_.radiationPattern) {
-        additions.append(QString::fromStdString(writer.writeRadiationPatternCard(pattern)));
-    }
-    if (!additions.empty()) {
+    } else if (enabled) {
         const auto updatedDocument = nec::NecParser{}.parse(lines.join(QLatin1Char('\n')).toStdString());
         auto insertionIndex = lines.size();
         for (const auto& card : updatedDocument.cards()) {
@@ -2595,11 +3054,31 @@ void MainWindow::changeAnalysisRequests(bool executionEnabled,
                 break;
             }
         }
-        for (const auto& addition : additions) {
-            lines.insert(insertionIndex++, addition);
+        lines.insert(insertionIndex, QString::fromStdString(writer.writeExecutionCard(execution)));
+    }
+    pushGeometrySourceEdit(tr("Change current and impedance request"),
+        lines.join(QLatin1Char('\n')));
+}
+
+void MainWindow::changeRadiationPattern(const model::RadiationPatternRequest& pattern)
+{
+    if (pattern.sourceLine != 0) {
+        upsertSetupCard(tr("Edit radiation pattern"), pattern.sourceLine,
+            QString::fromStdString(nec::NecWriter{}.writeRadiationPatternCard(pattern)), false);
+        return;
+    }
+    auto lines = editor_->toPlainText().split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+    const auto document = nec::NecParser{}.parse(editor_->toPlainText().toStdString());
+    auto insertionIndex = lines.size();
+    for (const auto& card : document.cards()) {
+        if (card.kind == nec::NecCardKind::Execute || card.kind == nec::NecCardKind::End) {
+            insertionIndex = static_cast<int>(card.lineNumber) - 1;
+            break;
         }
     }
-    pushGeometrySourceEdit(tr("Change requested analysis results"), lines.join(QLatin1Char('\n')));
+    lines.insert(insertionIndex,
+        QString::fromStdString(nec::NecWriter{}.writeRadiationPatternCard(pattern)));
+    pushGeometrySourceEdit(tr("Add radiation pattern"), lines.join(QLatin1Char('\n')));
 }
 
 void MainWindow::updateAnalysisReadiness()
@@ -2624,7 +3103,7 @@ void MainWindow::updateAnalysisReadiness()
         blockers.append(tr("No supported EX voltage source."));
     }
     auto averageGainBlockers = blockers;
-    if (!currentSetup_.executionRequest && !currentSetup_.radiationPattern) {
+    if (!currentSetup_.executionRequest && currentSetup_.radiationPatterns.empty()) {
         blockers.append(tr("No XQ or RP result request."));
     }
     if (!analysis::isBackendRunnable(solverBackendId_.toStdString())) {
@@ -2663,6 +3142,8 @@ void MainWindow::updateAnalysisReadiness()
 
 void MainWindow::synchronizeRunnerState()
 {
+    stopAction_->setEnabled(solverProcess_ != nullptr || optimizationWorkspace_->isRunning()
+        || convergenceWorkspace_->isRunning());
     optimizationWorkspace_->setExternalRunActive(
         solverProcess_ != nullptr || convergenceWorkspace_->isRunning());
     convergenceWorkspace_->setExternalRunActive(
@@ -2953,6 +3434,7 @@ void MainWindow::cancelAnalysis()
         return;
     }
     currentRunCanceled_ = true;
+    stopAction_->setEnabled(false);
     solverActivityPhase_ = tr("Canceling");
     solverActivityCancelButton_->setEnabled(false);
     updateSolverActivity();
@@ -3022,17 +3504,20 @@ void MainWindow::finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus)
     }
     appendSolverOutput(solverProcess_->readAllStandardOutput());
     appendSolverOutput(solverProcess_->readAllStandardError());
-    solverActivityPhase_ = tr("Parsing results");
+    const auto processSucceeded = !currentRunTimedOut_ && !currentRunCanceled_
+        && exitStatus == QProcess::NormalExit && exitCode == 0;
+    solverActivityPhase_ = processSucceeded ? tr("Parsing results") : tr("Finishing run");
     updateSolverActivity();
 
     auto averageGainParsed = false;
     auto analysisResultsAvailable = false;
     QFile outputFile(currentRunOutputPath_);
-    if (outputFile.open(QIODevice::ReadOnly)) {
+    if (processSucceeded && outputFile.open(QIODevice::ReadOnly)) {
         const auto outputBytes = outputFile.readAll();
         analysisOutput_->setPlainText(QString::fromLocal8Bit(outputBytes));
-        const auto result = analysis::NecOutputParser{}.parse(std::string_view(
+        auto result = analysis::NecOutputParser{}.parse(std::string_view(
             outputBytes.constData(), static_cast<std::size_t>(outputBytes.size())));
+        result.referenceImpedanceOhms = model::referenceImpedanceOhms(currentSetup_);
         if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
             const auto context = runContext(*currentRunRecord_);
             currentRunRecord_->outputBytes = outputBytes.size();
@@ -3108,14 +3593,23 @@ void MainWindow::finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus)
             analysisResultsAvailable = !result.feedpoints.empty() || !result.currents.empty()
                 || !result.radiation.empty();
         }
-    } else if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
+    } else if (processSucceeded && currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
         const auto message = tr("The solver did not produce a readable model.out file.");
         averageGainResultsView_->setFailure(message, runContext(*currentRunRecord_));
         dashboardPage_->setAverageGainFailure(message);
+    } else if (currentRunRecord_) {
+        currentRunRecord_->outputBytes = QFileInfo(currentRunOutputPath_).size();
+        if (currentRunRow_ >= 0) {
+            analysisRuns_->setItem(currentRunRow_, RunOutputSizeColumn,
+                new QTableWidgetItem(formatByteSize(currentRunRecord_->outputBytes)));
+        }
+        analysisOutput_->setPlainText(tr(
+            "This run did not complete successfully. Its partial solver output was not loaded "
+            "or parsed, preventing large canceled runs from blocking the interface.\n\n"
+            "Run folder: %1").arg(currentRunDirectory_));
     }
 
-    const auto runCompleted = !currentRunTimedOut_ && !currentRunCanceled_
-        && exitStatus == QProcess::NormalExit && exitCode == 0
+    const auto runCompleted = processSucceeded
         && (currentRunPurpose_ != SolverRunPurpose::AverageGainTest || averageGainParsed);
     QString status;
     if (currentRunTimedOut_) {
@@ -3367,7 +3861,6 @@ auto MainWindow::loadRunModel(const QString& directory, const QString& modelName
     editor_->setPlainText(QString::fromUtf8(inputFile.readAll()));
     hasNecModel_ = true;
     modelModuleAction_->setEnabled(true);
-    sourceModuleAction_->setEnabled(true);
     analysisModuleAction_->setEnabled(true);
     visualizeModuleAction_->setEnabled(true);
     dashboardStack_->setCurrentIndex(1);
@@ -3473,8 +3966,15 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
     }
     const auto outputBytes = outputFile.readAll();
     analysisOutput_->setPlainText(QString::fromLocal8Bit(outputBytes));
-    const auto result = analysis::NecOutputParser{}.parse(std::string_view(
+    auto result = analysis::NecOutputParser{}.parse(std::string_view(
         outputBytes.constData(), static_cast<std::size_t>(outputBytes.size())));
+    QFile archivedSourceFile(QDir(directory).filePath(QStringLiteral("model.source.nec")));
+    if (archivedSourceFile.open(QIODevice::ReadOnly)) {
+        const auto sourceDocument = nec::NecParser{}.parse(
+            QString::fromUtf8(archivedSourceFile.readAll()).toStdString());
+        result.referenceImpedanceOhms = model::referenceImpedanceOhms(
+            nec::NecSetupConverter{}.convert(sourceDocument));
+    }
     AnalysisRunRecord summary;
     setRunResultMetadata(summary, result, outputBytes.size());
     const auto selectedRow = analysisRuns_->currentRow();
@@ -3911,15 +4411,30 @@ void MainWindow::pushGeometrySourceEdit(const QString& description, QString upda
     if (originalSource == updatedSource) {
         return;
     }
-    const auto targetTabIndex = moduleStack_->currentIndex() == analysisModuleIndex_
-        ? setupTabIndex_
-        : moduleStack_->currentIndex() == sourceModuleIndex_
-            ? sourceTabIndex_ : workspace_->currentIndex();
+    auto targetTabIndex = workspace_->currentIndex();
+    if (moduleStack_->currentIndex() == analysisModuleIndex_) {
+        targetTabIndex = setupTabIndex_;
+    } else if (moduleStack_->currentIndex() == modelModuleIndex_) {
+        if (modelWorkspace_->currentIndex() == modelDeckWorkspaceIndex_)
+            targetTabIndex = sourceTabIndex_;
+        else if (modelWorkspace_->currentIndex() == modelSourcesWorkspaceIndex_)
+            targetTabIndex = SourcesEditorTarget;
+        else if (modelWorkspace_->currentIndex() == loadNetworkTabIndex_)
+            targetTabIndex = LoadsEditorTarget;
+        else if (modelWorkspace_->currentIndex() == modelEnvironmentWorkspaceIndex_)
+            targetTabIndex = EnvironmentEditorTarget;
+        else if (modelWorkspace_->currentIndex() == modelParametersWorkspaceIndex_)
+            targetTabIndex = ParametersEditorTarget;
+    }
+    const auto targetAnalysisTabIndex = analysisWorkspace_->currentIndex();
     undoStack_->push(new GeometrySourceCommand(description, originalSource, std::move(updatedSource),
-        [this, targetTabIndex](const QString& source) { applyGeometrySource(source, targetTabIndex); }));
+        [this, targetTabIndex, targetAnalysisTabIndex](const QString& source) {
+            applyGeometrySource(source, targetTabIndex, targetAnalysisTabIndex);
+        }));
 }
 
-void MainWindow::applyGeometrySource(const QString& source, int targetTabIndex)
+void MainWindow::applyGeometrySource(const QString& source, int targetTabIndex,
+    int targetAnalysisTabIndex)
 {
     updatingSourceFromGeometry_ = true;
     editor_->setPlainText(source);
@@ -3929,10 +4444,12 @@ void MainWindow::applyGeometrySource(const QString& source, int targetTabIndex)
     editor_->document()->setModified(true);
     checkModel();
     if (targetTabIndex == sourceTabIndex_) {
-        showModule(sourceModuleIndex_);
+        showModelTab(sourceTabIndex_);
         sourceWorkspace_->setCurrentIndex(structuredSourceTabIndex_);
     } else {
         showModelTab(targetTabIndex);
+        if (targetTabIndex == setupTabIndex_)
+            analysisWorkspace_->setCurrentIndex(targetAnalysisTabIndex);
     }
 }
 
@@ -4004,12 +4521,17 @@ void MainWindow::updateWireCardEditor()
 
 void MainWindow::performUndo()
 {
-    if (moduleStack_->currentIndex() == modelModuleIndex_
-        || moduleStack_->currentIndex() == analysisModuleIndex_
-        || (moduleStack_->currentIndex() == sourceModuleIndex_
-            && sourceWorkspace_->currentIndex() == structuredSourceTabIndex_)) {
+    const auto structuredDeckActive = moduleStack_->currentIndex() == modelModuleIndex_
+        && modelWorkspace_->currentIndex() == modelDeckWorkspaceIndex_
+        && sourceWorkspace_->currentIndex() == structuredSourceTabIndex_;
+    const auto modelEditorActive = moduleStack_->currentIndex() == modelModuleIndex_
+        && (modelWorkspace_->currentIndex() != modelDeckWorkspaceIndex_
+            || structuredDeckActive);
+    if (modelEditorActive
+        || moduleStack_->currentIndex() == analysisModuleIndex_) {
         undoStack_->undo();
-    } else if (moduleStack_->currentIndex() == sourceModuleIndex_
+    } else if ((moduleStack_->currentIndex() == modelModuleIndex_
+            && modelWorkspace_->currentIndex() == modelDeckWorkspaceIndex_)
         || moduleStack_->currentIndex() == homeModuleIndex_) {
         editor_->undo();
     }
@@ -4017,12 +4539,17 @@ void MainWindow::performUndo()
 
 void MainWindow::performRedo()
 {
-    if (moduleStack_->currentIndex() == modelModuleIndex_
-        || moduleStack_->currentIndex() == analysisModuleIndex_
-        || (moduleStack_->currentIndex() == sourceModuleIndex_
-            && sourceWorkspace_->currentIndex() == structuredSourceTabIndex_)) {
+    const auto structuredDeckActive = moduleStack_->currentIndex() == modelModuleIndex_
+        && modelWorkspace_->currentIndex() == modelDeckWorkspaceIndex_
+        && sourceWorkspace_->currentIndex() == structuredSourceTabIndex_;
+    const auto modelEditorActive = moduleStack_->currentIndex() == modelModuleIndex_
+        && (modelWorkspace_->currentIndex() != modelDeckWorkspaceIndex_
+            || structuredDeckActive);
+    if (modelEditorActive
+        || moduleStack_->currentIndex() == analysisModuleIndex_) {
         undoStack_->redo();
-    } else if (moduleStack_->currentIndex() == sourceModuleIndex_
+    } else if ((moduleStack_->currentIndex() == modelModuleIndex_
+            && modelWorkspace_->currentIndex() == modelDeckWorkspaceIndex_)
         || moduleStack_->currentIndex() == homeModuleIndex_) {
         editor_->redo();
     }
@@ -4030,23 +4557,25 @@ void MainWindow::performRedo()
 
 void MainWindow::updateUndoActions()
 {
-    const bool geometryActive = moduleStack_ != nullptr
-        && (moduleStack_->currentIndex() == modelModuleIndex_
-            || moduleStack_->currentIndex() == analysisModuleIndex_
-            || (moduleStack_->currentIndex() == sourceModuleIndex_
-                && sourceWorkspace_->currentIndex() == structuredSourceTabIndex_));
+    const bool commandEditorActive = moduleStack_ != nullptr
+        && (moduleStack_->currentIndex() == analysisModuleIndex_
+            || (moduleStack_->currentIndex() == modelModuleIndex_
+                && (modelWorkspace_->currentIndex() != modelDeckWorkspaceIndex_
+                    || (modelWorkspace_->currentIndex() == modelDeckWorkspaceIndex_
+                        && sourceWorkspace_->currentIndex() == structuredSourceTabIndex_))));
     const bool sourceActive = moduleStack_ != nullptr
-        && ((moduleStack_->currentIndex() == sourceModuleIndex_
+        && ((moduleStack_->currentIndex() == modelModuleIndex_
+                && modelWorkspace_->currentIndex() == modelDeckWorkspaceIndex_
                 && sourceWorkspace_->currentIndex() == 0)
             || moduleStack_->currentIndex() == homeModuleIndex_);
-    undoAction_->setEnabled(geometryActive ? undoStack_->canUndo()
+    undoAction_->setEnabled(commandEditorActive ? undoStack_->canUndo()
                                            : sourceActive && editor_->document()->isUndoAvailable());
-    redoAction_->setEnabled(geometryActive ? undoStack_->canRedo()
+    redoAction_->setEnabled(commandEditorActive ? undoStack_->canRedo()
                                            : sourceActive && editor_->document()->isRedoAvailable());
-    undoAction_->setText(geometryActive && undoStack_->canUndo()
+    undoAction_->setText(commandEditorActive && undoStack_->canUndo()
             ? tr("&Undo %1").arg(undoStack_->undoText())
             : tr("&Undo"));
-    redoAction_->setText(geometryActive && undoStack_->canRedo()
+    redoAction_->setText(commandEditorActive && undoStack_->canRedo()
             ? tr("&Redo %1").arg(undoStack_->redoText())
             : tr("&Redo"));
 }
@@ -4062,6 +4591,7 @@ void MainWindow::updateProjectTree(const model::AntennaModel& antennaModel, cons
     auto* geometry = new QTreeWidgetItem(root, {tr("Geometry")});
     geometry->setData(0, ItemKindRole, QStringLiteral("geometry"));
     auto* parameters = new QTreeWidgetItem(root, {tr("Parameters")});
+    parameters->setData(0, ItemKindRole, QStringLiteral("parameters"));
     auto* environment = new QTreeWidgetItem(root, {tr("Environment")});
     auto* frequencySources = new QTreeWidgetItem(root, {tr("Frequency && Sources")});
     auto* attachments = new QTreeWidgetItem(root, {tr("Loads && Networks")});
@@ -4069,7 +4599,7 @@ void MainWindow::updateProjectTree(const model::AntennaModel& antennaModel, cons
     auto* comments = new QTreeWidgetItem(root, {tr("Comments")});
     auto* other = new QTreeWidgetItem(root, {tr("Other Cards")});
     auto* allCards = new QTreeWidgetItem(root, {tr("All Cards")});
-    for (auto* category : {parameters, environment, frequencySources, attachments, requests, comments, other, allCards})
+    for (auto* category : {environment, frequencySources, attachments, requests, comments, other, allCards})
         category->setData(0, ItemKindRole, QStringLiteral("category"));
 
     const auto categoryFor = [&](const nec::NecCard& card) -> QTreeWidgetItem* {
@@ -4240,8 +4770,12 @@ void MainWindow::restoreWorkspaceLayout()
     } else {
         const auto normalGeometry = settings.value(QStringLiteral("mainWindow/normalGeometry")).toRect();
         if (normalGeometry.isValid()) setGeometry(normalGeometry);
+        else if (workspaceDensity_ == WorkspaceDensity::Compact) resize(1120, 720);
+        else if (workspaceDensity_ == WorkspaceDensity::Spacious) resize(1440, 900);
     }
-    restoreState(settings.value(QStringLiteral("mainWindow/state")).toByteArray());
+    const auto savedState = settings.value(QStringLiteral("mainWindow/state")).toByteArray();
+    restoreState(savedState);
+    if (savedState.isEmpty()) resetWorkspaceLayout();
     auto geometrySettings = geometrySettings_;
     geometrySettings.lengthUnit = static_cast<model::LengthUnit>(settings.value(
         QStringLiteral("model/displayLengthUnit"), static_cast<int>(model::LengthUnit::Meter)).toInt());

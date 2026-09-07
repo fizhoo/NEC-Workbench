@@ -19,6 +19,8 @@ configured by the user and are not bundled.
 - Solver-independent `SY` expressions with numeric NEC run-deck generation
 - Ordered `GS` geometry scaling with separate display and deck-unit controls
 - One-variable bounded sweeps with model-sweep or explicit-frequency SWR objectives
+- Shared candidate evaluator for parameter sweeps and future optimizer algorithms
+- Shared frequency plans with model, continuous, explicit-point, and amateur-band modes
 - Static model-adequacy checks for segmentation, thin-wire ratios, sources, and junctions
 - Single-frequency lossless Average Gain Test with archived Validation results
 - Segmentation convergence studies with EX, LD, and TL attachment remapping
@@ -48,7 +50,8 @@ sequence is:
 
 1. Extend the clarified expression and resolved-value presentation into
    structured editors.
-2. Apply a selected optimization candidate back into the active model.
+2. Apply a selected optimization candidate back into the active model by updating
+   the selected direct `SY` assignment while preserving its authored context.
 3. Add safe expression-aware structured and graphical editing.
 
 Parameterization is the required foundation for both model templates and
@@ -64,8 +67,8 @@ particular solver's extensions.
 5. Add bounded multi-parameter optimization.
 6. Add explicit Compare Runs and baseline-versus-candidate overlays.
 
-Explicit frequency sets currently provide a simple multi-band foundation.
-Named amateur bands, per-frequency weights, and pass/fail constraints remain
+Explicit frequency sets and editable amateur-band presets provide the initial
+multi-band foundation. Per-frequency weights and pass/fail constraints remain
 future refinements rather than complicating the first workflow.
 
 The first optimizer should favor transparent, reproducible behavior over a

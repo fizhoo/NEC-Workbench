@@ -21,6 +21,9 @@ class SetupEditor final : public QWidget {
 public:
     explicit SetupEditor(QWidget* parent = nullptr);
 
+    [[nodiscard]] auto frequencyPage() const -> QWidget*;
+    [[nodiscard]] auto sourcesPage() const -> QWidget*;
+    [[nodiscard]] auto environmentPage() const -> QWidget*;
     void setData(const model::AntennaModel& model, const model::ModelSetup& setup);
     void selectExcitation(std::size_t sourceLine);
 
@@ -41,6 +44,9 @@ private:
 
     model::AntennaModel model_;
     model::ModelSetup setup_;
+    QWidget* frequencyPage_{};
+    QWidget* sourcesPage_{};
+    QWidget* environmentPage_{};
     QCheckBox* frequencySweepControl_{};
     QComboBox* frequencyModeControl_{};
     QDoubleSpinBox* startFrequencyControl_{};

@@ -280,6 +280,18 @@ void checkExecute(const NecCard& card, ModelCheckResult& result)
     }
 }
 
+void checkReferenceImpedance(const NecCard& card, ModelCheckResult& result)
+{
+    if (card.fields.empty() || !isNumber<double>(card.fields[0])) {
+        addError(result, card, "Z0/ZO reference impedance requires a numeric value in ohms");
+        return;
+    }
+    double impedance{};
+    std::from_chars(card.fields[0].data(), card.fields[0].data() + card.fields[0].size(), impedance);
+    if (impedance <= 0.0)
+        addError(result, card, "Z0/ZO reference impedance must be positive");
+}
+
 void checkLoad(const NecCard& card, ModelCheckResult& result)
 {
     if (card.fields.size() < 7) { addError(result, card, "LD requires four integer and three numeric fields"); return; }
@@ -361,6 +373,7 @@ void checkCardOrdering(const NecDocument& document, ModelCheckResult& result)
             || card.kind == NecCardKind::Execute
             || card.kind == NecCardKind::TransmissionLine
             || card.kind == NecCardKind::Network
+            || card.kind == NecCardKind::ReferenceImpedance
             || card.kind == NecCardKind::End;
         if (isControlCard && lastGeometry != nullptr && !geometryEnded && !reportedMissingEnd) {
             addError(result, card, card.mnemonic
@@ -423,6 +436,9 @@ auto NecModelChecker::check(const NecDocument& document) const -> ModelCheckResu
             break;
         case NecCardKind::TransmissionLine:
             checkTransmissionLine(card, result);
+            break;
+        case NecCardKind::ReferenceImpedance:
+            checkReferenceImpedance(card, result);
             break;
         case NecCardKind::Unknown:
             result.diagnostics.push_back({DiagnosticSeverity::Warning, card.lineNumber,

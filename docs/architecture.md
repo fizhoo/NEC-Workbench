@@ -13,16 +13,30 @@ editors are deliberately excluded from presentation rounding.
 - `analysis`: external-solver command adapters without Qt dependencies
 
 The main window is a modular workbench rather than a source-editor container.
-Its persistent navigation switches among Dashboard, Geometry, NEC Source,
-Analysis, Results, and Optimize workspaces through one stacked central area.
+Its persistent navigation switches among Home, Model, Analysis, Results, and
+Optimize workspaces through one stacked central area. Model contains nested
+Geometry and NEC Deck workspaces; NEC Deck contains the existing Raw Source and
+Structured Cards views.
 Before a NEC deck is created or opened, Dashboard shows the welcome screen.
 After loading, Dashboard composes four live panels: a basic editor sharing the
 authoritative source document, the existing interactive 3D results renderer, a
 model summary, and quick solver results. It does not maintain a second NEC copy.
+Workspace tabs provide destination navigation; the loaded-model Dashboard keeps
+only Check Model and Run Analysis as global quick actions, right-aligned within
+the NEC Source panel. Validation actions remain contextual beside their status
+in a compact two-column quality area, while less-frequent modeling operations
+stay in the menu system.
 
-Geometry owns the detailed XY, XZ, YZ, and 3D editing views. NEC Source owns the
-full source editor and structured card tables. Analysis owns frequency,
-source, ground, loads/lines, solver, and result-request controls. Results owns
+Menus and tabs have separate roles: tabs navigate among workspaces, menus expose
+the complete command inventory, and the main toolbar contains only frequent
+global actions. The Run menu owns the process-level Run and Stop commands. Stop
+delegates to the active ordinary solver, convergence study, or parameter sweep.
+Reset Layout affects only window/dock placement and never model or result data.
+
+Model → Geometry owns the detailed XY, XZ, YZ, and 3D editing views. Model → NEC
+Deck owns the full source editor and structured card tables. Model also owns the
+existing source, load/transmission-line, and ground/environment editors. Analysis
+owns frequency, solver, and result-request controls. Results owns
 summary, grouped run history, impedance tables and plots, currents, nested 2D/3D
 radiation, and immutable raw solver output. Optimize provides bounded
 single-variable SWR sweeps.
@@ -52,8 +66,9 @@ solver execution, and both 3D renderers retain their prior boundaries.
 
 NEC Source presents Raw Source and Structured Cards over the same authoritative
 text document. Structured Cards contains the validated, unit-aware `GW` wire
-table plus schema-specific tables for `EX`, `FR`, `GN/GE`, `LD`, `TL`, `RP`, and
-`XQ`, plus explicit `GS` scale editing. Each row retains its original source-line mapping. Selecting a structured
+table plus a category tree leading to schema-specific tables for `EX`, `FR`,
+`GN/GE`, `LD`, `TL`, `RP`, and `XQ`, plus explicit `GS` scale and `Z0`/`ZO`
+reference-impedance editing. Each row retains its original source-line mapping. Selecting a structured
 row positions the raw editor cursor on that card; editing a field rewrites only
 that mapped line through the existing source command, undo, parse, validation,
 and synchronization path. Supported families provide safe default Add actions
@@ -124,13 +139,13 @@ Qt Widgets, avoiding an additional OpenGL dependency. It supports orbit, pan,
 zoom, fit, isometric reset, world-axis rendering, wire picking, and synchronized
 selection and properties. It is intentionally read-only in this checkpoint.
 
-The Analyze workspace exposes three top-level tabs: Model Setup, Solver, and
-Requests. Model Setup contains nested Frequency, Ground & Sources and Loads &
-Transmission Lines editors, avoiding another top-level workflow step. Its
-compact frequency and ground forms share an adjustable horizontal splitter;
-source and attachment tables retain full-width editing areas.
+The Analysis workspace exposes Solver, Frequency, and Requests tabs. The former
+combined setup editor supplies three synchronized pages: Frequency is hosted by
+Analysis, while Sources and Environment are hosted by Model. The existing Loads
+& Transmission Lines editor is also hosted by Model. Reparenting these pages
+changes navigation ownership without duplicating controls or semantic state.
 
-The Model Setup editors manage the first supported analysis cards. They edit one
+The model and frequency editors manage the first supported analysis cards. They edit one
 linear or multiplicative `FR` frequency definition and any number of standard
 voltage-source `EX 0` cards using magnitude and phase. Source references are
 validated against wire tags and segment counts, and feed positions are marked in
@@ -166,9 +181,17 @@ visible but are reported as not runnable until their command adapters exist.
 When NEC-2 is selected with no saved path, the application discovers `nec2c`
 from `PATH`.
 
-Analysis Requests manages a canonical `XQ` current/impedance request and a normal
-far-field `RP` request with theta and phi sampling controls. Applying requests
-updates, inserts, or removes only the managed cards in one undoable source edit.
+Analysis Requests manages a canonical `XQ` current/impedance request and every
+supported normal-mode `RP` card through a row-based theta/phi editor. Pattern
+add and duplicate actions create drafts; apply and delete update only the selected
+card through the undoable source path. Solver-output parsing assigns each
+radiation block a frequency-local dataset index so 2D cuts and 3D grids remain
+selectable rather than being merged.
+For an every-frequency radiation request, solver preparation preserves the
+model's native `FR` sweep and `RP` sequence instead of expanding it into one
+command pair per frequency. Representative and center-only policies still
+create explicit one-frequency solver requests. This keeps large native sweeps
+compact and avoids stressing legacy fixed-format NEC-2 parsers.
 The readiness summary requires a freshly checked valid model, supported `FR` and
 `EX` definitions, at least one result request, and a runnable solver path. Any raw
 source edit immediately invalidates readiness until Check Model runs again.
@@ -219,8 +242,11 @@ NEC output into structured result objects is a
 separate core layer. The first parser reads each frequency block's antenna-input
 rows into backend-neutral feedpoint results. Results Numerical Results shows
 frequency, source location, resistance, reactance, impedance
-magnitude and phase, input power, and SWR referenced to 50 ohms. Raw output
-remains available for audit and future parsers.
+magnitude and phase, input power, and SWR referenced to the model's `Z0`/`ZO`
+value, defaulting to 50 ohms. `Z0` is the canonical xnec2c-compatible spelling;
+legacy `ZO` is accepted. Both remain in authored source but are stripped from
+temporary standard-NEC-2 solver decks because `nec2c` does not implement that
+extension. Raw output remains available for audit and future parsers.
 
 Results Sweep Plots renders resistance and reactance together and SWR in a
 separate vertically resizable plot. The Qt Widgets renderer has no charting
@@ -263,10 +289,16 @@ requires the separate Open Snapshot as New Model action. Immutable run artifacts
 are never overwritten. Legacy run records without source metadata are labeled
 as archived `model.nec` snapshots.
 
-Model Setup → Loads & Transmission Lines provides structured editable tables for NEC `LD` types 0–5
+Model → Loads & Transmission Lines provides structured editable tables for NEC `LD` types 0–5
 and `TL` cards. Changes rewrite or insert one canonical card through the shared
 undoable source path. Validation checks numeric field types, load wire/segment
-ranges, and both transmission-line endpoints. Supported attachments participate
+ranges, conductivity, and both transmission-line endpoints. The LD editor keeps
+model values in NEC SI units while presenting µH, pF, and MS/m display units, and
+maps its whole-wire scope to zero first/last segment fields. TL rows use model-backed
+wire and segment choices, preserve signed characteristic impedance, and convert
+the selected Geometry display unit to the meter value required by NEC. Add actions
+create local draft rows so incomplete LD or TL definitions do not mutate the source.
+Supported attachments participate
 in automatic segmentation through normalized wire-position remapping.
 
 ## Automatic Segmentation
@@ -305,27 +337,39 @@ numeric `model.nec` to the selected backend. Native NEC solvers therefore do not
 need to understand Workbench symbols.
 
 Each retained symbol definition includes its exact authored expression, resolved
-numeric value, source line, and whether it is a direct numeric assignment that
-the current Parameter Sweep may adjust. Raw SY values are unit-neutral. Geometry units and `GS` scaling apply
+numeric value, and source line. Raw SY values are unit-neutral. Geometry units and `GS` scaling apply
 where expressions are consumed by NEC cards; they are not inferred back onto a
 symbol merely because its name appears in a geometry field.
 
-Raw source is currently authoritative for symbolic fields. Structured or
-graphical edits may replace an expression with its current numeric value. The
-Optimize workspace can inspect definitions and override one value across a
-bounded linear sweep without modifying the authored source.
+The Model Parameters editor performs source-level add, update, and delete operations
+without introducing a second parameter store. It preserves other assignments when
+several definitions share one `SY` line, then runs the normal source check and shared
+Undo/Redo path. The Optimize workspace can inspect definitions and override one value
+across a bounded linear sweep without modifying the authored source. Every successfully
+resolved SY definition is selectable, including calculated expressions; a candidate
+override replaces that definition's resolved value before subsequent definitions and
+NEC cards are evaluated.
 
 Optimization candidates use the same external solver adapter and durable run
-store as ordinary analysis. Objective evaluation is centralized in the core
-analysis layer rather than embedded in solver lifecycle code. The initial
-objectives minimize either the maximum SWR across all returned feedpoint
-frequencies or the SWR nearest a selected frequency. Candidate input removes
+store as ordinary analysis. A reusable, non-widget `CandidateEvaluator` owns SY
+overrides, numeric deck generation, validation, artifact writing, solver process
+lifecycle, timeout/cancel handling, output parsing, and objective evaluation.
+Parameter Sweep now sequences candidate requests and renders returned results;
+future optimizer algorithms can use the same evaluator without duplicating
+solver logic. A Qt-free `FrequencyPlan` normalizes model sweeps, individual
+points, and one or more ranges into sorted, duplicate-free evaluation points.
+The initial objectives minimize either the maximum SWR across all
+returned feedpoint frequencies or the SWR nearest a selected frequency. Candidate input removes
 `RP` requests and ensures an `XQ` request, avoiding unnecessary far-field
 calculations. Optimization can retain the model's `FR` sweep or replace it with
-an explicit, sorted frequency set. Explicit sets are emitted as repeated
+an explicit, sorted frequency set generated from individual points, ranges, or
+both. Explicit sets are emitted as repeated
 single-frequency `FR`/`XQ` blocks, which permits disconnected bands in one
 candidate process. Parsed feedpoint rows remain attached to each candidate so
 the workspace can show its full frequency-by-frequency SWR and impedance detail.
+Applying the best candidate delegates one numeric `SY` replacement back to
+`MainWindow` so the ordinary source command, validation, and Undo/Redo path remains
+the only model-mutation mechanism.
 An `optimization.json` artifact records the variable, value, objective,
 frequency mode and points, selected objective frequency, and reference impedance
 used for each generated numeric deck.

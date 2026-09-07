@@ -77,8 +77,14 @@ auto NecSetupConverter::convert(const NecDocument& document) const -> model::Mod
                 setup.executionRequest = request;
             }
         }
-        if (card.kind == NecCardKind::RadiationPattern && !setup.radiationPattern
-            && card.fields.size() >= 8) {
+        if (card.kind == NecCardKind::ReferenceImpedance
+            && !setup.referenceImpedance && !card.fields.empty()) {
+            model::ReferenceImpedanceDefinition reference;
+            reference.sourceLine = card.lineNumber;
+            if (parseNumber(card.fields[0], reference.ohms) && reference.ohms > 0.0)
+                setup.referenceImpedance = reference;
+        }
+        if (card.kind == NecCardKind::RadiationPattern && card.fields.size() >= 8) {
             model::RadiationPatternRequest request;
             int mode{};
             int format{};
@@ -91,7 +97,7 @@ auto NecSetupConverter::convert(const NecDocument& document) const -> model::Mod
                 && parseNumber(card.fields[5], request.phiStart)
                 && parseNumber(card.fields[6], request.thetaStep)
                 && parseNumber(card.fields[7], request.phiStep)) {
-                setup.radiationPattern = request;
+                setup.radiationPatterns.push_back(request);
             }
         }
         if (card.kind == NecCardKind::Excitation && card.fields.size() >= 6) {

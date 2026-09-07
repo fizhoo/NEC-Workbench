@@ -8,10 +8,11 @@
 #include <vector>
 
 class QLabel;
-class QListWidget;
 class QTableWidget;
 class QTableWidgetItem;
 class QPushButton;
+class QTreeWidget;
+class QTreeWidgetItem;
 
 namespace necwb::ui {
 
@@ -37,9 +38,11 @@ private:
     [[nodiscard]] auto validateRow(int row) -> bool;
     [[nodiscard]] auto wireDefaults() const -> std::vector<std::pair<int, int>>;
     [[nodiscard]] auto defaultCard(int familyIndex) const -> QString;
+    [[nodiscard]] auto currentFamilyIndex() const -> int;
+    [[nodiscard]] auto familyItem(int familyIndex) const -> QTreeWidgetItem*;
 
     nec::NecDocument document_;
-    QListWidget* families_{};
+    QTreeWidget* families_{};
     QTableWidget* table_{};
     QLabel* description_{};
     QPushButton* addButton_{};

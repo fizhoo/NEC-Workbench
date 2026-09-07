@@ -61,6 +61,7 @@ struct RadiationSample {
     double axialRatio{};
     double tiltDegrees{};
     PolarizationSense polarizationSense{PolarizationSense::Unknown};
+    int patternIndex{};
 };
 
 struct RadiationMetrics {
@@ -68,7 +69,25 @@ struct RadiationMetrics {
     double peakGainDb{};
     double peakThetaDegrees{};
     double peakPhiDegrees{};
-    double frontToBackDb{};
+    std::vector<RadiationSample> tiedPeaks;
+    std::optional<double> frontToBackDb;
+};
+
+struct RadiationCutPoint {
+    double angleDegrees{};
+    double thetaDegrees{};
+    double phiDegrees{};
+    double gainDb{};
+};
+
+struct RadiationCutMetrics {
+    bool valid{};
+    double peakAngleDegrees{};
+    double peakGainDb{};
+    std::vector<double> tiedPeakAnglesDegrees;
+    std::optional<double> sampledBeamwidthDegrees;
+    std::optional<double> interpolatedBeamwidthDegrees;
+    std::optional<double> frontToBackDb;
 };
 
 struct RadiationDisplaySettings {
@@ -86,6 +105,7 @@ struct AnalysisResult {
     std::vector<RadiationSample> radiation;
     std::optional<double> averagePowerGain;
     std::optional<double> averagingSolidAnglePi;
+    double referenceImpedanceOhms{50.0};
 };
 
 [[nodiscard]] auto standingWaveRatio(std::complex<double> impedance,
@@ -94,5 +114,7 @@ struct AnalysisResult {
     RadiationComponent component) -> double;
 [[nodiscard]] auto radiationMetrics(std::span<const RadiationSample> samples,
     RadiationComponent component) -> RadiationMetrics;
+[[nodiscard]] auto radiationCutMetrics(std::span<const RadiationCutPoint> samples,
+    bool wraps) -> RadiationCutMetrics;
 
 }

@@ -5,8 +5,8 @@
 #include "model/ModelSetup.h"
 #include "nec/NecSymbolResolver.h"
 #include "ui/analysis/AnalysisRunStore.h"
+#include "ui/optimization/CandidateEvaluator.h"
 
-#include <QElapsedTimer>
 #include <QString>
 #include <QWidget>
 
@@ -15,14 +15,14 @@
 #include <vector>
 
 class QComboBox;
+class QDialog;
 class QDoubleSpinBox;
 class QLabel;
-class QProcess;
 class QProgressBar;
 class QPushButton;
+class QSplitter;
 class QSpinBox;
 class QTableWidget;
-class QTimer;
 
 namespace necwb::ui {
 
@@ -37,15 +37,18 @@ public:
     void setRunsChangedCallback(std::function<void()> callback);
     void setRunningChangedCallback(std::function<void()> callback);
     void setReturnToCurrentWorkCallback(std::function<void()> callback);
+    void setApplyParameterCallback(std::function<bool(QString, double)> callback);
     auto loadSession(const QString& sessionId) -> bool;
     void leaveHistoricalSession();
     [[nodiscard]] auto isRunning() const noexcept -> bool;
+    void cancel();
     void cancelAndWait();
 
 private:
     enum class FrequencyMode {
         ModelSweep,
-        Explicit
+        Explicit,
+        Continuous
     };
 
     struct Candidate {
@@ -60,21 +63,28 @@ private:
     void updateObjectiveControls();
     void updateFrequencyControls();
     void updateWorkload();
-    void updateCandidateDetails();
+    void showCandidateDetails(int row);
+    void updateCandidateDetails(int row);
+    void resetCandidateDetails();
+    void updateCandidateRowToolTip(int row);
     void updateReadiness();
     void populateModelFrequencies(const model::FrequencyDefinition& frequency);
     void setExplicitFrequencies(const std::vector<double>& frequenciesMHz);
     void addExplicitFrequency(double frequencyMHz);
+    void removeSelectedFrequencies();
+    void clearExplicitFrequencies();
+    void chooseAmateurBands();
     void pasteExplicitFrequencies();
     void startSweep();
     void cancelSweep();
     void startNextCandidate();
-    void finishCurrentCandidate(bool processSucceeded, const QString& detail = {});
+    void finishCurrentCandidate(CandidateEvaluationResult result);
     void finishSweep();
-    auto writeCandidateFiles(Candidate& candidate, const std::string& generatedDeck) -> bool;
+    auto writeCandidateMetadata(const Candidate& candidate) -> bool;
     void setCandidateStatus(int row, const QString& status);
     [[nodiscard]] auto selectedObjective() const -> analysis::OptimizationObjectiveSpec;
     [[nodiscard]] auto selectedFrequencyMode() const -> FrequencyMode;
+    [[nodiscard]] auto selectedFrequencyPlan() const -> analysis::FrequencyPlan;
     [[nodiscard]] auto explicitFrequencies() const -> std::vector<double>;
     [[nodiscard]] auto objectiveName(analysis::OptimizationObjectiveKind kind) const -> QString;
 
@@ -84,11 +94,17 @@ private:
     QDoubleSpinBox* targetFrequencyControl_{};
     QComboBox* frequencyModeControl_{};
     QWidget* explicitFrequencyPanel_{};
+    QWidget* continuousFrequencyPanel_{};
     QTableWidget* frequencyTable_{};
     QDoubleSpinBox* frequencyEntryControl_{};
     QPushButton* addFrequencyButton_{};
     QPushButton* removeFrequencyButton_{};
     QPushButton* pasteFrequencyButton_{};
+    QPushButton* clearFrequencyButton_{};
+    QPushButton* addAmateurBandButton_{};
+    QDoubleSpinBox* continuousStartControl_{};
+    QDoubleSpinBox* continuousStopControl_{};
+    QDoubleSpinBox* continuousStepControl_{};
     QLabel* workloadLabel_{};
     QDoubleSpinBox* minimumControl_{};
     QDoubleSpinBox* maximumControl_{};
@@ -96,22 +112,23 @@ private:
     QDoubleSpinBox* referenceImpedanceControl_{};
     QPushButton* runButton_{};
     QPushButton* cancelButton_{};
+    QPushButton* applyBestButton_{};
     QProgressBar* progress_{};
     QLabel* statusLabel_{};
     QLabel* bestLabel_{};
     QTableWidget* resultsTable_{};
+    QDialog* candidateDetailsWindow_{};
     QLabel* candidateDetailLabel_{};
     QTableWidget* candidateDetailsTable_{};
     QWidget* historicalBanner_{};
     QLabel* historicalBannerTitle_{};
     QPushButton* returnToCurrentWorkButton_{};
-    QProcess* process_{};
-    QTimer* timeout_{};
-    QElapsedTimer elapsed_;
+    CandidateEvaluator* evaluator_{};
     AnalysisRunStore runStore_;
     std::function<void()> runsChangedCallback_;
     std::function<void()> runningChangedCallback_;
     std::function<void()> returnToCurrentWorkCallback_;
+    std::function<bool(QString, double)> applyParameterCallback_;
     std::vector<nec::SymbolDefinition> definitions_;
     std::vector<Candidate> candidates_;
     std::vector<double> modelFrequenciesMHz_;
@@ -128,10 +145,10 @@ private:
     std::size_t candidateIndex_{};
     double bestScore_{};
     int bestRow_{-1};
+    int detailCandidateRow_{-1};
     bool modelValid_{};
     bool externalRunActive_{};
     bool cancelRequested_{};
-    bool timedOut_{};
     bool historicalSession_{};
 };
 

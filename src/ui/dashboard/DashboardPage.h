@@ -23,8 +23,7 @@ class DashboardPage final : public QWidget {
 public:
     explicit DashboardPage(QTextDocument* document, QWidget* parent = nullptr);
 
-    void setQuickActions(QAction* geometry, QAction* source, QAction* check,
-        QAction* run, QAction* results);
+    void setQuickActions(QAction* check, QAction* run);
     void setAverageGainAction(QAction* action);
     void setConvergenceAction(QAction* action);
     void setDocumentState(const QString& fileName, bool modified);

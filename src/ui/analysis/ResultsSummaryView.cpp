@@ -107,7 +107,8 @@ void ResultsSummaryView::refresh()
     auto minimumSwr = std::numeric_limits<double>::infinity();
     auto maximumSwr = 0.0;
     for (const auto& feedpoint : result_.feedpoints) {
-        const auto swr = analysis::standingWaveRatio(feedpoint.impedance);
+        const auto swr = analysis::standingWaveRatio(
+            feedpoint.impedance, result_.referenceImpedanceOhms);
         if (std::isfinite(swr)) {
             minimumSwr = std::min(minimumSwr, swr);
             maximumSwr = std::max(maximumSwr, swr);
@@ -122,8 +123,9 @@ void ResultsSummaryView::refresh()
             .arg(formatDecimal(std::abs(selectedFeedpoint->impedance.imag())))
             .arg(selectedFeedpoint->wireTag).arg(selectedFeedpoint->segment));
     swrLabel_->setText(std::isfinite(minimumSwr)
-        ? tr("%1 minimum · %2 maximum · 50 Ω reference")
-            .arg(formatDecimal(minimumSwr), formatDecimal(maximumSwr))
+        ? tr("%1 minimum · %2 maximum · %3 Ω reference")
+            .arg(formatDecimal(minimumSwr), formatDecimal(maximumSwr),
+                formatDecimal(result_.referenceImpedanceOhms))
         : tr("No finite SWR values"));
 
     std::vector<analysis::RadiationSample> selectedRadiation;
@@ -131,12 +133,18 @@ void ResultsSummaryView::refresh()
         if (sameFrequency(sample.frequencyMHz, selectedFrequency_)) selectedRadiation.push_back(sample);
     }
     const auto metrics = analysis::radiationMetrics(selectedRadiation, analysis::RadiationComponent::Total);
-    radiationLabel_->setText(metrics.valid
-        ? tr("Peak %1 dBi at θ %2°, φ %3°")
+    if (metrics.valid) {
+        auto text = tr("Peak %1 dBi at θ %2°, φ %3°")
             .arg(formatDecimal(metrics.peakGainDb))
             .arg(formatDecimal(metrics.peakThetaDegrees))
-            .arg(formatDecimal(metrics.peakPhiDegrees))
-        : tr("No radiation pattern at %1 MHz").arg(formatDecimal(selectedFrequency_)));
+            .arg(formatDecimal(metrics.peakPhiDegrees));
+        if (metrics.tiedPeaks.size() > 1)
+            text += tr(" · %1 tied peak directions").arg(metrics.tiedPeaks.size());
+        radiationLabel_->setText(text);
+    } else {
+        radiationLabel_->setText(tr("No radiation pattern at %1 MHz")
+            .arg(formatDecimal(selectedFrequency_)));
+    }
 
     QStringList available;
     if (!result_.feedpoints.empty()) available.append(tr("Impedance"));

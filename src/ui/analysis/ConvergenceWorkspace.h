@@ -36,6 +36,7 @@ public:
     [[nodiscard]] auto isRunning() const noexcept -> bool;
     auto loadSession(const QString& sessionId) -> bool;
     void leaveHistoricalSession();
+    void cancel();
     void cancelAndWait();
     void clearResults();
     void markStale();

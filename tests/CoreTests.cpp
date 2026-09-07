@@ -1,5 +1,6 @@
 #include "analysis/SolverCommand.h"
 #include "analysis/AverageGainTest.h"
+#include "analysis/FrequencyPlan.h"
 #include "analysis/NecOutputParser.h"
 #include "analysis/OptimizationObjective.h"
 #include "analysis/SegmentationConvergence.h"
@@ -15,6 +16,7 @@
 #include "nec/NecParser.h"
 #include "nec/NecSetupConverter.h"
 #include "nec/NecSymbolResolver.h"
+#include "nec/NecSymbolEditor.h"
 #include "nec/NecWriter.h"
 
 #include <algorithm>
@@ -51,15 +53,18 @@ void testRoundTripPreservesSource()
 
 void testKnownCardsAreRecognized()
 {
-    const std::string source = "CM note\nCE\nSY length=1\nGW 1 3 0 0 0 1 0 0 .001\nGS 0 0 1\nGE\nEX\nLD\nGN\nFR\nRP\nTL\nNT\nEN";
+    const std::string source = "CM note\nCE\nSY length=1\nGW 1 3 0 0 0 1 0 0 .001\nGS 0 0 1\nGE\nEX\nLD\nGN\nFR\nRP\nTL\nNT\nZ0 50\nZO 75\nEN";
     const auto document = necwb::nec::NecParser{}.parse(source);
     const auto cards = document.cards();
-    expect(cards.size() == 14, "all known card lines are parsed");
+    expect(cards.size() == 16, "all known card lines are parsed");
     expect(cards[0].kind == necwb::nec::NecCardKind::Comment, "CM recognized");
     expect(cards[2].kind == necwb::nec::NecCardKind::Symbol, "SY recognized");
     expect(cards[3].kind == necwb::nec::NecCardKind::GeometryWire, "GW recognized");
     expect(cards[4].kind == necwb::nec::NecCardKind::GeometryScale, "GS recognized");
-    expect(cards[13].kind == necwb::nec::NecCardKind::End, "EN recognized");
+    expect(cards[13].kind == necwb::nec::NecCardKind::ReferenceImpedance
+            && cards[14].kind == necwb::nec::NecCardKind::ReferenceImpedance,
+        "canonical Z0 and legacy ZO reference impedance cards are recognized");
+    expect(cards[15].kind == necwb::nec::NecCardKind::End, "EN recognized");
 }
 
 void testSymbolResolution()
@@ -79,22 +84,40 @@ void testSymbolResolution()
     expect(resolution.definitions.size() == 4, "all symbol assignments are retained");
     expect(resolution.definitions[0].name == "half" && resolution.definitions[0].value == 5.0,
         "symbol definitions retain names and evaluated values");
-    expect(resolution.definitions[0].expression == "5"
-            && resolution.definitions[0].adjustable,
-        "plain numeric assignments are retained and marked adjustable");
-    expect(!resolution.definitions[1].adjustable && !resolution.definitions[2].adjustable,
-        "calculated and symbol-derived expressions remain read-only");
+    expect(resolution.definitions[0].expression == "5",
+        "plain numeric assignment expressions are retained");
     expect(resolution.definitions[3].name == "segments" && resolution.definitions[3].value == 21.0,
         "later assignments can use arithmetic and earlier symbols");
     const auto scientificLiteral = necwb::nec::NecSymbolResolver{}.resolve(
         "SY radius=1.0e-3, offset=+2.5\n");
-    expect(scientificLiteral.ok()
-            && scientificLiteral.definitions.size() == 2
-            && scientificLiteral.definitions[0].adjustable
-            && scientificLiteral.definitions[1].adjustable,
-        "signed and scientific numeric assignments remain adjustable");
+    expect(scientificLiteral.ok() && scientificLiteral.definitions.size() == 2,
+        "signed and scientific numeric assignments remain available");
+    const auto derivedOverride = necwb::nec::NecSymbolResolver{}.resolve(
+        "SY FT=0.3048\nSY len=66*FT\nGW 1 11 0 0 0 len 0 0 0.001\nGE 0\n",
+        {{"len", 10.0}});
+    expect(derivedOverride.ok()
+            && derivedOverride.generatedDeck.find("GW 1 11 0 0 0 10 0 0 0.001")
+                != std::string::npos,
+        "expression-based symbols accept candidate overrides before downstream use");
     expect(resolution.generatedDeck.find("SY ") == std::string::npos,
         "generated numeric deck omits Workbench symbol declarations");
+
+    const std::string editableSymbols =
+        "CM symbols\r\nSY length=10, half=length/2\r\nGW 1 11 -half 0 0 half 0 0 .001\r\nEN\r\n";
+    const auto insertedSymbol = necwb::nec::insertSymbolDefinition(
+        editableSymbols, "height", "6*0.3048");
+    expect(insertedSymbol.find("SY height=6*0.3048\r\nGW") != std::string::npos,
+        "new symbol is inserted after existing SY definitions with line endings preserved");
+    const auto replacedSymbol = necwb::nec::replaceSymbolDefinition(
+        editableSymbols, 2, "half", "halfLength", "length/2+0.1");
+    expect(replacedSymbol && replacedSymbol->find(
+        "SY length=10, halfLength=length/2+0.1") != std::string::npos,
+        "one assignment on a multi-symbol SY line can be replaced");
+    const auto removedSymbol = necwb::nec::removeSymbolDefinition(
+        editableSymbols, 2, "length");
+    expect(removedSymbol && removedSymbol->find("SY half=length/2") != std::string::npos
+            && removedSymbol->find("SY length=") == std::string::npos,
+        "one assignment on a multi-symbol SY line can be removed");
     expect(resolution.resolvedSource.find("CE\r\n\r\n\r\n\r\nGW") != std::string::npos,
         "line-preserving resolution replaces each SY declaration with a blank source line");
     expect(resolution.generatedDeck.find("GW 1 21 -5 0 6 5 0 6 0.001") != std::string::npos,
@@ -598,17 +621,25 @@ void testAnalysisRequests()
         "FR 0 1 0 0 14.2 0\n"
         "XQ 0\n"
         "RP 0 91 1 1000 0 0 1 0 0 0\n"
+        "RP 0 1 360 1000 62 0 0 1 0 0\n"
+        "Z0 450 0 0 0 0 0 0 0 0 0\n"
         "EN\n");
     const auto setup = necwb::nec::NecSetupConverter{}.convert(document);
     expect(setup.executionRequest && setup.executionRequest->option == 0,
         "structured setup reads XQ execution requests");
-    expect(setup.radiationPattern && setup.radiationPattern->thetaCount == 91
-            && setup.radiationPattern->phiCount == 1
-            && setup.radiationPattern->thetaStep == 1.0,
-        "structured setup reads normal RP angular sampling");
+    expect(setup.radiationPatterns.size() == 2
+            && setup.radiationPatterns[0].thetaCount == 91
+            && setup.radiationPatterns[0].phiCount == 1
+            && setup.radiationPatterns[0].thetaStep == 1.0
+            && setup.radiationPatterns[1].thetaStart == 62.0
+            && setup.radiationPatterns[1].phiCount == 360,
+        "structured setup retains every RP request");
+    expect(setup.referenceImpedance && setup.referenceImpedance->ohms == 450.0
+            && necwb::model::referenceImpedanceOhms(setup) == 450.0,
+        "structured setup reads xnec2c reference impedance metadata");
     expect(necwb::nec::NecWriter{}.writeExecutionCard(*setup.executionRequest) == "XQ 0",
         "execution requests write canonical XQ cards");
-    expect(necwb::nec::NecWriter{}.writeRadiationPatternCard(*setup.radiationPattern)
+    expect(necwb::nec::NecWriter{}.writeRadiationPatternCard(setup.radiationPatterns[0])
             == "RP 0 91 1 1000 0 0 1 0 0 0",
         "radiation requests write canonical RP cards");
     expect(necwb::nec::NecModelChecker{}.check(document).errorCount() == 0,
@@ -618,15 +649,15 @@ void testAnalysisRequests()
         "RP 0 181 361 1000 0.000 0.000 1.000 1.000\n");
     const auto shortSetup = necwb::nec::NecSetupConverter{}.convert(shortPattern);
     expect(necwb::nec::NecModelChecker{}.check(shortPattern).errorCount() == 0
-            && shortSetup.radiationPattern
-            && shortSetup.radiationPattern->thetaCount == 181
-            && shortSetup.radiationPattern->phiCount == 361,
+            && shortSetup.radiationPatterns.size() == 1
+            && shortSetup.radiationPatterns[0].thetaCount == 181
+            && shortSetup.radiationPatterns[0].phiCount == 361,
         "RP accepts omitted optional distance and normalization fields");
 
     const auto invalid = necwb::nec::NecParser{}.parse(
-        "RP 0 0 2 1000 0 0 1 0 0 0\nXQ bad\n");
-    expect(necwb::nec::NecModelChecker{}.check(invalid).errorCount() == 3,
-        "invalid RP counts, angular steps, and XQ options are diagnosed");
+        "RP 0 0 2 1000 0 0 1 0 0 0\nXQ bad\nZO -50\n");
+    expect(necwb::nec::NecModelChecker{}.check(invalid).errorCount() == 4,
+        "invalid RP counts, XQ options, and reference impedance are diagnosed");
 }
 
 void testLoadsAndTransmissionLines()
@@ -690,7 +721,8 @@ void testRadiationSweepSolverInput()
     const std::string source =
         "CM sweep\nCE\nCM inline geometry note\nGW 1 11 0 0 0 1 0 0 .001\nGE 0\n"
         "EX 0 1 6 0 1 0\nFR 0 3 0 0 14 0.25\nGN 2 0 0 0 13 .005\nXQ 0\n"
-        "RP 0 19 12 1000 0 0 10 30 0 0\nEN\n";
+        "RP 0 19 12 1000 0 0 10 30 0 0\n"
+        "RP 0 1 360 1000 62 0 0 1 0 0\nZ0 450\nEN\n";
     const auto document = necwb::nec::NecParser{}.parse(source);
     const auto setup = necwb::nec::NecSetupConverter{}.convert(document);
     const auto countOccurrences = [](const std::string& text, std::string_view value) {
@@ -704,17 +736,20 @@ void testRadiationSweepSolverInput()
     };
     const auto prepared = necwb::analysis::prepareSolverInput(source, setup);
     expect(prepared.find("CM sweep") != std::string::npos
-            && prepared.find("CM inline geometry note") == std::string::npos,
-        "solver input retains the NEC comment block and omits Workbench inline comments");
+            && prepared.find("CM inline geometry note") == std::string::npos
+            && prepared.find("Z0 450") == std::string::npos,
+        "solver input retains opening comments and omits inline comments and xnec2c metadata");
     expect(prepared.find("GN 2 0 0 0 13 .005\nFR 0 3 0 0 14 0.25\nXQ 0") != std::string::npos,
         "center-only radiation retains the fast native impedance sweep");
     expect(countOccurrences(prepared, "RP 0 19 12 1000") == 1
+            && countOccurrences(prepared, "RP 0 1 360 1000") == 1
             && prepared.find("FR 0 1 0 0 14.25 0\nRP") != std::string::npos,
-        "center-only radiation requests one pattern at the sweep midpoint");
+        "center-only radiation retains all RP requests at the sweep midpoint");
 
     const auto representative = necwb::analysis::prepareSolverInput(source, setup,
         necwb::analysis::RadiationSweepMode::RepresentativeFrequencies);
     expect(countOccurrences(representative, "RP 0 19 12 1000") == 3
+            && countOccurrences(representative, "RP 0 1 360 1000") == 3
             && representative.find("FR 0 1 0 0 14 0\nRP") != std::string::npos
             && representative.find("FR 0 1 0 0 14.25 0\nRP") != std::string::npos
             && representative.find("FR 0 1 0 0 14.5 0\nRP") != std::string::npos,
@@ -736,21 +771,38 @@ void testRadiationSweepSolverInput()
 
     const auto everyFrequency = necwb::analysis::prepareSolverInput(source, setup,
         necwb::analysis::RadiationSweepMode::EveryFrequency);
-    expect(everyFrequency.find("FR 0 3 0 0 14 0.25") == std::string::npos
-            && everyFrequency.find("XQ 0") == std::string::npos
-            && countOccurrences(everyFrequency, "RP 0 19 12 1000") == 3,
-        "exhaustive radiation sweeps execute one pattern per frequency");
+    expect(countOccurrences(everyFrequency, "FR 0 3 0 0 14 0.25") == 1
+            && countOccurrences(everyFrequency, "XQ 0") == 1
+            && countOccurrences(everyFrequency, "RP 0 19 12 1000") == 1
+            && countOccurrences(everyFrequency, "RP 0 1 360 1000") == 1,
+        "every-frequency radiation preserves the compact native NEC sweep");
 
-    auto logarithmic = setup;
-    logarithmic.frequency->steppingMode = 1;
-    logarithmic.frequency->startMHz = 10.0;
-    logarithmic.frequency->step = 2.0;
-    const auto logarithmicPrepared = necwb::analysis::prepareSolverInput(source, logarithmic,
+    const std::string logarithmicSource =
+        "GW 1 11 0 0 0 1 0 0 .001\nGE 0\nEX 0 1 6 0 1 0\n"
+        "FR 1 3 0 0 10 2\nRP 0 19 12 1000 0 0 10 30 0 0\nEN\n";
+    const auto logarithmicSetup = necwb::nec::NecSetupConverter{}.convert(
+        necwb::nec::NecParser{}.parse(logarithmicSource));
+    const auto logarithmicPrepared = necwb::analysis::prepareSolverInput(
+        logarithmicSource, logarithmicSetup,
         necwb::analysis::RadiationSweepMode::EveryFrequency);
-    expect(logarithmicPrepared.find("FR 0 1 0 0 10 0") != std::string::npos
-            && logarithmicPrepared.find("FR 0 1 0 0 20 0") != std::string::npos
-            && logarithmicPrepared.find("FR 0 1 0 0 40 0") != std::string::npos,
-        "radiation sweeps expand multiplicative frequencies");
+    expect(countOccurrences(logarithmicPrepared, "FR 1 3 0 0 10 2") == 1
+            && countOccurrences(logarithmicPrepared, "RP 0 19 12 1000") == 1,
+        "every-frequency multiplicative radiation also remains a native sweep");
+
+    const std::string xnecSweep =
+        "CM xnec2c sweep\nCE\nGW 1 11 0 0 0 0 0 12 1.25000E-03\nGE 1\n"
+        "EX 0 1 1 0 1.00000E+00 0\nFR 0 55 0 0 3.00000E+00 5.00000E-01\n"
+        "RP 0 19 37 1000 0 0 5 10 0 0\nGN 0 16 0 0 1.20000E+01 5.00000E-02 20 0.005\n"
+        "ZO 450 0 0 0 0 0 0 0 0 0\nEN 0 0 0 0 0 0 0 0 0 0\n";
+    const auto xnecSetup = necwb::nec::NecSetupConverter{}.convert(
+        necwb::nec::NecParser{}.parse(xnecSweep));
+    const auto xnecPrepared = necwb::analysis::prepareSolverInput(
+        xnecSweep, xnecSetup, necwb::analysis::RadiationSweepMode::EveryFrequency);
+    expect(countOccurrences(xnecPrepared, "FR 0 55") == 1
+            && countOccurrences(xnecPrepared, "RP 0 19 37") == 1
+            && xnecPrepared.find("ZO 450") == std::string::npos
+            && xnecPrepared.find("RP 0 19 37") < xnecPrepared.find("GN 0 16"),
+        "solver normalization keeps card order, compact FR sweep, and strips legacy ZO metadata");
 
     const std::string singleFrequencySource =
         "CM single\nCE\nCM inline note\nGW 1 11 0 0 0 1 0 0 .001\nGE 0\n"
@@ -799,6 +851,9 @@ void testNecOutputParsing()
         " FREQUENCY : 1.4200E+01 MHz\n"
         " RADIATION PATTERNS\n"
         " 90 0 2.25 -999.99 2.25 0 0 LINEAR\n"
+        "\n"
+        " RADIATION PATTERNS\n"
+        " 62 0 1.25 -999.99 1.25 0 0 LINEAR\n"
         " AVERAGE POWER GAIN: 9.97119E-01 - SOLID ANGLE USED IN AVERAGING: (+4.0000)*PI STERADIANS\n"
         "\n";
     const auto result = necwb::analysis::NecOutputParser{}.parse(output);
@@ -825,15 +880,17 @@ void testNecOutputParsing()
     expect(result.currents[2].wireTag == 2 && result.currents[2].segment == 1
             && result.currents[2].magnitude == 0.0070711,
         "global NEC current segments map to local tag-relative segments");
-    expect(result.radiation.size() == 4
+    expect(result.radiation.size() == 5
             && result.radiation[1].thetaDegrees == 90.0
             && result.radiation[1].totalGainDb == 2.15
             && result.radiation[1].polarizationSense
                 == necwb::analysis::PolarizationSense::Linear,
         "NEC output parser reads radiation gain samples");
     expect(result.radiation[3].frequencyMHz == 14.2
-            && result.radiation[3].totalGainDb == 2.25,
-        "NEC output parser retains each radiation sweep frequency");
+            && result.radiation[3].totalGainDb == 2.25
+            && result.radiation[3].patternIndex == 0
+            && result.radiation[4].patternIndex == 1,
+        "NEC output parser retains frequency and RP dataset identity");
     expect(std::abs(necwb::analysis::radiationGainDb(result.radiation[1],
                 necwb::analysis::RadiationComponent::RightHandCircular)
             - (2.15 - 3.0102999566)) < 1.0e-9,
@@ -853,8 +910,50 @@ void testNecOutputParsing()
     expect(metrics.valid && metrics.peakGainDb == 2.15
             && metrics.peakThetaDegrees == 90.0
             && metrics.peakPhiDegrees == 0.0
-            && std::abs(metrics.frontToBackDb - 10.0) < 1.0e-12,
+            && metrics.frontToBackDb
+            && std::abs(*metrics.frontToBackDb - 10.0) < 1.0e-12,
         "radiation metrics report peak direction and front-to-back ratio");
+
+    std::vector<necwb::analysis::RadiationCutPoint> elevationCut;
+    for (auto theta = -90; theta <= 90; ++theta)
+        elevationCut.push_back({static_cast<double>(theta), static_cast<double>(theta), 90.0, -20.0});
+    const auto setElevationGain = [&elevationCut](int theta, double gain) {
+        elevationCut[static_cast<std::size_t>(theta + 90)].gainDb = gain;
+    };
+    for (auto theta = -82; theta <= -69; ++theta) setElevationGain(theta, 6.5);
+    setElevationGain(-83, 5.08);
+    setElevationGain(-82, 5.96);
+    setElevationGain(-76, 8.20);
+    setElevationGain(-69, 5.88);
+    setElevationGain(-68, 5.05);
+    setElevationGain(76, 8.20);
+    const auto elevationMetrics = necwb::analysis::radiationCutMetrics(elevationCut, false);
+    expect(elevationMetrics.valid && elevationMetrics.peakAngleDegrees == -76.0
+            && elevationMetrics.tiedPeakAnglesDegrees.size() == 2
+            && elevationMetrics.tiedPeakAnglesDegrees[1] == 76.0
+            && elevationMetrics.sampledBeamwidthDegrees
+            && std::abs(*elevationMetrics.sampledBeamwidthDegrees - 13.0) < 1.0e-12
+            && elevationMetrics.interpolatedBeamwidthDegrees
+            && std::abs(*elevationMetrics.interpolatedBeamwidthDegrees - 14.6829135) < 1.0e-6
+            && !elevationMetrics.frontToBackDb,
+        "elevation-cut metrics retain tied peaks, interpolate HPBW, and require a physical back direction");
+
+    std::vector<necwb::analysis::RadiationCutPoint> horizontalCut;
+    for (auto phi = 0; phi < 360; ++phi)
+        horizontalCut.push_back({static_cast<double>(phi), 62.0,
+            static_cast<double>(phi), phi == 0 ? 8.0 : -2.0});
+    const auto offHorizonMetrics = necwb::analysis::radiationCutMetrics(horizontalCut, true);
+    expect(offHorizonMetrics.valid && !offHorizonMetrics.frontToBackDb
+            && offHorizonMetrics.sampledBeamwidthDegrees
+            && *offHorizonMetrics.sampledBeamwidthDegrees == 0.0
+            && offHorizonMetrics.interpolatedBeamwidthDegrees
+            && std::abs(*offHorizonMetrics.interpolatedBeamwidthDegrees - 0.6) < 1.0e-12,
+        "off-horizon azimuth cut wraps HPBW across the seam without inventing F/B");
+    for (auto& sample : horizontalCut) sample.thetaDegrees = 90.0;
+    const auto horizonMetrics = necwb::analysis::radiationCutMetrics(horizontalCut, true);
+    expect(horizonMetrics.frontToBackDb
+            && std::abs(*horizonMetrics.frontToBackDb - 10.0) < 1.0e-12,
+        "horizon azimuth cut finds its physical antipodal sample");
 }
 
 void testOptimizationObjectives()
@@ -877,6 +976,27 @@ void testOptimizationObjectives()
     expect(selected && selected->feedpoint && selected->feedpoint->frequencyMHz == 7.1
             && selected->score < maximum->score,
         "selected-frequency objective scores the nearest calculated frequency");
+}
+
+void testFrequencyPlans()
+{
+    const necwb::analysis::FrequencyPlan plan{
+        .mode = necwb::analysis::FrequencyPlanMode::Explicit,
+        .pointsMHz = {21.2, 7.15, 7.15, -1.0},
+        .ranges = {{14.0, 14.1, 0.05}, {10.15, 10.1, 0.01}},
+    };
+    const auto points = necwb::analysis::frequencyPlanPoints(plan);
+    expect(points.size() == 5 && points[0] == 7.15 && points[1] == 14.0
+            && std::abs(points[2] - 14.05) < 1.0e-12
+            && points[3] == 14.1 && points[4] == 21.2,
+        "frequency plans combine, sort, and deduplicate points and valid ranges");
+
+    const auto& presets = necwb::analysis::amateurBandPresets();
+    const auto fortyMeters = std::ranges::find(presets, std::string_view{"40 m"},
+        &necwb::analysis::AmateurBandPreset::name);
+    expect(fortyMeters != presets.end() && fortyMeters->startMHz == 7.0
+            && fortyMeters->endMHz == 7.3 && fortyMeters->stepMHz > 0.0,
+        "amateur-band presets provide an editable 40-meter evaluation range");
 }
 
 void testAverageGainTestPreparation()
@@ -1010,6 +1130,7 @@ auto main() -> int
     testRadiationSweepSolverInput();
     testNecOutputParsing();
     testOptimizationObjectives();
+    testFrequencyPlans();
     testAverageGainTestPreparation();
     testSegmentationConvergencePreparation();
 

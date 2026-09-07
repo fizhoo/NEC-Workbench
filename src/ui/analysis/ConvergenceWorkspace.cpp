@@ -352,6 +352,11 @@ void ConvergenceWorkspace::cancelAndWait()
     }
 }
 
+void ConvergenceWorkspace::cancel()
+{
+    cancelStudy();
+}
+
 void ConvergenceWorkspace::clearResults()
 {
     if (isRunning()) return;

@@ -6,18 +6,20 @@
 #include "analysis/NecOutputParser.h"
 #include "analysis/OptimizationObjective.h"
 #include "analysis/SolverCommand.h"
-#include "analysis/SolverInput.h"
-#include "nec/NecModelChecker.h"
 #include "nec/NecParser.h"
 #include "nec/NecSetupConverter.h"
 
 #include <QAbstractItemView>
+#include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QDoubleSpinBox>
 #include <QFile>
 #include <QFileInfo>
 #include <QFrame>
+#include <QGridLayout>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -25,20 +27,23 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
-#include <QProcess>
+#include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScrollArea>
+#include <QSizePolicy>
 #include <QSignalBlocker>
+#include <QShortcut>
 #include <QSplitter>
 #include <QSpinBox>
+#include <QScrollBar>
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
 #include <cmath>
-#include <exception>
 #include <limits>
 #include <set>
 #include <utility>
@@ -89,6 +94,7 @@ auto frequencyArray(std::span<const double> frequenciesMHz) -> QJsonArray
 OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     : QWidget(parent), bestScore_(std::numeric_limits<double>::infinity())
 {
+    evaluator_ = new CandidateEvaluator(this);
     auto* layout = new QVBoxLayout(this);
     historicalBanner_ = new QFrame(this);
     historicalBanner_->setObjectName(QStringLiteral("optimizationHistoricalBanner"));
@@ -147,6 +153,8 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         static_cast<int>(FrequencyMode::ModelSweep));
     frequencyModeControl_->addItem(tr("Use Selected Frequencies"),
         static_cast<int>(FrequencyMode::Explicit));
+    frequencyModeControl_->addItem(tr("Custom Continuous Sweep"),
+        static_cast<int>(FrequencyMode::Continuous));
     minimumControl_ = new QDoubleSpinBox(this);
     maximumControl_ = new QDoubleSpinBox(this);
     pointsControl_ = new QSpinBox(this);
@@ -195,9 +203,11 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     for (auto row = 0; row < sweepSettingsTable->rowCount(); ++row) {
         settingsHeight += sweepSettingsTable->rowHeight(row);
     }
-    sweepSettingsTable->setFixedHeight(settingsHeight);
+    sweepSettingsTable->setMinimumHeight(settingsHeight);
+    sweepSettingsTable->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
     explicitFrequencyPanel_ = new QWidget(this);
+    explicitFrequencyPanel_->setObjectName(QStringLiteral("optimizationExplicitFrequencyPanel"));
     auto* frequencyLayout = new QHBoxLayout(explicitFrequencyPanel_);
     frequencyLayout->setContentsMargins(0, 0, 0, 0);
     frequencyTable_ = new QTableWidget(explicitFrequencyPanel_);
@@ -208,8 +218,10 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     frequencyTable_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     frequencyTable_->verticalHeader()->hide();
     frequencyTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    frequencyTable_->setMaximumHeight(108);
-    auto* frequencyButtons = new QVBoxLayout;
+    frequencyTable_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    frequencyTable_->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    auto* frequencyActions = new QGridLayout;
+    frequencyActions->setContentsMargins(0, 0, 0, 0);
     frequencyEntryControl_ = new QDoubleSpinBox(explicitFrequencyPanel_);
     frequencyEntryControl_->setObjectName(QStringLiteral("optimizationFrequencyEntry"));
     frequencyEntryControl_->setRange(0.000001, 1.0e9);
@@ -218,17 +230,60 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     frequencyEntryControl_->setSuffix(tr(" MHz"));
     addFrequencyButton_ = new QPushButton(tr("Add Frequency"), explicitFrequencyPanel_);
     addFrequencyButton_->setObjectName(QStringLiteral("optimizationAddFrequency"));
-    removeFrequencyButton_ = new QPushButton(tr("Remove Selected"), explicitFrequencyPanel_);
+    removeFrequencyButton_ = new QPushButton(tr("Remove"), explicitFrequencyPanel_);
     removeFrequencyButton_->setObjectName(QStringLiteral("optimizationRemoveFrequency"));
     pasteFrequencyButton_ = new QPushButton(tr("Paste List…"), explicitFrequencyPanel_);
     pasteFrequencyButton_->setObjectName(QStringLiteral("optimizationPasteFrequencies"));
-    frequencyButtons->addWidget(frequencyEntryControl_);
-    frequencyButtons->addWidget(addFrequencyButton_);
-    frequencyButtons->addWidget(removeFrequencyButton_);
-    frequencyButtons->addWidget(pasteFrequencyButton_);
-    frequencyButtons->addStretch();
+    clearFrequencyButton_ = new QPushButton(tr("Clear All"), explicitFrequencyPanel_);
+    clearFrequencyButton_->setObjectName(QStringLiteral("optimizationClearFrequencies"));
+    addAmateurBandButton_ = new QPushButton(tr("Add Amateur Bands…"), explicitFrequencyPanel_);
+    addAmateurBandButton_->setObjectName(QStringLiteral("optimizationAddAmateurBand"));
+    addAmateurBandButton_->setToolTip(tr(
+        "Choose one or more common amateur-band engineering ranges."));
+    auto* listActions = new QHBoxLayout;
+    listActions->setContentsMargins(0, 0, 0, 0);
+    listActions->addWidget(pasteFrequencyButton_);
+    listActions->addWidget(removeFrequencyButton_);
+    listActions->addWidget(clearFrequencyButton_);
+    frequencyActions->addWidget(frequencyEntryControl_, 0, 0);
+    frequencyActions->addWidget(addFrequencyButton_, 0, 1);
+    frequencyActions->addLayout(listActions, 1, 0, 1, 2);
+    frequencyActions->addWidget(addAmateurBandButton_, 2, 0, 1, 2);
+    frequencyActions->setColumnStretch(0, 1);
     frequencyLayout->addWidget(frequencyTable_, 1);
-    frequencyLayout->addLayout(frequencyButtons);
+    frequencyLayout->addLayout(frequencyActions);
+
+    continuousFrequencyPanel_ = new QWidget(this);
+    continuousFrequencyPanel_->setObjectName(
+        QStringLiteral("optimizationContinuousFrequencyPanel"));
+    auto* continuousLayout = new QGridLayout(continuousFrequencyPanel_);
+    continuousLayout->setContentsMargins(0, 0, 0, 0);
+    continuousStartControl_ = new QDoubleSpinBox(continuousFrequencyPanel_);
+    continuousStartControl_->setObjectName(
+        QStringLiteral("optimizationContinuousStart"));
+    continuousStopControl_ = new QDoubleSpinBox(continuousFrequencyPanel_);
+    continuousStopControl_->setObjectName(
+        QStringLiteral("optimizationContinuousStop"));
+    continuousStepControl_ = new QDoubleSpinBox(continuousFrequencyPanel_);
+    continuousStepControl_->setObjectName(
+        QStringLiteral("optimizationContinuousStep"));
+    for (auto* control : {continuousStartControl_, continuousStopControl_,
+             continuousStepControl_}) {
+        control->setRange(0.000001, 1.0e9);
+        control->setDecimals(DisplayDecimalPlaces);
+        control->setSuffix(tr(" MHz"));
+    }
+    continuousStartControl_->setValue(14.0);
+    continuousStopControl_->setValue(14.35);
+    continuousStepControl_->setValue(0.05);
+    continuousLayout->addWidget(new QLabel(tr("Start"), continuousFrequencyPanel_), 0, 0);
+    continuousLayout->addWidget(continuousStartControl_, 0, 1);
+    continuousLayout->addWidget(new QLabel(tr("Stop"), continuousFrequencyPanel_), 0, 2);
+    continuousLayout->addWidget(continuousStopControl_, 0, 3);
+    continuousLayout->addWidget(new QLabel(tr("Step"), continuousFrequencyPanel_), 1, 0);
+    continuousLayout->addWidget(continuousStepControl_, 1, 1);
+    continuousLayout->setColumnStretch(1, 1);
+    continuousLayout->setColumnStretch(3, 1);
     workloadLabel_ = new QLabel(this);
     workloadLabel_->setObjectName(QStringLiteral("optimizationWorkload"));
 
@@ -261,7 +316,8 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     sweepHeading->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     sweepLayout->addWidget(sweepHeading);
     sweepLayout->addWidget(sweepSettingsTable);
-    sweepLayout->addWidget(explicitFrequencyPanel_);
+    sweepLayout->addWidget(explicitFrequencyPanel_, 1);
+    sweepLayout->addWidget(continuousFrequencyPanel_, 1);
     sweepLayout->addWidget(workloadLabel_);
 
     auto* configurationSplitter = new QSplitter(Qt::Horizontal, this);
@@ -272,16 +328,22 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     configurationSplitter->setStretchFactor(0, 2);
     configurationSplitter->setStretchFactor(1, 3);
     configurationSplitter->setSizes({360, 540});
-    configurationSplitter->setMaximumHeight(300);
+    configurationSplitter->setMinimumHeight(250);
 
     auto* buttons = new QHBoxLayout;
     runButton_ = new QPushButton(tr("Run Parameter Sweep"), this);
     cancelButton_ = new QPushButton(tr("Cancel"), this);
     cancelButton_->setEnabled(false);
+    applyBestButton_ = new QPushButton(tr("Apply Best to Model"), this);
+    applyBestButton_->setObjectName(QStringLiteral("optimizationApplyBest"));
+    applyBestButton_->setEnabled(false);
+    applyBestButton_->setToolTip(tr(
+        "Replace the selected SY expression with the best numeric value. This model edit is undoable."));
     progress_ = new QProgressBar(this);
     progress_->setTextVisible(true);
     buttons->addWidget(runButton_);
     buttons->addWidget(cancelButton_);
+    buttons->addWidget(applyBestButton_);
     buttons->addWidget(progress_, 1);
 
     statusLabel_ = new QLabel(this);
@@ -289,6 +351,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     bestLabel_ = new QLabel(tr("No parameter-sweep results yet."), this);
     bestLabel_->setWordWrap(true);
     resultsTable_ = new QTableWidget(this);
+    resultsTable_->setObjectName(QStringLiteral("optimizationResultsTable"));
     resultsTable_->setColumnCount(ResultColumnCount);
     resultsTable_->setHorizontalHeaderLabels({tr("Value"), tr("Maximum SWR"), tr("Frequency"),
         tr("R (Ω)"), tr("X (Ω)"), tr("Status"), tr("Run")});
@@ -299,9 +362,17 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     resultsTable_->horizontalHeader()->setSectionResizeMode(StatusColumn, QHeaderView::Stretch);
     resultsTable_->horizontalHeader()->setSectionResizeMode(RunColumn, QHeaderView::ResizeToContents);
 
-    candidateDetailLabel_ = new QLabel(tr("Select a completed candidate to inspect every frequency."), this);
+    candidateDetailsWindow_ = new QDialog(this, Qt::Window);
+    candidateDetailsWindow_->setObjectName(
+        QStringLiteral("optimizationCandidateDetailsWindow"));
+    candidateDetailsWindow_->setWindowTitle(tr("Candidate Frequency Results"));
+    candidateDetailsWindow_->setModal(false);
+    candidateDetailsWindow_->resize(680, 420);
+    auto* detailLayout = new QVBoxLayout(candidateDetailsWindow_);
+    candidateDetailLabel_ = new QLabel(candidateDetailsWindow_);
     candidateDetailLabel_->setObjectName(QStringLiteral("optimizationCandidateDetailLabel"));
-    candidateDetailsTable_ = new QTableWidget(this);
+    candidateDetailLabel_->setWordWrap(true);
+    candidateDetailsTable_ = new QTableWidget(candidateDetailsWindow_);
     candidateDetailsTable_->setObjectName(QStringLiteral("optimizationCandidateDetails"));
     candidateDetailsTable_->setColumnCount(4);
     candidateDetailsTable_->setHorizontalHeaderLabels(
@@ -311,25 +382,40 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     candidateDetailsTable_->setSelectionMode(QAbstractItemView::SingleSelection);
     candidateDetailsTable_->verticalHeader()->hide();
     candidateDetailsTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    auto* detailPanel = new QWidget(this);
-    auto* detailLayout = new QVBoxLayout(detailPanel);
-    detailLayout->setContentsMargins(0, 0, 0, 0);
     detailLayout->addWidget(candidateDetailLabel_);
     detailLayout->addWidget(candidateDetailsTable_);
-    auto* resultSplitter = new QSplitter(Qt::Vertical, this);
-    resultSplitter->addWidget(resultsTable_);
-    resultSplitter->addWidget(detailPanel);
-    resultSplitter->setStretchFactor(0, 2);
-    resultSplitter->setStretchFactor(1, 1);
+    resetCandidateDetails();
+
+    auto* resultsPanel = new QWidget(this);
+    resultsPanel->setObjectName(QStringLiteral("optimizationResultsPanel"));
+    auto* resultsLayout = new QVBoxLayout(resultsPanel);
+    resultsLayout->setContentsMargins(0, 0, 0, 0);
+    resultsLayout->addLayout(buttons);
+    resultsLayout->addWidget(statusLabel_);
+    resultsLayout->addWidget(bestLabel_);
+    resultsLayout->addWidget(resultsTable_, 1);
+    resultsPanel->setMinimumHeight(220);
+
+    auto* resultsScrollArea = new QScrollArea(this);
+    resultsScrollArea->setObjectName(QStringLiteral("optimizationResultsScrollArea"));
+    resultsScrollArea->setFrameShape(QFrame::NoFrame);
+    resultsScrollArea->setWidgetResizable(true);
+    resultsScrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    resultsScrollArea->setWidget(resultsPanel);
+    resultsScrollArea->setMinimumHeight(100);
+
+    auto* workspaceSplitter = new QSplitter(Qt::Vertical, this);
+    workspaceSplitter->setObjectName(QStringLiteral("optimizationWorkspaceSplitter"));
+    workspaceSplitter->addWidget(configurationSplitter);
+    workspaceSplitter->addWidget(resultsScrollArea);
+    workspaceSplitter->setStretchFactor(0, 1);
+    workspaceSplitter->setStretchFactor(1, 1);
+    workspaceSplitter->setSizes({360, 300});
 
     layout->addWidget(historicalBanner_);
     layout->addWidget(heading);
     layout->addWidget(description);
-    layout->addWidget(configurationSplitter);
-    layout->addLayout(buttons);
-    layout->addWidget(statusLabel_);
-    layout->addWidget(bestLabel_);
-    layout->addWidget(resultSplitter, 1);
+    layout->addWidget(workspaceSplitter, 1);
 
     connect(variableControl_, &QComboBox::currentIndexChanged, this, [this] { updateBounds(); });
     connect(objectiveControl_, &QComboBox::currentIndexChanged,
@@ -341,20 +427,33 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         updateWorkload();
         updateReadiness();
     });
+    for (auto* control : {continuousStartControl_, continuousStopControl_,
+             continuousStepControl_}) {
+        connect(control, &QDoubleSpinBox::valueChanged, this, [this] {
+            updateWorkload();
+            updateReadiness();
+        });
+    }
     connect(addFrequencyButton_, &QPushButton::clicked, this, [this] {
         addExplicitFrequency(frequencyEntryControl_->value());
     });
-    connect(removeFrequencyButton_, &QPushButton::clicked, this, [this] {
-        std::set<int, std::greater<>> rows;
-        for (const auto* item : frequencyTable_->selectedItems()) rows.insert(item->row());
-        for (const auto row : rows) frequencyTable_->removeRow(row);
-        updateWorkload();
-        updateReadiness();
-    });
+    connect(removeFrequencyButton_, &QPushButton::clicked,
+        this, [this] { removeSelectedFrequencies(); });
     connect(pasteFrequencyButton_, &QPushButton::clicked,
         this, [this] { pasteExplicitFrequencies(); });
-    connect(resultsTable_, &QTableWidget::itemSelectionChanged,
-        this, [this] { updateCandidateDetails(); });
+    connect(clearFrequencyButton_, &QPushButton::clicked,
+        this, [this] { clearExplicitFrequencies(); });
+    auto* deleteShortcut = new QShortcut(QKeySequence(Qt::Key_Delete), frequencyTable_);
+    connect(deleteShortcut, &QShortcut::activated,
+        this, [this] { removeSelectedFrequencies(); });
+    auto* backspaceShortcut = new QShortcut(
+        QKeySequence(Qt::Key_Backspace), frequencyTable_);
+    connect(backspaceShortcut, &QShortcut::activated,
+        this, [this] { removeSelectedFrequencies(); });
+    connect(addAmateurBandButton_, &QPushButton::clicked,
+        this, [this] { chooseAmateurBands(); });
+    connect(resultsTable_, &QTableWidget::cellDoubleClicked,
+        this, [this](int row, int) { showCandidateDetails(row); });
     connect(variablesTable_, &QTableWidget::cellClicked, this, [this](int row, int) {
         const auto* item = variablesTable_->item(row, 0);
         const auto index = item == nullptr ? -1 : variableControl_->findText(item->text());
@@ -362,6 +461,19 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     });
     connect(runButton_, &QPushButton::clicked, this, [this] { startSweep(); });
     connect(cancelButton_, &QPushButton::clicked, this, [this] { cancelSweep(); });
+    connect(applyBestButton_, &QPushButton::clicked, this, [this] {
+        if (bestRow_ < 0 || static_cast<std::size_t>(bestRow_) >= candidates_.size()
+            || !applyParameterCallback_) return;
+        const auto symbol = selectedSymbol_;
+        const auto value = candidates_[static_cast<std::size_t>(bestRow_)].value;
+        if (applyParameterCallback_(symbol, value))
+            statusLabel_->setText(tr("Applied %1 = %2 to the active model.")
+                .arg(symbol).arg(value, 0, 'g', 15));
+    });
+    connect(evaluator_, &CandidateEvaluator::finished, this,
+        [this](CandidateEvaluationResult result) {
+            finishCurrentCandidate(std::move(result));
+        });
     connect(returnToCurrentWorkButton_, &QPushButton::clicked, this, [this] {
         if (returnToCurrentWorkCallback_) returnToCurrentWorkCallback_();
     });
@@ -384,6 +496,7 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
     if (resolution.ok()) {
         const auto setup = nec::NecSetupConverter{}.convert(
             nec::NecParser{}.parse(resolution.generatedDeck));
+        referenceImpedanceControl_->setValue(model::referenceImpedanceOhms(setup));
         if (setup.frequency) {
             targetFrequencyControl_->setValue(setup.frequency->startMHz);
             frequencyEntryControl_->setValue(setup.frequency->startMHz);
@@ -398,9 +511,11 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
     }
     candidates_.clear();
     candidateIndex_ = 0;
-    candidateDetailsTable_->setRowCount(0);
-    candidateDetailLabel_->setText(
-        tr("Select a completed candidate to inspect every frequency."));
+    bestScore_ = std::numeric_limits<double>::infinity();
+    bestRow_ = -1;
+    resultsTable_->setRowCount(0);
+    bestLabel_->setText(tr("No parameter-sweep results yet."));
+    resetCandidateDetails();
     updateWorkload();
     updateReadiness();
 }
@@ -432,9 +547,16 @@ void OptimizationWorkspace::setReturnToCurrentWorkCallback(std::function<void()>
     returnToCurrentWorkCallback_ = std::move(callback);
 }
 
+void OptimizationWorkspace::setApplyParameterCallback(
+    std::function<bool(QString, double)> callback)
+{
+    applyParameterCallback_ = std::move(callback);
+    updateReadiness();
+}
+
 auto OptimizationWorkspace::isRunning() const noexcept -> bool
 {
-    return process_ != nullptr || candidateIndex_ < candidates_.size();
+    return evaluator_->isRunning() || candidateIndex_ < candidates_.size();
 }
 
 auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
@@ -459,13 +581,24 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         if (std::isfinite(frequencyMHz) && frequencyMHz > 0.0)
             activeFrequenciesMHz_.push_back(frequencyMHz);
     }
-    const auto restoredMode = sessionMetadata.value(QStringLiteral("frequencyMode")).toString()
-            == QStringLiteral("explicit")
-        ? FrequencyMode::Explicit : FrequencyMode::ModelSweep;
+    const auto storedFrequencyMode = sessionMetadata.value(
+        QStringLiteral("frequencyMode")).toString();
+    const auto restoredMode = storedFrequencyMode == QStringLiteral("explicit")
+        ? FrequencyMode::Explicit
+        : storedFrequencyMode == QStringLiteral("continuous")
+            ? FrequencyMode::Continuous : FrequencyMode::ModelSweep;
     const auto modeIndex = frequencyModeControl_->findData(static_cast<int>(restoredMode));
     if (modeIndex >= 0) frequencyModeControl_->setCurrentIndex(modeIndex);
     if (restoredMode == FrequencyMode::Explicit && !activeFrequenciesMHz_.empty())
         setExplicitFrequencies(activeFrequenciesMHz_);
+    if (restoredMode == FrequencyMode::Continuous) {
+        continuousStartControl_->setValue(sessionMetadata.value(
+            QStringLiteral("continuousStartMHz")).toDouble(14.0));
+        continuousStopControl_->setValue(sessionMetadata.value(
+            QStringLiteral("continuousStopMHz")).toDouble(14.35));
+        continuousStepControl_->setValue(sessionMetadata.value(
+            QStringLiteral("continuousStepMHz")).toDouble(0.05));
+    }
 
     candidates_.clear();
     resultsTable_->setRowCount(static_cast<int>(candidateRecords.size()));
@@ -515,6 +648,7 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         resultsTable_->setItem(row, StatusColumn, new QTableWidgetItem(candidateRecords[index].status));
         resultsTable_->setItem(row, RunColumn, new QTableWidgetItem(candidateRecords[index].id));
         candidates_.push_back(Candidate{value, row, candidateRecords[index], result.feedpoints});
+        updateCandidateRowToolTip(row);
     }
     historicalSession_ = true;
     const auto modelName = session->sourceFile.isEmpty()
@@ -534,7 +668,6 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
     candidateIndex_ = candidates_.size();
     if (bestRow_ >= 0) {
         resultsTable_->selectRow(bestRow_);
-        updateCandidateDetails();
     }
     updateWorkload();
     updateReadiness();
@@ -553,10 +686,12 @@ void OptimizationWorkspace::leaveHistoricalSession()
 void OptimizationWorkspace::cancelAndWait()
 {
     cancelRequested_ = true;
-    if (process_ != nullptr) {
-        process_->kill();
-        process_->waitForFinished(2000);
-    }
+    evaluator_->cancelAndWait();
+}
+
+void OptimizationWorkspace::cancel()
+{
+    cancelSweep();
 }
 
 void OptimizationWorkspace::populateVariables(const nec::SymbolResolution& resolution)
@@ -579,14 +714,11 @@ void OptimizationWorkspace::populateVariables(const nec::SymbolResolution& resol
         variablesTable_->setItem(row, 2, valueItem);
         variablesTable_->setItem(row, 3,
             new QTableWidgetItem(QString::number(definition.lineNumber)));
-        if (definition.adjustable)
-            variableControl_->addItem(QString::fromStdString(definition.name), definition.value);
+        variableControl_->addItem(QString::fromStdString(definition.name), definition.value);
     }
     statusLabel_->setText(resolution.ok()
         ? definitions_.empty() ? tr("Add SY declarations to enable parameter optimization.")
-        : variableControl_->count() == 0
-            ? tr("Add an independent numeric SY assignment to enable a parameter sweep.")
-            : tr("Choose one independent literal symbol and a bounded range.")
+            : tr("Choose one resolved symbol and a bounded range.")
         : tr("Resolve the model's SY expression errors before optimizing."));
     updateBounds();
 }
@@ -619,15 +751,16 @@ void OptimizationWorkspace::updateObjectiveControls()
 void OptimizationWorkspace::updateFrequencyControls()
 {
     const auto explicitMode = selectedFrequencyMode() == FrequencyMode::Explicit;
+    const auto continuousMode = selectedFrequencyMode() == FrequencyMode::Continuous;
     explicitFrequencyPanel_->setVisible(explicitMode);
+    continuousFrequencyPanel_->setVisible(continuousMode);
     updateWorkload();
     updateReadiness();
 }
 
 void OptimizationWorkspace::updateWorkload()
 {
-    const auto frequencyCount = selectedFrequencyMode() == FrequencyMode::Explicit
-        ? explicitFrequencies().size() : modelFrequenciesMHz_.size();
+    const auto frequencyCount = analysis::frequencyPlanPoints(selectedFrequencyPlan()).size();
     const auto candidateCount = pointsControl_->value();
     workloadLabel_->setText(tr("%1 candidates × %2 frequencies = %3 calculated points")
         .arg(candidateCount)
@@ -644,6 +777,13 @@ void OptimizationWorkspace::populateModelFrequencies(const model::FrequencyDefin
         const auto frequencyMHz = frequencyAt(frequency, index);
         if (std::isfinite(frequencyMHz) && frequencyMHz > 0.0)
             modelFrequenciesMHz_.push_back(frequencyMHz);
+    }
+    if (!modelFrequenciesMHz_.empty()) {
+        continuousStartControl_->setValue(modelFrequenciesMHz_.front());
+        continuousStopControl_->setValue(modelFrequenciesMHz_.back());
+        if (modelFrequenciesMHz_.size() > 1)
+            continuousStepControl_->setValue(
+                std::abs(modelFrequenciesMHz_[1] - modelFrequenciesMHz_[0]));
     }
     setExplicitFrequencies(modelFrequenciesMHz_);
 }
@@ -668,6 +808,123 @@ void OptimizationWorkspace::addExplicitFrequency(double frequencyMHz)
     frequencyTable_->setItem(row, 0, numericItem(frequencyMHz));
 }
 
+void OptimizationWorkspace::removeSelectedFrequencies()
+{
+    if (!frequencyTable_->isEnabled()) return;
+    std::set<int, std::greater<>> rows;
+    for (const auto* item : frequencyTable_->selectedItems()) rows.insert(item->row());
+    for (const auto row : rows) frequencyTable_->removeRow(row);
+    updateWorkload();
+    updateReadiness();
+}
+
+void OptimizationWorkspace::clearExplicitFrequencies()
+{
+    if (!frequencyTable_->isEnabled() || frequencyTable_->rowCount() == 0) return;
+    QMessageBox confirmation(this);
+    confirmation.setWindowTitle(tr("Clear Selected Frequencies"));
+    confirmation.setText(tr("Clear every frequency from the editable list?\n"
+                            "The model's FR card will not be changed."));
+    auto* clearButton = confirmation.addButton(
+        tr("Clear All"), QMessageBox::DestructiveRole);
+    confirmation.addButton(QMessageBox::Cancel);
+    confirmation.exec();
+    if (confirmation.clickedButton() != clearButton) return;
+    frequencyTable_->setRowCount(0);
+    updateWorkload();
+    updateReadiness();
+}
+
+void OptimizationWorkspace::chooseAmateurBands()
+{
+    const auto& presets = analysis::amateurBandPresets();
+    QDialog dialog(this);
+    dialog.setObjectName(QStringLiteral("optimizationAmateurBandDialog"));
+    dialog.setWindowTitle(tr("Add Amateur Bands"));
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* description = new QLabel(tr(
+        "Select one or more engineering ranges. These presets do not define local operating privileges."),
+        &dialog);
+    description->setWordWrap(true);
+    layout->addWidget(description);
+
+    auto* bandLayout = new QGridLayout;
+    std::vector<QCheckBox*> checks;
+    checks.reserve(presets.size());
+    for (std::size_t index = 0; index < presets.size(); ++index) {
+        const auto& preset = presets[index];
+        auto* check = new QCheckBox(tr("%1  (%2–%3 MHz)")
+            .arg(QString::fromUtf8(preset.name.data(),
+                static_cast<qsizetype>(preset.name.size())))
+            .arg(preset.startMHz, 0, 'f', 3)
+            .arg(preset.endMHz, 0, 'f', 3), &dialog);
+        check->setObjectName(QStringLiteral("optimizationAmateurBandCheck%1").arg(index));
+        checks.push_back(check);
+        bandLayout->addWidget(check, static_cast<int>(index % 6),
+            static_cast<int>(index / 6));
+    }
+    layout->addLayout(bandLayout);
+
+    auto* summary = new QLabel(&dialog);
+    summary->setObjectName(QStringLiteral("optimizationAmateurBandSummary"));
+    auto* selectionButtons = new QHBoxLayout;
+    auto* selectAll = new QPushButton(tr("Select All"), &dialog);
+    auto* clearSelection = new QPushButton(tr("Clear"), &dialog);
+    selectionButtons->addWidget(selectAll);
+    selectionButtons->addWidget(clearSelection);
+    selectionButtons->addStretch();
+    selectionButtons->addWidget(summary);
+    layout->addLayout(selectionButtons);
+
+    auto* dialogButtons = new QDialogButtonBox(QDialogButtonBox::Cancel, &dialog);
+    auto* addSelected = dialogButtons->addButton(
+        tr("Add Selected"), QDialogButtonBox::AcceptRole);
+    addSelected->setObjectName(QStringLiteral("optimizationAddSelectedBands"));
+    layout->addWidget(dialogButtons);
+
+    const auto updateSummary = [&checks, &presets, summary, addSelected] {
+        analysis::FrequencyPlan selected{
+            .mode = analysis::FrequencyPlanMode::Explicit,
+            .pointsMHz = {},
+            .ranges = {},
+        };
+        auto selectedCount = 0;
+        for (std::size_t index = 0; index < checks.size(); ++index) {
+            if (!checks[index]->isChecked()) continue;
+            ++selectedCount;
+            selected.ranges.push_back({presets[index].startMHz,
+                presets[index].endMHz, presets[index].stepMHz});
+        }
+        const auto pointCount = analysis::frequencyPlanPoints(selected).size();
+        summary->setText(tr("%1 bands · %2 frequency points")
+            .arg(selectedCount).arg(pointCount));
+        addSelected->setEnabled(selectedCount > 0);
+    };
+    for (auto* check : checks)
+        connect(check, &QCheckBox::toggled, &dialog, updateSummary);
+    connect(selectAll, &QPushButton::clicked, &dialog, [&checks] {
+        for (auto* check : checks) check->setChecked(true);
+    });
+    connect(clearSelection, &QPushButton::clicked, &dialog, [&checks] {
+        for (auto* check : checks) check->setChecked(false);
+    });
+    connect(dialogButtons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(dialogButtons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    updateSummary();
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    analysis::FrequencyPlan plan{
+        .mode = analysis::FrequencyPlanMode::Explicit,
+        .pointsMHz = explicitFrequencies(),
+        .ranges = {},
+    };
+    for (std::size_t index = 0; index < checks.size(); ++index) {
+        if (checks[index]->isChecked()) plan.ranges.push_back({presets[index].startMHz,
+            presets[index].endMHz, presets[index].stepMHz});
+    }
+    setExplicitFrequencies(analysis::frequencyPlanPoints(plan));
+}
+
 void OptimizationWorkspace::pasteExplicitFrequencies()
 {
     bool accepted{};
@@ -688,14 +945,22 @@ void OptimizationWorkspace::pasteExplicitFrequencies()
     setExplicitFrequencies(frequenciesMHz);
 }
 
-void OptimizationWorkspace::updateCandidateDetails()
+void OptimizationWorkspace::showCandidateDetails(int row)
+{
+    detailCandidateRow_ = row;
+    updateCandidateDetails(row);
+    candidateDetailsWindow_->show();
+    candidateDetailsWindow_->raise();
+    candidateDetailsWindow_->activateWindow();
+}
+
+void OptimizationWorkspace::updateCandidateDetails(int row)
 {
     candidateDetailsTable_->setRowCount(0);
-    const auto row = resultsTable_->currentRow();
     if (row < 0 || static_cast<std::size_t>(row) >= candidates_.size()
         || candidates_[static_cast<std::size_t>(row)].feedpoints.empty()) {
         candidateDetailLabel_->setText(
-            tr("Select a completed candidate to inspect every frequency."));
+            tr("Frequency details are unavailable because this candidate did not complete with impedance results."));
         return;
     }
 
@@ -729,11 +994,35 @@ void OptimizationWorkspace::updateCandidateDetails()
         .arg(feedpoints.size()));
 }
 
+void OptimizationWorkspace::resetCandidateDetails()
+{
+    detailCandidateRow_ = -1;
+    candidateDetailsTable_->setRowCount(0);
+    candidateDetailLabel_->setText(
+        tr("Double-click a completed candidate to view its frequency results."));
+}
+
+void OptimizationWorkspace::updateCandidateRowToolTip(int row)
+{
+    if (row < 0 || static_cast<std::size_t>(row) >= candidates_.size()) return;
+    const auto hasDetails = !candidates_[static_cast<std::size_t>(row)].feedpoints.empty();
+    const auto* statusItem = resultsTable_->item(row, StatusColumn);
+    const auto inProgress = statusItem != nullptr
+        && (statusItem->text() == tr("Pending") || statusItem->text() == tr("Running"));
+    const auto toolTip = hasDetails
+        ? tr("Double-click to view frequency results for this candidate.")
+        : inProgress
+            ? tr("Frequency details will be available after this candidate completes.")
+            : tr("Frequency details are unavailable because this candidate did not complete with impedance results.");
+    for (auto column = 0; column < resultsTable_->columnCount(); ++column) {
+        if (auto* item = resultsTable_->item(row, column)) item->setToolTip(toolTip);
+    }
+}
+
 void OptimizationWorkspace::updateReadiness()
 {
     const auto executable = QFileInfo(executable_);
-    const auto hasFrequencies = selectedFrequencyMode() == FrequencyMode::Explicit
-        ? !explicitFrequencies().empty() : !modelFrequenciesMHz_.empty();
+    const auto hasFrequencies = !analysis::frequencyPlanPoints(selectedFrequencyPlan()).empty();
     const auto ready = !historicalSession_ && modelValid_ && variableControl_->count() > 0
         && !externalRunActive_
         && hasFrequencies
@@ -741,6 +1030,9 @@ void OptimizationWorkspace::updateReadiness()
         && executable.exists() && executable.isFile() && executable.isExecutable();
     runButton_->setEnabled(ready);
     cancelButton_->setEnabled(isRunning());
+    applyBestButton_->setEnabled(!historicalSession_ && modelValid_ && !isRunning()
+        && bestRow_ >= 0 && static_cast<std::size_t>(bestRow_) < candidates_.size()
+        && static_cast<bool>(applyParameterCallback_));
     const auto editable = !isRunning() && !historicalSession_;
     variablesTable_->setEnabled(editable);
     variableControl_->setEnabled(editable);
@@ -758,6 +1050,13 @@ void OptimizationWorkspace::updateReadiness()
     addFrequencyButton_->setEnabled(editable && explicitMode);
     removeFrequencyButton_->setEnabled(editable && explicitMode);
     pasteFrequencyButton_->setEnabled(editable && explicitMode);
+    clearFrequencyButton_->setEnabled(
+        editable && explicitMode && frequencyTable_->rowCount() > 0);
+    addAmateurBandButton_->setEnabled(editable && explicitMode);
+    const auto continuousMode = selectedFrequencyMode() == FrequencyMode::Continuous;
+    continuousStartControl_->setEnabled(editable && continuousMode);
+    continuousStopControl_->setEnabled(editable && continuousMode);
+    continuousStepControl_->setEnabled(editable && continuousMode);
 }
 
 void OptimizationWorkspace::startSweep()
@@ -768,8 +1067,7 @@ void OptimizationWorkspace::startSweep()
     }
     selectedSymbol_ = variableControl_->currentText();
     activeObjective_ = selectedObjective();
-    activeFrequenciesMHz_ = selectedFrequencyMode() == FrequencyMode::Explicit
-        ? explicitFrequencies() : modelFrequenciesMHz_;
+    activeFrequenciesMHz_ = analysis::frequencyPlanPoints(selectedFrequencyPlan());
     if (activeFrequenciesMHz_.empty()) {
         statusLabel_->setText(tr("Choose at least one valid frequency."));
         return;
@@ -798,16 +1096,19 @@ void OptimizationWorkspace::startSweep()
         {QStringLiteral("referenceImpedance"), activeObjective_.referenceImpedance},
         {QStringLiteral("targetFrequencyMHz"), activeObjective_.targetFrequencyMHz},
         {QStringLiteral("frequencyMode"), selectedFrequencyMode() == FrequencyMode::Explicit
-            ? QStringLiteral("explicit") : QStringLiteral("model-fr")},
+            ? QStringLiteral("explicit")
+            : selectedFrequencyMode() == FrequencyMode::Continuous
+                ? QStringLiteral("continuous") : QStringLiteral("model-fr")},
         {QStringLiteral("frequenciesMHz"), frequencyArray(activeFrequenciesMHz_)},
+        {QStringLiteral("continuousStartMHz"), continuousStartControl_->value()},
+        {QStringLiteral("continuousStopMHz"), continuousStopControl_->value()},
+        {QStringLiteral("continuousStepMHz"), continuousStepControl_->value()},
     };
     writeFile(QDir(sessionRecord_->directory).filePath(QStringLiteral("optimization-session.json")),
         QJsonDocument(sessionMetadata).toJson(QJsonDocument::Indented));
     candidates_.clear();
     resultsTable_->clearSelection();
-    candidateDetailsTable_->setRowCount(0);
-    candidateDetailLabel_->setText(
-        tr("Select a completed candidate to inspect every frequency."));
+    resetCandidateDetails();
     resultsTable_->setRowCount(pointsControl_->value());
     const auto minimum = minimumControl_->value();
     const auto maximum = maximumControl_->value();
@@ -839,7 +1140,7 @@ void OptimizationWorkspace::cancelSweep()
 {
     cancelRequested_ = true;
     cancelButton_->setEnabled(false);
-    if (process_ != nullptr) process_->terminate();
+    evaluator_->cancel();
 }
 
 void OptimizationWorkspace::startNextCandidate()
@@ -849,45 +1150,13 @@ void OptimizationWorkspace::startNextCandidate()
         return;
     }
     auto& candidate = candidates_[candidateIndex_];
-    const auto resolution = nec::NecSymbolResolver{}.resolve(source_.toStdString(),
-        {{selectedSymbol_.toStdString(), candidate.value}});
-    if (!resolution.ok()) {
-        setCandidateStatus(candidate.row, tr("Expression error"));
-        ++candidateIndex_;
-        progress_->setValue(static_cast<int>(candidateIndex_));
-        QTimer::singleShot(0, this, [this] { startNextCandidate(); });
-        return;
-    }
-    const auto candidateCheck = nec::NecModelChecker{}.check(
-        nec::NecParser{}.parse(resolution.generatedDeck));
-    if (candidateCheck.errorCount() != 0) {
-        setCandidateStatus(candidate.row, tr("Invalid candidate model"));
-        ++candidateIndex_;
-        progress_->setValue(static_cast<int>(candidateIndex_));
-        QTimer::singleShot(0, this, [this] { startNextCandidate(); });
-        return;
-    }
     candidate.record = runStore_.create(backend_, sourceFile_.isEmpty()
         ? QStringLiteral("Untitled model.nec") : sourceFile_,
         QStringLiteral("optimization-candidate"), sessionRecord_ ? sessionRecord_->id : QString{});
-    if (!writeCandidateFiles(candidate, resolution.generatedDeck)) {
+    if (!writeCandidateMetadata(candidate)) {
         candidate.record.status = QStringLiteral("Failed");
         runStore_.save(candidate.record);
-        setCandidateStatus(candidate.row, tr("Could not write run files"));
-        ++candidateIndex_;
-        progress_->setValue(static_cast<int>(candidateIndex_));
-        QTimer::singleShot(0, this, [this] { startNextCandidate(); });
-        return;
-    }
-
-    analysis::SolverCommand command;
-    try {
-        command = analysis::buildSolverCommand(backend_.toStdString(), executable_.toStdString(),
-            "model.nec", "model.out");
-    } catch (const std::exception& error) {
-        setCandidateStatus(candidate.row, QString::fromLocal8Bit(error.what()));
-        candidate.record.status = QStringLiteral("Failed");
-        runStore_.save(candidate.record);
+        setCandidateStatus(candidate.row, tr("Could not write candidate metadata"));
         ++candidateIndex_;
         progress_->setValue(static_cast<int>(candidateIndex_));
         QTimer::singleShot(0, this, [this] { startNextCandidate(); });
@@ -897,89 +1166,72 @@ void OptimizationWorkspace::startNextCandidate()
     candidate.record.status = QStringLiteral("Running");
     runStore_.save(candidate.record);
     setCandidateStatus(candidate.row, tr("Running"));
-    timedOut_ = false;
-    elapsed_.restart();
-    process_ = new QProcess(this);
-    auto* process = process_;
-    process_->setWorkingDirectory(candidate.record.directory);
-    process_->setProgram(QString::fromStdString(command.executable));
-    QStringList arguments;
-    for (const auto& argument : command.arguments) arguments.append(QString::fromStdString(argument));
-    process_->setArguments(arguments);
-    connect(process_, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
-        if (process_ == process && error == QProcess::FailedToStart)
-            finishCurrentCandidate(false, process->errorString());
+    evaluator_->start({
+        .authoredSource = source_,
+        .variableValues = {{selectedSymbol_.toStdString(), candidate.value}},
+        .frequencyPlan = selectedFrequencyMode() == FrequencyMode::ModelSweep
+            ? analysis::FrequencyPlan{analysis::FrequencyPlanMode::ModelSweep,
+                  activeFrequenciesMHz_, {}}
+            : analysis::FrequencyPlan{analysis::FrequencyPlanMode::Explicit,
+                  activeFrequenciesMHz_, {}},
+        .objective = activeObjective_,
+        .backend = backend_,
+        .executable = executable_,
+        .directory = candidate.record.directory,
+        .timeoutSeconds = timeoutSeconds_,
     });
-    connect(process_, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
-        [this, process](int exitCode, QProcess::ExitStatus status) {
-            if (process_ == process)
-                finishCurrentCandidate(status == QProcess::NormalExit && exitCode == 0);
-        });
-    timeout_ = new QTimer(this);
-    timeout_->setSingleShot(true);
-    connect(timeout_, &QTimer::timeout, this, [this, process] {
-        if (process_ == process) {
-            timedOut_ = true;
-            process->kill();
-        }
-    });
-    timeout_->start(timeoutSeconds_ * 1000);
-    process_->start();
 }
 
-void OptimizationWorkspace::finishCurrentCandidate(bool processSucceeded, const QString& detail)
+void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult result)
 {
-    if (process_ == nullptr || candidateIndex_ >= candidates_.size()) return;
-    if (timeout_ != nullptr) {
-        timeout_->stop();
-        timeout_->deleteLater();
-        timeout_ = nullptr;
-    }
-    process_->deleteLater();
-    process_ = nullptr;
+    if (candidateIndex_ >= candidates_.size()) return;
     auto& candidate = candidates_[candidateIndex_];
-    candidate.record.durationSeconds = elapsed_.elapsed() / 1000.0;
-    const auto outputPath = QDir(candidate.record.directory).filePath(QStringLiteral("model.out"));
-    QFile outputFile(outputPath);
-    QByteArray output;
-    if (outputFile.open(QIODevice::ReadOnly)) output = outputFile.readAll();
-    candidate.record.outputBytes = output.size();
+    candidate.record.durationSeconds = result.durationSeconds;
+    candidate.record.outputBytes = result.outputBytes;
+    candidate.feedpoints = result.analysis.feedpoints;
 
-    if (processSucceeded && !cancelRequested_) {
-        const auto result = analysis::NecOutputParser{}.parse(output.toStdString());
-        candidate.feedpoints = result.feedpoints;
-        std::set<double> frequencies;
-        for (const auto& feedpoint : result.feedpoints) frequencies.insert(feedpoint.frequencyMHz);
-        const auto evaluation = analysis::evaluateOptimizationObjective(
-            result.feedpoints, activeObjective_);
-        if (evaluation && evaluation->feedpoint) {
-            resultsTable_->setItem(candidate.row, SwrColumn, numericItem(evaluation->swr));
-            resultsTable_->setItem(candidate.row, FrequencyColumn,
-                numericItem(evaluation->feedpoint->frequencyMHz));
-            resultsTable_->setItem(candidate.row, ResistanceColumn,
-                numericItem(evaluation->feedpoint->impedance.real()));
-            resultsTable_->setItem(candidate.row, ReactanceColumn,
-                numericItem(evaluation->feedpoint->impedance.imag()));
-            setCandidateStatus(candidate.row, tr("Completed"));
-            candidate.record.status = QStringLiteral("Completed");
-            candidate.record.frequencyCount = static_cast<int>(frequencies.size());
-            candidate.record.hasImpedance = true;
-            if (evaluation->score < bestScore_) {
-                bestScore_ = evaluation->score;
-                bestRow_ = candidate.row;
-            }
-            if (resultsTable_->currentRow() == candidate.row) updateCandidateDetails();
-        } else {
-            setCandidateStatus(candidate.row, tr("No impedance results"));
-            candidate.record.status = QStringLiteral("Failed");
+    if (result.status == CandidateEvaluationStatus::Completed && result.objective
+        && result.objective->feedpoint) {
+        const auto& evaluation = *result.objective;
+        resultsTable_->setItem(candidate.row, SwrColumn, numericItem(evaluation.swr));
+        resultsTable_->setItem(candidate.row, FrequencyColumn,
+            numericItem(evaluation.feedpoint->frequencyMHz));
+        resultsTable_->setItem(candidate.row, ResistanceColumn,
+            numericItem(evaluation.feedpoint->impedance.real()));
+        resultsTable_->setItem(candidate.row, ReactanceColumn,
+            numericItem(evaluation.feedpoint->impedance.imag()));
+        setCandidateStatus(candidate.row, tr("Completed"));
+        candidate.record.status = QStringLiteral("Completed");
+        candidate.record.frequencyCount = result.frequencyCount;
+        candidate.record.hasImpedance = true;
+        if (evaluation.score < bestScore_) {
+            bestScore_ = evaluation.score;
+            bestRow_ = candidate.row;
         }
+        updateCandidateRowToolTip(candidate.row);
+        if (candidateDetailsWindow_->isVisible() && detailCandidateRow_ == candidate.row)
+            updateCandidateDetails(candidate.row);
     } else {
-        const auto status = cancelRequested_ ? tr("Canceled")
-            : timedOut_ ? tr("Timed out")
-            : detail.isEmpty() ? tr("Solver failed") : detail;
+        QString status;
+        switch (result.status) {
+        case CandidateEvaluationStatus::ExpressionError: status = tr("Expression error"); break;
+        case CandidateEvaluationStatus::InvalidModel: status = tr("Invalid candidate model"); break;
+        case CandidateEvaluationStatus::FileError: status = tr("Could not write run files"); break;
+        case CandidateEvaluationStatus::CommandError:
+        case CandidateEvaluationStatus::FailedToStart:
+        case CandidateEvaluationStatus::SolverFailed:
+            status = result.detail.isEmpty() ? tr("Solver failed") : result.detail;
+            break;
+        case CandidateEvaluationStatus::TimedOut: status = tr("Timed out"); break;
+        case CandidateEvaluationStatus::Canceled: status = tr("Canceled"); break;
+        case CandidateEvaluationStatus::NoImpedance: status = tr("No impedance results"); break;
+        case CandidateEvaluationStatus::Completed: status = tr("Solver failed"); break;
+        }
         setCandidateStatus(candidate.row, status);
-        candidate.record.status = cancelRequested_ ? QStringLiteral("Canceled")
-            : timedOut_ ? QStringLiteral("Timed Out") : QStringLiteral("Failed");
+        candidate.record.status = result.status == CandidateEvaluationStatus::Canceled
+            ? QStringLiteral("Canceled")
+            : result.status == CandidateEvaluationStatus::TimedOut
+                ? QStringLiteral("Timed Out") : QStringLiteral("Failed");
     }
     runStore_.save(candidate.record);
     ++candidateIndex_;
@@ -1028,14 +1280,10 @@ void OptimizationWorkspace::finishSweep()
     if (runningChangedCallback_) runningChangedCallback_();
 }
 
-auto OptimizationWorkspace::writeCandidateFiles(Candidate& candidate,
-    const std::string& generatedDeck) -> bool
+auto OptimizationWorkspace::writeCandidateMetadata(const Candidate& candidate) -> bool
 {
     const QDir directory(candidate.record.directory);
-    const auto explicitMode = selectedFrequencyMode() == FrequencyMode::Explicit;
-    const auto numericDeck = explicitMode
-        ? analysis::prepareExplicitFrequencyInput(generatedDeck, activeFrequenciesMHz_)
-        : analysis::prepareImpedanceInput(generatedDeck);
+    const auto frequencyMode = selectedFrequencyMode();
     const auto metadata = QJsonObject{
         {QStringLiteral("version"), 2},
         {QStringLiteral("variable"), selectedSymbol_},
@@ -1047,13 +1295,16 @@ auto OptimizationWorkspace::writeCandidateFiles(Candidate& candidate,
                 : QStringLiteral("minimize-swr-at-frequency")},
         {QStringLiteral("referenceImpedance"), activeObjective_.referenceImpedance},
         {QStringLiteral("targetFrequencyMHz"), activeObjective_.targetFrequencyMHz},
-        {QStringLiteral("frequencyMode"), explicitMode
-            ? QStringLiteral("explicit") : QStringLiteral("model-fr")},
+        {QStringLiteral("frequencyMode"), frequencyMode == FrequencyMode::Explicit
+            ? QStringLiteral("explicit")
+            : frequencyMode == FrequencyMode::Continuous
+                ? QStringLiteral("continuous") : QStringLiteral("model-fr")},
         {QStringLiteral("frequenciesMHz"), frequencyArray(activeFrequenciesMHz_)},
+        {QStringLiteral("continuousStartMHz"), continuousStartControl_->value()},
+        {QStringLiteral("continuousStopMHz"), continuousStopControl_->value()},
+        {QStringLiteral("continuousStepMHz"), continuousStepControl_->value()},
     };
-    return writeFile(directory.filePath(QStringLiteral("model.source.nec")), source_.toUtf8())
-        && writeFile(directory.filePath(QStringLiteral("model.nec")), QByteArray::fromStdString(numericDeck))
-        && writeFile(directory.filePath(QStringLiteral("optimization.json")),
+    return writeFile(directory.filePath(QStringLiteral("optimization.json")),
             QJsonDocument(metadata).toJson(QJsonDocument::Indented));
 }
 
@@ -1065,6 +1316,7 @@ void OptimizationWorkspace::setCandidateStatus(int row, const QString& status)
         resultsTable_->setItem(row, RunColumn,
             new QTableWidgetItem(candidates_[static_cast<std::size_t>(row)].record.id));
     }
+    updateCandidateRowToolTip(row);
 }
 
 auto OptimizationWorkspace::selectedObjective() const -> analysis::OptimizationObjectiveSpec
@@ -1082,6 +1334,21 @@ auto OptimizationWorkspace::selectedFrequencyMode() const -> FrequencyMode
     return static_cast<FrequencyMode>(frequencyModeControl_->currentData().toInt());
 }
 
+auto OptimizationWorkspace::selectedFrequencyPlan() const -> analysis::FrequencyPlan
+{
+    switch (selectedFrequencyMode()) {
+    case FrequencyMode::Explicit:
+        return {analysis::FrequencyPlanMode::Explicit, explicitFrequencies(), {}};
+    case FrequencyMode::Continuous:
+        return {analysis::FrequencyPlanMode::Explicit, {},
+            {{continuousStartControl_->value(), continuousStopControl_->value(),
+                continuousStepControl_->value()}}};
+    case FrequencyMode::ModelSweep:
+        return {analysis::FrequencyPlanMode::ModelSweep, modelFrequenciesMHz_, {}};
+    }
+    return {};
+}
+
 auto OptimizationWorkspace::explicitFrequencies() const -> std::vector<double>
 {
     std::vector<double> frequencies;
@@ -1094,10 +1361,8 @@ auto OptimizationWorkspace::explicitFrequencies() const -> std::vector<double>
         if (valid && std::isfinite(frequencyMHz) && frequencyMHz > 0.0)
             frequencies.push_back(frequencyMHz);
     }
-    std::ranges::sort(frequencies);
-    const auto duplicates = std::ranges::unique(frequencies);
-    frequencies.erase(duplicates.begin(), duplicates.end());
-    return frequencies;
+    return analysis::frequencyPlanPoints({
+        analysis::FrequencyPlanMode::Explicit, std::move(frequencies), {}});
 }
 
 auto OptimizationWorkspace::objectiveName(analysis::OptimizationObjectiveKind kind) const -> QString

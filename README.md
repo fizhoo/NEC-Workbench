@@ -15,16 +15,20 @@ The current foundation provides:
 - A Qt 6 NEC editor with line numbers, highlighting, and clickable model diagnostics
 - Raw and structured NEC Source tabs with add/delete, card-specific columns, source mapping, and contextual properties
 - A dockable engineering workbench shell with project, properties, diagnostics, and solver-output panels
-- Dashboard, Geometry, NEC Source, Analysis, Results, and Optimize workspaces in one main window
+- Home, Model, Analysis, Results, and Optimize workspaces in one main window
+- Model groups Geometry, Parameters, Sources, Loads & Transmission Lines, Environment, and NEC Deck views
 - A live dashboard combining the shared NEC document, interactive 3D renderer, model summary, and quick results
 - An editable `GW` wire-card table synchronized with source, geometry, project selection, and undo/redo
+- A Model Parameters editor for adding, updating, deleting, and resolving `SY` expressions
+- Categorized, schema-specific Structured Cards navigation over the authoritative NEC deck
+- An undoable Apply Best action that writes a parameter-sweep winner back through `SY`
 - Selectable metric/imperial display units with automatic unit-friendly snap intervals or physical preservation
 - Persistent Geometry Settings for automatic/manual grids, minor divisions, visibility, and snap tolerance
 - Synchronized XY, XZ, and YZ wire views with live coordinates, engineering grids, fit, zoom, pan, and selection
 - Interactive software-rendered 3D model view with orbit, pan, zoom, fit, axes, picking, and synchronized selection
 - Structured FR frequency sweeps and EX voltage sources with validation, undo/redo, and 2D/3D feed markers
 - Selectable EX markers with contextual properties, deletion, and nearest-segment source creation from 2D/3D wires
-- Dedicated EX Properties dialog plus batch source management in Model Setup
+- Dedicated EX Properties dialog plus batch source management under Model → Sources
 - Structured GN/GE ground environments: free space, perfect, real/fast, real/Sommerfeld, and average-ground preset
 - Persistent Analysis backend selection for NEC-2, OpenNEC, NEC-4-compatible, or custom executables
 - Managed XQ/RP result requests with far-field angular grids and live analysis-readiness validation

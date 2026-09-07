@@ -13,7 +13,6 @@ struct SymbolDefinition {
     std::string expression;
     double value{};
     std::size_t lineNumber{};
-    bool adjustable{};
 };
 
 struct SymbolDiagnostic {

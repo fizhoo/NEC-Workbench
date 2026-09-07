@@ -10,6 +10,7 @@
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QLabel>
+#include <QResizeEvent>
 #include <QTableWidget>
 #include <QTextDocument>
 #include <QToolButton>
@@ -22,9 +23,53 @@
 namespace necwb::ui {
 namespace {
 
+class HeaderActionGroupBox final : public QGroupBox {
+public:
+    HeaderActionGroupBox(const QString& title, QWidget* actions, QWidget* parent)
+        : QGroupBox(title, parent), actions_(actions)
+    {
+        actions_->setParent(this);
+        actions_->raise();
+    }
+
+    void refreshHeaderActions()
+    {
+        actions_->adjustSize();
+        const auto hint = actions_->sizeHint();
+        actions_->resize(hint);
+        actions_->move(std::max(8, width() - hint.width() - 8), 0);
+        if (auto* groupLayout = layout()) {
+            const auto margins = groupLayout->contentsMargins();
+            groupLayout->setContentsMargins(
+                margins.left(), std::max(10, hint.height()), margins.right(), margins.bottom());
+        }
+        actions_->raise();
+    }
+
+protected:
+    void resizeEvent(QResizeEvent* event) override
+    {
+        QGroupBox::resizeEvent(event);
+        refreshHeaderActions();
+    }
+
+private:
+    QWidget* actions_{};
+};
+
 auto panel(const QString& title, QWidget* content, QWidget* parent) -> QGroupBox*
 {
     auto* group = new QGroupBox(title, parent);
+    auto* layout = new QVBoxLayout(group);
+    layout->setContentsMargins(8, 10, 8, 8);
+    layout->addWidget(content);
+    return group;
+}
+
+auto actionPanel(const QString& title, QWidget* content, QWidget* actions,
+    QWidget* parent) -> HeaderActionGroupBox*
+{
+    auto* group = new HeaderActionGroupBox(title, actions, parent);
     auto* layout = new QVBoxLayout(group);
     layout->setContentsMargins(8, 10, 8, 8);
     layout->addWidget(content);
@@ -77,15 +122,17 @@ DashboardPage::DashboardPage(QTextDocument* document, QWidget* parent) : QWidget
     fileState_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     headingText->addWidget(heading);
     headingText->addWidget(fileState_);
-    quickActions_ = new QHBoxLayout;
-    quickActions_->setSpacing(6);
     headingLayout->addLayout(headingText);
     headingLayout->addStretch();
-    headingLayout->addLayout(quickActions_);
 
     editor_ = new NecEditor(this);
     editor_->setDocument(document);
     editor_->setMinimumSize(360, 240);
+    auto* quickActionsWidget = new QWidget(this);
+    quickActionsWidget->setObjectName(QStringLiteral("dashboardQuickActionsContainer"));
+    quickActions_ = new QHBoxLayout(quickActionsWidget);
+    quickActions_->setContentsMargins(0, 0, 0, 0);
+    quickActions_->setSpacing(6);
 
     view3D_ = new Radiation3DView(this);
     view3D_->setOverviewMode(true);
@@ -97,7 +144,7 @@ DashboardPage::DashboardPage(QTextDocument* document, QWidget* parent) : QWidget
     modelState_ = new QLabel(tr("No model loaded"), modelPanel);
     modelState_->setWordWrap(true);
     modelSummary_ = summaryTable({tr("Wires"), tr("Segments"), tr("Sources"), tr("Loads"),
-        tr("TLs"), tr("Solver"), tr("Ground"), tr("Frequency")}, modelPanel);
+        tr("TLs"), tr("Solver"), tr("Ground"), tr("Frequency"), tr("SWR Reference")}, modelPanel);
     modelLayout->addWidget(modelState_);
     modelLayout->addWidget(modelSummary_, 1);
     auto* averageGainHeading = new QLabel(tr("Model Quality"), modelPanel);
@@ -105,20 +152,29 @@ DashboardPage::DashboardPage(QTextDocument* document, QWidget* parent) : QWidget
     averageGainFont.setBold(true);
     averageGainHeading->setFont(averageGainFont);
     averageGainState_ = new QLabel(tr("AGT not run"), modelPanel);
+    averageGainState_->setObjectName(QStringLiteral("dashboardAverageGainState"));
     averageGainState_->setWordWrap(true);
     averageGainButton_ = new QToolButton(modelPanel);
+    averageGainButton_->setObjectName(QStringLiteral("dashboardAverageGainButton"));
     averageGainButton_->setText(tr("Run Average Gain Test…"));
     averageGainButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     convergenceState_ = new QLabel(tr("Segmentation convergence not run"), modelPanel);
+    convergenceState_->setObjectName(QStringLiteral("dashboardConvergenceState"));
     convergenceState_->setWordWrap(true);
     convergenceButton_ = new QToolButton(modelPanel);
+    convergenceButton_->setObjectName(QStringLiteral("dashboardConvergenceButton"));
     convergenceButton_->setText(tr("Segmentation Convergence…"));
     convergenceButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    modelLayout->addWidget(averageGainHeading);
-    modelLayout->addWidget(averageGainState_);
-    modelLayout->addWidget(averageGainButton_, 0, Qt::AlignLeft);
-    modelLayout->addWidget(convergenceState_);
-    modelLayout->addWidget(convergenceButton_, 0, Qt::AlignLeft);
+    auto* qualityLayout = new QGridLayout;
+    qualityLayout->setContentsMargins(0, 0, 0, 0);
+    qualityLayout->setColumnStretch(0, 1);
+    qualityLayout->setColumnStretch(1, 1);
+    qualityLayout->addWidget(averageGainHeading, 0, 0, 1, 2);
+    qualityLayout->addWidget(averageGainState_, 1, 0);
+    qualityLayout->addWidget(convergenceState_, 1, 1);
+    qualityLayout->addWidget(averageGainButton_, 2, 0, Qt::AlignLeft);
+    qualityLayout->addWidget(convergenceButton_, 2, 1, Qt::AlignLeft);
+    modelLayout->addLayout(qualityLayout);
 
     auto* resultPanel = new QWidget(this);
     auto* resultLayout = new QVBoxLayout(resultPanel);
@@ -131,8 +187,12 @@ DashboardPage::DashboardPage(QTextDocument* document, QWidget* parent) : QWidget
     resultLayout->addWidget(quickResults_, 1);
 
     layout->addWidget(headingPanel, 0, 0, 1, 2);
-    layout->addWidget(panel(tr("NEC Source"), editor_, this), 1, 0);
-    layout->addWidget(panel(tr("3D Overview"), view3D_, this), 1, 1);
+    auto* sourcePanel = actionPanel(tr("NEC Source"), editor_, quickActionsWidget, this);
+    sourcePanel->setObjectName(QStringLiteral("dashboardNecSourcePanel"));
+    auto* overviewPanel = panel(tr("3D Overview"), view3D_, this);
+    overviewPanel->setObjectName(QStringLiteral("dashboard3DOverviewPanel"));
+    layout->addWidget(sourcePanel, 1, 0);
+    layout->addWidget(overviewPanel, 1, 1);
     layout->addWidget(panel(tr("Model Summary"), modelPanel, this), 2, 0);
     layout->addWidget(panel(tr("Quick Results"), resultPanel, this), 2, 1);
     layout->setRowStretch(1, 3);
@@ -153,19 +213,24 @@ void DashboardPage::setConvergenceAction(QAction* action)
     convergenceButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 }
 
-void DashboardPage::setQuickActions(QAction* geometry, QAction* source, QAction* check,
-    QAction* run, QAction* results)
+void DashboardPage::setQuickActions(QAction* check, QAction* run)
 {
     while (auto* item = quickActions_->takeAt(0)) {
         delete item->widget();
         delete item;
     }
-    for (auto* action : {geometry, source, check, run, results}) {
+    for (auto* action : {check, run}) {
         if (action == nullptr) continue;
         auto* button = new QToolButton(this);
+        button->setObjectName(QStringLiteral("dashboardQuickAction"));
         button->setDefaultAction(action);
         button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         quickActions_->addWidget(button);
+    }
+    if (auto* actions = quickActions_->parentWidget()) {
+        actions->adjustSize();
+        if (auto* group = dynamic_cast<HeaderActionGroupBox*>(actions->parentWidget()))
+            group->refreshHeaderActions();
     }
 }
 
@@ -201,6 +266,7 @@ void DashboardPage::setModel(const model::AntennaModel& model, const model::Mode
                   .arg(setup.frequency->count)
             : tr("%1 MHz").arg(formatDecimal(setup.frequency->startMHz)))
         : tr("Not configured"));
+    setValue(modelSummary_, 8, tr("%1 Ω").arg(formatDecimal(model::referenceImpedanceOhms(setup))));
     modelState_->setText(!checked ? tr("Model changed — validation required")
         : errors > 0 ? tr("Invalid model — %1 error(s), %2 warning(s)").arg(errors).arg(warnings)
         : tr("Ready — %1 warning(s)").arg(warnings));
@@ -213,13 +279,16 @@ void DashboardPage::setResults(const analysis::AnalysisResult& result,
     resultsStale_ = stale;
     resultContext_ = context;
     view3D_->setResults(result, context);
+    quickResults_->item(3, 0)->setText(
+        tr("SWR (%1 Ω)").arg(formatDecimal(result.referenceImpedanceOhms)));
     for (auto row = 0; row < quickResults_->rowCount(); ++row) setValue(quickResults_, row, QStringLiteral("—"));
     if (!result.feedpoints.empty()) {
         const auto& feedpoint = result.feedpoints.front();
         setValue(quickResults_, 0, tr("%1 MHz").arg(formatDecimal(feedpoint.frequencyMHz)));
         setValue(quickResults_, 1, tr("%1 Ω").arg(formatDecimal(feedpoint.impedance.real())));
         setValue(quickResults_, 2, tr("%1 Ω").arg(formatDecimal(feedpoint.impedance.imag())));
-        const auto swr = analysis::standingWaveRatio(feedpoint.impedance);
+        const auto swr = analysis::standingWaveRatio(
+            feedpoint.impedance, result.referenceImpedanceOhms);
         setValue(quickResults_, 3, std::isfinite(swr) ? formatDecimal(swr) : tr("∞"));
     }
     if (!result.radiation.empty()) {

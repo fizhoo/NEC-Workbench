@@ -57,7 +57,10 @@ public:
 
 private:
     enum class CutOrientation { Vertical, Horizontal };
+    [[nodiscard]] auto availableCutPlanes(CutOrientation orientation) const -> std::vector<double>;
+    void refreshCutControls();
     void refreshSelectors();
+    void refreshDatasets();
     void refresh();
     void toggleOrientation();
     void stepAngle(int offset);
@@ -67,6 +70,7 @@ private:
     void settingsChanged();
     analysis::AnalysisResult result_;
     QComboBox* frequency_{};
+    QComboBox* dataset_{};
     QComboBox* phi_{};
     QComboBox* component_{};
     QComboBox* scale_{};
@@ -97,12 +101,14 @@ public:
 
 private:
     void refresh();
+    void refreshDatasets();
     void settingsChanged();
     void exportImage();
     void exportData();
     analysis::AnalysisResult result_;
     model::AntennaModel model_;
     QComboBox* frequency_{};
+    QComboBox* dataset_{};
     QComboBox* component_{};
     QComboBox* scale_{};
     QComboBox* floor_{};

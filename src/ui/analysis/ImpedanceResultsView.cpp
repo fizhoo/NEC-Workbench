@@ -49,11 +49,14 @@ ImpedanceResultsView::ImpedanceResultsView(QWidget* parent)
 void ImpedanceResultsView::setResults(const analysis::AnalysisResult& result,
     const QString& runDirectory)
 {
+    table_->horizontalHeaderItem(7)->setText(
+        tr("SWR (%1 Ω)").arg(formatDecimal(result.referenceImpedanceOhms)));
     table_->setRowCount(0);
     for (const auto& feedpoint : result.feedpoints) {
         const auto row = table_->rowCount();
         table_->insertRow(row);
-        const auto swr = analysis::standingWaveRatio(feedpoint.impedance);
+        const auto swr = analysis::standingWaveRatio(
+            feedpoint.impedance, result.referenceImpedanceOhms);
         const QStringList values{
             formatDecimal(feedpoint.frequencyMHz),
             QString::number(feedpoint.wireTag),
@@ -74,8 +77,9 @@ void ImpedanceResultsView::setResults(const analysis::AnalysisResult& result,
     }
     summary_->setText(result.feedpoints.empty()
             ? tr("No supported antenna-input rows were found in %1.").arg(runDirectory)
-            : tr("%1 feedpoint result(s) parsed from %2. SWR uses a 50 Ω reference.")
-                .arg(result.feedpoints.size()).arg(runDirectory));
+            : tr("%1 feedpoint result(s) parsed from %2. SWR uses a %3 Ω reference.")
+                .arg(result.feedpoints.size()).arg(runDirectory)
+                .arg(formatDecimal(result.referenceImpedanceOhms)));
     table_->resizeColumnsToContents();
 }
 

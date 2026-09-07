@@ -34,6 +34,16 @@ auto splitLines(std::string_view source) -> std::vector<std::string>
     return lines;
 }
 
+auto joinLines(const std::vector<std::string>& lines) -> std::string
+{
+    std::ostringstream output;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        if (index != 0) output << '\n';
+        output << lines[index];
+    }
+    return output.str();
+}
+
 }
 
 auto normalizeSolverDeck(std::string_view source) -> std::string
@@ -45,7 +55,8 @@ auto normalizeSolverDeck(std::string_view source) -> std::string
     for (std::size_t index = 0; index < cards.size(); ++index) {
         const auto& card = cards[index];
         const auto inlineComment = card.mnemonic == "CM" && !openingCommentBlock;
-        if (!inlineComment) output << card.sourceText;
+        const auto compatibilityMetadata = card.kind == nec::NecCardKind::ReferenceImpedance;
+        if (!inlineComment && !compatibilityMetadata) output << card.sourceText;
         if (card.mnemonic == "CE"
             || (card.kind != nec::NecCardKind::Blank && card.mnemonic != "CM")) {
             openingCommentBlock = false;
@@ -60,13 +71,16 @@ auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
     RadiationSweepMode mode) -> std::string
 {
     const auto compatibleSource = normalizeSolverDeck(source);
-    if (!setup.frequency || !setup.radiationPattern || setup.frequency->count <= 1) {
+    if (!setup.frequency || setup.radiationPatterns.empty() || setup.frequency->count <= 1) {
         return compatibleSource;
     }
+    if (mode == RadiationSweepMode::EveryFrequency) return compatibleSource;
 
     auto lines = splitLines(compatibleSource);
     const auto frequencyLine = setup.frequency->sourceLine;
-    const auto patternLine = setup.radiationPattern->sourceLine;
+    std::vector<std::size_t> patternLines;
+    patternLines.reserve(setup.radiationPatterns.size());
+    for (const auto& pattern : setup.radiationPatterns) patternLines.push_back(pattern.sourceLine);
     const auto executionLine = setup.executionRequest
         ? setup.executionRequest->sourceLine : std::size_t{};
     std::vector<std::string> retained;
@@ -77,7 +91,8 @@ auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
         if (sourceLine == frequencyLine) {
             continue;
         }
-        if (sourceLine == patternLine || (executionLine != 0 && sourceLine == executionLine)) {
+        if (std::ranges::find(patternLines, sourceLine) != patternLines.end()
+            || (executionLine != 0 && sourceLine == executionLine)) {
             insertionIndex = std::min(insertionIndex, retained.size());
             continue;
         }
@@ -87,11 +102,7 @@ auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
     insertionIndex = std::min(insertionIndex, retained.size());
     const nec::NecWriter writer;
     std::vector<int> patternIndexes;
-    if (mode == RadiationSweepMode::EveryFrequency) {
-        patternIndexes.reserve(static_cast<std::size_t>(setup.frequency->count));
-        for (auto index = 0; index < setup.frequency->count; ++index)
-            patternIndexes.push_back(index);
-    } else if (mode == RadiationSweepMode::RepresentativeFrequencies) {
+    if (mode == RadiationSweepMode::RepresentativeFrequencies) {
         patternIndexes = {setup.frequency->count - 1, 0,
             (setup.frequency->count - 1) / 2};
         std::ranges::sort(patternIndexes);
@@ -102,12 +113,11 @@ auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
     }
 
     std::vector<std::string> requests;
-    requests.reserve(static_cast<std::size_t>(setup.frequency->count) * 2);
-    if (mode != RadiationSweepMode::EveryFrequency) {
-        requests.push_back(writer.writeFrequencyCard(*setup.frequency));
-        requests.push_back(setup.executionRequest
-            ? writer.writeExecutionCard(*setup.executionRequest) : std::string{"XQ 0"});
-    }
+    requests.reserve(static_cast<std::size_t>(setup.frequency->count)
+        * (setup.radiationPatterns.size() + 1));
+    requests.push_back(writer.writeFrequencyCard(*setup.frequency));
+    requests.push_back(setup.executionRequest
+        ? writer.writeExecutionCard(*setup.executionRequest) : std::string{"XQ 0"});
     for (const auto index : patternIndexes) {
         auto point = *setup.frequency;
         point.steppingMode = 0;
@@ -115,17 +125,13 @@ auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
         point.startMHz = frequencyAt(*setup.frequency, index);
         point.step = 0.0;
         requests.push_back(writer.writeFrequencyCard(point));
-        requests.push_back(writer.writeRadiationPatternCard(*setup.radiationPattern));
+        for (const auto& pattern : setup.radiationPatterns)
+            requests.push_back(writer.writeRadiationPatternCard(pattern));
     }
     retained.insert(retained.begin() + static_cast<std::ptrdiff_t>(insertionIndex),
         requests.begin(), requests.end());
 
-    std::ostringstream output;
-    for (std::size_t index = 0; index < retained.size(); ++index) {
-        if (index != 0) output << '\n';
-        output << retained[index];
-    }
-    return output.str();
+    return joinLines(retained);
 }
 
 auto prepareImpedanceInput(std::string_view source) -> std::string

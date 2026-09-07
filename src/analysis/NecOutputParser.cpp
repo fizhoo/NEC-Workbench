@@ -149,6 +149,8 @@ auto NecOutputParser::parse(std::string_view output) const -> AnalysisResult
     std::unordered_set<SourceResultKey, SourceResultKeyHash> feedpointKeys;
     std::unordered_set<SourceResultKey, SourceResultKeyHash> currentKeys;
     std::unordered_map<int, int> firstGlobalSegmentByTag;
+    std::unordered_map<int, int> nextPatternIndexByFrequency;
+    int currentPatternIndex{};
     bool readingInputParameters{};
     bool foundInputRow{};
     bool readingCurrents{};
@@ -187,6 +189,7 @@ auto NecOutputParser::parse(std::string_view output) const -> AnalysisResult
         if (line.find("RADIATION PATTERNS") != std::string::npos) {
             readingRadiation = true;
             foundRadiationRow = false;
+            currentPatternIndex = nextPatternIndexByFrequency[frequencyIndex]++;
             continue;
         }
         if (readingCurrents) {
@@ -208,6 +211,7 @@ auto NecOutputParser::parse(std::string_view output) const -> AnalysisResult
         if (readingRadiation) {
             RadiationSample sample;
             if (parseRadiation(line, frequencyMHz, sample)) {
+                sample.patternIndex = currentPatternIndex;
                 result.radiation.push_back(sample);
                 foundRadiationRow = true;
                 continue;
