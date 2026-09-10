@@ -8,19 +8,27 @@
 namespace necwb::analysis {
 
 enum class OptimizationObjectiveKind {
-    MaximumSwr,
+    WorstPointAcrossFrequencies,
     SwrAtFrequency
 };
 
 struct OptimizationObjectiveSpec {
-    OptimizationObjectiveKind kind{OptimizationObjectiveKind::MaximumSwr};
+    OptimizationObjectiveKind kind{OptimizationObjectiveKind::WorstPointAcrossFrequencies};
     double referenceImpedance{50.0};
     double targetFrequencyMHz{};
+    double swrWeight{1.0};
+    double resistanceWeight{};
+    double resistanceTargetOhms{50.0};
+    double reactanceWeight{};
+    double reactanceTargetOhms{};
 };
 
 struct OptimizationObjectiveResult {
     double score{};
     double swr{};
+    double swrComponent{};
+    double resistanceComponent{};
+    double reactanceComponent{};
     std::optional<FeedpointResult> feedpoint;
 };
 

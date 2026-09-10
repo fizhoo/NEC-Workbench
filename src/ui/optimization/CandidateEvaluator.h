@@ -3,6 +3,7 @@
 #include "analysis/AnalysisResult.h"
 #include "analysis/FrequencyPlan.h"
 #include "analysis/OptimizationObjective.h"
+#include "ui/analysis/SolverProcessRunner.h"
 
 #include <QElapsedTimer>
 #include <QObject>
@@ -12,9 +13,6 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-
-class QProcess;
-class QTimer;
 
 namespace necwb::ui {
 
@@ -69,14 +67,12 @@ signals:
 private:
     void finish(CandidateEvaluationStatus status, QString detail = {});
     void finishLater(CandidateEvaluationStatus status, QString detail = {});
+    void finishProcess(SolverProcessResult result);
 
     CandidateEvaluationRequest request_;
-    QProcess* process_{};
-    QTimer* timeout_{};
+    SolverProcessRunner* runner_{};
     QElapsedTimer elapsed_;
     bool running_{};
-    bool canceled_{};
-    bool timedOut_{};
 };
 
 }

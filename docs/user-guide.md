@@ -216,11 +216,13 @@ values, remain unchanged in the authored source.
 Path: **Model → Parameters**
 
 The Parameters editor lists each `SY` definition as **Name**, authored
-**Expression**, and unit-neutral **Resolved Value**. Select a row to update or
-delete that assignment, or enter a new name and expression to add one. Multiple
-assignments on one `SY` source line remain supported; changing or deleting one
-assignment preserves the others. All changes update the authoritative NEC source
-through shared Undo/Redo and are immediately available to Parameter Sweep.
+**Expression**, and unit-neutral **Resolved Value**. Double-click a Name or
+Expression cell to edit it; Resolved Value remains read-only. **Add Parameter**
+creates a draft row even when the model has no existing `SY` cards. Apply or
+revert the highlighted draft before editing another row. Multiple assignments on
+one `SY` source line remain supported; changing or deleting one assignment
+preserves the others. Applied changes update the authoritative NEC source through
+shared Undo/Redo and are immediately available to Parameter Sweep.
 An edit that introduces an expression error—or deletes a parameter still used by
 the model—is rejected with an explanation instead of leaving a broken definition.
 
@@ -245,6 +247,11 @@ Selections synchronize with their Geometry markers, and invalid wire or segment
 references are rejected before source changes are applied. The existing editor
 behavior and NEC-card writing remain unchanged in this rollout.
 
+Changes in the load and transmission-line tables are staged until the matching
+**Apply Selected** button is pressed. The button is highlighted while edits are
+pending. Leaving the page offers a choice to discard the edits or return and
+apply them.
+
 ### Environment
 
 Path: **Model → Environment**
@@ -252,6 +259,17 @@ Path: **Model → Environment**
 Configure free space, perfect ground, reflection-approximation ground, or
 Sommerfeld/Norton ground. Real-ground controls include material presets,
 relative permittivity, conductivity, and the `GE` ground-connection flag.
+
+The material list provides approximate single-medium starting values for salt
+water, fresh water, very good, good, average, poor rocky, sandy/dry, and urban
+ground. Selecting a preset fills relative permittivity and conductivity; editing
+either value changes the selection to **Custom**. Prefer measured local values
+when available. These presets do not define a two-medium `GN`/`GD` ground model.
+
+Frequency, source, and environment forms use the same staged-edit behavior: the
+relevant Apply or Update button is highlighted after a field changes, returns to
+normal after a successful application, and protects unapplied values during
+workspace navigation.
 
 ### NEC Deck
 
@@ -590,9 +608,28 @@ Next** for free-text search. Process messages remain in the Solver Output dock.
 
 Path: **Optimize** on the top workspace bar
 
-Optimize provides a basic bounded sweep for one `SY` variable. Choose the
-variable, minimum, maximum, number of candidate points, reference impedance, and
-SWR objective, then select **Run Parameter Sweep**.
+Optimize provides two bounded one-variable workflows that share the same `SY`
+selection, frequency plan, reference impedance, weighted objectives, candidate
+table, plots, history, and **Apply Best to Model** action:
+
+- **Parameter Sweep** exhaustively evaluates evenly spaced values between the
+  bounds using **Sweep points**.
+- **Adaptive Optimize** starts with five values and refines midpoints around the
+  current best candidate. It stops at the evaluation budget, parameter tolerance,
+  or after repeated rounds remain within the score-improvement tolerance.
+
+Adaptive Optimize is a transparent derivative-free coarse-to-fine search. It is
+more efficient than a dense sweep when the useful region is localized, but a
+parameter sweep remains valuable for inspecting the full objective landscape.
+The latest candidate table remains visible when moving to another workspace and
+returning to Optimize. It resets only after the active model source changes or a
+new sweep begins.
+
+The results area has **Candidates** and **Plots** views. The plot shows total
+objective score against the swept parameter together with the enabled weighted
+SWR, resistance, and reactance contributions. Lower values are better, and the
+best candidate is marked. Hover for exact values; double-click a marker to open
+the same frequency-detail window used by the candidate table.
 
 The compact setup band keeps **Symbols & Expressions** beside **Sweep &
 Frequencies**. Sweep settings use an interactive grid whose value cells contain
@@ -601,7 +638,8 @@ horizontally, while the candidate result table retains most of the workspace
 below. Decimal values are displayed and entered to three places
 throughout the optimizer; archived raw solver output remains unchanged.
 
-**Frequency Source** controls the frequencies calculated for every candidate:
+For **Minimax**, **Frequency Source** controls the
+frequencies calculated for every candidate:
 
 - **Use Model FR Sweep** keeps the model's existing `FR` definition.
 - **Use Selected Frequencies** evaluates only the explicit MHz values in the
@@ -636,17 +674,28 @@ symbol overrides its resolved value for that candidate before later symbol
 expressions and NEC cards are evaluated. Workbench does not try to determine
 whether the selected symbol materially affects the final model.
 
-This tool exhaustively evaluates the requested candidate points. “Complete”
-means every candidate was attempted; it is not optimizer convergence. A future
-adaptive optimizer will separately report search stopping criteria. Future
-tolerance analysis will perturb a finalist to measure construction and component
-sensitivity.
+For Parameter Sweep, “Complete” means every requested candidate was attempted;
+it is not convergence. Adaptive Optimize reports its stopping reason separately.
+Future tolerance analysis will perturb a finalist to measure construction and
+component sensitivity.
 
-**Minimize Worst SWR Across Frequencies** scores each candidate using its highest
-calculated SWR. This is the appropriate choice when every modeled or explicitly
-selected frequency must remain usable. **Minimize SWR at Selected Frequency** scores the
-calculated frequency nearest the requested frequency. If the model contains only
-one frequency, both objectives produce the same score.
+**Minimax** minimizes each candidate's worst-performing weighted objective point
+across the selected frequencies. **Selected Frequency** calculates and
+scores only the requested frequency, regardless of the model's authored `FR`
+sweep.
+Hover over either evaluation choice for a concise description of its frequency
+and scoring behavior.
+
+The **Weighted Objectives** grid combines three impedance criteria. A weight of
+zero disables that criterion. SWR is minimized directly; resistance and
+reactance minimize their distance from the entered targets. Resistance and
+reactance errors are divided by the reference impedance before weighting, then
+the combined score is divided by total weight. This keeps values in ohms from
+dominating SWR merely because their raw numbers are larger. The default weights
+preserve the original SWR-only behavior. The results table shows the normalized
+objective score separately from actual SWR, resistance, and reactance. The
+candidate plot uses these exact evaluator contributions rather than recalculating
+or approximating the score in the GUI.
 
 Radiation requests are omitted from these initial impedance-only candidates to
 keep the sweep fast. Each candidate remains available in Results → Run History

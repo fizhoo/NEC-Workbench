@@ -10,6 +10,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(necwb_core
+    src/analysis/AdaptiveSearch.cpp
+    src/analysis/AdaptiveSearch.h
     src/analysis/AnalysisResult.cpp
     src/analysis/AverageGainTest.cpp
     src/analysis/FrequencyPlan.cpp
@@ -32,6 +34,8 @@ add_library(necwb_core
     src/nec/NecModelConverter.cpp
     src/nec/NecParser.cpp
     src/nec/NecSetupConverter.cpp
+    src/nec/NecSourceEditor.cpp
+    src/nec/NecSourceEditor.h
     src/nec/NecSymbolEditor.cpp
     src/nec/NecSymbolResolver.cpp
     src/nec/NecWriter.cpp
@@ -50,8 +54,7 @@ if(NECWB_BUILD_GUI)
     find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets)
     qt_standard_project_setup()
 
-    qt_add_executable(nec-workbench
-        src/app/main.cpp
+    qt_add_library(necwb_ui STATIC
         src/ui/MainWindow.cpp
         src/ui/MainWindow.h
         src/ui/DetachablePanel.cpp
@@ -70,6 +73,8 @@ if(NECWB_BUILD_GUI)
         src/ui/analysis/ImpedanceResultsView.h
         src/ui/analysis/ResultsSummaryView.cpp
         src/ui/analysis/ResultsSummaryView.h
+        src/ui/analysis/SolverProcessRunner.cpp
+        src/ui/analysis/SolverProcessRunner.h
         src/ui/analysis/SweepPlotsView.cpp
         src/ui/analysis/SweepPlotsView.h
         src/ui/analysis/FieldResultsViews.cpp
@@ -118,12 +123,15 @@ if(NECWB_BUILD_GUI)
         src/ui/welcome/WelcomePage.cpp
         src/ui/welcome/WelcomePage.h
     )
-    target_link_libraries(nec-workbench PRIVATE necwb_core Qt6::Widgets)
+    target_link_libraries(necwb_ui PUBLIC necwb_core Qt6::Widgets)
     if(MSVC)
-        target_compile_options(nec-workbench PRIVATE /W4 /permissive-)
+        target_compile_options(necwb_ui PRIVATE /W4 /permissive-)
     else()
-        target_compile_options(nec-workbench PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(necwb_ui PRIVATE -Wall -Wextra -Wpedantic)
     endif()
+
+    qt_add_executable(nec-workbench src/app/main.cpp)
+    target_link_libraries(nec-workbench PRIVATE necwb_ui)
 
     install(TARGETS nec-workbench
         BUNDLE DESTINATION .
@@ -138,56 +146,14 @@ if(NECWB_BUILD_TESTS)
     add_test(NAME necwb_core_tests COMMAND necwb_core_tests)
 
     if(NECWB_BUILD_GUI)
-        add_executable(necwb_plot_tests
-            tests/PlotSmokeTests.cpp
-            src/ui/DetachablePanel.cpp
-            src/ui/DetachablePanel.h
-            src/ui/analysis/AnalysisRunStore.cpp
-            src/ui/analysis/AnalysisRunStore.h
-            src/ui/analysis/AnalysisRequestEditor.cpp
-            src/ui/analysis/AnalysisRequestEditor.h
-            src/ui/analysis/AverageGainResultsView.cpp
-            src/ui/analysis/AverageGainResultsView.h
-            src/ui/analysis/ConvergenceWorkspace.cpp
-            src/ui/analysis/ConvergenceWorkspace.h
-            src/ui/analysis/ResultsSummaryView.cpp
-            src/ui/analysis/ResultsSummaryView.h
-            src/ui/analysis/FieldResultsViews.cpp
-            src/ui/analysis/FieldResultsViews.h
-            src/ui/analysis/SweepPlotsView.cpp
-            src/ui/analysis/SweepPlotsView.h
-            src/ui/dashboard/DashboardPage.cpp
-            src/ui/dashboard/DashboardPage.h
-            src/ui/editor/NecEditor.cpp
-            src/ui/editor/NecEditor.h
-            src/ui/cards/StructuredCardEditor.cpp
-            src/ui/cards/StructuredCardEditor.h
-            src/ui/cards/WireCardEditor.cpp
-            src/ui/cards/WireCardEditor.h
-            src/ui/geometry/WirePropertiesDialog.cpp
-            src/ui/geometry/WirePropertiesDialog.h
-            src/ui/geometry/GeometryView.cpp
-            src/ui/geometry/GeometryView.h
-            src/ui/geometry/Geometry3DView.cpp
-            src/ui/geometry/Geometry3DView.h
-            src/ui/geometry/AutoSegmentationDialog.cpp
-            src/ui/geometry/AutoSegmentationDialog.h
-            src/ui/optimization/OptimizationWorkspace.cpp
-            src/ui/optimization/OptimizationWorkspace.h
-            src/ui/optimization/CandidateEvaluator.cpp
-            src/ui/optimization/CandidateEvaluator.h
-            src/ui/model/ParameterEditor.cpp
-            src/ui/model/ParameterEditor.h
-            src/ui/setup/LoadNetworkEditor.cpp
-            src/ui/setup/LoadNetworkEditor.h
-            src/ui/setup/SetupEditor.cpp
-            src/ui/setup/SetupEditor.h
-            src/ui/welcome/WelcomePage.cpp
-            src/ui/welcome/WelcomePage.h
-        )
-        target_link_libraries(necwb_plot_tests PRIVATE necwb_core Qt6::Widgets)
+        add_executable(necwb_plot_tests tests/PlotSmokeTests.cpp)
+        target_link_libraries(necwb_plot_tests PRIVATE necwb_ui)
         add_test(NAME necwb_plot_tests COMMAND necwb_plot_tests)
         set_tests_properties(necwb_plot_tests PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+        add_executable(necwb_optimization_tests tests/OptimizationEvaluatorTests.cpp)
+        target_link_libraries(necwb_optimization_tests PRIVATE necwb_ui)
+        add_test(NAME necwb_optimization_tests COMMAND necwb_optimization_tests)
     endif()
 endif()

@@ -1,6 +1,7 @@
 #include "ui/optimization/OptimizationWorkspace.h"
 
 #include "ui/DisplayFormat.h"
+#include "ui/analysis/SweepPlotsView.h"
 
 #include "analysis/AnalysisResult.h"
 #include "analysis/NecOutputParser.h"
@@ -19,6 +20,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFrame>
+#include <QFormLayout>
 #include <QGridLayout>
 #include <QHeaderView>
 #include <QHBoxLayout>
@@ -39,6 +41,7 @@
 #include <QSpinBox>
 #include <QScrollBar>
 #include <QTableWidget>
+#include <QTabWidget>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -53,6 +56,7 @@ namespace {
 
 enum ResultColumn {
     ValueColumn,
+    ScoreColumn,
     SwrColumn,
     FrequencyColumn,
     ResistanceColumn,
@@ -111,14 +115,14 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     historicalLayout->addWidget(historicalBannerTitle_, 1);
     historicalLayout->addWidget(returnToCurrentWorkButton_);
     historicalBanner_->hide();
-    auto* heading = new QLabel(tr("Parameter Sweep"), this);
+    auto* heading = new QLabel(tr("Optimize"), this);
     auto headingFont = heading->font();
     headingFont.setPointSize(headingFont.pointSize() + 3);
     headingFont.setBold(true);
     heading->setFont(headingFont);
     auto* description = new QLabel(tr(
-        "Sweep one SY variable across bounded candidates and rank the results by SWR. "
-        "This is an exhaustive parameter sweep, not an iterative optimizer."), this);
+        "Choose a bounded SY variable, frequency plan, and weighted objective. Use Parameter Sweep "
+        "for an exhaustive grid or Adaptive Optimize for a focused coarse-to-fine search."), this);
     description->setWordWrap(true);
 
     variablesTable_ = new QTableWidget(this);
@@ -138,11 +142,19 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     variableControl_ = new QComboBox(this);
     variableControl_->setObjectName(QStringLiteral("optimizationVariableControl"));
     objectiveControl_ = new QComboBox(this);
-    objectiveControl_->addItem(tr("Minimize Worst SWR Across Frequencies"),
-        static_cast<int>(analysis::OptimizationObjectiveKind::MaximumSwr));
-    objectiveControl_->addItem(tr("Minimize SWR at Selected Frequency"),
+    objectiveControl_->setObjectName(QStringLiteral("optimizationObjectiveControl"));
+    objectiveControl_->addItem(tr("Minimax"),
+        static_cast<int>(analysis::OptimizationObjectiveKind::WorstPointAcrossFrequencies));
+    objectiveControl_->addItem(tr("Selected Frequency"),
         static_cast<int>(analysis::OptimizationObjectiveKind::SwrAtFrequency));
+    objectiveControl_->setItemData(0, tr(
+        "Minimax: Minimizes the worst-performing point across the band/pattern, rather than the average."),
+        Qt::ToolTipRole);
+    objectiveControl_->setItemData(1, tr(
+        "Calculates and scores each candidate at only the selected frequency, ignoring the model FR sweep."),
+        Qt::ToolTipRole);
     targetFrequencyControl_ = new QDoubleSpinBox(this);
+    targetFrequencyControl_->setObjectName(QStringLiteral("optimizationTargetFrequency"));
     targetFrequencyControl_->setRange(0.000001, 1.0e9);
     targetFrequencyControl_->setDecimals(DisplayDecimalPlaces);
     targetFrequencyControl_->setValue(14.175);
@@ -169,6 +181,67 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     referenceImpedanceControl_->setDecimals(DisplayDecimalPlaces);
     referenceImpedanceControl_->setValue(50.0);
     referenceImpedanceControl_->setSuffix(QStringLiteral(" Ω"));
+
+    objectiveCriteriaTable_ = new QTableWidget(3, 3, this);
+    objectiveCriteriaTable_->setObjectName(QStringLiteral("optimizationObjectiveCriteria"));
+    objectiveCriteriaTable_->setHorizontalHeaderLabels(
+        {tr("Criterion"), tr("Weight"), tr("Target")});
+    objectiveCriteriaTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    objectiveCriteriaTable_->setSelectionMode(QAbstractItemView::NoSelection);
+    objectiveCriteriaTable_->verticalHeader()->hide();
+    objectiveCriteriaTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    objectiveCriteriaTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    objectiveCriteriaTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    const auto criterionItem = [this](int row, const QString& text, const QString& toolTip) {
+        auto* item = new QTableWidgetItem(text);
+        item->setFlags(Qt::ItemIsEnabled);
+        item->setToolTip(toolTip);
+        objectiveCriteriaTable_->setItem(row, 0, item);
+    };
+    criterionItem(0, tr("SWR"), tr("Minimize SWR. Set weight to zero to ignore it."));
+    criterionItem(1, tr("Resistance (Ω)"),
+        tr("Minimize distance from the resistance target."));
+    criterionItem(2, tr("Reactance (Ω)"),
+        tr("Minimize distance from the reactance target."));
+    const auto weightControl = [this](const QString& name, double value) {
+        auto* control = new QDoubleSpinBox(objectiveCriteriaTable_);
+        control->setObjectName(name);
+        control->setRange(0.0, 100.0);
+        control->setDecimals(DisplayDecimalPlaces);
+        control->setValue(value);
+        control->setToolTip(tr("Relative importance; zero disables this criterion."));
+        return control;
+    };
+    swrWeightControl_ = weightControl(QStringLiteral("optimizationSwrWeight"), 1.0);
+    resistanceWeightControl_ = weightControl(
+        QStringLiteral("optimizationResistanceWeight"), 0.0);
+    reactanceWeightControl_ = weightControl(
+        QStringLiteral("optimizationReactanceWeight"), 0.0);
+    resistanceTargetControl_ = new QDoubleSpinBox(objectiveCriteriaTable_);
+    resistanceTargetControl_->setObjectName(QStringLiteral("optimizationResistanceTarget"));
+    reactanceTargetControl_ = new QDoubleSpinBox(objectiveCriteriaTable_);
+    reactanceTargetControl_->setObjectName(QStringLiteral("optimizationReactanceTarget"));
+    for (auto* control : {resistanceTargetControl_, reactanceTargetControl_}) {
+        control->setRange(-1.0e9, 1.0e9);
+        control->setDecimals(DisplayDecimalPlaces);
+        control->setSuffix(QStringLiteral(" Ω"));
+    }
+    resistanceTargetControl_->setValue(50.0);
+    reactanceTargetControl_->setValue(0.0);
+    objectiveCriteriaTable_->setCellWidget(0, 1, swrWeightControl_);
+    objectiveCriteriaTable_->setCellWidget(1, 1, resistanceWeightControl_);
+    objectiveCriteriaTable_->setCellWidget(2, 1, reactanceWeightControl_);
+    auto* swrTarget = new QTableWidgetItem(tr("1:1 (ideal)"));
+    swrTarget->setFlags(Qt::ItemIsEnabled);
+    objectiveCriteriaTable_->setItem(0, 2, swrTarget);
+    objectiveCriteriaTable_->setCellWidget(1, 2, resistanceTargetControl_);
+    objectiveCriteriaTable_->setCellWidget(2, 2, reactanceTargetControl_);
+    objectiveCriteriaTable_->resizeRowsToContents();
+    auto criteriaHeight = objectiveCriteriaTable_->horizontalHeader()->sizeHint().height()
+        + 2 * objectiveCriteriaTable_->frameWidth();
+    for (auto row = 0; row < objectiveCriteriaTable_->rowCount(); ++row)
+        criteriaHeight += objectiveCriteriaTable_->rowHeight(row);
+    objectiveCriteriaTable_->setFixedHeight(criteriaHeight);
     auto* sweepSettingsTable = new QTableWidget(4, 4, this);
     sweepSettingsTable->setObjectName(QStringLiteral("optimizationSweepSettingsTable"));
     sweepSettingsTable->setHorizontalHeaderLabels(
@@ -190,12 +263,12 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         sweepSettingsTable->setCellWidget(row, column + 1, editor);
     };
     addSetting(0, 0, tr("Variable"), variableControl_);
-    addSetting(1, 0, tr("Objective"), objectiveControl_);
+    addSetting(1, 0, tr("Evaluation"), objectiveControl_);
     addSetting(2, 0, tr("Frequency source"), frequencyModeControl_);
     addSetting(3, 0, tr("Selected frequency"), targetFrequencyControl_);
     addSetting(0, 2, tr("Minimum"), minimumControl_);
     addSetting(1, 2, tr("Maximum"), maximumControl_);
-    addSetting(2, 2, tr("Candidate points"), pointsControl_);
+    addSetting(2, 2, tr("Sweep points"), pointsControl_);
     addSetting(3, 2, tr("Reference impedance"), referenceImpedanceControl_);
     sweepSettingsTable->resizeRowsToContents();
     auto settingsHeight = sweepSettingsTable->horizontalHeader()->sizeHint().height()
@@ -205,6 +278,56 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     }
     sweepSettingsTable->setMinimumHeight(settingsHeight);
     sweepSettingsTable->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+    searchMethodTabs_ = new QTabWidget(this);
+    searchMethodTabs_->setObjectName(QStringLiteral("optimizationSearchMethodTabs"));
+    searchMethodTabs_->setDocumentMode(true);
+    auto* parameterSweepPage = new QWidget(searchMethodTabs_);
+    auto* parameterSweepLayout = new QVBoxLayout(parameterSweepPage);
+    parameterSweepLayout->setContentsMargins(8, 8, 8, 8);
+    auto* parameterSweepDescription = new QLabel(tr(
+        "Exhaustively evaluates every evenly spaced candidate between Minimum and Maximum."
+        " Sweep points controls the candidate count."), parameterSweepPage);
+    parameterSweepDescription->setWordWrap(true);
+    parameterSweepLayout->addWidget(parameterSweepDescription);
+    parameterSweepLayout->addStretch();
+    searchMethodTabs_->addTab(parameterSweepPage, tr("Parameter Sweep"));
+
+    auto* adaptivePage = new QWidget(searchMethodTabs_);
+    auto* adaptiveLayout = new QFormLayout(adaptivePage);
+    adaptiveLayout->setContentsMargins(8, 8, 8, 8);
+    adaptiveMaximumEvaluationsControl_ = new QSpinBox(adaptivePage);
+    adaptiveMaximumEvaluationsControl_->setObjectName(
+        QStringLiteral("optimizationAdaptiveMaximumEvaluations"));
+    adaptiveMaximumEvaluationsControl_->setRange(5, 101);
+    adaptiveMaximumEvaluationsControl_->setValue(21);
+    adaptiveMaximumEvaluationsControl_->setToolTip(tr(
+        "Maximum solver candidates, including the initial five-point search."));
+    adaptiveParameterToleranceControl_ = new QDoubleSpinBox(adaptivePage);
+    adaptiveParameterToleranceControl_->setObjectName(
+        QStringLiteral("optimizationAdaptiveParameterTolerance"));
+    adaptiveParameterToleranceControl_->setRange(0.001, 1.0e12);
+    adaptiveParameterToleranceControl_->setDecimals(DisplayDecimalPlaces);
+    adaptiveParameterToleranceControl_->setValue(0.010);
+    adaptiveParameterToleranceControl_->setToolTip(tr(
+        "Stop when no new candidate can be placed this far from the current best value."));
+    adaptiveScoreToleranceControl_ = new QDoubleSpinBox(adaptivePage);
+    adaptiveScoreToleranceControl_->setObjectName(
+        QStringLiteral("optimizationAdaptiveScoreTolerance"));
+    adaptiveScoreToleranceControl_->setRange(0.0, 1.0e9);
+    adaptiveScoreToleranceControl_->setDecimals(DisplayDecimalPlaces);
+    adaptiveScoreToleranceControl_->setValue(0.001);
+    adaptiveScoreToleranceControl_->setToolTip(tr(
+        "Stop after two refinement rounds improve the best objective by no more than this amount."));
+    adaptiveLayout->addRow(tr("Maximum evaluations"), adaptiveMaximumEvaluationsControl_);
+    adaptiveLayout->addRow(tr("Parameter tolerance"), adaptiveParameterToleranceControl_);
+    adaptiveLayout->addRow(tr("Score tolerance"), adaptiveScoreToleranceControl_);
+    auto* adaptiveDescription = new QLabel(tr(
+        "Starts with five candidates, then repeatedly evaluates midpoints around the best result."
+        " This is a transparent derivative-free bounded search."), adaptivePage);
+    adaptiveDescription->setWordWrap(true);
+    adaptiveLayout->addRow(adaptiveDescription);
+    searchMethodTabs_->addTab(adaptivePage, tr("Adaptive Optimize"));
 
     explicitFrequencyPanel_ = new QWidget(this);
     explicitFrequencyPanel_->setObjectName(QStringLiteral("optimizationExplicitFrequencyPanel"));
@@ -298,6 +421,8 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     variablesHeading->setFont(variablesHeadingFont);
     variablesLayout->addWidget(variablesHeading);
     variablesLayout->addWidget(variablesTable_, 1);
+    variablesLayout->addWidget(new QLabel(tr("Weighted Objectives"), variablesPanel));
+    variablesLayout->addWidget(objectiveCriteriaTable_);
 
     auto* sweepPanel = new QWidget(this);
     sweepPanel->setObjectName(QStringLiteral("optimizationSweepPanel"));
@@ -316,6 +441,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     sweepHeading->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     sweepLayout->addWidget(sweepHeading);
     sweepLayout->addWidget(sweepSettingsTable);
+    sweepLayout->addWidget(searchMethodTabs_);
     sweepLayout->addWidget(explicitFrequencyPanel_, 1);
     sweepLayout->addWidget(continuousFrequencyPanel_, 1);
     sweepLayout->addWidget(workloadLabel_);
@@ -348,12 +474,12 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
 
     statusLabel_ = new QLabel(this);
     statusLabel_->setWordWrap(true);
-    bestLabel_ = new QLabel(tr("No parameter-sweep results yet."), this);
+    bestLabel_ = new QLabel(tr("No optimization results yet."), this);
     bestLabel_->setWordWrap(true);
     resultsTable_ = new QTableWidget(this);
     resultsTable_->setObjectName(QStringLiteral("optimizationResultsTable"));
     resultsTable_->setColumnCount(ResultColumnCount);
-    resultsTable_->setHorizontalHeaderLabels({tr("Value"), tr("Maximum SWR"), tr("Frequency"),
+    resultsTable_->setHorizontalHeaderLabels({tr("Value"), tr("Objective Score"), tr("SWR"), tr("Frequency"),
         tr("R (Ω)"), tr("X (Ω)"), tr("Status"), tr("Run")});
     resultsTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     resultsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -361,6 +487,18 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     resultsTable_->verticalHeader()->hide();
     resultsTable_->horizontalHeader()->setSectionResizeMode(StatusColumn, QHeaderView::Stretch);
     resultsTable_->horizontalHeader()->setSectionResizeMode(RunColumn, QHeaderView::ResizeToContents);
+
+    candidatePlots_ = new CandidatePlotsView(this);
+    auto* resultViews = new QTabWidget(this);
+    resultViews->setObjectName(QStringLiteral("optimizationResultViews"));
+    resultViews->setDocumentMode(true);
+    resultViews->addTab(resultsTable_, tr("Candidates"));
+    resultViews->addTab(candidatePlots_, tr("Plots"));
+    candidatePlots_->setCandidateActivatedCallback([this](int row) {
+        if (row < 0 || row >= resultsTable_->rowCount()) return;
+        resultsTable_->selectRow(row);
+        showCandidateDetails(row);
+    });
 
     candidateDetailsWindow_ = new QDialog(this, Qt::Window);
     candidateDetailsWindow_->setObjectName(
@@ -393,7 +531,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     resultsLayout->addLayout(buttons);
     resultsLayout->addWidget(statusLabel_);
     resultsLayout->addWidget(bestLabel_);
-    resultsLayout->addWidget(resultsTable_, 1);
+    resultsLayout->addWidget(resultViews, 1);
     resultsPanel->setMinimumHeight(220);
 
     auto* resultsScrollArea = new QScrollArea(this);
@@ -420,9 +558,21 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     connect(variableControl_, &QComboBox::currentIndexChanged, this, [this] { updateBounds(); });
     connect(objectiveControl_, &QComboBox::currentIndexChanged,
         this, [this] { updateObjectiveControls(); });
+    connect(targetFrequencyControl_, &QDoubleSpinBox::valueChanged, this, [this] {
+        updateWorkload();
+        updateReadiness();
+    });
+    for (auto* control : {swrWeightControl_, resistanceWeightControl_, resistanceTargetControl_,
+             reactanceWeightControl_, reactanceTargetControl_}) {
+        connect(control, &QDoubleSpinBox::valueChanged, this, [this] { updateReadiness(); });
+    }
     connect(frequencyModeControl_, &QComboBox::currentIndexChanged,
         this, [this] { updateFrequencyControls(); });
     connect(pointsControl_, &QSpinBox::valueChanged, this, [this] { updateWorkload(); });
+    connect(searchMethodTabs_, &QTabWidget::currentChanged,
+        this, [this] { updateSearchMethodControls(); });
+    connect(adaptiveMaximumEvaluationsControl_, &QSpinBox::valueChanged,
+        this, [this] { updateWorkload(); });
     connect(frequencyTable_, &QTableWidget::itemChanged, this, [this] {
         updateWorkload();
         updateReadiness();
@@ -479,24 +629,32 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     });
     updateObjectiveControls();
     updateFrequencyControls();
+    updateSearchMethodControls();
 }
 
 void OptimizationWorkspace::setContext(QString source, QString sourceFile, QString backend,
     QString executable, int timeoutSeconds, bool modelValid)
 {
     if (isRunning() || historicalSession_) return;
+    const auto sourceUnchanged = source_ == source && sourceFile_ == sourceFile;
     source_ = std::move(source);
     sourceFile_ = std::move(sourceFile);
     backend_ = std::move(backend);
     executable_ = std::move(executable);
     timeoutSeconds_ = timeoutSeconds;
     modelValid_ = modelValid;
+    if (sourceUnchanged) {
+        updateWorkload();
+        updateReadiness();
+        return;
+    }
     const auto resolution = nec::NecSymbolResolver{}.resolve(source_.toStdString());
     populateVariables(resolution);
     if (resolution.ok()) {
         const auto setup = nec::NecSetupConverter{}.convert(
             nec::NecParser{}.parse(resolution.generatedDeck));
         referenceImpedanceControl_->setValue(model::referenceImpedanceOhms(setup));
+        resistanceTargetControl_->setValue(model::referenceImpedanceOhms(setup));
         if (setup.frequency) {
             targetFrequencyControl_->setValue(setup.frequency->startMHz);
             frequencyEntryControl_->setValue(setup.frequency->startMHz);
@@ -514,7 +672,8 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
     bestScore_ = std::numeric_limits<double>::infinity();
     bestRow_ = -1;
     resultsTable_->setRowCount(0);
-    bestLabel_->setText(tr("No parameter-sweep results yet."));
+    candidatePlots_->clear();
+    bestLabel_->setText(tr("No optimization results yet."));
     resetCandidateDetails();
     updateWorkload();
     updateReadiness();
@@ -574,6 +733,16 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         QStringLiteral("optimization-session.json")));
     const auto sessionMetadata = sessionMetadataFile.open(QIODevice::ReadOnly)
         ? QJsonDocument::fromJson(sessionMetadataFile.readAll()).object() : QJsonObject{};
+    const auto adaptiveSession = sessionMetadata.value(
+        QStringLiteral("searchMethod")).toString() == QStringLiteral("adaptive");
+    searchMethodTabs_->setCurrentIndex(adaptiveSession ? 1 : 0);
+    activeSearchMethod_ = adaptiveSession ? SearchMethod::Adaptive : SearchMethod::ParameterSweep;
+    adaptiveMaximumEvaluationsControl_->setValue(sessionMetadata.value(
+        QStringLiteral("candidateCount")).toInt(21));
+    adaptiveParameterToleranceControl_->setValue(sessionMetadata.value(
+        QStringLiteral("parameterTolerance")).toDouble(0.010));
+    adaptiveScoreToleranceControl_->setValue(sessionMetadata.value(
+        QStringLiteral("scoreTolerance")).toDouble(0.001));
     selectedSymbol_ = sessionMetadata.value(QStringLiteral("variable")).toString();
     activeFrequenciesMHz_.clear();
     for (const auto value : sessionMetadata.value(QStringLiteral("frequenciesMHz")).toArray()) {
@@ -624,15 +793,26 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         restoredObjective = {
             .kind = objectiveId == QStringLiteral("minimize-swr-at-frequency")
                 ? analysis::OptimizationObjectiveKind::SwrAtFrequency
-                : analysis::OptimizationObjectiveKind::MaximumSwr,
+                : analysis::OptimizationObjectiveKind::WorstPointAcrossFrequencies,
             .referenceImpedance = metadata.value(
                 QStringLiteral("referenceImpedance")).toDouble(50.0),
             .targetFrequencyMHz = metadata.value(
                 QStringLiteral("targetFrequencyMHz")).toDouble(),
+            .swrWeight = metadata.value(QStringLiteral("swrWeight")).toDouble(1.0),
+            .resistanceWeight = metadata.value(
+                QStringLiteral("resistanceWeight")).toDouble(),
+            .resistanceTargetOhms = metadata.value(
+                QStringLiteral("resistanceTargetOhms")).toDouble(
+                    metadata.value(QStringLiteral("referenceImpedance")).toDouble(50.0)),
+            .reactanceWeight = metadata.value(
+                QStringLiteral("reactanceWeight")).toDouble(),
+            .reactanceTargetOhms = metadata.value(
+                QStringLiteral("reactanceTargetOhms")).toDouble(),
         };
         const auto evaluation = analysis::evaluateOptimizationObjective(
             result.feedpoints, restoredObjective);
         if (evaluation && evaluation->feedpoint) {
+            resultsTable_->setItem(row, ScoreColumn, numericItem(evaluation->score));
             resultsTable_->setItem(row, SwrColumn, numericItem(evaluation->swr));
             resultsTable_->setItem(row, FrequencyColumn,
                 numericItem(evaluation->feedpoint->frequencyMHz));
@@ -647,7 +827,8 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         }
         resultsTable_->setItem(row, StatusColumn, new QTableWidgetItem(candidateRecords[index].status));
         resultsTable_->setItem(row, RunColumn, new QTableWidgetItem(candidateRecords[index].id));
-        candidates_.push_back(Candidate{value, row, candidateRecords[index], result.feedpoints});
+        candidates_.push_back(Candidate{
+            value, row, candidateRecords[index], result.feedpoints, evaluation});
         updateCandidateRowToolTip(row);
     }
     historicalSession_ = true;
@@ -662,9 +843,11 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
     statusLabel_->setText(tr("Historical optimization session · %1").arg(session->status));
     bestLabel_->setText(session->summary.isEmpty() ? tr("No optimization summary is available.") : session->summary);
     activeObjective_ = restoredObjective;
-    resultsTable_->horizontalHeaderItem(SwrColumn)->setText(objectiveName(activeObjective_.kind));
+    updateCandidatePlots();
+    resultsTable_->horizontalHeaderItem(ScoreColumn)->setText(tr("Objective Score"));
     progress_->setRange(0, static_cast<int>(candidateRecords.size()));
     progress_->setValue(static_cast<int>(candidateRecords.size()));
+    progress_->setFormat(tr("Complete — %v candidates"));
     candidateIndex_ = candidates_.size();
     if (bestRow_ >= 0) {
         resultsTable_->selectRow(bestRow_);
@@ -679,7 +862,7 @@ void OptimizationWorkspace::leaveHistoricalSession()
     if (!historicalSession_) return;
     historicalSession_ = false;
     historicalBanner_->hide();
-    runButton_->setText(tr("Run Parameter Sweep"));
+    updateSearchMethodControls();
     updateReadiness();
 }
 
@@ -743,17 +926,44 @@ void OptimizationWorkspace::updateBounds()
 void OptimizationWorkspace::updateObjectiveControls()
 {
     const auto objective = selectedObjective();
+    const auto singleFrequency = objective.kind
+        == analysis::OptimizationObjectiveKind::SwrAtFrequency;
     targetFrequencyControl_->setEnabled(
-        !isRunning() && objective.kind == analysis::OptimizationObjectiveKind::SwrAtFrequency);
-    resultsTable_->horizontalHeaderItem(SwrColumn)->setText(objectiveName(objective.kind));
+        !isRunning() && !historicalSession_ && singleFrequency);
+    objectiveControl_->setToolTip(objectiveControl_->currentData(Qt::ToolTipRole).toString());
+    frequencyModeControl_->setToolTip(singleFrequency
+        ? tr("The selected-frequency objective runs only the objective frequency.")
+        : tr("Choose which frequencies are calculated for every candidate."));
+    resultsTable_->horizontalHeaderItem(ScoreColumn)->setText(tr("Objective Score"));
+    updateFrequencyControls();
 }
 
 void OptimizationWorkspace::updateFrequencyControls()
 {
-    const auto explicitMode = selectedFrequencyMode() == FrequencyMode::Explicit;
-    const auto continuousMode = selectedFrequencyMode() == FrequencyMode::Continuous;
+    const auto singleFrequency = selectedObjective().kind
+        == analysis::OptimizationObjectiveKind::SwrAtFrequency;
+    const auto explicitMode = !singleFrequency
+        && selectedFrequencyMode() == FrequencyMode::Explicit;
+    const auto continuousMode = !singleFrequency
+        && selectedFrequencyMode() == FrequencyMode::Continuous;
     explicitFrequencyPanel_->setVisible(explicitMode);
     continuousFrequencyPanel_->setVisible(continuousMode);
+    updateWorkload();
+    updateReadiness();
+}
+
+void OptimizationWorkspace::updateSearchMethodControls()
+{
+    const auto adaptive = selectedSearchMethod() == SearchMethod::Adaptive;
+    pointsControl_->setEnabled(!adaptive && !isRunning() && !historicalSession_);
+    adaptiveMaximumEvaluationsControl_->setEnabled(adaptive && !isRunning()
+        && !historicalSession_);
+    adaptiveParameterToleranceControl_->setEnabled(adaptive && !isRunning()
+        && !historicalSession_);
+    adaptiveScoreToleranceControl_->setEnabled(adaptive && !isRunning()
+        && !historicalSession_);
+    if (!historicalSession_)
+        runButton_->setText(adaptive ? tr("Run Adaptive Optimize") : tr("Run Parameter Sweep"));
     updateWorkload();
     updateReadiness();
 }
@@ -761,11 +971,18 @@ void OptimizationWorkspace::updateFrequencyControls()
 void OptimizationWorkspace::updateWorkload()
 {
     const auto frequencyCount = analysis::frequencyPlanPoints(selectedFrequencyPlan()).size();
-    const auto candidateCount = pointsControl_->value();
-    workloadLabel_->setText(tr("%1 candidates × %2 frequencies = %3 calculated points")
-        .arg(candidateCount)
-        .arg(frequencyCount)
-        .arg(static_cast<qulonglong>(candidateCount * frequencyCount)));
+    const auto adaptive = selectedSearchMethod() == SearchMethod::Adaptive;
+    const auto candidateCount = adaptive
+        ? adaptiveMaximumEvaluationsControl_->value() : pointsControl_->value();
+    workloadLabel_->setText(adaptive
+        ? tr("Up to %1 candidates × %2 %3 = up to %4 calculated points")
+            .arg(candidateCount).arg(frequencyCount)
+            .arg(frequencyCount == 1 ? tr("frequency") : tr("frequencies"))
+            .arg(static_cast<qulonglong>(candidateCount * frequencyCount))
+        : tr("%1 candidates × %2 %3 = %4 calculated points")
+            .arg(candidateCount).arg(frequencyCount)
+            .arg(frequencyCount == 1 ? tr("frequency") : tr("frequencies"))
+            .arg(static_cast<qulonglong>(candidateCount * frequencyCount)));
 }
 
 void OptimizationWorkspace::populateModelFrequencies(const model::FrequencyDefinition& frequency)
@@ -1019,16 +1236,31 @@ void OptimizationWorkspace::updateCandidateRowToolTip(int row)
     }
 }
 
+void OptimizationWorkspace::updateCandidatePlots()
+{
+    std::vector<CandidatePlotPoint> points;
+    points.reserve(candidates_.size());
+    for (const auto& candidate : candidates_) {
+        if (!candidate.evaluation) continue;
+        points.push_back({candidate.row, candidate.value, *candidate.evaluation});
+    }
+    candidatePlots_->setCandidates(selectedSymbol_, selectedValueSuffix_, points, bestRow_);
+}
+
 void OptimizationWorkspace::updateReadiness()
 {
     const auto executable = QFileInfo(executable_);
     const auto hasFrequencies = !analysis::frequencyPlanPoints(selectedFrequencyPlan()).empty();
+    const auto hasObjective = swrWeightControl_->value() + resistanceWeightControl_->value()
+        + reactanceWeightControl_->value() > 0.0;
     const auto ready = !historicalSession_ && modelValid_ && variableControl_->count() > 0
         && !externalRunActive_
-        && hasFrequencies
+        && hasFrequencies && hasObjective
         && !isRunning() && analysis::isBackendRunnable(backend_.toStdString())
         && executable.exists() && executable.isFile() && executable.isExecutable();
     runButton_->setEnabled(ready);
+    runButton_->setToolTip(hasObjective ? QString{}
+        : tr("Set at least one objective weight above zero."));
     cancelButton_->setEnabled(isRunning());
     applyBestButton_->setEnabled(!historicalSession_ && modelValid_ && !isRunning()
         && bestRow_ >= 0 && static_cast<std::size_t>(bestRow_) < candidates_.size()
@@ -1037,14 +1269,24 @@ void OptimizationWorkspace::updateReadiness()
     variablesTable_->setEnabled(editable);
     variableControl_->setEnabled(editable);
     objectiveControl_->setEnabled(editable);
-    frequencyModeControl_->setEnabled(editable);
+    const auto singleFrequency = selectedObjective().kind
+        == analysis::OptimizationObjectiveKind::SwrAtFrequency;
+    frequencyModeControl_->setEnabled(editable && !singleFrequency);
     minimumControl_->setEnabled(editable);
     maximumControl_->setEnabled(editable);
-    pointsControl_->setEnabled(editable);
+    const auto adaptive = selectedSearchMethod() == SearchMethod::Adaptive;
+    searchMethodTabs_->setEnabled(editable);
+    pointsControl_->setEnabled(editable && !adaptive);
+    adaptiveMaximumEvaluationsControl_->setEnabled(editable && adaptive);
+    adaptiveParameterToleranceControl_->setEnabled(editable && adaptive);
+    adaptiveScoreToleranceControl_->setEnabled(editable && adaptive);
     referenceImpedanceControl_->setEnabled(editable);
+    for (auto* control : {swrWeightControl_, resistanceWeightControl_, resistanceTargetControl_,
+             reactanceWeightControl_, reactanceTargetControl_}) control->setEnabled(editable);
     targetFrequencyControl_->setEnabled(editable
         && selectedObjective().kind == analysis::OptimizationObjectiveKind::SwrAtFrequency);
-    const auto explicitMode = selectedFrequencyMode() == FrequencyMode::Explicit;
+    const auto explicitMode = !singleFrequency
+        && selectedFrequencyMode() == FrequencyMode::Explicit;
     frequencyTable_->setEnabled(editable && explicitMode);
     frequencyEntryControl_->setEnabled(editable && explicitMode);
     addFrequencyButton_->setEnabled(editable && explicitMode);
@@ -1053,7 +1295,8 @@ void OptimizationWorkspace::updateReadiness()
     clearFrequencyButton_->setEnabled(
         editable && explicitMode && frequencyTable_->rowCount() > 0);
     addAmateurBandButton_->setEnabled(editable && explicitMode);
-    const auto continuousMode = selectedFrequencyMode() == FrequencyMode::Continuous;
+    const auto continuousMode = !singleFrequency
+        && selectedFrequencyMode() == FrequencyMode::Continuous;
     continuousStartControl_->setEnabled(editable && continuousMode);
     continuousStopControl_->setEnabled(editable && continuousMode);
     continuousStepControl_->setEnabled(editable && continuousMode);
@@ -1067,38 +1310,56 @@ void OptimizationWorkspace::startSweep()
     }
     selectedSymbol_ = variableControl_->currentText();
     activeObjective_ = selectedObjective();
+    activeSearchMethod_ = selectedSearchMethod();
     activeFrequenciesMHz_ = analysis::frequencyPlanPoints(selectedFrequencyPlan());
     if (activeFrequenciesMHz_.empty()) {
         statusLabel_->setText(tr("Choose at least one valid frequency."));
         return;
     }
-    resultsTable_->horizontalHeaderItem(SwrColumn)->setText(objectiveName(activeObjective_.kind));
+    resultsTable_->horizontalHeaderItem(ScoreColumn)->setText(tr("Objective Score"));
     sessionRecord_ = runStore_.create(backend_, sourceFile_.isEmpty()
         ? QStringLiteral("Untitled model.nec") : sourceFile_,
         QStringLiteral("optimization-session"));
     sessionRecord_->status = QStringLiteral("Running");
-    sessionRecord_->candidateCount = pointsControl_->value();
-    sessionRecord_->summary = tr("Optimize %1 · %2 · %3 candidates × %4 frequencies")
-        .arg(selectedSymbol_, objectiveName(activeObjective_.kind))
-        .arg(pointsControl_->value())
-        .arg(activeFrequenciesMHz_.size());
+    const auto candidateLimit = activeSearchMethod_ == SearchMethod::Adaptive
+        ? adaptiveMaximumEvaluationsControl_->value() : pointsControl_->value();
+    sessionRecord_->candidateCount = candidateLimit;
+    sessionRecord_->summary = activeSearchMethod_ == SearchMethod::Adaptive
+        ? tr("Adaptive optimize %1 · %2 · up to %3 candidates × %4 frequencies")
+            .arg(selectedSymbol_, objectiveName(activeObjective_.kind))
+            .arg(candidateLimit).arg(activeFrequenciesMHz_.size())
+        : tr("Parameter sweep %1 · %2 · %3 candidates × %4 frequencies")
+            .arg(selectedSymbol_, objectiveName(activeObjective_.kind))
+            .arg(candidateLimit).arg(activeFrequenciesMHz_.size());
     runStore_.save(*sessionRecord_);
     const auto sessionMetadata = QJsonObject{
-        {QStringLiteral("version"), 2},
+        {QStringLiteral("version"), 4},
         {QStringLiteral("variable"), selectedSymbol_},
         {QStringLiteral("minimum"), minimumControl_->value()},
         {QStringLiteral("maximum"), maximumControl_->value()},
-        {QStringLiteral("candidateCount"), pointsControl_->value()},
+        {QStringLiteral("candidateCount"), candidateLimit},
+        {QStringLiteral("searchMethod"), activeSearchMethod_ == SearchMethod::Adaptive
+            ? QStringLiteral("adaptive") : QStringLiteral("parameter-sweep")},
+        {QStringLiteral("parameterTolerance"), adaptiveParameterToleranceControl_->value()},
+        {QStringLiteral("scoreTolerance"), adaptiveScoreToleranceControl_->value()},
         {QStringLiteral("objective"), activeObjective_.kind
-            == analysis::OptimizationObjectiveKind::MaximumSwr
-                ? QStringLiteral("minimize-maximum-swr")
+            == analysis::OptimizationObjectiveKind::WorstPointAcrossFrequencies
+                ? QStringLiteral("worst-point-across-frequencies")
                 : QStringLiteral("minimize-swr-at-frequency")},
         {QStringLiteral("referenceImpedance"), activeObjective_.referenceImpedance},
         {QStringLiteral("targetFrequencyMHz"), activeObjective_.targetFrequencyMHz},
-        {QStringLiteral("frequencyMode"), selectedFrequencyMode() == FrequencyMode::Explicit
-            ? QStringLiteral("explicit")
-            : selectedFrequencyMode() == FrequencyMode::Continuous
-                ? QStringLiteral("continuous") : QStringLiteral("model-fr")},
+        {QStringLiteral("swrWeight"), activeObjective_.swrWeight},
+        {QStringLiteral("resistanceWeight"), activeObjective_.resistanceWeight},
+        {QStringLiteral("resistanceTargetOhms"), activeObjective_.resistanceTargetOhms},
+        {QStringLiteral("reactanceWeight"), activeObjective_.reactanceWeight},
+        {QStringLiteral("reactanceTargetOhms"), activeObjective_.reactanceTargetOhms},
+        {QStringLiteral("frequencyMode"), activeObjective_.kind
+                == analysis::OptimizationObjectiveKind::SwrAtFrequency
+            ? QStringLiteral("objective-frequency")
+            : selectedFrequencyMode() == FrequencyMode::Explicit
+                ? QStringLiteral("explicit")
+                : selectedFrequencyMode() == FrequencyMode::Continuous
+                    ? QStringLiteral("continuous") : QStringLiteral("model-fr")},
         {QStringLiteral("frequenciesMHz"), frequencyArray(activeFrequenciesMHz_)},
         {QStringLiteral("continuousStartMHz"), continuousStartControl_->value()},
         {QStringLiteral("continuousStopMHz"), continuousStopControl_->value()},
@@ -1109,28 +1370,42 @@ void OptimizationWorkspace::startSweep()
     candidates_.clear();
     resultsTable_->clearSelection();
     resetCandidateDetails();
-    resultsTable_->setRowCount(pointsControl_->value());
+    candidatePlots_->clear();
+    resultsTable_->setRowCount(0);
     const auto minimum = minimumControl_->value();
     const auto maximum = maximumControl_->value();
-    const auto count = pointsControl_->value();
-    for (auto index = 0; index < count; ++index) {
-        const auto fraction = static_cast<double>(index) / static_cast<double>(count - 1);
-        Candidate candidate{minimum + fraction * (maximum - minimum), index, {}, {}};
-        candidates_.push_back(candidate);
-        auto* valueItem = numericItem(candidate.value);
-        valueItem->setText(valueItem->text() + selectedValueSuffix_);
-        resultsTable_->setItem(index, ValueColumn, valueItem);
-        setCandidateStatus(index, tr("Pending"));
+    adaptiveSearch_.reset();
+    if (activeSearchMethod_ == SearchMethod::Adaptive) {
+        adaptiveSearch_.emplace(analysis::AdaptiveSearchSettings{
+            minimum, maximum, candidateLimit,
+            adaptiveParameterToleranceControl_->value(),
+            adaptiveScoreToleranceControl_->value()});
+        for (const auto value : adaptiveSearch_->initialCandidates()) appendCandidate(value);
+    } else {
+        for (auto index = 0; index < candidateLimit; ++index) {
+            const auto fraction = static_cast<double>(index)
+                / static_cast<double>(candidateLimit - 1);
+            appendCandidate(minimum + fraction * (maximum - minimum));
+        }
     }
+    const auto count = static_cast<int>(candidates_.size());
     candidateIndex_ = 0;
     bestScore_ = std::numeric_limits<double>::infinity();
     bestRow_ = -1;
+    adaptiveStopReason_.clear();
     cancelRequested_ = false;
-    progress_->setRange(0, count);
+    progress_->setRange(0, candidateLimit);
     progress_->setValue(0);
-    bestLabel_->setText(tr("Sweep in progress…"));
-    statusLabel_->setText(tr("Running %1 candidates × %2 frequencies for %3.")
-        .arg(count).arg(activeFrequenciesMHz_.size()).arg(selectedSymbol_));
+    progress_->setFormat(activeSearchMethod_ == SearchMethod::Adaptive
+        ? tr("%v of up to %m evaluations") : tr("%v / %m candidates (%p%)"));
+    bestLabel_->setText(activeSearchMethod_ == SearchMethod::Adaptive
+        ? tr("Adaptive optimization in progress…") : tr("Sweep in progress…"));
+    statusLabel_->setText(tr("Running %1 with %2 initial candidates × %3 %4 for %5.")
+        .arg(activeSearchMethod_ == SearchMethod::Adaptive
+            ? tr("adaptive optimization") : tr("parameter sweep"))
+        .arg(count).arg(activeFrequenciesMHz_.size())
+        .arg(activeFrequenciesMHz_.size() == 1 ? tr("frequency") : tr("frequencies"))
+        .arg(selectedSymbol_));
     updateReadiness();
     if (runningChangedCallback_) runningChangedCallback_();
     startNextCandidate();
@@ -1143,8 +1418,52 @@ void OptimizationWorkspace::cancelSweep()
     evaluator_->cancel();
 }
 
+void OptimizationWorkspace::appendCandidate(double value)
+{
+    const auto row = resultsTable_->rowCount();
+    resultsTable_->insertRow(row);
+    candidates_.push_back(Candidate{value, row, {}, {}, {}});
+    auto* valueItem = numericItem(value);
+    valueItem->setText(valueItem->text() + selectedValueSuffix_);
+    resultsTable_->setItem(row, ValueColumn, valueItem);
+    setCandidateStatus(row, tr("Pending"));
+}
+
+auto OptimizationWorkspace::prepareAdaptiveRound() -> bool
+{
+    if (!adaptiveSearch_) return false;
+    const auto proposals = adaptiveSearch_->nextCandidates();
+    for (const auto proposal : proposals) appendCandidate(proposal);
+    if (!proposals.empty()) return true;
+    switch (adaptiveSearch_->stopReason()) {
+    case analysis::AdaptiveStopReason::MaximumEvaluations:
+        adaptiveStopReason_ = tr("maximum evaluations reached");
+        break;
+    case analysis::AdaptiveStopReason::ParameterTolerance:
+        adaptiveStopReason_ = tr("parameter tolerance reached");
+        break;
+    case analysis::AdaptiveStopReason::ScoreTolerance:
+        adaptiveStopReason_ = tr("objective improvement stayed within tolerance");
+        break;
+    case analysis::AdaptiveStopReason::NoSuccessfulCandidate:
+        adaptiveStopReason_ = tr("no successful candidate was available to refine");
+        break;
+    case analysis::AdaptiveStopReason::None:
+        adaptiveStopReason_ = tr("search completed");
+        break;
+    }
+    return !proposals.empty();
+}
+
 void OptimizationWorkspace::startNextCandidate()
 {
+    if (!cancelRequested_ && candidateIndex_ >= candidates_.size()
+        && activeSearchMethod_ == SearchMethod::Adaptive && prepareAdaptiveRound()) {
+        statusLabel_->setText(tr("Adaptive refinement around %1 = %2%3.")
+            .arg(selectedSymbol_)
+            .arg(candidates_[static_cast<std::size_t>(bestRow_)].value, 0, 'f', 3)
+            .arg(selectedValueSuffix_));
+    }
     if (cancelRequested_ || candidateIndex_ >= candidates_.size()) {
         finishSweep();
         return;
@@ -1157,6 +1476,8 @@ void OptimizationWorkspace::startNextCandidate()
         candidate.record.status = QStringLiteral("Failed");
         runStore_.save(candidate.record);
         setCandidateStatus(candidate.row, tr("Could not write candidate metadata"));
+        if (activeSearchMethod_ == SearchMethod::Adaptive && adaptiveSearch_)
+            adaptiveSearch_->record(candidate.value, std::nullopt);
         ++candidateIndex_;
         progress_->setValue(static_cast<int>(candidateIndex_));
         QTimer::singleShot(0, this, [this] { startNextCandidate(); });
@@ -1169,7 +1490,8 @@ void OptimizationWorkspace::startNextCandidate()
     evaluator_->start({
         .authoredSource = source_,
         .variableValues = {{selectedSymbol_.toStdString(), candidate.value}},
-        .frequencyPlan = selectedFrequencyMode() == FrequencyMode::ModelSweep
+        .frequencyPlan = activeObjective_.kind != analysis::OptimizationObjectiveKind::SwrAtFrequency
+                && selectedFrequencyMode() == FrequencyMode::ModelSweep
             ? analysis::FrequencyPlan{analysis::FrequencyPlanMode::ModelSweep,
                   activeFrequenciesMHz_, {}}
             : analysis::FrequencyPlan{analysis::FrequencyPlanMode::Explicit,
@@ -1189,10 +1511,13 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
     candidate.record.durationSeconds = result.durationSeconds;
     candidate.record.outputBytes = result.outputBytes;
     candidate.feedpoints = result.analysis.feedpoints;
+    candidate.evaluation.reset();
 
     if (result.status == CandidateEvaluationStatus::Completed && result.objective
         && result.objective->feedpoint) {
         const auto& evaluation = *result.objective;
+        candidate.evaluation = evaluation;
+        resultsTable_->setItem(candidate.row, ScoreColumn, numericItem(evaluation.score));
         resultsTable_->setItem(candidate.row, SwrColumn, numericItem(evaluation.swr));
         resultsTable_->setItem(candidate.row, FrequencyColumn,
             numericItem(evaluation.feedpoint->frequencyMHz));
@@ -1208,6 +1533,7 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
             bestScore_ = evaluation.score;
             bestRow_ = candidate.row;
         }
+        updateCandidatePlots();
         updateCandidateRowToolTip(candidate.row);
         if (candidateDetailsWindow_->isVisible() && detailCandidateRow_ == candidate.row)
             updateCandidateDetails(candidate.row);
@@ -1233,11 +1559,17 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
             : result.status == CandidateEvaluationStatus::TimedOut
                 ? QStringLiteral("Timed Out") : QStringLiteral("Failed");
     }
+    if (activeSearchMethod_ == SearchMethod::Adaptive && adaptiveSearch_)
+        adaptiveSearch_->record(candidate.value,
+            candidate.evaluation
+                ? std::optional<double>{candidate.evaluation->score} : std::nullopt);
     runStore_.save(candidate.record);
     ++candidateIndex_;
     progress_->setValue(static_cast<int>(candidateIndex_));
     if (sessionRecord_) {
-        sessionRecord_->summary = tr("Optimize %1 · %2/%3 candidates complete")
+        sessionRecord_->summary = tr("%1 %2 · %3/%4 candidates complete")
+            .arg(activeSearchMethod_ == SearchMethod::Adaptive
+                ? tr("Adaptive optimize") : tr("Parameter sweep"))
             .arg(selectedSymbol_).arg(candidateIndex_).arg(candidates_.size());
         runStore_.save(*sessionRecord_);
     }
@@ -1249,9 +1581,23 @@ void OptimizationWorkspace::finishSweep()
     if (cancelRequested_) {
         for (std::size_t index = candidateIndex_; index < candidates_.size(); ++index)
             setCandidateStatus(candidates_[index].row, tr("Skipped"));
-        statusLabel_->setText(tr("Parameter sweep canceled."));
+        statusLabel_->setText(activeSearchMethod_ == SearchMethod::Adaptive
+            ? tr("Adaptive optimization canceled.") : tr("Parameter sweep canceled."));
+        progress_->setFormat(activeSearchMethod_ == SearchMethod::Adaptive
+            ? tr("Canceled — %v of up to %m evaluations")
+            : tr("Canceled — %v / %m candidates"));
     } else {
-        statusLabel_->setText(tr("Parameter sweep complete."));
+        statusLabel_->setText(activeSearchMethod_ == SearchMethod::Adaptive
+            ? tr("Adaptive optimization complete: %1.").arg(adaptiveStopReason_)
+            : tr("Parameter sweep complete."));
+        if (activeSearchMethod_ == SearchMethod::Adaptive) {
+            const auto evaluations = static_cast<int>(candidates_.size());
+            progress_->setRange(0, std::max(1, evaluations));
+            progress_->setValue(evaluations);
+            progress_->setFormat(tr("Complete — %v evaluations"));
+        } else {
+            progress_->setFormat(tr("Complete — %v candidates"));
+        }
     }
     candidateIndex_ = candidates_.size();
     if (bestRow_ >= 0) {
@@ -1260,7 +1606,7 @@ void OptimizationWorkspace::finishSweep()
         for (auto column = 0; column < ResultColumnCount; ++column) {
             if (auto* item = resultsTable_->item(bestRow_, column)) item->setFont(font);
         }
-        bestLabel_->setText(tr("Best candidate: %1 = %2%3, %4 %5")
+        bestLabel_->setText(tr("Best candidate: %1 = %2%3, %4 = %5")
             .arg(selectedSymbol_)
             .arg(candidates_[static_cast<std::size_t>(bestRow_)].value, 0, 'f', 3)
             .arg(selectedValueSuffix_)
@@ -1270,6 +1616,7 @@ void OptimizationWorkspace::finishSweep()
         bestLabel_->setText(tr("No successful candidate produced impedance results."));
     }
     if (sessionRecord_) {
+        sessionRecord_->candidateCount = static_cast<int>(candidates_.size());
         sessionRecord_->status = cancelRequested_ ? QStringLiteral("Canceled") : QStringLiteral("Completed");
         sessionRecord_->summary = bestLabel_->text();
         runStore_.save(*sessionRecord_);
@@ -1285,20 +1632,30 @@ auto OptimizationWorkspace::writeCandidateMetadata(const Candidate& candidate) -
     const QDir directory(candidate.record.directory);
     const auto frequencyMode = selectedFrequencyMode();
     const auto metadata = QJsonObject{
-        {QStringLiteral("version"), 2},
+        {QStringLiteral("version"), 4},
         {QStringLiteral("variable"), selectedSymbol_},
         {QStringLiteral("value"), candidate.value},
         {QStringLiteral("unit"), selectedValueSuffix_.trimmed()},
+        {QStringLiteral("searchMethod"), activeSearchMethod_ == SearchMethod::Adaptive
+            ? QStringLiteral("adaptive") : QStringLiteral("parameter-sweep")},
         {QStringLiteral("objective"), activeObjective_.kind
-            == analysis::OptimizationObjectiveKind::MaximumSwr
-                ? QStringLiteral("minimize-maximum-swr")
+            == analysis::OptimizationObjectiveKind::WorstPointAcrossFrequencies
+                ? QStringLiteral("worst-point-across-frequencies")
                 : QStringLiteral("minimize-swr-at-frequency")},
         {QStringLiteral("referenceImpedance"), activeObjective_.referenceImpedance},
         {QStringLiteral("targetFrequencyMHz"), activeObjective_.targetFrequencyMHz},
-        {QStringLiteral("frequencyMode"), frequencyMode == FrequencyMode::Explicit
-            ? QStringLiteral("explicit")
-            : frequencyMode == FrequencyMode::Continuous
-                ? QStringLiteral("continuous") : QStringLiteral("model-fr")},
+        {QStringLiteral("swrWeight"), activeObjective_.swrWeight},
+        {QStringLiteral("resistanceWeight"), activeObjective_.resistanceWeight},
+        {QStringLiteral("resistanceTargetOhms"), activeObjective_.resistanceTargetOhms},
+        {QStringLiteral("reactanceWeight"), activeObjective_.reactanceWeight},
+        {QStringLiteral("reactanceTargetOhms"), activeObjective_.reactanceTargetOhms},
+        {QStringLiteral("frequencyMode"), activeObjective_.kind
+                == analysis::OptimizationObjectiveKind::SwrAtFrequency
+            ? QStringLiteral("objective-frequency")
+            : frequencyMode == FrequencyMode::Explicit
+                ? QStringLiteral("explicit")
+                : frequencyMode == FrequencyMode::Continuous
+                    ? QStringLiteral("continuous") : QStringLiteral("model-fr")},
         {QStringLiteral("frequenciesMHz"), frequencyArray(activeFrequenciesMHz_)},
         {QStringLiteral("continuousStartMHz"), continuousStartControl_->value()},
         {QStringLiteral("continuousStopMHz"), continuousStopControl_->value()},
@@ -1326,6 +1683,11 @@ auto OptimizationWorkspace::selectedObjective() const -> analysis::OptimizationO
             objectiveControl_->currentData().toInt()),
         .referenceImpedance = referenceImpedanceControl_->value(),
         .targetFrequencyMHz = targetFrequencyControl_->value(),
+        .swrWeight = swrWeightControl_->value(),
+        .resistanceWeight = resistanceWeightControl_->value(),
+        .resistanceTargetOhms = resistanceTargetControl_->value(),
+        .reactanceWeight = reactanceWeightControl_->value(),
+        .reactanceTargetOhms = reactanceTargetControl_->value(),
     };
 }
 
@@ -1334,8 +1696,18 @@ auto OptimizationWorkspace::selectedFrequencyMode() const -> FrequencyMode
     return static_cast<FrequencyMode>(frequencyModeControl_->currentData().toInt());
 }
 
+auto OptimizationWorkspace::selectedSearchMethod() const -> SearchMethod
+{
+    return searchMethodTabs_->currentIndex() == 1
+        ? SearchMethod::Adaptive : SearchMethod::ParameterSweep;
+}
+
 auto OptimizationWorkspace::selectedFrequencyPlan() const -> analysis::FrequencyPlan
 {
+    if (selectedObjective().kind == analysis::OptimizationObjectiveKind::SwrAtFrequency) {
+        return {analysis::FrequencyPlanMode::Explicit,
+            {targetFrequencyControl_->value()}, {}};
+    }
     switch (selectedFrequencyMode()) {
     case FrequencyMode::Explicit:
         return {analysis::FrequencyPlanMode::Explicit, explicitFrequencies(), {}};
@@ -1367,9 +1739,9 @@ auto OptimizationWorkspace::explicitFrequencies() const -> std::vector<double>
 
 auto OptimizationWorkspace::objectiveName(analysis::OptimizationObjectiveKind kind) const -> QString
 {
-    return kind == analysis::OptimizationObjectiveKind::MaximumSwr
-        ? tr("Worst SWR")
-        : tr("SWR at Selected Frequency");
+    return kind == analysis::OptimizationObjectiveKind::WorstPointAcrossFrequencies
+        ? tr("Minimax score")
+        : tr("Selected-frequency score");
 }
 
 }

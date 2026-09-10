@@ -1,14 +1,13 @@
 #include "ui/model/ParameterEditor.h"
 
 #include "ui/DisplayFormat.h"
+#include "ui/PendingEditIndicator.h"
 
 #include <QAbstractItemView>
-#include <QFormLayout>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QLineEdit>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSignalBlocker>
@@ -21,6 +20,18 @@ namespace {
 
 constexpr auto SourceLineRole = Qt::UserRole;
 constexpr auto OriginalNameRole = Qt::UserRole + 1;
+constexpr auto OriginalExpressionRole = Qt::UserRole + 2;
+constexpr auto OriginalResolvedValueRole = Qt::UserRole + 3;
+
+constexpr auto NameColumn = 0;
+constexpr auto ExpressionColumn = 1;
+constexpr auto ResolvedValueColumn = 2;
+
+auto parameterNameIsValid(const QString& name) -> bool
+{
+    static const QRegularExpression validName(QStringLiteral("^[A-Za-z_][A-Za-z0-9_]*$"));
+    return validName.match(name.trimmed()).hasMatch();
+}
 
 }
 
@@ -33,7 +44,7 @@ ParameterEditor::ParameterEditor(QWidget* parent)
     auto* groupLayout = new QVBoxLayout(group);
 
     auto* description = new QLabel(tr(
-        "SY values are unit-neutral. Their physical meaning comes from expressions and where they are used."), group);
+        "Double-click Name or Expression to edit. Resolved values are calculated after Apply Selected."), group);
     description->setWordWrap(true);
     groupLayout->addWidget(description);
 
@@ -43,33 +54,26 @@ ParameterEditor::ParameterEditor(QWidget* parent)
     table_->setHorizontalHeaderLabels({tr("Name"), tr("Expression"), tr("Resolved Value")});
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
-    table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    table_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    table_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    table_->setEditTriggers(QAbstractItemView::DoubleClicked
+        | QAbstractItemView::SelectedClicked | QAbstractItemView::EditKeyPressed);
+    table_->horizontalHeader()->setSectionResizeMode(NameColumn, QHeaderView::ResizeToContents);
+    table_->horizontalHeader()->setSectionResizeMode(ExpressionColumn, QHeaderView::Stretch);
+    table_->horizontalHeader()->setSectionResizeMode(ResolvedValueColumn, QHeaderView::ResizeToContents);
     table_->verticalHeader()->setVisible(false);
     groupLayout->addWidget(table_, 1);
-
-    auto* form = new QFormLayout;
-    nameControl_ = new QLineEdit(group);
-    nameControl_->setObjectName(QStringLiteral("parameterName"));
-    nameControl_->setPlaceholderText(tr("Example: HALF_LENGTH"));
-    expressionControl_ = new QLineEdit(group);
-    expressionControl_->setObjectName(QStringLiteral("parameterExpression"));
-    expressionControl_->setPlaceholderText(tr("Example: LENGTH_FT*0.3048/2"));
-    form->addRow(tr("Name"), nameControl_);
-    form->addRow(tr("Expression"), expressionControl_);
-    groupLayout->addLayout(form);
 
     auto* buttons = new QHBoxLayout;
     addButton_ = new QPushButton(tr("Add Parameter"), group);
     addButton_->setObjectName(QStringLiteral("addParameterButton"));
-    updateButton_ = new QPushButton(tr("Update Selected"), group);
-    updateButton_->setObjectName(QStringLiteral("updateParameterButton"));
+    applyButton_ = new QPushButton(tr("Apply Selected"), group);
+    applyButton_->setObjectName(QStringLiteral("applyParameterButton"));
+    revertButton_ = new QPushButton(tr("Revert Changes"), group);
+    revertButton_->setObjectName(QStringLiteral("revertParameterButton"));
     deleteButton_ = new QPushButton(tr("Delete Selected"), group);
     deleteButton_->setObjectName(QStringLiteral("deleteParameterButton"));
     buttons->addWidget(addButton_);
-    buttons->addWidget(updateButton_);
+    buttons->addWidget(applyButton_);
+    buttons->addWidget(revertButton_);
     buttons->addWidget(deleteButton_);
     buttons->addStretch();
     groupLayout->addLayout(buttons);
@@ -81,30 +85,23 @@ ParameterEditor::ParameterEditor(QWidget* parent)
     layout->addWidget(group, 1);
 
     connect(table_, &QTableWidget::itemSelectionChanged, this, [this] {
-        loadSelection();
         updateActions();
         if (!updating_ && table_->currentRow() >= 0)
-            emit parameterSelected(table_->item(table_->currentRow(), 0)
+            emit parameterSelected(table_->item(table_->currentRow(), NameColumn)
                 ->data(SourceLineRole).toULongLong());
     });
-    connect(nameControl_, &QLineEdit::textChanged, this, [this] { updateActions(); });
-    connect(expressionControl_, &QLineEdit::textChanged, this, [this] { updateActions(); });
-    connect(addButton_, &QPushButton::clicked, this, [this] {
-        emit parameterChanged(0, {}, nameControl_->text().trimmed(),
-            expressionControl_->text().trimmed());
+    connect(table_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
+        if (updating_ || item == nullptr
+            || (item->column() != NameColumn && item->column() != ExpressionColumn)) return;
+        updatePendingState(item->row());
     });
-    connect(updateButton_, &QPushButton::clicked, this, [this] {
-        const auto row = table_->currentRow();
-        if (row < 0) return;
-        const auto* item = table_->item(row, 0);
-        emit parameterChanged(item->data(SourceLineRole).toULongLong(),
-            item->data(OriginalNameRole).toString(), nameControl_->text().trimmed(),
-            expressionControl_->text().trimmed());
-    });
+    connect(addButton_, &QPushButton::clicked, this, [this] { addDraft(); });
+    connect(applyButton_, &QPushButton::clicked, this, [this] { applySelected(); });
+    connect(revertButton_, &QPushButton::clicked, this, [this] { revertPendingEdits(); });
     connect(deleteButton_, &QPushButton::clicked, this, [this] {
         const auto row = table_->currentRow();
-        if (row < 0) return;
-        const auto* item = table_->item(row, 0);
+        if (row < 0 || pendingRow_ >= 0) return;
+        const auto* item = table_->item(row, NameColumn);
         emit parameterDeleteRequested(item->data(SourceLineRole).toULongLong(),
             item->data(OriginalNameRole).toString());
     });
@@ -115,33 +112,41 @@ void ParameterEditor::setResolution(const nec::SymbolResolution& resolution)
 {
     updating_ = true;
     const auto selectedLine = table_->currentRow() < 0 ? std::size_t{}
-        : table_->item(table_->currentRow(), 0)->data(SourceLineRole).toULongLong();
+        : table_->item(table_->currentRow(), NameColumn)->data(SourceLineRole).toULongLong();
     const auto selectedName = table_->currentRow() < 0 ? QString{}
-        : table_->item(table_->currentRow(), 0)->data(OriginalNameRole).toString();
+        : table_->item(table_->currentRow(), NameColumn)->data(OriginalNameRole).toString();
     definitions_ = resolution.definitions;
     const QSignalBlocker blocker(table_);
     table_->setRowCount(static_cast<int>(definitions_.size()));
     for (std::size_t index = 0; index < definitions_.size(); ++index) {
         const auto& definition = definitions_[index];
         const auto row = static_cast<int>(index);
-        auto* nameItem = new QTableWidgetItem(QString::fromStdString(definition.name));
+        const auto name = QString::fromStdString(definition.name);
+        const auto expression = QString::fromStdString(definition.expression);
+        const auto resolvedValue = formatDecimal(definition.value);
+        auto* nameItem = new QTableWidgetItem(name);
         nameItem->setData(SourceLineRole, static_cast<qulonglong>(definition.lineNumber));
-        nameItem->setData(OriginalNameRole, QString::fromStdString(definition.name));
+        nameItem->setData(OriginalNameRole, name);
+        nameItem->setData(OriginalExpressionRole, expression);
+        nameItem->setData(OriginalResolvedValueRole, resolvedValue);
         nameItem->setToolTip(tr("Defined on source line %1").arg(definition.lineNumber));
-        table_->setItem(row, 0, nameItem);
-        table_->setItem(row, 1, new QTableWidgetItem(QString::fromStdString(definition.expression)));
-        auto* valueItem = new QTableWidgetItem(formatDecimal(definition.value));
+        table_->setItem(row, NameColumn, nameItem);
+        table_->setItem(row, ExpressionColumn, new QTableWidgetItem(expression));
+        auto* valueItem = new QTableWidgetItem(resolvedValue);
+        valueItem->setFlags(valueItem->flags() & ~Qt::ItemIsEditable);
         valueItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         valueItem->setToolTip(tr("Resolved numeric value; no physical unit is inferred."));
-        table_->setItem(row, 2, valueItem);
+        table_->setItem(row, ResolvedValueColumn, valueItem);
         if (definition.lineNumber == selectedLine
-            && QString::fromStdString(definition.name).compare(selectedName, Qt::CaseInsensitive) == 0)
+            && name.compare(selectedName, Qt::CaseInsensitive) == 0)
             table_->selectRow(row);
     }
+    pendingRow_ = -1;
     updating_ = false;
+    setPendingEditIndicator(applyButton_, false);
     if (resolution.diagnostics.empty()) {
         statusLabel_->setText(definitions_.empty()
-            ? tr("No SY parameters are defined.")
+            ? tr("No SY parameters are defined. Select Add Parameter to create one.")
             : tr("%1 parameter(s) resolved successfully.").arg(definitions_.size()));
         statusLabel_->setStyleSheet({});
     } else {
@@ -149,7 +154,7 @@ void ParameterEditor::setResolution(const nec::SymbolResolution& resolution)
             .arg(resolution.diagnostics.size()));
         statusLabel_->setStyleSheet(QStringLiteral("color: #9a3030;"));
     }
-    loadSelection();
+    updateRowEditability();
     updateActions();
 }
 
@@ -158,7 +163,7 @@ void ParameterEditor::selectParameter(std::size_t sourceLine, const QString& nam
     updating_ = true;
     table_->clearSelection();
     for (auto row = 0; row < table_->rowCount(); ++row) {
-        const auto* item = table_->item(row, 0);
+        const auto* item = table_->item(row, NameColumn);
         if (item->data(SourceLineRole).toULongLong() != sourceLine) continue;
         if (!name.isEmpty()
             && item->data(OriginalNameRole).toString().compare(name, Qt::CaseInsensitive) != 0) continue;
@@ -167,7 +172,6 @@ void ParameterEditor::selectParameter(std::size_t sourceLine, const QString& nam
         break;
     }
     updating_ = false;
-    loadSelection();
     updateActions();
 }
 
@@ -177,38 +181,164 @@ void ParameterEditor::showEditError(const QString& message)
     statusLabel_->setStyleSheet(QStringLiteral("color: #9a3030;"));
 }
 
-void ParameterEditor::loadSelection()
+auto ParameterEditor::hasPendingEdits() const noexcept -> bool
 {
-    const auto row = table_->currentRow();
-    if (row < 0) return;
-    const QSignalBlocker nameBlocker(nameControl_);
-    const QSignalBlocker expressionBlocker(expressionControl_);
-    nameControl_->setText(table_->item(row, 0)->text());
-    expressionControl_->setText(table_->item(row, 1)->text());
+    return pendingRow_ >= 0;
+}
+
+void ParameterEditor::discardPendingEdits()
+{
+    revertPendingEdits();
+}
+
+void ParameterEditor::addDraft()
+{
+    if (pendingRow_ >= 0) {
+        table_->selectRow(pendingRow_);
+        table_->editItem(table_->item(pendingRow_, NameColumn));
+        return;
+    }
+    updating_ = true;
+    const auto row = table_->rowCount();
+    table_->insertRow(row);
+    auto* nameItem = new QTableWidgetItem;
+    nameItem->setData(SourceLineRole, static_cast<qulonglong>(0));
+    nameItem->setData(OriginalNameRole, QString{});
+    nameItem->setData(OriginalExpressionRole, QString{});
+    nameItem->setData(OriginalResolvedValueRole, QString{});
+    table_->setItem(row, NameColumn, nameItem);
+    table_->setItem(row, ExpressionColumn, new QTableWidgetItem);
+    auto* resolvedItem = new QTableWidgetItem(tr("Not applied"));
+    resolvedItem->setFlags(resolvedItem->flags() & ~Qt::ItemIsEditable);
+    table_->setItem(row, ResolvedValueColumn, resolvedItem);
+    pendingRow_ = row;
+    table_->selectRow(row);
+    updating_ = false;
+    updateRowEditability();
+    updateActions();
+    table_->editItem(nameItem);
+}
+
+void ParameterEditor::applySelected()
+{
+    if (!pendingInputIsValid() || pendingRow_ < 0) return;
+    const auto* nameItem = table_->item(pendingRow_, NameColumn);
+    emit parameterChanged(nameItem->data(SourceLineRole).toULongLong(),
+        nameItem->data(OriginalNameRole).toString(), nameItem->text().trimmed(),
+        table_->item(pendingRow_, ExpressionColumn)->text().trimmed());
+}
+
+void ParameterEditor::revertPendingEdits()
+{
+    if (pendingRow_ < 0) return;
+    updating_ = true;
+    const QSignalBlocker blocker(table_);
+    auto* nameItem = table_->item(pendingRow_, NameColumn);
+    if (nameItem->data(SourceLineRole).toULongLong() == 0) {
+        table_->removeRow(pendingRow_);
+    } else {
+        nameItem->setText(nameItem->data(OriginalNameRole).toString());
+        table_->item(pendingRow_, ExpressionColumn)->setText(
+            nameItem->data(OriginalExpressionRole).toString());
+        table_->item(pendingRow_, ResolvedValueColumn)->setText(
+            nameItem->data(OriginalResolvedValueRole).toString());
+        table_->selectRow(pendingRow_);
+    }
+    pendingRow_ = -1;
+    updating_ = false;
+    statusLabel_->setStyleSheet({});
+    statusLabel_->setText(definitions_.empty()
+        ? tr("No SY parameters are defined. Select Add Parameter to create one.")
+        : tr("Changes reverted. %1 parameter(s) remain.").arg(definitions_.size()));
+    updateRowEditability();
+    updateActions();
+}
+
+void ParameterEditor::updatePendingState(int row)
+{
+    if (pendingRow_ >= 0 && row != pendingRow_) return;
+    const auto* nameItem = table_->item(row, NameColumn);
+    const auto draft = nameItem->data(SourceLineRole).toULongLong() == 0;
+    const auto changed = draft
+        || nameItem->text().trimmed() != nameItem->data(OriginalNameRole).toString()
+        || table_->item(row, ExpressionColumn)->text().trimmed()
+            != nameItem->data(OriginalExpressionRole).toString();
+    pendingRow_ = changed ? row : -1;
+    if (changed) {
+        const QSignalBlocker blocker(table_);
+        table_->item(row, ResolvedValueColumn)->setText(tr("Apply to resolve"));
+        table_->selectRow(row);
+    } else {
+        const QSignalBlocker blocker(table_);
+        table_->item(row, ResolvedValueColumn)->setText(
+            nameItem->data(OriginalResolvedValueRole).toString());
+        statusLabel_->setStyleSheet({});
+        statusLabel_->setText(definitions_.empty()
+            ? tr("No SY parameters are defined. Select Add Parameter to create one.")
+            : tr("%1 parameter(s) resolved successfully.").arg(definitions_.size()));
+    }
+    updateRowEditability();
+    updateActions();
+}
+
+void ParameterEditor::updateRowEditability()
+{
+    const QSignalBlocker blocker(table_);
+    for (auto row = 0; row < table_->rowCount(); ++row) {
+        for (const auto column : {NameColumn, ExpressionColumn}) {
+            auto* item = table_->item(row, column);
+            const auto editable = pendingRow_ < 0 || row == pendingRow_;
+            const auto flags = editable ? item->flags() | Qt::ItemIsEditable
+                                        : item->flags() & ~Qt::ItemIsEditable;
+            if (item->flags() != flags) item->setFlags(flags);
+        }
+    }
 }
 
 void ParameterEditor::updateActions()
 {
-    const auto valid = inputIsValid();
-    const auto name = nameControl_->text().trimmed();
     const auto selectedRow = table_->currentRow();
-    auto uniqueForAdd = true;
-    auto uniqueForUpdate = true;
-    for (auto row = 0; row < table_->rowCount(); ++row) {
-        if (table_->item(row, 0)->text().compare(name, Qt::CaseInsensitive) != 0) continue;
-        uniqueForAdd = false;
-        if (row != selectedRow) uniqueForUpdate = false;
+    const auto selectedPending = pendingRow_ >= 0 && selectedRow == pendingRow_;
+    addButton_->setEnabled(pendingRow_ < 0);
+    applyButton_->setEnabled(selectedPending && pendingInputIsValid());
+    revertButton_->setEnabled(pendingRow_ >= 0);
+    deleteButton_->setEnabled(selectedRow >= 0 && pendingRow_ < 0);
+    setPendingEditIndicator(applyButton_, pendingRow_ >= 0);
+
+    if (pendingRow_ < 0) return;
+    const auto name = table_->item(pendingRow_, NameColumn)->text().trimmed();
+    const auto expression = table_->item(pendingRow_, ExpressionColumn)->text().trimmed();
+    statusLabel_->setStyleSheet(QStringLiteral("color: #9a3030;"));
+    if (!parameterNameIsValid(name))
+        statusLabel_->setText(tr("Enter a name beginning with a letter or underscore."));
+    else if (expression.isEmpty())
+        statusLabel_->setText(tr("Enter an expression before applying this parameter."));
+    else if (!pendingNameIsUnique())
+        statusLabel_->setText(tr("Parameter names must be unique."));
+    else {
+        statusLabel_->setStyleSheet({});
+        statusLabel_->setText(tr("Unapplied parameter changes. Select Apply Selected or Revert Changes."));
     }
-    addButton_->setEnabled(valid && uniqueForAdd);
-    updateButton_->setEnabled(valid && uniqueForUpdate && selectedRow >= 0);
-    deleteButton_->setEnabled(table_->currentRow() >= 0);
 }
 
-auto ParameterEditor::inputIsValid() const -> bool
+auto ParameterEditor::pendingInputIsValid() const -> bool
 {
-    static const QRegularExpression validName(QStringLiteral("^[A-Za-z_][A-Za-z0-9_]*$"));
-    const auto name = nameControl_->text().trimmed();
-    return validName.match(name).hasMatch() && !expressionControl_->text().trimmed().isEmpty();
+    if (pendingRow_ < 0) return false;
+    return parameterNameIsValid(table_->item(pendingRow_, NameColumn)->text())
+        && !table_->item(pendingRow_, ExpressionColumn)->text().trimmed().isEmpty()
+        && pendingNameIsUnique();
+}
+
+auto ParameterEditor::pendingNameIsUnique() const -> bool
+{
+    if (pendingRow_ < 0) return false;
+    const auto name = table_->item(pendingRow_, NameColumn)->text().trimmed();
+    for (auto row = 0; row < table_->rowCount(); ++row) {
+        if (row != pendingRow_
+            && table_->item(row, NameColumn)->text().trimmed().compare(
+                name, Qt::CaseInsensitive) == 0) return false;
+    }
+    return true;
 }
 
 }

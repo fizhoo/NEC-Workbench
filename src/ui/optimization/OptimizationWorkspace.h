@@ -1,6 +1,7 @@
 #pragma once
 
 #include "analysis/AnalysisResult.h"
+#include "analysis/AdaptiveSearch.h"
 #include "analysis/OptimizationObjective.h"
 #include "model/ModelSetup.h"
 #include "nec/NecSymbolResolver.h"
@@ -23,8 +24,11 @@ class QPushButton;
 class QSplitter;
 class QSpinBox;
 class QTableWidget;
+class QTabWidget;
 
 namespace necwb::ui {
+
+class CandidatePlotsView;
 
 class OptimizationWorkspace final : public QWidget {
 public:
@@ -51,22 +55,30 @@ private:
         Continuous
     };
 
+    enum class SearchMethod {
+        ParameterSweep,
+        Adaptive
+    };
+
     struct Candidate {
         double value{};
         int row{};
         AnalysisRunRecord record;
         std::vector<analysis::FeedpointResult> feedpoints;
+        std::optional<analysis::OptimizationObjectiveResult> evaluation;
     };
 
     void populateVariables(const nec::SymbolResolution& resolution);
     void updateBounds();
     void updateObjectiveControls();
     void updateFrequencyControls();
+    void updateSearchMethodControls();
     void updateWorkload();
     void showCandidateDetails(int row);
     void updateCandidateDetails(int row);
     void resetCandidateDetails();
     void updateCandidateRowToolTip(int row);
+    void updateCandidatePlots();
     void updateReadiness();
     void populateModelFrequencies(const model::FrequencyDefinition& frequency);
     void setExplicitFrequencies(const std::vector<double>& frequenciesMHz);
@@ -78,12 +90,15 @@ private:
     void startSweep();
     void cancelSweep();
     void startNextCandidate();
+    [[nodiscard]] auto prepareAdaptiveRound() -> bool;
+    void appendCandidate(double value);
     void finishCurrentCandidate(CandidateEvaluationResult result);
     void finishSweep();
     auto writeCandidateMetadata(const Candidate& candidate) -> bool;
     void setCandidateStatus(int row, const QString& status);
     [[nodiscard]] auto selectedObjective() const -> analysis::OptimizationObjectiveSpec;
     [[nodiscard]] auto selectedFrequencyMode() const -> FrequencyMode;
+    [[nodiscard]] auto selectedSearchMethod() const -> SearchMethod;
     [[nodiscard]] auto selectedFrequencyPlan() const -> analysis::FrequencyPlan;
     [[nodiscard]] auto explicitFrequencies() const -> std::vector<double>;
     [[nodiscard]] auto objectiveName(analysis::OptimizationObjectiveKind kind) const -> QString;
@@ -92,6 +107,12 @@ private:
     QComboBox* variableControl_{};
     QComboBox* objectiveControl_{};
     QDoubleSpinBox* targetFrequencyControl_{};
+    QTableWidget* objectiveCriteriaTable_{};
+    QDoubleSpinBox* swrWeightControl_{};
+    QDoubleSpinBox* resistanceWeightControl_{};
+    QDoubleSpinBox* resistanceTargetControl_{};
+    QDoubleSpinBox* reactanceWeightControl_{};
+    QDoubleSpinBox* reactanceTargetControl_{};
     QComboBox* frequencyModeControl_{};
     QWidget* explicitFrequencyPanel_{};
     QWidget* continuousFrequencyPanel_{};
@@ -109,6 +130,10 @@ private:
     QDoubleSpinBox* minimumControl_{};
     QDoubleSpinBox* maximumControl_{};
     QSpinBox* pointsControl_{};
+    QTabWidget* searchMethodTabs_{};
+    QSpinBox* adaptiveMaximumEvaluationsControl_{};
+    QDoubleSpinBox* adaptiveParameterToleranceControl_{};
+    QDoubleSpinBox* adaptiveScoreToleranceControl_{};
     QDoubleSpinBox* referenceImpedanceControl_{};
     QPushButton* runButton_{};
     QPushButton* cancelButton_{};
@@ -117,6 +142,7 @@ private:
     QLabel* statusLabel_{};
     QLabel* bestLabel_{};
     QTableWidget* resultsTable_{};
+    CandidatePlotsView* candidatePlots_{};
     QDialog* candidateDetailsWindow_{};
     QLabel* candidateDetailLabel_{};
     QTableWidget* candidateDetailsTable_{};
@@ -141,9 +167,12 @@ private:
     QString selectedSymbol_;
     QString selectedValueSuffix_;
     analysis::OptimizationObjectiveSpec activeObjective_;
+    SearchMethod activeSearchMethod_{SearchMethod::ParameterSweep};
     int timeoutSeconds_{120};
     std::size_t candidateIndex_{};
     double bestScore_{};
+    QString adaptiveStopReason_;
+    std::optional<analysis::AdaptiveSearch> adaptiveSearch_;
     int bestRow_{-1};
     int detailCandidateRow_{-1};
     bool modelValid_{};

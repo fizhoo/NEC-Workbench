@@ -16,7 +16,6 @@
 #include "ui/geometry/GeometryView.h"
 #include "ui/geometry/Geometry3DView.h"
 #include "ui/optimization/OptimizationWorkspace.h"
-#include "ui/optimization/CandidateEvaluator.h"
 #include "ui/model/ParameterEditor.h"
 #include "ui/setup/LoadNetworkEditor.h"
 #include "ui/setup/SetupEditor.h"
@@ -28,12 +27,10 @@
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
-#include <QCoreApplication>
 #include <QDebug>
 #include <QDoubleSpinBox>
 #include <QDialog>
 #include <QDir>
-#include <QEventLoop>
 #include <QFile>
 #include <QImage>
 #include <QFileInfo>
@@ -46,6 +43,7 @@
 #include <QTimer>
 #include <QTextDocument>
 #include <QTableWidget>
+#include <QTabWidget>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QToolButton>
@@ -108,11 +106,8 @@ auto main(int argc, char* argv[]) -> int
         result.radiation.push_back(sample);
     }
     QSettings plotSettings;
-    const auto previousImpedanceScale = plotSettings.value(
-        QStringLiteral("results/impedanceScaleMode"));
-    const auto previousSwrScale = plotSettings.value(QStringLiteral("results/swrScaleMode"));
-    plotSettings.setValue(QStringLiteral("results/impedanceScaleMode"), 0);
-    plotSettings.setValue(QStringLiteral("results/swrScaleMode"), 0);
+    const auto previousSwrScale = plotSettings.value(QStringLiteral("results/swrScaleModeV2"));
+    plotSettings.setValue(QStringLiteral("results/swrScaleModeV2"), 0);
     necwb::ui::SweepPlotsView view;
     view.resize(900, 700);
     view.setResults(result, QStringLiteral("test-run"));
@@ -127,42 +122,68 @@ auto main(int argc, char* argv[]) -> int
     painter.end();
     auto* impedanceSweepPlot = view.findChild<QWidget*>(QStringLiteral("impedanceSweepPlot"));
     auto* swrSweepPlot = view.findChild<QWidget*>(QStringLiteral("swrSweepPlot"));
-    auto* impedanceScaleControl = view.findChild<QComboBox*>(
-        QStringLiteral("impedanceScaleControl"));
     auto* swrScaleControl = view.findChild<QComboBox*>(QStringLiteral("swrScaleControl"));
-    const auto wholeNumberAxes = impedanceSweepPlot != nullptr && swrSweepPlot != nullptr
-        && impedanceSweepPlot->property("yTickStep").toDouble() >= 1.0
-        && swrSweepPlot->property("yTickStep").toDouble() >= 1.0
-        && std::floor(impedanceSweepPlot->property("yTickStep").toDouble())
-            == impedanceSweepPlot->property("yTickStep").toDouble()
-        && std::floor(swrSweepPlot->property("yTickStep").toDouble())
-            == swrSweepPlot->property("yTickStep").toDouble()
-        && impedanceSweepPlot->property("plotLeftMargin").toDouble() >= 100.0
-        && swrSweepPlot->property("plotLeftMargin").toDouble() >= 100.0;
-    if (impedanceScaleControl == nullptr || swrScaleControl == nullptr
-        || impedanceScaleControl->count() != 2 || swrScaleControl->count() != 4) {
+    const auto engineeringAxes = impedanceSweepPlot != nullptr && swrSweepPlot != nullptr
+        && impedanceSweepPlot->property("dualAxes").toBool()
+        && impedanceSweepPlot->property("leftAxisScale").toInt() == 1
+        && impedanceSweepPlot->property("rightAxisScale").toInt() == 0
+        && impedanceSweepPlot->property("leftAxisMinimum").toDouble() > 0.0
+        && impedanceSweepPlot->property("rightAxisMinimum").toDouble() <= 0.0
+        && impedanceSweepPlot->property("rightAxisMaximum").toDouble() >= 0.0
+        && impedanceSweepPlot->property("leftAxisTickCount").toInt() >= 2
+        && impedanceSweepPlot->property("rightAxisTickCount").toInt() >= 2
+        && impedanceSweepPlot->property("plotLeftMargin").toDouble() >= 90.0
+        && impedanceSweepPlot->property("plotRightMargin").toDouble() >= 90.0
+        && !swrSweepPlot->property("dualAxes").toBool()
+        && swrSweepPlot->property("leftAxisScale").toInt() == 1
+        && swrSweepPlot->property("leftAxisMinimum").toDouble() == 1.0
+        && swrSweepPlot->property("leftAxisTickCount").toInt() >= 3;
+    if (swrScaleControl == nullptr || swrScaleControl->count() != 4
+        || swrScaleControl->currentText() != QStringLiteral("Logarithmic")) {
         return EXIT_FAILURE;
     }
-    impedanceScaleControl->setCurrentIndex(1);
     swrScaleControl->setCurrentIndex(2);
     QPainter alternateScalePainter(&image);
     view.render(&alternateScalePainter);
     alternateScalePainter.end();
-    const auto alternateScalesWork = impedanceSweepPlot->property("scaleMode").toInt() == 1
-        && swrSweepPlot->property("scaleMode").toInt() == 2
-        && swrSweepPlot->property("yMinimum").toDouble() == 1.0
-        && swrSweepPlot->property("yMaximum").toDouble() == 3.0;
-    if (previousImpedanceScale.isValid()) {
-        plotSettings.setValue(QStringLiteral("results/impedanceScaleMode"), previousImpedanceScale);
-    } else {
-        plotSettings.remove(QStringLiteral("results/impedanceScaleMode"));
-    }
+    const auto alternateScalesWork = swrSweepPlot->property("scaleMode").toInt() == 2
+        && swrSweepPlot->property("leftAxisScale").toInt() == 0
+        && swrSweepPlot->property("leftAxisMinimum").toDouble() == 1.0
+        && swrSweepPlot->property("leftAxisMaximum").toDouble() == 3.0;
     if (previousSwrScale.isValid()) {
-        plotSettings.setValue(QStringLiteral("results/swrScaleMode"), previousSwrScale);
+        plotSettings.setValue(QStringLiteral("results/swrScaleModeV2"), previousSwrScale);
     } else {
-        plotSettings.remove(QStringLiteral("results/swrScaleMode"));
+        plotSettings.remove(QStringLiteral("results/swrScaleModeV2"));
     }
     if (!alternateScalesWork) return EXIT_FAILURE;
+    necwb::ui::CandidatePlotsView candidatePlots;
+    candidatePlots.resize(760, 360);
+    const std::vector<necwb::ui::CandidatePlotPoint> candidatePoints{
+        {1, 10.0, {.score = 1.2, .swr = 1.5, .swrComponent = 0.9,
+            .resistanceComponent = 0.2, .reactanceComponent = 0.1}},
+        {2, 11.0, {.score = 1.6, .swr = 1.8, .swrComponent = 1.1,
+            .resistanceComponent = 0.3, .reactanceComponent = 0.2}},
+        {0, 9.0, {.score = 2.0, .swr = 2.5, .swrComponent = 1.5,
+            .resistanceComponent = 0.3, .reactanceComponent = 0.2}},
+    };
+    candidatePlots.setCandidates(QStringLiteral("LENGTH"), QStringLiteral("ft"),
+        candidatePoints, 1);
+    candidatePlots.show();
+    application.processEvents();
+    QImage candidatePlotImage(candidatePlots.size(), QImage::Format_ARGB32_Premultiplied);
+    candidatePlotImage.fill(Qt::transparent);
+    QPainter candidatePlotPainter(&candidatePlotImage);
+    candidatePlots.render(&candidatePlotPainter);
+    candidatePlotPainter.end();
+    auto* candidateScorePlot = candidatePlots.findChild<QWidget*>(
+        QStringLiteral("optimizationCandidateScorePlot"));
+    const auto candidatePlotValid = !candidatePlotImage.isNull()
+        && candidateScorePlot != nullptr
+        && candidateScorePlot->property("pointCount").toInt() == 3
+        && candidateScorePlot->property("xValuesAscending").toBool()
+        && candidateScorePlot->property("bestX").toDouble() == 10.0
+        && candidateScorePlot->property("leftAxisMinimum").toDouble() == 0.0
+        && candidateScorePlot->property("leftAxisMaximum").toDouble() >= 2.0;
     necwb::ui::ResultsSummaryView resultsSummary;
     resultsSummary.resize(700, 420);
     resultsSummary.setResults(result, QStringLiteral("test-run"));
@@ -224,12 +245,12 @@ auto main(int argc, char* argv[]) -> int
     optimization.resize(1000, 700);
     optimization.show();
     application.processEvents();
-    optimization.setContext(
-        QStringLiteral("SY LONG_FT=95\n"
+    const auto optimizationSource = QStringLiteral("SY LONG_FT=95\n"
                        "SY FT=0.3048\n"
                        "SY HALF=LONG_FT*FT/2\n"
                        "GW 1 21 -HALF 0 10 HALF 0 10 0.001\n"
-                       "GE 0\nEX 0 1 11 0 1 0\nFR 0 1 0 0 7.15 0\nEN\n"),
+                       "GE 0\nEX 0 1 11 0 1 0\nFR 0 1 0 0 7.15 0\nEN\n");
+    optimization.setContext(optimizationSource,
         QStringLiteral("symbol-units.nec"), QStringLiteral("nec2"), {}, 120, false);
     application.processEvents();
     auto* optimizationConfiguration = optimization.findChild<QSplitter*>(
@@ -242,6 +263,10 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationResultsScrollArea"));
     auto* optimizationResultsTable = optimization.findChild<QTableWidget*>(
         QStringLiteral("optimizationResultsTable"));
+    auto* optimizationResultViews = optimization.findChild<QTabWidget*>(
+        QStringLiteral("optimizationResultViews"));
+    auto* optimizationCandidatePlots = optimization.findChild<QWidget*>(
+        QStringLiteral("optimizationCandidatePlots"));
     auto* optimizationCandidateDetailsWindow = optimization.findChild<QDialog*>(
         QStringLiteral("optimizationCandidateDetailsWindow"));
     auto* optimizationCandidateDetails = optimization.findChild<QTableWidget*>(
@@ -250,6 +275,18 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationVariablesTable"));
     auto* optimizationSweepSettings = optimization.findChild<QTableWidget*>(
         QStringLiteral("optimizationSweepSettingsTable"));
+    auto* optimizationObjectiveCriteria = optimization.findChild<QTableWidget*>(
+        QStringLiteral("optimizationObjectiveCriteria"));
+    auto* optimizationSwrWeight = optimization.findChild<QDoubleSpinBox*>(
+        QStringLiteral("optimizationSwrWeight"));
+    auto* optimizationResistanceWeight = optimization.findChild<QDoubleSpinBox*>(
+        QStringLiteral("optimizationResistanceWeight"));
+    auto* optimizationResistanceTarget = optimization.findChild<QDoubleSpinBox*>(
+        QStringLiteral("optimizationResistanceTarget"));
+    auto* optimizationReactanceWeight = optimization.findChild<QDoubleSpinBox*>(
+        QStringLiteral("optimizationReactanceWeight"));
+    auto* optimizationReactanceTarget = optimization.findChild<QDoubleSpinBox*>(
+        QStringLiteral("optimizationReactanceTarget"));
     auto* optimizationVariableControl = optimization.findChild<QComboBox*>(
         QStringLiteral("optimizationVariableControl"));
     auto* optimizationVariablesHeading = optimization.findChild<QLabel*>(
@@ -258,6 +295,10 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationSweepHeading"));
     auto* optimizationFrequencyMode = optimization.findChild<QComboBox*>(
         QStringLiteral("optimizationFrequencyMode"));
+    auto* optimizationObjective = optimization.findChild<QComboBox*>(
+        QStringLiteral("optimizationObjectiveControl"));
+    auto* optimizationTargetFrequency = optimization.findChild<QDoubleSpinBox*>(
+        QStringLiteral("optimizationTargetFrequency"));
     auto* optimizationFrequencyTable = optimization.findChild<QTableWidget*>(
         QStringLiteral("optimizationFrequencyTable"));
     auto* optimizationAddAmateurBand = optimization.findChild<QPushButton*>(
@@ -278,6 +319,20 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationWorkload"));
     auto* optimizationApplyBest = optimization.findChild<QPushButton*>(
         QStringLiteral("optimizationApplyBest"));
+    auto* optimizationSearchMethods = optimization.findChild<QTabWidget*>(
+        QStringLiteral("optimizationSearchMethodTabs"));
+    auto* optimizationAdaptiveMaximum = optimization.findChild<QSpinBox*>(
+        QStringLiteral("optimizationAdaptiveMaximumEvaluations"));
+    auto* optimizationAdaptiveParameterTolerance = optimization.findChild<QDoubleSpinBox*>(
+        QStringLiteral("optimizationAdaptiveParameterTolerance"));
+    auto* optimizationAdaptiveScoreTolerance = optimization.findChild<QDoubleSpinBox*>(
+        QStringLiteral("optimizationAdaptiveScoreTolerance"));
+    if (optimizationResultsTable != nullptr) optimizationResultsTable->setRowCount(1);
+    optimization.setContext(optimizationSource,
+        QStringLiteral("symbol-units.nec"), QStringLiteral("nec2"), {}, 120, false);
+    const auto optimizerResultsPreserved = optimizationResultsTable != nullptr
+        && optimizationResultsTable->rowCount() == 1;
+    if (optimizationResultsTable != nullptr) optimizationResultsTable->setRowCount(0);
     if (optimizationFrequencyMode != nullptr) optimizationFrequencyMode->setCurrentIndex(1);
     QTimer::singleShot(0, &optimization, [&optimization] {
         auto* dialog = optimization.findChild<QDialog*>(
@@ -328,6 +383,32 @@ auto main(int argc, char* argv[]) -> int
         && optimizationWorkload != nullptr
         && optimizationWorkload->text().contains(
             QStringLiteral("7 candidates × 36 frequencies"));
+    if (optimizationObjective != nullptr) optimizationObjective->setCurrentIndex(1);
+    if (optimizationTargetFrequency != nullptr) optimizationTargetFrequency->setValue(14.2);
+    application.processEvents();
+    const auto selectedFrequencyObjectiveValid = optimizationFrequencyMode != nullptr
+        && !optimizationFrequencyMode->isEnabled()
+        && optimizationExplicitFrequencies != nullptr
+        && !optimizationExplicitFrequencies->isVisible()
+        && optimizationContinuousFrequencies != nullptr
+        && !optimizationContinuousFrequencies->isVisible()
+        && optimizationWorkload != nullptr
+        && optimizationWorkload->text().contains(
+            QStringLiteral("7 candidates × 1 frequency"));
+    if (optimizationSearchMethods != nullptr) optimizationSearchMethods->setCurrentIndex(1);
+    application.processEvents();
+    const auto adaptiveControlsValid = optimizationSearchMethods != nullptr
+        && optimizationSearchMethods->count() == 2
+        && optimizationSearchMethods->tabText(0) == QStringLiteral("Parameter Sweep")
+        && optimizationSearchMethods->tabText(1) == QStringLiteral("Adaptive Optimize")
+        && optimizationAdaptiveMaximum != nullptr && optimizationAdaptiveMaximum->value() == 21
+        && optimizationAdaptiveParameterTolerance != nullptr
+        && optimizationAdaptiveParameterTolerance->value() == 0.010
+        && optimizationAdaptiveScoreTolerance != nullptr
+        && optimizationAdaptiveScoreTolerance->value() == 0.001
+        && optimizationWorkload != nullptr
+        && optimizationWorkload->text().contains(QStringLiteral("Up to 21 candidates"));
+    if (optimizationSearchMethods != nullptr) optimizationSearchMethods->setCurrentIndex(0);
     const auto optimizationDecimalControls = optimization.findChildren<QDoubleSpinBox*>();
     const auto optimizerUsesThreeDecimals = std::ranges::all_of(
         optimizationDecimalControls, [](const auto* control) { return control->decimals() == 3; });
@@ -341,6 +422,8 @@ auto main(int argc, char* argv[]) -> int
         || optimizationResultsScrollArea == nullptr
         || optimizationResultsScrollArea->verticalScrollBarPolicy() != Qt::ScrollBarAsNeeded
         || optimizationResultsTable == nullptr
+        || optimizationResultViews == nullptr || optimizationResultViews->count() != 2
+        || optimizationCandidatePlots == nullptr
         || optimizationCandidateDetailsWindow == nullptr
         || optimizationCandidateDetailsWindow->isVisible()
         || optimizationCandidateDetails == nullptr
@@ -352,9 +435,19 @@ auto main(int argc, char* argv[]) -> int
         || optimizationVariables == nullptr
         || optimizationVariableControl == nullptr
         || optimizationSweepSettings == nullptr
+        || optimizationObjectiveCriteria == nullptr
+        || optimizationSwrWeight == nullptr || optimizationSwrWeight->value() != 1.0
+        || optimizationResistanceWeight == nullptr || optimizationResistanceWeight->value() != 0.0
+        || optimizationResistanceTarget == nullptr || optimizationResistanceTarget->value() != 50.0
+        || optimizationReactanceWeight == nullptr || optimizationReactanceWeight->value() != 0.0
+        || optimizationReactanceTarget == nullptr || optimizationReactanceTarget->value() != 0.0
         || optimizationVariablesHeading == nullptr
         || optimizationSweepHeading == nullptr
         || optimizationFrequencyMode == nullptr
+        || optimizationObjective == nullptr
+        || optimizationObjective->itemData(0, Qt::ToolTipRole).toString().isEmpty()
+        || optimizationObjective->itemData(1, Qt::ToolTipRole).toString().isEmpty()
+        || optimizationTargetFrequency == nullptr
         || optimizationFrequencyTable == nullptr
         || optimizationAddAmateurBand == nullptr
         || optimizationClearFrequencies == nullptr
@@ -363,17 +456,22 @@ auto main(int argc, char* argv[]) -> int
         || optimizationContinuousStop == nullptr
         || optimizationContinuousStep == nullptr
         || optimizationApplyBest == nullptr || optimizationApplyBest->isEnabled()
+        || !adaptiveControlsValid
         || settingsBottom > frequencyPanelTop
         || !frequencyControlsContained
         || !hasDeleteShortcut
         || !hasBackspaceShortcut
         || !continuousSweepValid
+        || !selectedFrequencyObjectiveValid
         || optimizationFrequencyTable->rowCount() != 7
         || optimizationVariablesHeading->height() != optimizationSweepHeading->height()
         || optimizationVariables->mapTo(&optimization, QPoint{}).y()
             != optimizationSweepSettings->mapTo(&optimization, QPoint{}).y()
         || !optimizerUsesThreeDecimals
+        || !optimizerResultsPreserved
         || optimizationSweepSettings->rowCount() != 4
+        || optimizationObjectiveCriteria->rowCount() != 3
+        || optimizationResultsTable->columnCount() != 8
         || optimizationVariables->columnCount() != 4
         || optimizationVariables->rowCount() != 3
         || optimizationVariables->item(0, 1)->text() != QStringLiteral("95")
@@ -383,55 +481,6 @@ auto main(int argc, char* argv[]) -> int
         || qobject_cast<QComboBox*>(optimizationSweepSettings->cellWidget(0, 1)) == nullptr) {
         return EXIT_FAILURE;
     }
-    QTemporaryDir candidateDirectory;
-    if (!candidateDirectory.isValid()) return EXIT_FAILURE;
-    necwb::ui::CandidateEvaluator candidateEvaluator;
-    necwb::ui::CandidateEvaluationResult candidateEvaluation;
-    auto candidateFinished = false;
-    QEventLoop candidateLoop;
-    QObject::connect(&candidateEvaluator, &necwb::ui::CandidateEvaluator::finished,
-        [&candidateEvaluation, &candidateFinished, &candidateLoop](auto result) {
-            candidateEvaluation = std::move(result);
-            candidateFinished = true;
-            candidateLoop.quit();
-        });
-    candidateEvaluator.start({
-        .authoredSource = QStringLiteral(
-            "SY HALF=5\nGW 1 21 -HALF 0 6 HALF 0 6 0.001\nGE 0\n"
-            "EX 0 1 11 0 1 0\nFR 0 2 0 0 7 0.1\nRP 0 19 37 1000 0 0 5 10\nEN\n"),
-        .variableValues = {{"half", 6.0}},
-        .frequencyPlan = {necwb::analysis::FrequencyPlanMode::Explicit,
-            {7.0, 14.0}, {}},
-        .objective = {.kind = necwb::analysis::OptimizationObjectiveKind::MaximumSwr,
-            .referenceImpedance = 50.0},
-        .backend = QStringLiteral("nec2"),
-        .executable = QCoreApplication::applicationFilePath(),
-        .directory = candidateDirectory.path(),
-        .timeoutSeconds = 2,
-    });
-    QTimer::singleShot(2000, &candidateLoop, &QEventLoop::quit);
-    candidateLoop.exec();
-    QFile candidateDeck(QDir(candidateDirectory.path()).filePath(QStringLiteral("model.nec")));
-    const auto candidateDeckText = candidateDeck.open(QIODevice::ReadOnly)
-        ? QString::fromUtf8(candidateDeck.readAll()) : QString{};
-    QFile candidateSource(QDir(candidateDirectory.path()).filePath(
-        QStringLiteral("model.source.nec")));
-    const auto candidateSourceText = candidateSource.open(QIODevice::ReadOnly)
-        ? QString::fromUtf8(candidateSource.readAll()) : QString{};
-    const auto candidateEvaluatorValid = candidateFinished
-        && candidateEvaluation.status == necwb::ui::CandidateEvaluationStatus::Completed
-        && candidateEvaluation.frequencyCount == 2
-        && candidateEvaluation.analysis.feedpoints.size() == 2
-        && candidateEvaluation.objective
-        && candidateEvaluation.objective->feedpoint
-        && candidateEvaluation.objective->feedpoint->frequencyMHz == 14.0
-        && candidateDeckText.contains(QStringLiteral("GW 1 21 -6 0 6 6 0 6 0.001"))
-        && candidateDeckText.contains(QStringLiteral("FR 0 1 0 0 7 0"))
-        && candidateDeckText.contains(QStringLiteral("FR 0 1 0 0 14 0"))
-        && !candidateDeckText.contains(QStringLiteral("SY "))
-        && !candidateDeckText.contains(QStringLiteral("RP "))
-        && candidateSourceText.startsWith(QStringLiteral("SY HALF=5"));
-    if (!candidateEvaluatorValid) return EXIT_FAILURE;
     necwb::ui::CurrentDistributionView currents;
     necwb::ui::RadiationPatternView radiation2D;
     necwb::ui::Radiation3DView radiation3D;
@@ -829,13 +878,16 @@ auto main(int argc, char* argv[]) -> int
     auto* customGauge = qobject_cast<QComboBox*>(wireTable->cellWidget(0, 9));
     const auto customRadiusPreserved = customGauge != nullptr && customGauge->currentIndex() == 0;
     necwb::ui::WireCardEditor symbolicWireEditor;
-    symbolicWireEditor.setSymbolicGeometryLines({1});
+    symbolicWireEditor.setSymbolicGeometryFields({{1, {3, 4, 6, 7}}});
     symbolicWireEditor.setModel(wireModel);
     auto* symbolicWireTable = symbolicWireEditor.findChild<QTableWidget*>(
         QStringLiteral("wireCardTable"));
     auto* symbolicGauge = symbolicWireTable == nullptr ? nullptr
         : qobject_cast<QComboBox*>(symbolicWireTable->cellWidget(0, 9));
-    const auto symbolicGaugeDisabled = symbolicGauge != nullptr && !symbolicGauge->isEnabled();
+    const auto symbolicCoordinatesLocked = symbolicWireTable != nullptr
+        && !(symbolicWireTable->item(0, 3)->flags() & Qt::ItemIsEditable)
+        && (symbolicWireTable->item(0, 8)->flags() & Qt::ItemIsEditable);
+    const auto symbolicGaugeEnabled = symbolicGauge != nullptr && symbolicGauge->isEnabled();
     QImage wireImage(900, 400, QImage::Format_ARGB32_Premultiplied);
     wireImage.fill(Qt::transparent); QPainter wirePainter(&wireImage);
     wireEditor.render(&wirePainter); wirePainter.end();
@@ -862,6 +914,32 @@ auto main(int argc, char* argv[]) -> int
         && setupEditor.sourcesPage()->objectName() == QStringLiteral("sourcesEditorPage")
         && setupEditor.environmentPage()->objectName() == QStringLiteral("environmentEditorPage")
         && setupEditor.frequencyPage()->objectName() == QStringLiteral("frequencyEditorPage");
+    auto* groundPreset = setupEditor.environmentPage()->findChild<QComboBox*>(
+        QStringLiteral("groundPresetControl"));
+    auto* groundPermittivity = setupEditor.environmentPage()->findChild<QDoubleSpinBox*>(
+        QStringLiteral("groundRelativePermittivity"));
+    auto* groundConductivity = setupEditor.environmentPage()->findChild<QDoubleSpinBox*>(
+        QStringLiteral("groundConductivity"));
+    if (groundPreset == nullptr || groundPermittivity == nullptr
+        || groundConductivity == nullptr) return EXIT_FAILURE;
+    const auto saltWaterIndex = groundPreset->findText(
+        QStringLiteral("Salt water"), Qt::MatchStartsWith);
+    groundPreset->setCurrentIndex(saltWaterIndex);
+    const auto groundPresetValuesValid = groundPreset->count() == 10
+        && saltWaterIndex > 0
+        && std::abs(groundPermittivity->value() - 81.0) < 1.0e-9
+        && std::abs(groundConductivity->value() - 5.0) < 1.0e-12;
+    groundConductivity->setValue(4.5);
+    const auto customGroundDetected = groundPreset->currentIndex() == 0;
+    auto* applyGround = setupEditor.environmentPage()->findChild<QPushButton*>(
+        QStringLiteral("applyGroundButton"));
+    const auto groundApplyHighlighted = applyGround != nullptr
+        && applyGround->property("pendingChanges").toBool()
+        && setupEditor.hasPendingEdits(setupEditor.environmentPage());
+    setupEditor.discardPendingEdits(setupEditor.environmentPage());
+    const auto groundDiscardRestored = !setupEditor.hasPendingEdits(
+        setupEditor.environmentPage())
+        && std::abs(groundConductivity->value() - 0.005) < 1.0e-12;
     necwb::ui::ParameterEditor parameterEditor;
     parameterEditor.setResolution(necwb::nec::NecSymbolResolver{}.resolve(
         "SY LENGTH=10, HALF=LENGTH/2\nGW 1 11 -HALF 0 0 HALF 0 0 .001\nGE 0\nEN\n"));
@@ -869,10 +947,10 @@ auto main(int argc, char* argv[]) -> int
     parameterEditor.show();
     application.processEvents();
     auto* parameterTable = parameterEditor.findChild<QTableWidget*>(QStringLiteral("parameterTable"));
-    auto* parameterName = parameterEditor.findChild<QLineEdit*>(QStringLiteral("parameterName"));
-    auto* parameterExpression = parameterEditor.findChild<QLineEdit*>(QStringLiteral("parameterExpression"));
-    auto* updateParameter = parameterEditor.findChild<QPushButton*>(
-        QStringLiteral("updateParameterButton"));
+    auto* applyParameter = parameterEditor.findChild<QPushButton*>(
+        QStringLiteral("applyParameterButton"));
+    auto* revertParameter = parameterEditor.findChild<QPushButton*>(
+        QStringLiteral("revertParameterButton"));
     auto parameterSignalValid = false;
     QObject::connect(&parameterEditor, &necwb::ui::ParameterEditor::parameterChanged,
         [&parameterSignalValid](std::size_t sourceLine, const QString& originalName,
@@ -880,18 +958,52 @@ auto main(int argc, char* argv[]) -> int
             parameterSignalValid = sourceLine == 1 && originalName == QStringLiteral("HALF")
                 && name == QStringLiteral("HALF") && expression == QStringLiteral("LENGTH/2+1");
         });
-    if (parameterTable == nullptr || parameterName == nullptr
-        || parameterExpression == nullptr || updateParameter == nullptr) return EXIT_FAILURE;
+    if (parameterTable == nullptr || applyParameter == nullptr
+        || revertParameter == nullptr) return EXIT_FAILURE;
     parameterTable->selectRow(1);
     application.processEvents();
-    parameterExpression->setText(QStringLiteral("LENGTH/2+1"));
-    updateParameter->click();
+    parameterTable->item(1, 1)->setText(QStringLiteral("LENGTH/2+1"));
+    const auto parameterEditPending = parameterEditor.hasPendingEdits()
+        && applyParameter->isEnabled() && revertParameter->isEnabled()
+        && applyParameter->property("pendingChanges").toBool()
+        && parameterTable->item(1, 2)->text() == QStringLiteral("Apply to resolve");
+    applyParameter->click();
+    revertParameter->click();
+    const auto parameterRevertValid = !parameterEditor.hasPendingEdits()
+        && parameterTable->item(1, 1)->text() == QStringLiteral("LENGTH/2")
+        && parameterTable->item(1, 2)->text() == QStringLiteral("5.000");
     const auto parameterEditorValid = parameterTable->columnCount() == 3
         && parameterTable->rowCount() == 2
         && parameterTable->item(0, 0)->text() == QStringLiteral("LENGTH")
         && parameterTable->item(1, 2)->text() == QStringLiteral("5.000")
-        && parameterName->text() == QStringLiteral("HALF")
-        && parameterSignalValid;
+        && parameterTable->editTriggers().testFlag(QAbstractItemView::DoubleClicked)
+        && !parameterTable->item(1, 2)->flags().testFlag(Qt::ItemIsEditable)
+        && parameterEditPending && parameterRevertValid && parameterSignalValid;
+    necwb::ui::ParameterEditor emptyParameterEditor;
+    emptyParameterEditor.setResolution(necwb::nec::NecSymbolResolver{}.resolve(
+        "GW 1 11 -1 0 0 1 0 0 .001\nGE 0\nEN\n"));
+    auto* emptyParameterTable = emptyParameterEditor.findChild<QTableWidget*>(
+        QStringLiteral("parameterTable"));
+    auto* addParameter = emptyParameterEditor.findChild<QPushButton*>(
+        QStringLiteral("addParameterButton"));
+    auto* applyNewParameter = emptyParameterEditor.findChild<QPushButton*>(
+        QStringLiteral("applyParameterButton"));
+    auto newParameterSignalValid = false;
+    QObject::connect(&emptyParameterEditor, &necwb::ui::ParameterEditor::parameterChanged,
+        [&newParameterSignalValid](std::size_t sourceLine, const QString& originalName,
+            const QString& name, const QString& expression) {
+            newParameterSignalValid = sourceLine == 0 && originalName.isEmpty()
+                && name == QStringLiteral("LENGTH") && expression == QStringLiteral("10");
+        });
+    if (emptyParameterTable == nullptr || addParameter == nullptr
+        || applyNewParameter == nullptr || !addParameter->isEnabled()) return EXIT_FAILURE;
+    addParameter->click();
+    emptyParameterTable->item(0, 0)->setText(QStringLiteral("LENGTH"));
+    emptyParameterTable->item(0, 1)->setText(QStringLiteral("10"));
+    const auto emptyParameterDraftValid = emptyParameterTable->rowCount() == 1
+        && applyNewParameter->isEnabled() && emptyParameterEditor.hasPendingEdits();
+    applyNewParameter->click();
+    const auto newParameterValid = emptyParameterDraftValid && newParameterSignalValid;
     necwb::model::ModelSetup requestSetup;
     requestSetup.frequency = necwb::model::FrequencyDefinition{0, 1, 14.15, 0.0, 4};
     requestSetup.radiationPatterns = {
@@ -1050,6 +1162,8 @@ auto main(int argc, char* argv[]) -> int
         });
     loadTable->item(0, 1)->setText(QStringLiteral("99")); applyLoad->click();
     const auto invalidLoadBlocked = !validLoadEmitted && loadValidation->isVisibleTo(&loadNetwork);
+    const auto invalidLoadRemainsPending = loadNetwork.hasPendingEdits()
+        && applyLoad->property("pendingChanges").toBool();
     loadTable->item(0, 1)->setText(QStringLiteral("1")); applyLoad->click();
     addLoad->click();
     const auto draftDidNotEmit = emittedLoadType == 4 && loadTable->rowCount() == 2;
@@ -1067,6 +1181,8 @@ auto main(int argc, char* argv[]) -> int
         && std::abs(emittedLoadCapacitance - 22.0e-12) < 1.0e-20;
     lineTable->selectRow(0); lineTable->item(0, 4)->setText(QStringLiteral("0")); applyLine->click();
     const auto invalidLineBlocked = !validLineEmitted;
+    const auto invalidLineRemainsPending = loadNetwork.hasPendingEdits()
+        && applyLine->property("pendingChanges").toBool();
     lineTable->item(0, 4)->setText(QStringLiteral("75")); applyLine->click();
     const auto lineUnitConverted = std::abs(emittedLineLength - 3.048) < 1.0e-12;
     addLine->click();
@@ -1125,7 +1241,8 @@ auto main(int argc, char* argv[]) -> int
         && store.removeGroup(session.id, session.directory)
         && !QFileInfo::exists(session.directory) && !QFileInfo::exists(candidate.directory)
         && store.remove(run.directory) && !QFileInfo::exists(run.directory);
-    const auto passed = !image.isNull() && wholeNumberAxes && !summaryImage.isNull()
+    const auto passed = !image.isNull() && engineeringAxes && candidatePlotValid
+        && !summaryImage.isNull()
         && !fieldImage.isNull() && !currentImage.isNull()
         && !dashboardImage.isNull() && dashboardStateVisible && dashboard3DIsOverview
         && resultPanelDetached && resultPanelReattached
@@ -1139,8 +1256,11 @@ auto main(int argc, char* argv[]) -> int
         && addedCard == QStringLiteral("LD 0 1 1 11 0 0 0") && deletedLine == 3
         && !wireImage.isNull() && wireEditCommitted && gaugeDropdownValid
         && structuredGaugeRangeValid && structuredGaugeCommitted && customRadiusPreserved
-        && symbolicGaugeDisabled
-        && setupColumnsValid && parameterEditorValid
+        && symbolicCoordinatesLocked
+        && symbolicGaugeEnabled
+        && setupColumnsValid && groundPresetValuesValid && customGroundDetected
+        && groundApplyHighlighted && groundDiscardRestored
+        && parameterEditorValid && newParameterValid
         && multiplePatternEditorValid
         && convergenceHistoryControlsValid
         && segmentationApplyAccepted
@@ -1150,13 +1270,25 @@ auto main(int argc, char* argv[]) -> int
         && radiationExportReady && maxGainCutSelected && missingRadiationReported
         && missingRadiationDisablesDataExport
         && resultOriginPreserved
-        && !attachmentImage.isNull() && invalidLoadBlocked && validLoadEmitted
+        && !attachmentImage.isNull() && invalidLoadBlocked && invalidLoadRemainsPending
+        && validLoadEmitted
         && draftDidNotEmit && selectedDraftTypeEmitted
-        && invalidLineBlocked && validLineEmitted && lineUnitConverted
+        && invalidLineBlocked && invalidLineRemainsPending
+        && validLineEmitted && lineUnitConverted
         && lineDraftDidNotEmit && lineDraftApplied;
     if (!passed) qWarning() << "structured smoke state" << invalidEditBlocked << editedCard
         << addedCard << deletedLine << "wire committed" << wireEditCommitted
         << "segmentation apply" << segmentationApplyAccepted
-        << "run store" << storeValid << "run deletion" << runDeletionSafe;
+        << "run store" << storeValid << "run deletion" << runDeletionSafe
+        << "ground presets" << groundPresetValuesValid << customGroundDetected
+        << groundPreset->count() << groundPreset->currentIndex()
+        << groundPermittivity->value() << groundConductivity->value()
+        << "candidate plot" << candidatePlotValid
+        << (candidateScorePlot == nullptr ? QVariant{} : candidateScorePlot->property("pointCount"))
+        << (candidateScorePlot == nullptr ? QVariant{} : candidateScorePlot->property("bestX"))
+        << (candidateScorePlot == nullptr ? QVariant{} : candidateScorePlot->property("leftAxisMinimum"))
+        << (candidateScorePlot == nullptr ? QVariant{} : candidateScorePlot->property("leftAxisMaximum"))
+        << "result tabs" << (optimizationResultViews == nullptr
+            ? -1 : optimizationResultViews->count());
     return passed ? EXIT_SUCCESS : EXIT_FAILURE;
 }

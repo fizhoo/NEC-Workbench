@@ -21,6 +21,8 @@ public:
     void setLengthUnit(model::LengthUnit unit);
     void selectLoad(std::size_t sourceLine);
     void selectTransmissionLine(std::size_t sourceLine);
+    [[nodiscard]] auto hasPendingEdits() const noexcept -> bool;
+    void discardPendingEdits();
 signals:
     void loadChanged(model::LoadDefinition load);
     void loadDeleteRequested(std::size_t sourceLine);
@@ -38,12 +40,19 @@ private:
     void updateLoadColumns(int row);
     void updateLoadSegmentFields(int row, bool entireWire);
     void updateLoadValueFields(int row, int type);
+    void setLoadPending(bool pending);
+    void setLinePending(bool pending);
     model::AntennaModel model_;
+    model::ModelSetup setup_;
     QTableWidget* loads_{};
     QTableWidget* lines_{};
+    QPushButton* applyLoadButton_{};
     QPushButton* applyLineButton_{};
     QLabel* validation_{};
     model::LengthUnit lengthUnit_{model::LengthUnit::Meter};
+    bool loadPending_{};
+    bool linePending_{};
+    bool updating_{};
 };
 
 }

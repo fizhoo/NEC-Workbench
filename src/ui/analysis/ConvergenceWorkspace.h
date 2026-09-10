@@ -1,8 +1,8 @@
 #pragma once
 
 #include "ui/analysis/AnalysisRunStore.h"
+#include "ui/analysis/SolverProcessRunner.h"
 
-#include <QElapsedTimer>
 #include <QString>
 #include <QWidget>
 
@@ -13,12 +13,10 @@
 
 class QDoubleSpinBox;
 class QLabel;
-class QProcess;
 class QProgressBar;
 class QPushButton;
 class QSpinBox;
 class QTableWidget;
-class QTimer;
 
 namespace necwb::ui {
 
@@ -57,7 +55,7 @@ private:
     void startStudy();
     void cancelStudy();
     void startNextStep();
-    void finishCurrentStep(bool processSucceeded, const QString& detail = {});
+    void finishCurrentStep(SolverProcessResult result);
     void finishStudy();
     auto writeStepFiles(Step& step, const std::string& deck) -> bool;
     void populateStepResult(Step& step, const QByteArray& output);
@@ -78,9 +76,7 @@ private:
     QWidget* historicalBanner_{};
     QLabel* historicalBannerTitle_{};
     QPushButton* returnToCurrentWorkButton_{};
-    QProcess* process_{};
-    QTimer* timeout_{};
-    QElapsedTimer elapsed_;
+    SolverProcessRunner* runner_{};
     AnalysisRunStore runStore_;
     std::function<void()> runsChangedCallback_;
     std::function<void()> runningChangedCallback_;
@@ -98,7 +94,6 @@ private:
     bool modelValid_{};
     bool externalRunActive_{};
     bool cancelRequested_{};
-    bool timedOut_{};
     bool hasResults_{};
     bool trackGain_{};
     bool modelChangedDuringRun_{};

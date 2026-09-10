@@ -5,6 +5,7 @@
 
 #include <QWidget>
 
+#include <unordered_map>
 #include <unordered_set>
 
 class QPushButton;
@@ -24,7 +25,8 @@ public:
     void selectWire(int tag);
     void setLengthUnit(model::LengthUnit unit);
     void setDeckScale(double scaleToMeters, QString unitLabel);
-    void setSymbolicGeometryLines(std::unordered_set<std::size_t> sourceLines);
+    void setSymbolicGeometryFields(
+        std::unordered_map<std::size_t, std::unordered_set<int>> sourceFields);
 
 signals:
     void wireSelected(int tag);
@@ -46,7 +48,7 @@ private:
     QPushButton* duplicateButton_{};
     QPushButton* deleteButton_{};
     model::AntennaModel model_;
-    std::unordered_set<std::size_t> symbolicGeometryLines_;
+    std::unordered_map<std::size_t, std::unordered_set<int>> symbolicGeometryFields_;
     double scaleToMeters_{1.0};
     QString unitLabel_{QStringLiteral("m")};
     bool updating_{};

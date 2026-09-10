@@ -1,6 +1,7 @@
 #include "ui/setup/LoadNetworkEditor.h"
 
 #include "ui/DisplayFormat.h"
+#include "ui/PendingEditIndicator.h"
 
 #include <array>
 #include <utility>
@@ -115,10 +116,10 @@ LoadNetworkEditor::LoadNetworkEditor(QWidget* parent) : QWidget(parent)
     auto* loadButtons = new QHBoxLayout;
     auto* addLoad = new QPushButton(tr("Add Load"), this);
     addLoad->setObjectName(QStringLiteral("addLoadButton"));
-    auto* applyLoad = new QPushButton(tr("Apply Selected Load"), this);
-    applyLoad->setObjectName(QStringLiteral("applySelectedLoadButton"));
+    applyLoadButton_ = new QPushButton(tr("Apply Selected Load"), this);
+    applyLoadButton_->setObjectName(QStringLiteral("applySelectedLoadButton"));
     auto* deleteLoad = new QPushButton(tr("Delete Selected Load"), this);
-    loadButtons->addWidget(addLoad); loadButtons->addWidget(applyLoad); loadButtons->addWidget(deleteLoad); loadButtons->addStretch();
+    loadButtons->addWidget(addLoad); loadButtons->addWidget(applyLoadButton_); loadButtons->addWidget(deleteLoad); loadButtons->addStretch();
 
     lines_ = new QTableWidget(0, LineColumnCount, this);
     lines_->setObjectName(QStringLiteral("loadNetworkLinesTable"));
@@ -154,13 +155,17 @@ LoadNetworkEditor::LoadNetworkEditor(QWidget* parent) : QWidget(parent)
         loads_->setCurrentCell(row, 0);
         loads_->selectRow(row);
         updateLoadColumns(row);
+        setLoadPending(true);
     });
-    connect(applyLoad, &QPushButton::clicked, this, [this] { applySelectedLoad(); });
+    connect(applyLoadButton_, &QPushButton::clicked, this, [this] { applySelectedLoad(); });
     connect(deleteLoad, &QPushButton::clicked, this, [this] {
         const auto row = loads_->currentRow();
         if (row < 0) return;
         const auto sourceLine = sourceLineAt(loads_, row);
-        if (sourceLine == 0) loads_->removeRow(row);
+        if (sourceLine == 0) {
+            loads_->removeRow(row);
+            setLoadPending(false);
+        }
         else emit loadDeleteRequested(sourceLine);
     });
     connect(addLine, &QPushButton::clicked, this, [this] {
@@ -181,13 +186,17 @@ LoadNetworkEditor::LoadNetworkEditor(QWidget* parent) : QWidget(parent)
         lines_->setCurrentCell(row, 0);
         lines_->selectRow(row);
         updateLineApplyState();
+        setLinePending(true);
     });
     connect(applyLineButton_, &QPushButton::clicked, this, [this] { applySelectedLine(); });
     connect(deleteLine, &QPushButton::clicked, this, [this] {
         const auto row = lines_->currentRow();
         if (row < 0) return;
         const auto sourceLine = sourceLineAt(lines_, row);
-        if (sourceLine == 0) lines_->removeRow(row);
+        if (sourceLine == 0) {
+            lines_->removeRow(row);
+            setLinePending(false);
+        }
         else emit transmissionLineDeleteRequested(sourceLine);
         updateLineApplyState();
     });
@@ -201,8 +210,11 @@ LoadNetworkEditor::LoadNetworkEditor(QWidget* parent) : QWidget(parent)
             updateLineApplyState();
             if (const auto line = sourceLineAt(lines_, row)) emit transmissionLineSelected(line);
         });
-    connect(lines_, &QTableWidget::itemChanged, this,
-        [this] { updateLineApplyState(); });
+    connect(loads_, &QTableWidget::itemChanged, this,
+        [this] { if (!updating_) setLoadPending(true); });
+    connect(lines_, &QTableWidget::itemChanged, this, [this] {
+        updateLineApplyState(); if (!updating_) setLinePending(true);
+    });
     setLengthUnit(lengthUnit_);
 }
 
@@ -210,7 +222,9 @@ void LoadNetworkEditor::setData(const model::AntennaModel& model, const model::M
 {
     const auto selectedLoad = sourceLineAt(loads_, loads_->currentRow());
     const auto selectedLine = sourceLineAt(lines_, lines_->currentRow());
+    updating_ = true;
     model_ = model;
+    setup_ = setup;
     const QSignalBlocker loadBlocker(loads_);
     loads_->setRowCount(static_cast<int>(setup.loads.size()));
     for (auto row = 0; row < static_cast<int>(setup.loads.size()); ++row) {
@@ -223,10 +237,25 @@ void LoadNetworkEditor::setData(const model::AntennaModel& model, const model::M
     }
     selectLoad(selectedLoad);
     selectTransmissionLine(selectedLine);
+    updating_ = false;
+    setLoadPending(false);
+    setLinePending(false);
+}
+
+auto LoadNetworkEditor::hasPendingEdits() const noexcept -> bool
+{
+    return loadPending_ || linePending_;
+}
+
+void LoadNetworkEditor::discardPendingEdits()
+{
+    if (hasPendingEdits()) setData(model_, setup_);
 }
 
 void LoadNetworkEditor::setLengthUnit(model::LengthUnit unit)
 {
+    const auto wasUpdating = updating_;
+    updating_ = true;
     if (unit != lengthUnit_) {
         for (auto row = 0; row < lines_->rowCount(); ++row) {
             auto* item = lines_->item(row, LengthColumn);
@@ -251,6 +280,7 @@ void LoadNetworkEditor::setLengthUnit(model::LengthUnit unit)
     lines_->horizontalHeaderItem(ShuntImaginary1Column)->setToolTip(tr("Imaginary shunt admittance (susceptance) at end one, in siemens."));
     lines_->horizontalHeaderItem(ShuntReal2Column)->setToolTip(tr("Real shunt admittance (conductance) at end two, in siemens."));
     lines_->horizontalHeaderItem(ShuntImaginary2Column)->setToolTip(tr("Imaginary shunt admittance (susceptance) at end two, in siemens."));
+    updating_ = wasUpdating;
 }
 
 void LoadNetworkEditor::selectLoad(std::size_t sourceLine)
@@ -308,7 +338,7 @@ void LoadNetworkEditor::applySelectedLoad()
         || (value.firstSegment != 0 && value.lastSegment != 0
             && value.firstSegment > value.lastSegment)) goto invalid_reference;
     if (value.type == 5 && value.value1 <= 0.0) goto invalid_value;
-    value.sourceLine = loads_->item(row,0)->data(SourceLineRole).toULongLong(); validation_->hide(); emit loadChanged(value); return;
+    value.sourceLine = loads_->item(row,0)->data(SourceLineRole).toULongLong(); validation_->hide(); setLoadPending(false); emit loadChanged(value); return;
 invalid: validation_->setText(tr("The selected LD row contains an invalid number.")); validation_->show();
     return;
 invalid_reference: validation_->setText(tr("LD type, wire tag, or segment range is invalid.")); validation_->show();
@@ -340,6 +370,7 @@ void LoadNetworkEditor::setLoadRow(int row, const model::LoadDefinition& value)
         loads_->setCurrentCell(row, 0);
         updateLoadValueFields(row, selectedType);
         updateLoadColumns(row);
+        if (!updating_) setLoadPending(true);
     });
     loads_->setCellWidget(row, 0, type);
     type->setToolTip(tr("NEC-2 LD load type. The value columns change meaning with this selection."));
@@ -360,6 +391,7 @@ void LoadNetworkEditor::setLoadRow(int row, const model::LoadDefinition& value)
         }
         updateLoadSegmentFields(row, entireWire);
         loads_->setCurrentCell(row, ScopeColumn);
+        if (!updating_) setLoadPending(true);
     });
     loads_->setCellWidget(row, ScopeColumn, scope);
     updateLoadSegmentFields(row, entireWireAt(loads_, row));
@@ -553,6 +585,18 @@ void LoadNetworkEditor::updateLineApplyState()
         && validValues);
 }
 
+void LoadNetworkEditor::setLoadPending(bool pending)
+{
+    loadPending_ = pending;
+    setPendingEditIndicator(applyLoadButton_, pending);
+}
+
+void LoadNetworkEditor::setLinePending(bool pending)
+{
+    linePending_ = pending;
+    setPendingEditIndicator(applyLineButton_, pending);
+}
+
 void LoadNetworkEditor::applySelectedLine()
 {
     const auto row = lines_->currentRow(); if (row < 0) return; bool valid = true; model::TransmissionLineDefinition value;
@@ -571,7 +615,7 @@ void LoadNetworkEditor::applySelectedLine()
     if (const auto* second = model_.wireByTag(value.wireTag2); second == nullptr
         || value.segment2 < 1 || value.segment2 > second->segments) goto invalid_reference;
     if (value.characteristicImpedance == 0.0 || value.lengthMeters < 0.0) goto invalid_reference;
-    value.sourceLine=lines_->item(row,0)->data(SourceLineRole).toULongLong(); validation_->hide(); emit transmissionLineChanged(value); return;
+    value.sourceLine=lines_->item(row,0)->data(SourceLineRole).toULongLong(); validation_->hide(); setLinePending(false); emit transmissionLineChanged(value); return;
 invalid: validation_->setText(tr("The selected TL row contains an invalid number.")); validation_->show();
     return;
 invalid_reference: validation_->setText(tr("TL endpoints must reference valid segments and Z0 must be nonzero.")); validation_->show();

@@ -9,7 +9,6 @@
 
 #include <QDir>
 #include <QFile>
-#include <QProcess>
 #include <QTimer>
 
 #include <algorithm>
@@ -32,6 +31,9 @@ auto writeFile(const QString& path, const QByteArray& data) -> bool
 CandidateEvaluator::CandidateEvaluator(QObject* parent)
     : QObject(parent)
 {
+    runner_ = new SolverProcessRunner(this);
+    connect(runner_, &SolverProcessRunner::finished,
+        this, [this](SolverProcessResult result) { finishProcess(std::move(result)); });
 }
 
 auto CandidateEvaluator::isRunning() const noexcept -> bool
@@ -44,8 +46,6 @@ void CandidateEvaluator::start(CandidateEvaluationRequest request)
     if (running_) return;
     request_ = std::move(request);
     running_ = true;
-    canceled_ = false;
-    timedOut_ = false;
     elapsed_.restart();
 
     const QDir directory(request_.directory);
@@ -70,8 +70,13 @@ void CandidateEvaluator::start(CandidateEvaluationRequest request)
         return;
     }
 
-    const auto frequenciesMHz = analysis::frequencyPlanPoints(request_.frequencyPlan);
-    const auto solverDeck = request_.frequencyPlan.mode == analysis::FrequencyPlanMode::Explicit
+    auto frequencyPlan = request_.frequencyPlan;
+    if (request_.objective.kind == analysis::OptimizationObjectiveKind::SwrAtFrequency) {
+        frequencyPlan = {analysis::FrequencyPlanMode::Explicit,
+            {request_.objective.targetFrequencyMHz}, {}};
+    }
+    const auto frequenciesMHz = analysis::frequencyPlanPoints(frequencyPlan);
+    const auto solverDeck = frequencyPlan.mode == analysis::FrequencyPlanMode::Explicit
         ? analysis::prepareExplicitFrequencyInput(
               resolution.generatedDeck, frequenciesMHz)
         : analysis::prepareImpedanceInput(resolution.generatedDeck);
@@ -92,73 +97,47 @@ void CandidateEvaluator::start(CandidateEvaluationRequest request)
         return;
     }
 
-    process_ = new QProcess(this);
-    auto* process = process_;
-    process->setWorkingDirectory(request_.directory);
-    process->setProgram(QString::fromStdString(command.executable));
-    QStringList arguments;
-    for (const auto& argument : command.arguments)
-        arguments.append(QString::fromStdString(argument));
-    process->setArguments(arguments);
-    connect(process, &QProcess::errorOccurred, this,
-        [this, process](QProcess::ProcessError error) {
-            if (running_ && process_ == process && error == QProcess::FailedToStart)
-                finish(CandidateEvaluationStatus::FailedToStart, process->errorString());
-        });
-    connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
-        [this, process](int exitCode, QProcess::ExitStatus status) {
-            if (!running_ || process_ != process) return;
-            if (canceled_) finish(CandidateEvaluationStatus::Canceled);
-            else if (timedOut_) finish(CandidateEvaluationStatus::TimedOut);
-            else if (status == QProcess::NormalExit && exitCode == 0)
-                finish(CandidateEvaluationStatus::Completed);
-            else
-                finish(CandidateEvaluationStatus::SolverFailed,
-                    tr("Solver exited with code %1.").arg(exitCode));
-        });
-
-    timeout_ = new QTimer(this);
-    timeout_->setSingleShot(true);
-    connect(timeout_, &QTimer::timeout, this, [this, process] {
-        if (running_ && process_ == process) {
-            timedOut_ = true;
-            process->kill();
-        }
-    });
-    timeout_->start(std::max(1, request_.timeoutSeconds) * 1000);
-    process->start();
+    runner_->start(command, request_.directory, request_.timeoutSeconds);
 }
 
 void CandidateEvaluator::cancel()
 {
     if (!running_) return;
-    canceled_ = true;
-    if (process_ != nullptr) process_->terminate();
+    runner_->cancel();
 }
 
 void CandidateEvaluator::cancelAndWait()
 {
     if (!running_) return;
-    canceled_ = true;
-    if (process_ != nullptr) {
-        auto* process = process_;
-        process->kill();
-        process->waitForFinished(2000);
-        if (running_) finish(CandidateEvaluationStatus::Canceled);
-    } else {
+    if (runner_->isRunning()) runner_->cancelAndWait();
+    else finish(CandidateEvaluationStatus::Canceled);
+}
+
+void CandidateEvaluator::finishProcess(SolverProcessResult result)
+{
+    switch (result.status) {
+    case SolverProcessStatus::Succeeded:
+        finish(CandidateEvaluationStatus::Completed);
+        break;
+    case SolverProcessStatus::FailedToStart:
+        finish(CandidateEvaluationStatus::FailedToStart, std::move(result.detail));
+        break;
+    case SolverProcessStatus::Failed:
+        finish(CandidateEvaluationStatus::SolverFailed,
+            tr("Solver exited with code %1.").arg(result.exitCode));
+        break;
+    case SolverProcessStatus::TimedOut:
+        finish(CandidateEvaluationStatus::TimedOut);
+        break;
+    case SolverProcessStatus::Canceled:
         finish(CandidateEvaluationStatus::Canceled);
+        break;
     }
 }
 
 void CandidateEvaluator::finish(CandidateEvaluationStatus status, QString detail)
 {
     if (!running_) return;
-    if (timeout_ != nullptr) {
-        timeout_->stop();
-        timeout_->deleteLater();
-        timeout_ = nullptr;
-    }
-
     CandidateEvaluationResult result;
     result.status = status;
     result.detail = std::move(detail);
@@ -180,10 +159,6 @@ void CandidateEvaluator::finish(CandidateEvaluationStatus status, QString detail
             result.status = CandidateEvaluationStatus::NoImpedance;
     }
 
-    if (process_ != nullptr) {
-        process_->deleteLater();
-        process_ = nullptr;
-    }
     running_ = false;
     emit finished(std::move(result));
 }

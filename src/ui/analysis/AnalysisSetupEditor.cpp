@@ -33,9 +33,6 @@ AnalysisSetupEditor::AnalysisSetupEditor(QWidget* parent)
     backendLayout->setRowWrapPolicy(QFormLayout::WrapLongRows);
     backendControl_ = new QComboBox(backendGroup);
     backendControl_->addItem(tr("NEC-2 / nec2c-compatible"), QStringLiteral("nec2"));
-    backendControl_->addItem(tr("OpenNEC"), QStringLiteral("opennec"));
-    backendControl_->addItem(tr("NEC-4-compatible installation"), QStringLiteral("nec4"));
-    backendControl_->addItem(tr("Custom NEC-compatible executable"), QStringLiteral("custom"));
     auto* executableRow = new QWidget(backendGroup);
     auto* executableLayout = new QHBoxLayout(executableRow);
     executableLayout->setContentsMargins(0, 0, 0, 0);
@@ -55,7 +52,7 @@ AnalysisSetupEditor::AnalysisSetupEditor(QWidget* parent)
     backendLayout->addRow(tr("Run timeout"), timeoutControl_);
     backendLayout->addRow(tr("Status"), status_);
 
-    auto* note = new QLabel(tr("NEC Workbench runs the selected solver as a separate process. Run decks and output files are preserved for inspection."), this);
+    auto* note = new QLabel(tr("NEC Workbench currently supports nec2c-compatible executables. Additional backend adapters will appear only when they are usable. Run decks and output files are preserved for inspection."), this);
     note->setWordWrap(true);
     note->setStyleSheet(QStringLiteral("color: palette(mid);"));
     layout->addWidget(heading);
@@ -99,16 +96,7 @@ void AnalysisSetupEditor::setSettings(const QString& backendId, const QString& e
 
 void AnalysisSetupEditor::updateDescription()
 {
-    const auto backendId = backendControl_->currentData().toString();
-    if (backendId == QStringLiteral("opennec")) {
-        description_->setText(tr("Use an OpenNEC command-line backend. Exact supported cards and output features will be detected before runs are enabled."));
-    } else if (backendId == QStringLiteral("nec4")) {
-        description_->setText(tr("Use a separately installed and licensed NEC-4-compatible executable."));
-    } else if (backendId == QStringLiteral("custom")) {
-        description_->setText(tr("Use another command-line NEC implementation through a configurable adapter."));
-    } else {
-        description_->setText(tr("Use a traditional NEC-2 or nec2c-compatible command-line solver."));
-    }
+    description_->setText(tr("Use a traditional NEC-2 or nec2c-compatible command-line solver."));
     const QFileInfo executable(executableControl_->text());
     if (executableControl_->text().isEmpty()) {
         status_->setText(tr("No executable selected."));
@@ -117,9 +105,7 @@ void AnalysisSetupEditor::updateDescription()
     } else if (!executable.isExecutable()) {
         status_->setText(tr("The selected file is not executable."));
     } else {
-        status_->setText(backendId == QStringLiteral("nec2")
-                ? tr("Executable found. This backend is ready to run.")
-                : tr("Executable found, but this backend's command adapter is not implemented yet."));
+        status_->setText(tr("Executable found. This backend is ready to run."));
     }
 }
 

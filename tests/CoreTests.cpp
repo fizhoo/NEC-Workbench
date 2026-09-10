@@ -1,4 +1,5 @@
 #include "analysis/SolverCommand.h"
+#include "analysis/AdaptiveSearch.h"
 #include "analysis/AverageGainTest.h"
 #include "analysis/FrequencyPlan.h"
 #include "analysis/NecOutputParser.h"
@@ -15,6 +16,7 @@
 #include "nec/NecModelChecker.h"
 #include "nec/NecParser.h"
 #include "nec/NecSetupConverter.h"
+#include "nec/NecSourceEditor.h"
 #include "nec/NecSymbolResolver.h"
 #include "nec/NecSymbolEditor.h"
 #include "nec/NecWriter.h"
@@ -28,6 +30,7 @@
 #include <limits>
 #include <span>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -49,6 +52,24 @@ void testRoundTripPreservesSource()
     expect(document.cards()[1].kind == necwb::nec::NecCardKind::Unknown, "unknown card is represented");
     expect(document.cards()[2].kind == necwb::nec::NecCardKind::Blank, "blank line is represented");
     expect(necwb::nec::NecWriter{}.write(document) == source, "writer preserves CRLF source exactly");
+}
+
+void testSourceLineEditing()
+{
+    const std::string source = "CM note\nGW 1 3 0 0 0 1 0 0 .001\nEN\n";
+    const auto replaced = necwb::nec::replaceSourceLine(source, 2, "GW replacement");
+    expect(replaced && *replaced == "CM note\nGW replacement\nEN\n",
+        "source-line replacement preserves line structure and trailing newline");
+    const auto inserted = necwb::nec::insertSourceLine(source, 2, "GE 0");
+    expect(inserted && *inserted == "CM note\nGW 1 3 0 0 0 1 0 0 .001\nGE 0\nEN\n",
+        "source-line insertion uses a zero-based insertion boundary");
+    const auto removed = necwb::nec::removeSourceLine(source, 1);
+    expect(removed && *removed == "GW 1 3 0 0 0 1 0 0 .001\nEN\n",
+        "source-line deletion preserves remaining lines");
+    expect(!necwb::nec::replaceSourceLine(source, 0, "invalid")
+            && !necwb::nec::removeSourceLine(source, 99)
+            && !necwb::nec::insertSourceLine(source, 99, "invalid"),
+        "source-line editing rejects invalid positions");
 }
 
 void testKnownCardsAreRecognized()
@@ -964,7 +985,7 @@ void testOptimizationObjectives()
         {.frequencyMHz = 7.2, .impedance = {100.0, 0.0}},
     };
     const auto maximum = necwb::analysis::evaluateOptimizationObjective(feedpoints,
-        {.kind = necwb::analysis::OptimizationObjectiveKind::MaximumSwr,
+        {.kind = necwb::analysis::OptimizationObjectiveKind::WorstPointAcrossFrequencies,
             .referenceImpedance = 50.0});
     expect(maximum && maximum->feedpoint && maximum->feedpoint->frequencyMHz == 7.2
             && std::abs(maximum->score - 2.0) < 1.0e-12,
@@ -976,6 +997,51 @@ void testOptimizationObjectives()
     expect(selected && selected->feedpoint && selected->feedpoint->frequencyMHz == 7.1
             && selected->score < maximum->score,
         "selected-frequency objective scores the nearest calculated frequency");
+
+    const std::vector<necwb::analysis::FeedpointResult> weightedFeedpoint{
+        {.frequencyMHz = 14.2, .impedance = {75.0, 25.0}},
+    };
+    const auto weighted = necwb::analysis::evaluateOptimizationObjective(weightedFeedpoint,
+        {.kind = necwb::analysis::OptimizationObjectiveKind::SwrAtFrequency,
+            .referenceImpedance = 50.0,
+            .targetFrequencyMHz = 14.2,
+            .swrWeight = 0.0,
+            .resistanceWeight = 2.0,
+            .resistanceTargetOhms = 50.0,
+            .reactanceWeight = 1.0,
+            .reactanceTargetOhms = 0.0});
+    expect(weighted && std::abs(weighted->score - 0.5) < 1.0e-12
+            && weighted->swrComponent == 0.0
+            && std::abs(weighted->resistanceComponent - 1.0 / 3.0) < 1.0e-12
+            && std::abs(weighted->reactanceComponent - 1.0 / 6.0) < 1.0e-12,
+        "weighted impedance objective normalizes resistance and reactance errors");
+    const auto disabled = necwb::analysis::evaluateOptimizationObjective(weightedFeedpoint,
+        {.swrWeight = 0.0, .resistanceWeight = 0.0, .reactanceWeight = 0.0});
+    expect(!disabled, "optimization objective requires at least one positive weight");
+}
+
+void testAdaptiveSearch()
+{
+    necwb::analysis::AdaptiveSearch search({0.0, 10.0, 12, 0.1, 0.001});
+    const auto initial = search.initialCandidates();
+    expect(initial == std::vector<double>({0.0, 2.5, 5.0, 7.5, 10.0}),
+        "adaptive search begins with a bounded five-point sample");
+    for (const auto value : initial) search.record(value, std::pow(value - 5.0, 2.0));
+    const auto firstRefinement = search.nextCandidates();
+    expect(firstRefinement == std::vector<double>({3.75, 6.25}),
+        "adaptive search refines both neighbors of an interior best point");
+    for (const auto value : firstRefinement) search.record(value, std::pow(value - 5.0, 2.0));
+    const auto secondRefinement = search.nextCandidates();
+    for (const auto value : secondRefinement) search.record(value, std::pow(value - 5.0, 2.0));
+    expect(search.nextCandidates().empty()
+            && search.stopReason() == necwb::analysis::AdaptiveStopReason::ScoreTolerance,
+        "adaptive search reports score-tolerance convergence after repeated stagnant rounds");
+
+    necwb::analysis::AdaptiveSearch limited({0.0, 10.0, 5, 0.1, 0.001});
+    for (const auto value : limited.initialCandidates()) limited.record(value, value);
+    expect(limited.nextCandidates().empty()
+            && limited.stopReason() == necwb::analysis::AdaptiveStopReason::MaximumEvaluations,
+        "adaptive search obeys its solver-evaluation budget");
 }
 
 void testFrequencyPlans()
@@ -1105,6 +1171,7 @@ void testSegmentationConvergencePreparation()
 auto main() -> int
 {
     testRoundTripPreservesSource();
+    testSourceLineEditing();
     testKnownCardsAreRecognized();
     testSymbolResolution();
     testCardFieldEditingPreservesExpressions();
@@ -1130,6 +1197,7 @@ auto main() -> int
     testRadiationSweepSolverInput();
     testNecOutputParsing();
     testOptimizationObjectives();
+    testAdaptiveSearch();
     testFrequencyPlans();
     testAverageGainTestPreparation();
     testSegmentationConvergencePreparation();

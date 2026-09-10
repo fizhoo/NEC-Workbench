@@ -173,11 +173,10 @@ undoable source edit. Supported environments are explicit free space, perfect
 ground, finite ground using the reflection approximation, and finite ground using
 Sommerfeld/Norton, with custom material values or an average-ground preset.
 
-Analysis Solver stores the selected backend family and executable path separately
-from the NEC model deck. It currently supports configuration for NEC-2/nec2c,
-OpenNEC, NEC-4-compatible installations, and custom adapters. No solver is
-bundled. The first executable adapter targets `nec2c`; other choices remain
-visible but are reported as not runnable until their command adapters exist.
+Analysis Solver stores the executable path separately from the NEC model deck.
+The visible backend targets NEC-2/nec2c-compatible executables; no solver is
+bundled. Future backend choices will be exposed only after their command and
+output adapters are usable.
 When NEC-2 is selected with no saved path, the application discovers `nec2c`
 from `PATH`.
 
@@ -355,11 +354,19 @@ store as ordinary analysis. A reusable, non-widget `CandidateEvaluator` owns SY
 overrides, numeric deck generation, validation, artifact writing, solver process
 lifecycle, timeout/cancel handling, output parsing, and objective evaluation.
 Parameter Sweep now sequences candidate requests and renders returned results;
-future optimizer algorithms can use the same evaluator without duplicating
-solver logic. A Qt-free `FrequencyPlan` normalizes model sweeps, individual
+the one-variable adaptive optimizer uses the same path while a Qt-free
+`AdaptiveSearch` planner chooses bounded midpoint refinements around the current
+best candidate and owns evaluation-budget, parameter-tolerance, and score-tolerance
+stopping rules. Future optimizer algorithms can use the evaluator without
+duplicating solver logic. A Qt-free `FrequencyPlan` normalizes model sweeps, individual
 points, and one or more ranges into sorted, duplicate-free evaluation points.
-The initial objectives minimize either the maximum SWR across all
-returned feedpoint frequencies or the SWR nearest a selected frequency. Candidate input removes
+The impedance objective builder combines weighted SWR, resistance-target error,
+and reactance-target error. Ohmic errors are normalized by reference impedance
+and the combined score by total weight. Evaluation selects either the worst
+weighted point across returned frequencies or one explicitly selected frequency.
+The evaluator returns the total score and each normalized weighted contribution;
+the candidate plot consumes those same values so presentation cannot drift from
+ranking behavior. Candidate input removes
 `RP` requests and ensures an `XQ` request, avoiding unnecessary far-field
 calculations. Optimization can retain the model's `FR` sweep or replace it with
 an explicit, sorted frequency set generated from individual points, ranges, or
@@ -370,9 +377,9 @@ the workspace can show its full frequency-by-frequency SWR and impedance detail.
 Applying the best candidate delegates one numeric `SY` replacement back to
 `MainWindow` so the ordinary source command, validation, and Undo/Redo path remains
 the only model-mutation mechanism.
-An `optimization.json` artifact records the variable, value, objective,
-frequency mode and points, selected objective frequency, and reference impedance
-used for each generated numeric deck.
+An `optimization.json` artifact records the variable, value, evaluation mode,
+frequency mode and points, selected objective frequency, reference impedance,
+criterion weights, and impedance targets used for each generated numeric deck.
 
 Run metadata distinguishes ordinary analyses, AGT runs, convergence sessions
 and steps, and parameter-sweep sessions and candidates. The Results run browser

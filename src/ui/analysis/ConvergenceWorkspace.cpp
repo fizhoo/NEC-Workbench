@@ -21,7 +21,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
-#include <QProcess>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSpinBox>
@@ -95,6 +94,9 @@ auto peakGain(const analysis::AnalysisResult& result, double frequencyMHz) -> st
 
 ConvergenceWorkspace::ConvergenceWorkspace(QWidget* parent) : QWidget(parent)
 {
+    runner_ = new SolverProcessRunner(this);
+    connect(runner_, &SolverProcessRunner::finished,
+        this, [this](SolverProcessResult result) { finishCurrentStep(std::move(result)); });
     auto* layout = new QVBoxLayout(this);
     historicalBanner_ = new QFrame(this);
     historicalBanner_->setObjectName(QStringLiteral("convergenceHistoricalBanner"));
@@ -249,7 +251,7 @@ void ConvergenceWorkspace::setReturnToCurrentWorkCallback(std::function<void()> 
 
 auto ConvergenceWorkspace::isRunning() const noexcept -> bool
 {
-    return process_ != nullptr || stepIndex_ < steps_.size();
+    return runner_->isRunning() || stepIndex_ < steps_.size();
 }
 
 void ConvergenceWorkspace::updateReadiness()
@@ -340,16 +342,13 @@ void ConvergenceWorkspace::cancelStudy()
 {
     cancelRequested_ = true;
     cancelButton_->setEnabled(false);
-    if (process_ != nullptr) process_->terminate();
+    runner_->cancel();
 }
 
 void ConvergenceWorkspace::cancelAndWait()
 {
     cancelRequested_ = true;
-    if (process_ != nullptr) {
-        process_->kill();
-        process_->waitForFinished(2000);
-    }
+    runner_->cancelAndWait();
 }
 
 void ConvergenceWorkspace::cancel()
@@ -424,63 +423,29 @@ void ConvergenceWorkspace::startNextStep()
     step.record.status = QStringLiteral("Running");
     runStore_.save(step.record);
     setStepStatus(step.row, tr("Running"));
-    timedOut_ = false;
-    elapsed_.restart();
-    process_ = new QProcess(this);
-    auto* process = process_;
-    process->setWorkingDirectory(step.record.directory);
-    process->setProgram(QString::fromStdString(command.executable));
-    QStringList arguments;
-    for (const auto& argument : command.arguments) arguments.append(QString::fromStdString(argument));
-    process->setArguments(arguments);
-    process->setProcessChannelMode(QProcess::MergedChannels);
-    connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
-        if (process_ == process && error == QProcess::FailedToStart)
-            finishCurrentStep(false, process->errorString());
-    });
-    connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
-        [this, process](int exitCode, QProcess::ExitStatus status) {
-            if (process_ == process)
-                finishCurrentStep(status == QProcess::NormalExit && exitCode == 0);
-        });
-    timeout_ = new QTimer(this);
-    timeout_->setSingleShot(true);
-    connect(timeout_, &QTimer::timeout, this, [this, process] {
-        if (process_ == process) {
-            timedOut_ = true;
-            process->kill();
-        }
-    });
-    timeout_->start(timeoutSeconds_ * 1000);
-    process->start();
+    runner_->start(command, step.record.directory, timeoutSeconds_);
 }
 
-void ConvergenceWorkspace::finishCurrentStep(bool processSucceeded, const QString& detail)
+void ConvergenceWorkspace::finishCurrentStep(SolverProcessResult result)
 {
-    if (process_ == nullptr || stepIndex_ >= steps_.size()) return;
-    if (timeout_ != nullptr) {
-        timeout_->stop();
-        timeout_->deleteLater();
-        timeout_ = nullptr;
-    }
-    auto* process = process_;
-    const auto processLog = process->readAll();
-    process->deleteLater();
-    process_ = nullptr;
+    if (stepIndex_ >= steps_.size()) return;
     auto& step = steps_[stepIndex_];
-    writeFile(QDir(step.record.directory).filePath(QStringLiteral("run.log")), processLog);
-    step.record.durationSeconds = elapsed_.elapsed() / 1000.0;
+    writeFile(QDir(step.record.directory).filePath(QStringLiteral("run.log")), result.output);
+    step.record.durationSeconds = result.durationSeconds;
     QFile outputFile(QDir(step.record.directory).filePath(QStringLiteral("model.out")));
     const auto output = outputFile.open(QIODevice::ReadOnly) ? outputFile.readAll() : QByteArray{};
     step.record.outputBytes = output.size();
-    if (processSucceeded && !cancelRequested_ && !output.isEmpty()) {
+    if (result.status == SolverProcessStatus::Succeeded && !output.isEmpty()) {
         populateStepResult(step, output);
     } else {
-        const auto status = cancelRequested_ ? tr("Canceled") : timedOut_ ? tr("Timed out")
-            : detail.isEmpty() ? tr("Solver failed") : detail;
+        const auto status = result.status == SolverProcessStatus::Canceled ? tr("Canceled")
+            : result.status == SolverProcessStatus::TimedOut ? tr("Timed out")
+            : result.detail.isEmpty() ? tr("Solver failed") : result.detail;
         setStepStatus(step.row, status);
-        step.record.status = cancelRequested_ ? QStringLiteral("Canceled")
-            : timedOut_ ? QStringLiteral("Timed Out") : QStringLiteral("Failed");
+        step.record.status = result.status == SolverProcessStatus::Canceled
+            ? QStringLiteral("Canceled")
+            : result.status == SolverProcessStatus::TimedOut
+                ? QStringLiteral("Timed Out") : QStringLiteral("Failed");
     }
     runStore_.save(step.record);
     ++stepIndex_;

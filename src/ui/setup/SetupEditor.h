@@ -26,6 +26,8 @@ public:
     [[nodiscard]] auto environmentPage() const -> QWidget*;
     void setData(const model::AntennaModel& model, const model::ModelSetup& setup);
     void selectExcitation(std::size_t sourceLine);
+    [[nodiscard]] auto hasPendingEdits(const QWidget* page) const -> bool;
+    void discardPendingEdits(const QWidget* page);
 
 signals:
     void frequencyChanged(model::FrequencyDefinition frequency);
@@ -39,7 +41,11 @@ private:
     void loadSelectedExcitation();
     void updateFrequencyControls();
     void updateGroundControls();
+    void updateGroundPresetSelection();
     void updateExcitationActions();
+    void setFrequencyPending(bool pending);
+    void setGroundPending(bool pending);
+    void setExcitationPending(bool pending);
     [[nodiscard]] auto editedExcitation(std::size_t sourceLine) const -> model::Excitation;
 
     model::AntennaModel model_;
@@ -60,11 +66,13 @@ private:
     QLabel* frequencySummaryLabel_{};
     QLabel* frequencyValidationLabel_{};
     QPushButton* removeFrequencyButton_{};
+    QPushButton* applyFrequencyButton_{};
     QComboBox* groundTypeControl_{};
     QComboBox* groundPresetControl_{};
     QDoubleSpinBox* relativePermittivityControl_{};
     QDoubleSpinBox* conductivityControl_{};
     QCheckBox* connectGroundEndsControl_{};
+    QPushButton* applyGroundButton_{};
     QTableWidget* excitationTable_{};
     QComboBox* wireControl_{};
     QSpinBox* segmentControl_{};
@@ -73,6 +81,9 @@ private:
     QPushButton* addExcitationButton_{};
     QPushButton* updateExcitationButton_{};
     QPushButton* deleteExcitationButton_{};
+    bool frequencyPending_{};
+    bool groundPending_{};
+    bool excitationPending_{};
     bool updating_{};
 };
 

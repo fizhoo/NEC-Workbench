@@ -1,6 +1,7 @@
 #include "ui/setup/SetupEditor.h"
 
 #include "ui/DisplayFormat.h"
+#include "ui/PendingEditIndicator.h"
 
 #include <QAbstractItemView>
 #include <QComboBox>
@@ -25,6 +26,8 @@ namespace necwb::ui {
 namespace {
 
 constexpr auto SourceLineRole = Qt::UserRole;
+constexpr auto GroundPermittivityRole = Qt::UserRole + 1;
+constexpr auto GroundConductivityRole = Qt::UserRole + 2;
 
 auto createDecimalControl(QWidget* parent) -> QDoubleSpinBox*
 {
@@ -81,9 +84,10 @@ SetupEditor::SetupEditor(QWidget* parent)
     frequencyLayout->addRow(frequencySummaryTitleLabel_, frequencySummaryLabel_);
     frequencyLayout->addRow({}, frequencyValidationLabel_);
     auto* frequencyButtons = new QHBoxLayout;
-    auto* applyFrequencyButton = new QPushButton(tr("Apply Frequency"), frequencyGroup);
+    applyFrequencyButton_ = new QPushButton(tr("Apply Frequency"), frequencyGroup);
+    applyFrequencyButton_->setObjectName(QStringLiteral("applyFrequencyButton"));
     removeFrequencyButton_ = new QPushButton(tr("Remove FR Card"), frequencyGroup);
-    frequencyButtons->addWidget(applyFrequencyButton);
+    frequencyButtons->addWidget(applyFrequencyButton_);
     frequencyButtons->addWidget(removeFrequencyButton_);
     frequencyButtons->addStretch();
     frequencyLayout->addRow(frequencyButtons);
@@ -102,22 +106,51 @@ SetupEditor::SetupEditor(QWidget* parent)
     groundTypeControl_->addItem(tr("Real ground — Sommerfeld/Norton"),
         static_cast<int>(model::GroundType::SommerfeldNorton));
     groundPresetControl_ = new QComboBox(groundGroup);
-    groundPresetControl_->addItem(tr("Custom"), 0);
-    groundPresetControl_->addItem(tr("Average ground (εr 13, 0.005 S/m)"), 1);
+    groundPresetControl_->setObjectName(QStringLiteral("groundPresetControl"));
+    groundPresetControl_->addItem(tr("Custom"));
+    const auto addGroundPreset = [this](const QString& label, double relativePermittivity,
+                                     double conductivity, const QString& description) {
+        const auto index = groundPresetControl_->count();
+        groundPresetControl_->addItem(label);
+        groundPresetControl_->setItemData(index, relativePermittivity, GroundPermittivityRole);
+        groundPresetControl_->setItemData(index, conductivity, GroundConductivityRole);
+        groundPresetControl_->setItemData(index, description, Qt::ToolTipRole);
+    };
+    addGroundPreset(tr("Salt water (εr 81, 5 S/m)"), 81.0, 5.0,
+        tr("Salt water; an approximate starting value."));
+    addGroundPreset(tr("Fresh water (εr 80, 0.001 S/m)"), 80.0, 0.001,
+        tr("Fresh water; high permittivity but low conductivity."));
+    addGroundPreset(tr("Very good ground (εr 20, 0.0303 S/m)"), 20.0, 0.0303,
+        tr("Pastoral low hills with rich soil."));
+    addGroundPreset(tr("Good ground (εr 14, 0.01 S/m)"), 14.0, 0.01,
+        tr("Pastoral low hills with rich soil."));
+    addGroundPreset(tr("Average ground (εr 13, 0.005 S/m)"), 13.0, 0.005,
+        tr("Typical heavy-clay ground."));
+    addGroundPreset(tr("Poor rocky ground (εr 13, 0.002 S/m)"), 13.0, 0.002,
+        tr("Rocky or mountainous terrain."));
+    addGroundPreset(tr("Sandy / dry ground (εr 10, 0.002 S/m)"), 10.0, 0.002,
+        tr("Sandy, dry, flat, or coastal terrain."));
+    addGroundPreset(tr("Very poor urban ground (εr 5, 0.001 S/m)"), 5.0, 0.001,
+        tr("Cities and industrial areas."));
+    addGroundPreset(tr("Extremely poor urban ground (εr 3, 0.001 S/m)"), 3.0, 0.001,
+        tr("Dense industrial areas with tall buildings."));
     relativePermittivityControl_ = createDecimalControl(groundGroup);
+    relativePermittivityControl_->setObjectName(QStringLiteral("groundRelativePermittivity"));
     relativePermittivityControl_->setDecimals(DisplayDecimalPlaces);
     relativePermittivityControl_->setRange(0.000001, 1.0e9);
     conductivityControl_ = createDecimalControl(groundGroup);
+    conductivityControl_->setObjectName(QStringLiteral("groundConductivity"));
     conductivityControl_->setRange(0.0, 1.0e9);
     conductivityControl_->setSuffix(tr(" S/m"));
     connectGroundEndsControl_ = new QCheckBox(tr("Connect wire ends that terminate on Z = 0"), groundGroup);
-    auto* applyGroundButton = new QPushButton(tr("Apply Ground"), groundGroup);
+    applyGroundButton_ = new QPushButton(tr("Apply Ground"), groundGroup);
+    applyGroundButton_->setObjectName(QStringLiteral("applyGroundButton"));
     groundLayout->addRow(tr("Environment"), groundTypeControl_);
     groundLayout->addRow(tr("Material preset"), groundPresetControl_);
     groundLayout->addRow(tr("Relative permittivity"), relativePermittivityControl_);
     groundLayout->addRow(tr("Conductivity"), conductivityControl_);
     groundLayout->addRow({}, connectGroundEndsControl_);
-    groundLayout->addRow(applyGroundButton);
+    groundLayout->addRow(applyGroundButton_);
 
     sourcesPage_ = new QWidget(this);
     sourcesPage_->setObjectName(QStringLiteral("sourcesEditorPage"));
@@ -169,12 +202,19 @@ SetupEditor::SetupEditor(QWidget* parent)
     environmentPageLayout->addStretch();
     sourcesPageLayout->addWidget(excitationGroup, 1);
 
-    connect(frequencySweepControl_, &QCheckBox::toggled, this, [this] { updateFrequencyControls(); });
-    connect(frequencyModeControl_, &QComboBox::currentIndexChanged, this, [this] { updateFrequencyControls(); });
-    connect(startFrequencyControl_, &QDoubleSpinBox::valueChanged, this, [this] { updateFrequencyControls(); });
-    connect(endFrequencyControl_, &QDoubleSpinBox::valueChanged, this, [this] { updateFrequencyControls(); });
-    connect(frequencyStepControl_, &QDoubleSpinBox::valueChanged, this, [this] { updateFrequencyControls(); });
-    connect(applyFrequencyButton, &QPushButton::clicked, this, [this] {
+    connect(frequencySweepControl_, &QCheckBox::toggled, this, [this] {
+        updateFrequencyControls(); if (!updating_) setFrequencyPending(true);
+    });
+    connect(frequencyModeControl_, &QComboBox::currentIndexChanged, this, [this] {
+        updateFrequencyControls(); if (!updating_) setFrequencyPending(true);
+    });
+    const auto frequencyEdited = [this] {
+        updateFrequencyControls(); if (!updating_) setFrequencyPending(true);
+    };
+    connect(startFrequencyControl_, &QDoubleSpinBox::valueChanged, this, frequencyEdited);
+    connect(endFrequencyControl_, &QDoubleSpinBox::valueChanged, this, frequencyEdited);
+    connect(frequencyStepControl_, &QDoubleSpinBox::valueChanged, this, frequencyEdited);
+    connect(applyFrequencyButton_, &QPushButton::clicked, this, [this] {
         model::FrequencyDefinition frequency;
         frequency.steppingMode = frequencySweepControl_->isChecked()
             ? frequencyModeControl_->currentData().toInt() : 0;
@@ -196,6 +236,7 @@ SetupEditor::SetupEditor(QWidget* parent)
         }
         frequencyValidationLabel_->hide();
         frequency.sourceLine = setup_.frequency ? setup_.frequency->sourceLine : 0;
+        setFrequencyPending(false);
         emit frequencyChanged(frequency);
     });
     connect(removeFrequencyButton_, &QPushButton::clicked, this, [this] {
@@ -203,14 +244,24 @@ SetupEditor::SetupEditor(QWidget* parent)
             emit frequencyDeleteRequested(setup_.frequency->sourceLine);
         }
     });
-    connect(groundTypeControl_, &QComboBox::currentIndexChanged, this, [this] { updateGroundControls(); });
-    connect(groundPresetControl_, &QComboBox::currentIndexChanged, this, [this] {
-        if (groundPresetControl_->currentData().toInt() == 1) {
-            relativePermittivityControl_->setValue(13.0);
-            conductivityControl_->setValue(0.005);
-        }
+    connect(groundTypeControl_, &QComboBox::currentIndexChanged, this, [this] {
+        updateGroundControls(); if (!updating_) setGroundPending(true);
     });
-    connect(applyGroundButton, &QPushButton::clicked, this, [this] {
+    connect(groundPresetControl_, &QComboBox::currentIndexChanged, this, [this] {
+        const auto relativePermittivity = groundPresetControl_->currentData(GroundPermittivityRole);
+        const auto conductivity = groundPresetControl_->currentData(GroundConductivityRole);
+        if (!relativePermittivity.isValid() || !conductivity.isValid()) return;
+        relativePermittivityControl_->setValue(relativePermittivity.toDouble());
+        conductivityControl_->setValue(conductivity.toDouble());
+        if (!updating_) setGroundPending(true);
+    });
+    connect(relativePermittivityControl_, &QDoubleSpinBox::valueChanged,
+        this, [this] { updateGroundPresetSelection(); if (!updating_) setGroundPending(true); });
+    connect(conductivityControl_, &QDoubleSpinBox::valueChanged,
+        this, [this] { updateGroundPresetSelection(); if (!updating_) setGroundPending(true); });
+    connect(connectGroundEndsControl_, &QCheckBox::toggled, this,
+        [this] { if (!updating_) setGroundPending(true); });
+    connect(applyGroundButton_, &QPushButton::clicked, this, [this] {
         model::GroundDefinition ground;
         ground.type = static_cast<model::GroundType>(groundTypeControl_->currentData().toInt());
         ground.relativePermittivity = relativePermittivityControl_->value();
@@ -221,6 +272,7 @@ SetupEditor::SetupEditor(QWidget* parent)
             ground.sourceLine = setup_.ground->sourceLine;
             ground.geometryEndSourceLine = setup_.ground->geometryEndSourceLine;
         }
+        setGroundPending(false);
         emit groundChanged(ground);
     });
     connect(excitationTable_, &QTableWidget::itemSelectionChanged, this, [this] {
@@ -234,13 +286,22 @@ SetupEditor::SetupEditor(QWidget* parent)
     connect(wireControl_, &QComboBox::currentIndexChanged, this, [this] {
         const auto* wire = model_.wireByTag(wireControl_->currentData().toInt());
         segmentControl_->setMaximum(wire == nullptr ? 1 : wire->segments);
+        if (!updating_) setExcitationPending(true);
     });
+    connect(segmentControl_, &QSpinBox::valueChanged, this,
+        [this] { if (!updating_) setExcitationPending(true); });
+    connect(magnitudeControl_, &QDoubleSpinBox::valueChanged, this,
+        [this] { if (!updating_) setExcitationPending(true); });
+    connect(phaseControl_, &QDoubleSpinBox::valueChanged, this,
+        [this] { if (!updating_) setExcitationPending(true); });
     connect(addExcitationButton_, &QPushButton::clicked, this, [this] {
+        setExcitationPending(false);
         emit excitationChanged(editedExcitation(0));
     });
     connect(updateExcitationButton_, &QPushButton::clicked, this, [this] {
         const auto row = excitationTable_->currentRow();
         if (row >= 0) {
+            setExcitationPending(false);
             emit excitationChanged(editedExcitation(
                 excitationTable_->item(row, 0)->data(SourceLineRole).toULongLong()));
         }
@@ -260,9 +321,27 @@ SetupEditor::SetupEditor(QWidget* parent)
     relativePermittivityControl_->setValue(13.0);
     conductivityControl_->setValue(0.005);
     connectGroundEndsControl_->setChecked(true);
+    updateGroundPresetSelection();
     updateFrequencyControls();
     updateGroundControls();
     updateExcitationActions();
+    setFrequencyPending(false);
+    setGroundPending(false);
+    setExcitationPending(false);
+}
+
+auto SetupEditor::hasPendingEdits(const QWidget* page) const -> bool
+{
+    if (page == frequencyPage_) return frequencyPending_;
+    if (page == environmentPage_) return groundPending_;
+    if (page == sourcesPage_) return excitationPending_;
+    return false;
+}
+
+void SetupEditor::discardPendingEdits(const QWidget* page)
+{
+    if (!hasPendingEdits(page)) return;
+    setData(model_, setup_);
 }
 
 auto SetupEditor::frequencyPage() const -> QWidget*
@@ -325,10 +404,14 @@ void SetupEditor::setData(const model::AntennaModel& model, const model::ModelSe
         relativePermittivityControl_->setValue(setup_.ground->relativePermittivity);
         conductivityControl_->setValue(setup_.ground->conductivity);
         connectGroundEndsControl_->setChecked(setup_.ground->geometryGroundFlag == 1);
-        groundPresetControl_->setCurrentIndex(
-            std::abs(setup_.ground->relativePermittivity - 13.0) < 1.0e-9
-                    && std::abs(setup_.ground->conductivity - 0.005) < 1.0e-12
-                ? 1 : 0);
+        updateGroundPresetSelection();
+    } else {
+        groundTypeControl_->setCurrentIndex(groundTypeControl_->findData(
+            static_cast<int>(model::GroundType::FreeSpace)));
+        relativePermittivityControl_->setValue(13.0);
+        conductivityControl_->setValue(0.005);
+        connectGroundEndsControl_->setChecked(true);
+        updateGroundPresetSelection();
     }
 
     excitationTable_->setRowCount(static_cast<int>(setup_.excitations.size()));
@@ -345,6 +428,9 @@ void SetupEditor::setData(const model::AntennaModel& model, const model::ModelSe
         ++row;
     }
     updating_ = false;
+    setFrequencyPending(false);
+    setGroundPending(false);
+    setExcitationPending(false);
     addExcitationButton_->setEnabled(!model_.empty());
     updateFrequencyControls();
     updateGroundControls();
@@ -420,11 +506,50 @@ void SetupEditor::updateGroundControls()
     connectGroundEndsControl_->setEnabled(hasGround);
 }
 
+void SetupEditor::updateGroundPresetSelection()
+{
+    auto matchingIndex = 0;
+    for (auto index = 1; index < groundPresetControl_->count(); ++index) {
+        const auto relativePermittivity = groundPresetControl_->itemData(
+            index, GroundPermittivityRole).toDouble();
+        const auto conductivity = groundPresetControl_->itemData(
+            index, GroundConductivityRole).toDouble();
+        if (std::abs(relativePermittivityControl_->value() - relativePermittivity) < 1.0e-9
+            && std::abs(conductivityControl_->value() - conductivity) < 1.0e-12) {
+            matchingIndex = index;
+            break;
+        }
+    }
+    const QSignalBlocker blocker(groundPresetControl_);
+    groundPresetControl_->setCurrentIndex(matchingIndex);
+}
+
 void SetupEditor::updateExcitationActions()
 {
     const bool selected = excitationTable_->currentRow() >= 0;
     updateExcitationButton_->setEnabled(selected);
     deleteExcitationButton_->setEnabled(selected);
+    setPendingEditIndicator(selected ? updateExcitationButton_ : addExcitationButton_,
+        excitationPending_);
+    setPendingEditIndicator(selected ? addExcitationButton_ : updateExcitationButton_, false);
+}
+
+void SetupEditor::setFrequencyPending(bool pending)
+{
+    frequencyPending_ = pending;
+    setPendingEditIndicator(applyFrequencyButton_, pending);
+}
+
+void SetupEditor::setGroundPending(bool pending)
+{
+    groundPending_ = pending;
+    setPendingEditIndicator(applyGroundButton_, pending);
+}
+
+void SetupEditor::setExcitationPending(bool pending)
+{
+    excitationPending_ = pending;
+    updateExcitationActions();
 }
 
 auto SetupEditor::editedExcitation(std::size_t sourceLine) const -> model::Excitation

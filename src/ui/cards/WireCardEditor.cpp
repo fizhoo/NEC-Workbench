@@ -130,6 +130,13 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
         for (auto column = 0; column <= Radius; ++column) {
             auto* item = new QTableWidgetItem(values[column]);
             item->setData(WireTagRole, wire.tag);
+            const auto symbolicLine = symbolicGeometryFields_.find(wire.sourceLine);
+            if (symbolicLine != symbolicGeometryFields_.end()
+                && symbolicLine->second.contains(column)) {
+                item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+                item->setToolTip(tr(
+                    "This value is controlled by an SY expression. Edit the parameter or raw source."));
+            }
             table_->setItem(row, column, item);
         }
         auto* gaugeControl = new QComboBox(table_);
@@ -139,10 +146,12 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
             gaugeControl->addItem(QString::fromStdString(model::awgLabel(gauge)), gauge);
         if (const auto gauge = model::matchingAwg(wire.radius); gauge && *gauge >= 10 && *gauge <= 30)
             gaugeControl->setCurrentIndex(gaugeControl->findData(*gauge));
-        if (symbolicGeometryLines_.contains(wire.sourceLine)) {
+        const auto symbolicLine = symbolicGeometryFields_.find(wire.sourceLine);
+        if (symbolicLine != symbolicGeometryFields_.end()
+            && symbolicLine->second.contains(Radius)) {
             gaugeControl->setEnabled(false);
             gaugeControl->setToolTip(tr(
-                "This GW line contains symbolic geometry. Edit its SY expression or raw source."));
+                "This radius is controlled by an SY expression. Edit the parameter or raw source."));
         } else {
             gaugeControl->setToolTip(tr(
                 "Selecting AWG updates the NEC wire radius; manual radius values remain Custom."));
@@ -161,10 +170,10 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
     updateActionStates();
 }
 
-void WireCardEditor::setSymbolicGeometryLines(
-    std::unordered_set<std::size_t> sourceLines)
+void WireCardEditor::setSymbolicGeometryFields(
+    std::unordered_map<std::size_t, std::unordered_set<int>> sourceFields)
 {
-    symbolicGeometryLines_ = std::move(sourceLines);
+    symbolicGeometryFields_ = std::move(sourceFields);
 }
 
 void WireCardEditor::setLengthUnit(model::LengthUnit unit)

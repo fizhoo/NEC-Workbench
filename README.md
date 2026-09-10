@@ -36,7 +36,8 @@ The current foundation provides:
 - Persistent selectable run history that reloads historical raw output, tables, and plots
 - Persistent open-model indicator plus model filenames, timestamps, and backends across history and results
 - Structured feedpoint results with frequency, complex impedance, phase, power, and 50-ohm SWR tables
-- Interactive resistance/reactance and 50-ohm SWR sweep plots with automatic scaling and hover values
+- Engineering-style sweep plots with logarithmic SWR, logarithmic resistance, independent linear reactance, and raw-value hover readouts
+- Exhaustive parameter sweeps and bounded adaptive optimization with weighted objectives, candidate plots, and undoable Apply Best
 - Parsed per-segment currents with selectable-frequency distribution plots and tables
 - Fully labeled, hover-tracked 2D gain cuts and layered 3D antenna, segment-current, and radiation results
 - Previewable wavelength-based automatic segmentation with undo and safe EX source remapping

@@ -7,13 +7,13 @@
 #include "nec/DeckGeometryUnits.h"
 #include "ui/geometry/GeometrySettings.h"
 #include "ui/analysis/AnalysisRunStore.h"
+#include "ui/analysis/SolverProcessRunner.h"
 #include "analysis/AnalysisResult.h"
 #include "analysis/AverageGainTest.h"
 #include "analysis/SolverCommand.h"
 
 #include <QMainWindow>
 #include <QElapsedTimer>
-#include <QProcess>
 #include <QString>
 #include <QStringList>
 
@@ -84,8 +84,20 @@ private:
         AverageGainTest
     };
 
+    enum class EditorDestination {
+        Geometry,
+        RawSource,
+        Frequency,
+        Parameters,
+        Sources,
+        Loads,
+        Environment
+    };
+
     void createActions();
     void createWorkspace();
+    void createResultsWorkspace();
+    void createOptimizationWorkspace();
     void createDocks();
     void createMenusAndToolbar();
     void resetWorkspaceLayout();
@@ -94,13 +106,15 @@ private:
     void showGettingStarted();
     void openUserGuide();
     void showAboutDialog();
-    void showModule(int index);
+    auto showModule(int index) -> bool;
+    [[nodiscard]] auto confirmCurrentEditorNavigation() -> bool;
+    [[nodiscard]] auto confirmPendingEdits(QWidget* page) -> bool;
     void toggleResultsDetached();
     void detachResults();
     void attachResults();
     void showDetachedResults();
     void presentCompletedAnalysisResults();
-    void showModelTab(int index);
+    void showEditor(EditorDestination destination, int geometryTab = 0);
     void setDisplayLengthUnit(model::LengthUnit unit);
     void changeDeckLengthUnit(model::LengthUnit unit);
     void updateDeckUnitControls(const nec::DeckGeometryUnitInfo& info);
@@ -181,8 +195,7 @@ private:
     void appendSolverOutput(const QString& text);
     void updateSolverActivity();
     void completeSolverActivity(const QString& status);
-    void finishAnalysis(int exitCode, QProcess::ExitStatus exitStatus);
-    void failAnalysis(const QString& message);
+    void finishAnalysis(SolverProcessResult result);
     void setCurrentRunStatus(const QString& status);
     void loadRunHistory();
     void addRunRecord(const AnalysisRunRecord& record, bool prepend);
@@ -208,8 +221,8 @@ private:
     void findInRawOutput();
     void clearDisplayedResults();
     void pushGeometrySourceEdit(const QString& description, QString updatedSource);
-    void applyGeometrySource(const QString& source, int targetTabIndex,
-        int targetAnalysisTabIndex);
+    void applyGeometrySource(const QString& source, EditorDestination destination,
+        int geometryTab, int analysisTab);
     [[nodiscard]] auto nextWireTag() const -> int;
     void replaceWireSourceLine(const model::Wire& wire);
     [[nodiscard]] auto wireHasSymbolicGeometry(std::size_t sourceLine) const -> bool;
@@ -248,7 +261,7 @@ private:
     QAction* homeModuleAction_{};
     QAction* modelModuleAction_{};
     QAction* analysisModuleAction_{};
-    QAction* visualizeModuleAction_{};
+    QAction* resultsModuleAction_{};
     QAction* optimizeModuleAction_{};
     QAction* detachResultsAction_{};
     QAction* resetLayoutAction_{};
@@ -300,8 +313,12 @@ private:
     OptimizationWorkspace* optimizationWorkspace_{};
     ParameterEditor* parameterEditor_{};
     QTabWidget* analysisWorkspace_{};
+    int previousModelWorkspaceIndex_{-1};
+    int previousAnalysisWorkspaceIndex_{-1};
+    bool restoringWorkspaceTab_{};
     QTabWidget* validationWorkspace_{};
     QTableWidget* analysisRuns_{};
+    QWidget* runsPage_{};
     QPlainTextEdit* analysisOutput_{};
     QPushButton* cancelRunButton_{};
     QPushButton* openRunFolderButton_{};
@@ -341,8 +358,7 @@ private:
     QString solverBackendId_{QStringLiteral("nec2")};
     QString solverExecutablePath_;
     int solverTimeoutSeconds_{120};
-    QProcess* solverProcess_{};
-    QTimer* solverTimeout_{};
+    SolverProcessRunner* solverRunner_{};
     QTimer* solverActivityTimer_{};
     QElapsedTimer solverElapsed_;
     QString solverActivityName_;
@@ -359,12 +375,8 @@ private:
         analysis::AverageGainEnvironment::FreeSpace};
     double currentAverageGainFrequencyMHz_{};
     int currentRunRow_{-1};
-    bool currentRunCanceled_{};
-    bool currentRunTimedOut_{};
-    int sourceTabIndex_{};
     int geometryTabIndex_{};
     int structuredSourceTabIndex_{1};
-    int setupTabIndex_{};
     int loadNetworkTabIndex_{};
     int homeModuleIndex_{};
     int modelModuleIndex_{};
@@ -381,7 +393,7 @@ private:
     int averageGainValidationTabIndex_{};
     int convergenceValidationTabIndex_{};
     int analysisOutputTabIndex_{};
-    int visualizeModuleIndex_{};
+    int resultsModuleIndex_{};
     int optimizeModuleIndex_{};
     int lastNonResultsModuleIndex_{-1};
     int historicalReturnModuleIndex_{-1};
