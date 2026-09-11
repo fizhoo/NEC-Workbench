@@ -14,6 +14,30 @@ Ideas recorded here are discussion items, not implementation commitments. Status
 
 **Direction:** Build this in layers: first a read-only Smith chart for NEC frequency results, then interactive markers and reference-impedance controls, followed by standalone transmission-line calculations. This avoids tying the initial chart implementation to a large calculator subsystem.
 
+## 3D Visualization
+
+### Radiation Color Contours and Shading
+
+- **Status:** Parking Lot
+- Add gain-based color contours or smooth color shading to 3D radiation patterns.
+- Provide a visible dBi color scale so color has an unambiguous numerical meaning.
+- Consider selectable absolute-gain and normalized-to-peak coloring.
+- Preserve antenna geometry visibility and readable surface shape when coloring is enabled.
+
+**Direction:** Start with a simple continuous color gradient mapped to gain and a legend. Add optional contour bands only if they improve interpretation; avoid adding multiple overlapping display modes initially.
+
+### Input-Power Normalization
+
+- **Status:** Parking Lot / Likely Near-Term
+- Allow results produced with a conventional `EX` voltage source, often `1 + j0` V, to be displayed at a user-selected accepted input power such as 100 W.
+- Scale current, source voltage, and field amplitudes by `sqrt(requested_power / solved_input_power)`; impedance, SWR, gain, and pattern shape remain unchanged in a linear model.
+- Offer **As Solved** and **Normalize to Input Power** display modes without silently rewriting the authored `EX` card.
+- Clearly label whether displayed amplitudes are NEC peak phasors or RMS values; 4nec2 presents voltage and current as RMS values.
+- Show normalized segment currents in amperes and source voltage/current where available.
+- Do not initially claim a general voltage distribution along every antenna wire: standard NEC output directly provides segment currents and driving-point voltage/current, but not a simple circuit-like voltage value at every wire segment.
+
+**Direction:** Implement normalization as a results-display transformation using the solver's reported accepted input power. Keep the original solver values available for reproducibility and apply the same scale consistently to currents and field strengths.
+
 ## Optimization
 
 ### Candidate Result Exploration

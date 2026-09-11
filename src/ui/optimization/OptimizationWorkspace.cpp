@@ -29,6 +29,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QListView>
+#include <QListWidget>
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
@@ -42,8 +44,10 @@
 #include <QScrollBar>
 #include <QTableWidget>
 #include <QTabWidget>
+#include <QTabBar>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <cmath>
@@ -64,6 +68,36 @@ enum ResultColumn {
     StatusColumn,
     RunColumn,
     ResultColumnCount
+};
+
+class FocusWheelSpinBox final : public QSpinBox {
+public:
+    using QSpinBox::QSpinBox;
+
+protected:
+    void wheelEvent(QWheelEvent* event) override
+    {
+        if (!hasFocus()) {
+            event->ignore();
+            return;
+        }
+        QSpinBox::wheelEvent(event);
+    }
+};
+
+class FocusWheelDoubleSpinBox final : public QDoubleSpinBox {
+public:
+    using QDoubleSpinBox::QDoubleSpinBox;
+
+protected:
+    void wheelEvent(QWheelEvent* event) override
+    {
+        if (!hasFocus()) {
+            event->ignore();
+            return;
+        }
+        QDoubleSpinBox::wheelEvent(event);
+    }
 };
 
 auto numericItem(double value) -> QTableWidgetItem*
@@ -120,10 +154,8 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     headingFont.setPointSize(headingFont.pointSize() + 3);
     headingFont.setBold(true);
     heading->setFont(headingFont);
-    auto* description = new QLabel(tr(
-        "Choose a bounded SY variable, frequency plan, and weighted objective. Use Parameter Sweep "
-        "for an exhaustive grid or Adaptive Optimize for a focused coarse-to-fine search."), this);
-    description->setWordWrap(true);
+    heading->setToolTip(tr(
+        "Choose a bounded SY variable, frequency plan, and weighted objective."));
 
     variablesTable_ = new QTableWidget(this);
     variablesTable_->setObjectName(QStringLiteral("optimizationVariablesTable"));
@@ -134,10 +166,15 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     variablesTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     variablesTable_->setSelectionMode(QAbstractItemView::SingleSelection);
     variablesTable_->verticalHeader()->hide();
-    variablesTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    variablesTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    variablesTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    variablesTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    variablesTable_->setTextElideMode(Qt::ElideRight);
+    variablesTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+    variablesTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
+    variablesTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
+    variablesTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Fixed);
+    variablesTable_->horizontalHeader()->resizeSection(0, 80);
+    variablesTable_->horizontalHeader()->resizeSection(1, 130);
+    variablesTable_->horizontalHeader()->resizeSection(2, 95);
+    variablesTable_->horizontalHeader()->resizeSection(3, 45);
 
     variableControl_ = new QComboBox(this);
     variableControl_->setObjectName(QStringLiteral("optimizationVariableControl"));
@@ -153,7 +190,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     objectiveControl_->setItemData(1, tr(
         "Calculates and scores each candidate at only the selected frequency, ignoring the model FR sweep."),
         Qt::ToolTipRole);
-    targetFrequencyControl_ = new QDoubleSpinBox(this);
+    targetFrequencyControl_ = new FocusWheelDoubleSpinBox(this);
     targetFrequencyControl_->setObjectName(QStringLiteral("optimizationTargetFrequency"));
     targetFrequencyControl_->setRange(0.000001, 1.0e9);
     targetFrequencyControl_->setDecimals(DisplayDecimalPlaces);
@@ -167,16 +204,22 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         static_cast<int>(FrequencyMode::Explicit));
     frequencyModeControl_->addItem(tr("Custom Continuous Sweep"),
         static_cast<int>(FrequencyMode::Continuous));
-    minimumControl_ = new QDoubleSpinBox(this);
-    maximumControl_ = new QDoubleSpinBox(this);
-    pointsControl_ = new QSpinBox(this);
-    referenceImpedanceControl_ = new QDoubleSpinBox(this);
+    minimumControl_ = new FocusWheelDoubleSpinBox(this);
+    maximumControl_ = new FocusWheelDoubleSpinBox(this);
+    minimumControl_->setObjectName(QStringLiteral("optimizationMinimum"));
+    maximumControl_->setObjectName(QStringLiteral("optimizationMaximum"));
+    pointsControl_ = new FocusWheelSpinBox(this);
+    referenceImpedanceControl_ = new FocusWheelDoubleSpinBox(this);
     for (auto* control : {minimumControl_, maximumControl_}) {
         control->setRange(-1.0e12, 1.0e12);
         control->setDecimals(DisplayDecimalPlaces);
     }
     pointsControl_->setRange(2, 101);
+    pointsControl_->setObjectName(QStringLiteral("optimizationCandidateCount"));
     pointsControl_->setValue(7);
+    pointsControl_->setToolTip(tr(
+        "Number of evenly spaced parameter values tested from Minimum through Maximum, "
+        "including both endpoints. Each candidate value is evaluated at every selected frequency."));
     referenceImpedanceControl_->setRange(1.0, 10000.0);
     referenceImpedanceControl_->setDecimals(DisplayDecimalPlaces);
     referenceImpedanceControl_->setValue(50.0);
@@ -204,7 +247,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     criterionItem(2, tr("Reactance (Ω)"),
         tr("Minimize distance from the reactance target."));
     const auto weightControl = [this](const QString& name, double value) {
-        auto* control = new QDoubleSpinBox(objectiveCriteriaTable_);
+        auto* control = new FocusWheelDoubleSpinBox(objectiveCriteriaTable_);
         control->setObjectName(name);
         control->setRange(0.0, 100.0);
         control->setDecimals(DisplayDecimalPlaces);
@@ -217,9 +260,9 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         QStringLiteral("optimizationResistanceWeight"), 0.0);
     reactanceWeightControl_ = weightControl(
         QStringLiteral("optimizationReactanceWeight"), 0.0);
-    resistanceTargetControl_ = new QDoubleSpinBox(objectiveCriteriaTable_);
+    resistanceTargetControl_ = new FocusWheelDoubleSpinBox(objectiveCriteriaTable_);
     resistanceTargetControl_->setObjectName(QStringLiteral("optimizationResistanceTarget"));
-    reactanceTargetControl_ = new QDoubleSpinBox(objectiveCriteriaTable_);
+    reactanceTargetControl_ = new FocusWheelDoubleSpinBox(objectiveCriteriaTable_);
     reactanceTargetControl_->setObjectName(QStringLiteral("optimizationReactanceTarget"));
     for (auto* control : {resistanceTargetControl_, reactanceTargetControl_}) {
         control->setRange(-1.0e9, 1.0e9);
@@ -242,68 +285,20 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     for (auto row = 0; row < objectiveCriteriaTable_->rowCount(); ++row)
         criteriaHeight += objectiveCriteriaTable_->rowHeight(row);
     objectiveCriteriaTable_->setFixedHeight(criteriaHeight);
-    auto* sweepSettingsTable = new QTableWidget(4, 4, this);
-    sweepSettingsTable->setObjectName(QStringLiteral("optimizationSweepSettingsTable"));
-    sweepSettingsTable->setHorizontalHeaderLabels(
-        {tr("Setting"), tr("Value"), tr("Setting"), tr("Value")});
-    sweepSettingsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    sweepSettingsTable->setSelectionMode(QAbstractItemView::NoSelection);
-    sweepSettingsTable->verticalHeader()->hide();
-    sweepSettingsTable->horizontalHeader()->setSectionResizeMode(
-        0, QHeaderView::ResizeToContents);
-    sweepSettingsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    sweepSettingsTable->horizontalHeader()->setSectionResizeMode(
-        2, QHeaderView::ResizeToContents);
-    sweepSettingsTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
-    const auto addSetting = [sweepSettingsTable](int row, int column,
-                                const QString& label, QWidget* editor) {
-        auto* labelItem = new QTableWidgetItem(label);
-        labelItem->setFlags(Qt::ItemIsEnabled);
-        sweepSettingsTable->setItem(row, column, labelItem);
-        sweepSettingsTable->setCellWidget(row, column + 1, editor);
-    };
-    addSetting(0, 0, tr("Variable"), variableControl_);
-    addSetting(1, 0, tr("Evaluation"), objectiveControl_);
-    addSetting(2, 0, tr("Frequency source"), frequencyModeControl_);
-    addSetting(3, 0, tr("Selected frequency"), targetFrequencyControl_);
-    addSetting(0, 2, tr("Minimum"), minimumControl_);
-    addSetting(1, 2, tr("Maximum"), maximumControl_);
-    addSetting(2, 2, tr("Sweep points"), pointsControl_);
-    addSetting(3, 2, tr("Reference impedance"), referenceImpedanceControl_);
-    sweepSettingsTable->resizeRowsToContents();
-    auto settingsHeight = sweepSettingsTable->horizontalHeader()->sizeHint().height()
-        + 2 * sweepSettingsTable->frameWidth();
-    for (auto row = 0; row < sweepSettingsTable->rowCount(); ++row) {
-        settingsHeight += sweepSettingsTable->rowHeight(row);
-    }
-    sweepSettingsTable->setMinimumHeight(settingsHeight);
-    sweepSettingsTable->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-
-    searchMethodTabs_ = new QTabWidget(this);
+    searchMethodTabs_ = new QTabBar(this);
     searchMethodTabs_->setObjectName(QStringLiteral("optimizationSearchMethodTabs"));
-    searchMethodTabs_->setDocumentMode(true);
-    auto* parameterSweepPage = new QWidget(searchMethodTabs_);
-    auto* parameterSweepLayout = new QVBoxLayout(parameterSweepPage);
-    parameterSweepLayout->setContentsMargins(8, 8, 8, 8);
-    auto* parameterSweepDescription = new QLabel(tr(
-        "Exhaustively evaluates every evenly spaced candidate between Minimum and Maximum."
-        " Sweep points controls the candidate count."), parameterSweepPage);
-    parameterSweepDescription->setWordWrap(true);
-    parameterSweepLayout->addWidget(parameterSweepDescription);
-    parameterSweepLayout->addStretch();
-    searchMethodTabs_->addTab(parameterSweepPage, tr("Parameter Sweep"));
+    searchMethodTabs_->setExpanding(true);
+    searchMethodTabs_->addTab(tr("Parameter Sweep"));
+    searchMethodTabs_->addTab(tr("Adaptive Optimize"));
 
-    auto* adaptivePage = new QWidget(searchMethodTabs_);
-    auto* adaptiveLayout = new QFormLayout(adaptivePage);
-    adaptiveLayout->setContentsMargins(8, 8, 8, 8);
-    adaptiveMaximumEvaluationsControl_ = new QSpinBox(adaptivePage);
+    adaptiveMaximumEvaluationsControl_ = new FocusWheelSpinBox(this);
     adaptiveMaximumEvaluationsControl_->setObjectName(
         QStringLiteral("optimizationAdaptiveMaximumEvaluations"));
     adaptiveMaximumEvaluationsControl_->setRange(5, 101);
     adaptiveMaximumEvaluationsControl_->setValue(21);
     adaptiveMaximumEvaluationsControl_->setToolTip(tr(
         "Maximum solver candidates, including the initial five-point search."));
-    adaptiveParameterToleranceControl_ = new QDoubleSpinBox(adaptivePage);
+    adaptiveParameterToleranceControl_ = new FocusWheelDoubleSpinBox(this);
     adaptiveParameterToleranceControl_->setObjectName(
         QStringLiteral("optimizationAdaptiveParameterTolerance"));
     adaptiveParameterToleranceControl_->setRange(0.001, 1.0e12);
@@ -311,7 +306,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     adaptiveParameterToleranceControl_->setValue(0.010);
     adaptiveParameterToleranceControl_->setToolTip(tr(
         "Stop when no new candidate can be placed this far from the current best value."));
-    adaptiveScoreToleranceControl_ = new QDoubleSpinBox(adaptivePage);
+    adaptiveScoreToleranceControl_ = new FocusWheelDoubleSpinBox(this);
     adaptiveScoreToleranceControl_->setObjectName(
         QStringLiteral("optimizationAdaptiveScoreTolerance"));
     adaptiveScoreToleranceControl_->setRange(0.0, 1.0e9);
@@ -319,33 +314,24 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     adaptiveScoreToleranceControl_->setValue(0.001);
     adaptiveScoreToleranceControl_->setToolTip(tr(
         "Stop after two refinement rounds improve the best objective by no more than this amount."));
-    adaptiveLayout->addRow(tr("Maximum evaluations"), adaptiveMaximumEvaluationsControl_);
-    adaptiveLayout->addRow(tr("Parameter tolerance"), adaptiveParameterToleranceControl_);
-    adaptiveLayout->addRow(tr("Score tolerance"), adaptiveScoreToleranceControl_);
-    auto* adaptiveDescription = new QLabel(tr(
-        "Starts with five candidates, then repeatedly evaluates midpoints around the best result."
-        " This is a transparent derivative-free bounded search."), adaptivePage);
-    adaptiveDescription->setWordWrap(true);
-    adaptiveLayout->addRow(adaptiveDescription);
-    searchMethodTabs_->addTab(adaptivePage, tr("Adaptive Optimize"));
-
     explicitFrequencyPanel_ = new QWidget(this);
     explicitFrequencyPanel_->setObjectName(QStringLiteral("optimizationExplicitFrequencyPanel"));
-    auto* frequencyLayout = new QHBoxLayout(explicitFrequencyPanel_);
+    auto* frequencyLayout = new QVBoxLayout(explicitFrequencyPanel_);
     frequencyLayout->setContentsMargins(0, 0, 0, 0);
-    frequencyTable_ = new QTableWidget(explicitFrequencyPanel_);
+    frequencyTable_ = new QListWidget(explicitFrequencyPanel_);
     frequencyTable_->setObjectName(QStringLiteral("optimizationFrequencyTable"));
-    frequencyTable_->setColumnCount(1);
-    frequencyTable_->setHorizontalHeaderLabels({tr("Frequency (MHz)")});
-    frequencyTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     frequencyTable_->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    frequencyTable_->verticalHeader()->hide();
-    frequencyTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    frequencyTable_->setViewMode(QListView::IconMode);
+    frequencyTable_->setFlow(QListView::LeftToRight);
+    frequencyTable_->setWrapping(true);
+    frequencyTable_->setResizeMode(QListView::Adjust);
+    frequencyTable_->setMovement(QListView::Static);
+    frequencyTable_->setUniformItemSizes(true);
+    frequencyTable_->setGridSize(QSize(92, 28));
+    frequencyTable_->setSpacing(2);
     frequencyTable_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     frequencyTable_->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    auto* frequencyActions = new QGridLayout;
-    frequencyActions->setContentsMargins(0, 0, 0, 0);
-    frequencyEntryControl_ = new QDoubleSpinBox(explicitFrequencyPanel_);
+    frequencyEntryControl_ = new FocusWheelDoubleSpinBox(explicitFrequencyPanel_);
     frequencyEntryControl_->setObjectName(QStringLiteral("optimizationFrequencyEntry"));
     frequencyEntryControl_->setRange(0.000001, 1.0e9);
     frequencyEntryControl_->setDecimals(DisplayDecimalPlaces);
@@ -363,31 +349,37 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     addAmateurBandButton_->setObjectName(QStringLiteral("optimizationAddAmateurBand"));
     addAmateurBandButton_->setToolTip(tr(
         "Choose one or more common amateur-band engineering ranges."));
+    auto* frequencyActions = new QGridLayout;
+    frequencyActions->setContentsMargins(0, 0, 0, 0);
+    frequencyActions->addWidget(frequencyEntryControl_, 0, 0);
+    frequencyActions->addWidget(addFrequencyButton_, 0, 1);
+    frequencyActions->addWidget(addAmateurBandButton_, 0, 2);
     auto* listActions = new QHBoxLayout;
     listActions->setContentsMargins(0, 0, 0, 0);
+    listActions->addStretch();
     listActions->addWidget(pasteFrequencyButton_);
     listActions->addWidget(removeFrequencyButton_);
     listActions->addWidget(clearFrequencyButton_);
-    frequencyActions->addWidget(frequencyEntryControl_, 0, 0);
-    frequencyActions->addWidget(addFrequencyButton_, 0, 1);
-    frequencyActions->addLayout(listActions, 1, 0, 1, 2);
-    frequencyActions->addWidget(addAmateurBandButton_, 2, 0, 1, 2);
+    frequencyActions->addLayout(listActions, 1, 0, 1, 3);
     frequencyActions->setColumnStretch(0, 1);
-    frequencyLayout->addWidget(frequencyTable_, 1);
+    auto* frequencyHeading = new QLabel(tr("Selected frequencies (MHz)"),
+        explicitFrequencyPanel_);
     frequencyLayout->addLayout(frequencyActions);
+    frequencyLayout->addWidget(frequencyHeading);
+    frequencyLayout->addWidget(frequencyTable_, 1);
 
     continuousFrequencyPanel_ = new QWidget(this);
     continuousFrequencyPanel_->setObjectName(
         QStringLiteral("optimizationContinuousFrequencyPanel"));
     auto* continuousLayout = new QGridLayout(continuousFrequencyPanel_);
     continuousLayout->setContentsMargins(0, 0, 0, 0);
-    continuousStartControl_ = new QDoubleSpinBox(continuousFrequencyPanel_);
+    continuousStartControl_ = new FocusWheelDoubleSpinBox(continuousFrequencyPanel_);
     continuousStartControl_->setObjectName(
         QStringLiteral("optimizationContinuousStart"));
-    continuousStopControl_ = new QDoubleSpinBox(continuousFrequencyPanel_);
+    continuousStopControl_ = new FocusWheelDoubleSpinBox(continuousFrequencyPanel_);
     continuousStopControl_->setObjectName(
         QStringLiteral("optimizationContinuousStop"));
-    continuousStepControl_ = new QDoubleSpinBox(continuousFrequencyPanel_);
+    continuousStepControl_ = new FocusWheelDoubleSpinBox(continuousFrequencyPanel_);
     continuousStepControl_->setObjectName(
         QStringLiteral("optimizationContinuousStep"));
     for (auto* control : {continuousStartControl_, continuousStopControl_,
@@ -410,51 +402,144 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     workloadLabel_ = new QLabel(this);
     workloadLabel_->setObjectName(QStringLiteral("optimizationWorkload"));
 
-    auto* variablesPanel = new QWidget(this);
-    variablesPanel->setObjectName(QStringLiteral("optimizationVariablesPanel"));
-    auto* variablesLayout = new QVBoxLayout(variablesPanel);
-    variablesLayout->setContentsMargins(0, 0, 0, 0);
-    auto* variablesHeading = new QLabel(tr("Symbols & Expressions"), variablesPanel);
-    variablesHeading->setObjectName(QStringLiteral("optimizationVariablesHeading"));
-    auto variablesHeadingFont = variablesHeading->font();
-    variablesHeadingFont.setBold(true);
-    variablesHeading->setFont(variablesHeadingFont);
-    variablesLayout->addWidget(variablesHeading);
-    variablesLayout->addWidget(variablesTable_, 1);
-    variablesLayout->addWidget(new QLabel(tr("Weighted Objectives"), variablesPanel));
-    variablesLayout->addWidget(objectiveCriteriaTable_);
+    auto* parameterPage = new QWidget(this);
+    parameterPage->setObjectName(QStringLiteral("optimizationParameterPage"));
+    auto* parameterLayout = new QHBoxLayout(parameterPage);
+    parameterLayout->setContentsMargins(8, 8, 8, 8);
+    parameterLayout->addWidget(variablesTable_, 2);
+    auto* parameterSettings = new QWidget(parameterPage);
+    parameterSettings->setObjectName(QStringLiteral("optimizationParameterSettings"));
+    auto* parameterGrid = new QGridLayout(parameterSettings);
+    parameterGrid->setContentsMargins(0, 0, 0, 0);
+    const auto gridLabel = [parameterSettings](const QString& text,
+                               const QString& objectName = {}) {
+        auto* label = new QLabel(text, parameterSettings);
+        label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        if (!objectName.isEmpty()) label->setObjectName(objectName);
+        return label;
+    };
+    variableControl_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    for (auto* control : {minimumControl_, maximumControl_,
+             adaptiveParameterToleranceControl_, adaptiveScoreToleranceControl_}) {
+        control->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    }
+    pointsControl_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    adaptiveMaximumEvaluationsControl_->setSizePolicy(
+        QSizePolicy::Expanding, QSizePolicy::Fixed);
+    searchBudgetLabel_ = new QLabel(tr("Candidate count"), parameterSettings);
+    searchBudgetLabel_->setObjectName(QStringLiteral("optimizationSearchBudgetLabel"));
+    searchBudgetLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    parameterGrid->addWidget(gridLabel(tr("Variable")), 0, 0);
+    parameterGrid->addWidget(variableControl_, 0, 1);
+    parameterGrid->addWidget(searchBudgetLabel_, 0, 2);
+    parameterGrid->addWidget(pointsControl_, 0, 3);
+    parameterGrid->addWidget(adaptiveMaximumEvaluationsControl_, 0, 3);
+    parameterGrid->addWidget(gridLabel(tr("Minimum")), 1, 0);
+    parameterGrid->addWidget(minimumControl_, 1, 1);
+    parameterGrid->addWidget(gridLabel(tr("Maximum")), 1, 2);
+    parameterGrid->addWidget(maximumControl_, 1, 3);
+    adaptiveParameterToleranceLabel_ = gridLabel(tr("Parameter tolerance"),
+        QStringLiteral("optimizationParameterToleranceLabel"));
+    adaptiveScoreToleranceLabel_ = gridLabel(tr("Score tolerance"),
+        QStringLiteral("optimizationScoreToleranceLabel"));
+    parameterGrid->addWidget(adaptiveParameterToleranceLabel_, 2, 0);
+    parameterGrid->addWidget(adaptiveParameterToleranceControl_, 2, 1);
+    parameterGrid->addWidget(adaptiveScoreToleranceLabel_, 2, 2);
+    parameterGrid->addWidget(adaptiveScoreToleranceControl_, 2, 3);
 
-    auto* sweepPanel = new QWidget(this);
-    sweepPanel->setObjectName(QStringLiteral("optimizationSweepPanel"));
-    auto* sweepLayout = new QVBoxLayout(sweepPanel);
-    sweepLayout->setContentsMargins(0, 0, 0, 0);
-    auto* sweepHeading = new QLabel(tr("Sweep & Frequencies"), sweepPanel);
-    sweepHeading->setObjectName(QStringLiteral("optimizationSweepHeading"));
-    auto sweepHeadingFont = sweepHeading->font();
-    sweepHeadingFont.setBold(true);
-    sweepHeading->setFont(sweepHeadingFont);
-    const auto sectionHeadingHeight = std::max(
-        variablesHeading->sizeHint().height(), sweepHeading->sizeHint().height());
-    variablesHeading->setFixedHeight(sectionHeadingHeight);
-    sweepHeading->setFixedHeight(sectionHeadingHeight);
-    variablesHeading->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    sweepHeading->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    sweepLayout->addWidget(sweepHeading);
-    sweepLayout->addWidget(sweepSettingsTable);
-    sweepLayout->addWidget(searchMethodTabs_);
-    sweepLayout->addWidget(explicitFrequencyPanel_, 1);
-    sweepLayout->addWidget(continuousFrequencyPanel_, 1);
-    sweepLayout->addWidget(workloadLabel_);
+    auto* resetSearchDefaultsButton = new QPushButton(tr("Reset Search Defaults"), parameterSettings);
+    resetSearchDefaultsButton->setObjectName(
+        QStringLiteral("optimizationResetSearchDefaults"));
+    resetSearchDefaultsButton->setToolTip(tr(
+        "Restore the default candidate count or adaptive search limits without changing the variable, range, frequencies, or objective."));
+    parameterGrid->addWidget(resetSearchDefaultsButton, 3, 2, 1, 2, Qt::AlignRight);
+    parameterGrid->setColumnStretch(1, 1);
+    parameterGrid->setColumnStretch(3, 1);
+    parameterLayout->setStretch(0, 5);
+    parameterLayout->addWidget(parameterSettings, 4);
 
-    auto* configurationSplitter = new QSplitter(Qt::Horizontal, this);
-    configurationSplitter->setObjectName(
-        QStringLiteral("optimizationConfigurationSplitter"));
-    configurationSplitter->addWidget(variablesPanel);
-    configurationSplitter->addWidget(sweepPanel);
-    configurationSplitter->setStretchFactor(0, 2);
-    configurationSplitter->setStretchFactor(1, 3);
-    configurationSplitter->setSizes({360, 540});
-    configurationSplitter->setMinimumHeight(250);
+    connect(resetSearchDefaultsButton, &QPushButton::clicked, this, [this] {
+        if (selectedSearchMethod() == SearchMethod::Adaptive) {
+            adaptiveMaximumEvaluationsControl_->setValue(21);
+            adaptiveParameterToleranceControl_->setValue(0.010);
+            adaptiveScoreToleranceControl_->setValue(0.001);
+        } else {
+            pointsControl_->setValue(7);
+        }
+    });
+
+    auto* frequencyPage = new QWidget(this);
+    frequencyPage->setObjectName(QStringLiteral("optimizationFrequencyPage"));
+    auto* frequencyPageLayout = new QVBoxLayout(frequencyPage);
+    frequencyPageLayout->setContentsMargins(8, 8, 8, 8);
+    auto* frequencyModeRow = new QHBoxLayout;
+    frequencyModeRow->addWidget(new QLabel(tr("Frequency source"), frequencyPage));
+    frequencyModeRow->addWidget(frequencyModeControl_, 1);
+    frequencyPageLayout->addLayout(frequencyModeRow);
+    frequencyPageLayout->addWidget(explicitFrequencyPanel_, 1);
+    frequencyPageLayout->addWidget(continuousFrequencyPanel_);
+    frequencyPageLayout->addWidget(workloadLabel_);
+
+    auto* objectivePage = new QWidget(this);
+    objectivePage->setObjectName(QStringLiteral("optimizationObjectivePage"));
+    auto* objectiveLayout = new QHBoxLayout(objectivePage);
+    objectiveLayout->setContentsMargins(8, 8, 8, 8);
+    auto* objectiveSettings = new QWidget(objectivePage);
+    objectiveSettings->setObjectName(QStringLiteral("optimizationObjectiveSettings"));
+    auto* objectiveForm = new QFormLayout(objectiveSettings);
+    objectiveForm->setContentsMargins(0, 0, 0, 0);
+    objectiveForm->addRow(tr("Evaluation"), objectiveControl_);
+    objectiveForm->addRow(tr("Selected frequency"), targetFrequencyControl_);
+    objectiveForm->addRow(tr("Reference impedance"), referenceImpedanceControl_);
+    objectiveForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    objectiveLayout->addWidget(objectiveSettings, 1, Qt::AlignTop);
+    objectiveLayout->addWidget(objectiveCriteriaTable_, 2, Qt::AlignTop);
+
+    auto* configurationTabs = new QTabWidget(this);
+    configurationTabs->setObjectName(QStringLiteral("optimizationConfigurationTabs"));
+    configurationTabs->setDocumentMode(true);
+    configurationTabs->addTab(parameterPage, tr("Parameter"));
+    configurationTabs->addTab(frequencyPage, tr("Frequencies"));
+    configurationTabs->addTab(objectivePage, tr("Objective"));
+
+    studySummaryLabel_ = new QLabel(this);
+    studySummaryLabel_->setObjectName(QStringLiteral("optimizationStudySummary"));
+    studySummaryLabel_->setWordWrap(true);
+    auto* toggleSetupButton = new QPushButton(tr("Hide Setup"), this);
+    toggleSetupButton->setObjectName(QStringLiteral("optimizationToggleSetup"));
+    toggleSetupButton->setCheckable(true);
+    toggleSetupButton->setToolTip(tr(
+        "Collapse configuration controls to leave more room for candidate results."));
+
+    auto* summaryRow = new QWidget(this);
+    auto* summaryLayout = new QHBoxLayout(summaryRow);
+    summaryLayout->setContentsMargins(0, 0, 0, 0);
+    summaryLayout->addWidget(studySummaryLabel_, 1);
+    summaryLayout->addWidget(toggleSetupButton);
+
+    auto* configurationDetails = new QWidget(this);
+    configurationDetails->setObjectName(QStringLiteral("optimizationConfigurationDetails"));
+    auto* configurationDetailsLayout = new QVBoxLayout(configurationDetails);
+    configurationDetailsLayout->setContentsMargins(0, 0, 0, 0);
+    configurationDetailsLayout->addWidget(configurationTabs, 1);
+
+    auto* configurationScrollArea = new QScrollArea(this);
+    configurationScrollArea->setObjectName(
+        QStringLiteral("optimizationConfigurationScrollArea"));
+    configurationScrollArea->setFrameShape(QFrame::NoFrame);
+    configurationScrollArea->setWidgetResizable(true);
+    configurationScrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    configurationScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    configurationScrollArea->setWidget(configurationDetails);
+
+    auto* configurationPanel = new QWidget(this);
+    configurationPanel->setObjectName(QStringLiteral("optimizationConfigurationPanel"));
+    auto* configurationLayout = new QVBoxLayout(configurationPanel);
+    configurationLayout->setContentsMargins(0, 0, 0, 0);
+    configurationLayout->addWidget(summaryRow);
+    configurationLayout->addWidget(searchMethodTabs_);
+    configurationLayout->addWidget(configurationScrollArea, 1);
+    configurationPanel->setMinimumHeight(summaryRow->sizeHint().height() + 48);
 
     auto* buttons = new QHBoxLayout;
     runButton_ = new QPushButton(tr("Run Parameter Sweep"), this);
@@ -505,7 +590,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         QStringLiteral("optimizationCandidateDetailsWindow"));
     candidateDetailsWindow_->setWindowTitle(tr("Candidate Frequency Results"));
     candidateDetailsWindow_->setModal(false);
-    candidateDetailsWindow_->resize(680, 420);
+    candidateDetailsWindow_->resize(820, 600);
     auto* detailLayout = new QVBoxLayout(candidateDetailsWindow_);
     candidateDetailLabel_ = new QLabel(candidateDetailsWindow_);
     candidateDetailLabel_->setObjectName(QStringLiteral("optimizationCandidateDetailLabel"));
@@ -520,8 +605,17 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     candidateDetailsTable_->setSelectionMode(QAbstractItemView::SingleSelection);
     candidateDetailsTable_->verticalHeader()->hide();
     candidateDetailsTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    candidateDetailPlots_ = new SweepPlotsView(candidateDetailsWindow_);
+    candidateDetailPlots_->setObjectName(
+        QStringLiteral("optimizationCandidateDetailPlots"));
+    auto* candidateDetailViews = new QTabWidget(candidateDetailsWindow_);
+    candidateDetailViews->setObjectName(
+        QStringLiteral("optimizationCandidateDetailViews"));
+    candidateDetailViews->setDocumentMode(true);
+    candidateDetailViews->addTab(candidateDetailsTable_, tr("Frequency Table"));
+    candidateDetailViews->addTab(candidateDetailPlots_, tr("SWR & Impedance Plots"));
     detailLayout->addWidget(candidateDetailLabel_);
-    detailLayout->addWidget(candidateDetailsTable_);
+    detailLayout->addWidget(candidateDetailViews, 1);
     resetCandidateDetails();
 
     auto* resultsPanel = new QWidget(this);
@@ -534,25 +628,33 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     resultsLayout->addWidget(resultViews, 1);
     resultsPanel->setMinimumHeight(220);
 
-    auto* resultsScrollArea = new QScrollArea(this);
-    resultsScrollArea->setObjectName(QStringLiteral("optimizationResultsScrollArea"));
-    resultsScrollArea->setFrameShape(QFrame::NoFrame);
-    resultsScrollArea->setWidgetResizable(true);
-    resultsScrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    resultsScrollArea->setWidget(resultsPanel);
-    resultsScrollArea->setMinimumHeight(100);
-
     auto* workspaceSplitter = new QSplitter(Qt::Vertical, this);
     workspaceSplitter->setObjectName(QStringLiteral("optimizationWorkspaceSplitter"));
-    workspaceSplitter->addWidget(configurationSplitter);
-    workspaceSplitter->addWidget(resultsScrollArea);
+    workspaceSplitter->addWidget(configurationPanel);
+    workspaceSplitter->addWidget(resultsPanel);
+    workspaceSplitter->setChildrenCollapsible(false);
     workspaceSplitter->setStretchFactor(0, 1);
-    workspaceSplitter->setStretchFactor(1, 1);
-    workspaceSplitter->setSizes({360, 300});
+    workspaceSplitter->setStretchFactor(1, 2);
+    workspaceSplitter->setSizes({280, 380});
+
+    connect(toggleSetupButton, &QPushButton::toggled, this,
+        [configurationDetails, configurationScrollArea, toggleSetupButton,
+            workspaceSplitter, summaryRow](bool hidden) {
+            configurationDetails->setVisible(!hidden);
+            configurationScrollArea->setVisible(!hidden);
+            toggleSetupButton->setText(hidden
+                ? tr("Show Setup") : tr("Hide Setup"));
+            if (hidden) {
+                workspaceSplitter->setSizes(
+                    {summaryRow->sizeHint().height(), workspaceSplitter->height()});
+            } else {
+                workspaceSplitter->setSizes({280,
+                    std::max(220, workspaceSplitter->height() - 280)});
+            }
+        });
 
     layout->addWidget(historicalBanner_);
     layout->addWidget(heading);
-    layout->addWidget(description);
     layout->addWidget(workspaceSplitter, 1);
 
     connect(variableControl_, &QComboBox::currentIndexChanged, this, [this] { updateBounds(); });
@@ -569,11 +671,14 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     connect(frequencyModeControl_, &QComboBox::currentIndexChanged,
         this, [this] { updateFrequencyControls(); });
     connect(pointsControl_, &QSpinBox::valueChanged, this, [this] { updateWorkload(); });
-    connect(searchMethodTabs_, &QTabWidget::currentChanged,
+    for (auto* control : {minimumControl_, maximumControl_}) {
+        connect(control, &QDoubleSpinBox::valueChanged, this, [this] { updateWorkload(); });
+    }
+    connect(searchMethodTabs_, &QTabBar::currentChanged,
         this, [this] { updateSearchMethodControls(); });
     connect(adaptiveMaximumEvaluationsControl_, &QSpinBox::valueChanged,
         this, [this] { updateWorkload(); });
-    connect(frequencyTable_, &QTableWidget::itemChanged, this, [this] {
+    connect(frequencyTable_, &QListWidget::itemChanged, this, [this] {
         updateWorkload();
         updateReadiness();
     });
@@ -637,12 +742,16 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
 {
     if (isRunning() || historicalSession_) return;
     const auto sourceUnchanged = source_ == source && sourceFile_ == sourceFile;
+    const auto preserveFrequencySelection = contextInitialized_ && sourceFile_ == sourceFile;
+    const auto frequencySelection = preserveFrequencySelection
+        ? std::optional{captureFrequencySelection()} : std::nullopt;
     source_ = std::move(source);
     sourceFile_ = std::move(sourceFile);
     backend_ = std::move(backend);
     executable_ = std::move(executable);
     timeoutSeconds_ = timeoutSeconds;
     modelValid_ = modelValid;
+    contextInitialized_ = true;
     if (sourceUnchanged) {
         updateWorkload();
         updateReadiness();
@@ -661,12 +770,13 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
             populateModelFrequencies(*setup.frequency);
         } else {
             modelFrequenciesMHz_.clear();
-            frequencyTable_->setRowCount(0);
+            frequencyTable_->clear();
         }
     } else {
         modelFrequenciesMHz_.clear();
-        frequencyTable_->setRowCount(0);
+        frequencyTable_->clear();
     }
+    if (frequencySelection) restoreFrequencySelection(*frequencySelection);
     candidates_.clear();
     candidateIndex_ = 0;
     bestScore_ = std::numeric_limits<double>::infinity();
@@ -723,6 +833,7 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
     auto records = runStore_.load();
     const auto session = std::ranges::find(records, sessionId, &AnalysisRunRecord::id);
     if (session == records.end() || session->runType != QStringLiteral("optimization-session")) return false;
+    if (!historicalSession_) activeFrequencySelection_ = captureFrequencySelection();
     std::vector<AnalysisRunRecord> candidateRecords;
     for (const auto& record : records) {
         if (record.parentId == sessionId) candidateRecords.push_back(record);
@@ -758,7 +869,7 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
             ? FrequencyMode::Continuous : FrequencyMode::ModelSweep;
     const auto modeIndex = frequencyModeControl_->findData(static_cast<int>(restoredMode));
     if (modeIndex >= 0) frequencyModeControl_->setCurrentIndex(modeIndex);
-    if (restoredMode == FrequencyMode::Explicit && !activeFrequenciesMHz_.empty())
+    if (restoredMode == FrequencyMode::Explicit)
         setExplicitFrequencies(activeFrequenciesMHz_);
     if (restoredMode == FrequencyMode::Continuous) {
         continuousStartControl_->setValue(sessionMetadata.value(
@@ -862,6 +973,10 @@ void OptimizationWorkspace::leaveHistoricalSession()
     if (!historicalSession_) return;
     historicalSession_ = false;
     historicalBanner_->hide();
+    if (activeFrequencySelection_) {
+        restoreFrequencySelection(*activeFrequencySelection_);
+        activeFrequencySelection_.reset();
+    }
     updateSearchMethodControls();
     updateReadiness();
 }
@@ -890,7 +1005,10 @@ void OptimizationWorkspace::populateVariables(const nec::SymbolResolution& resol
         const auto& definition = definitions_[index];
         const auto row = static_cast<int>(index);
         variablesTable_->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(definition.name)));
-        variablesTable_->setItem(row, 1, new QTableWidgetItem(QString::fromStdString(definition.expression)));
+        auto* expressionItem = new QTableWidgetItem(
+            QString::fromStdString(definition.expression));
+        expressionItem->setToolTip(tr("Full expression: %1").arg(expressionItem->text()));
+        variablesTable_->setItem(row, 1, expressionItem);
         auto* valueItem = numericItem(definition.value);
         valueItem->setToolTip(tr(
             "Resolved numeric SY value. No physical unit is inferred from where the symbol is used."));
@@ -955,6 +1073,13 @@ void OptimizationWorkspace::updateFrequencyControls()
 void OptimizationWorkspace::updateSearchMethodControls()
 {
     const auto adaptive = selectedSearchMethod() == SearchMethod::Adaptive;
+    searchBudgetLabel_->setText(adaptive ? tr("Maximum evaluations") : tr("Candidate count"));
+    pointsControl_->setVisible(!adaptive);
+    adaptiveMaximumEvaluationsControl_->setVisible(adaptive);
+    adaptiveParameterToleranceLabel_->setVisible(adaptive);
+    adaptiveParameterToleranceControl_->setVisible(adaptive);
+    adaptiveScoreToleranceLabel_->setVisible(adaptive);
+    adaptiveScoreToleranceControl_->setVisible(adaptive);
     pointsControl_->setEnabled(!adaptive && !isRunning() && !historicalSession_);
     adaptiveMaximumEvaluationsControl_->setEnabled(adaptive && !isRunning()
         && !historicalSession_);
@@ -983,6 +1108,12 @@ void OptimizationWorkspace::updateWorkload()
             .arg(candidateCount).arg(frequencyCount)
             .arg(frequencyCount == 1 ? tr("frequency") : tr("frequencies"))
             .arg(static_cast<qulonglong>(candidateCount * frequencyCount)));
+    studySummaryLabel_->setText(tr("Variable: %1  |  Range: %2 to %3  |  Frequencies: %4  |  Goal: %5")
+        .arg(variableControl_->currentText().isEmpty() ? tr("None") : variableControl_->currentText())
+        .arg(formatDecimal(minimumControl_->value()))
+        .arg(formatDecimal(maximumControl_->value()))
+        .arg(frequencyCount)
+        .arg(objectiveControl_->currentText()));
 }
 
 void OptimizationWorkspace::populateModelFrequencies(const model::FrequencyDefinition& frequency)
@@ -1009,10 +1140,12 @@ void OptimizationWorkspace::setExplicitFrequencies(
     const std::vector<double>& frequenciesMHz)
 {
     const QSignalBlocker blocker(frequencyTable_);
-    frequencyTable_->setRowCount(static_cast<int>(frequenciesMHz.size()));
-    for (std::size_t index = 0; index < frequenciesMHz.size(); ++index)
-        frequencyTable_->setItem(static_cast<int>(index), 0,
-            numericItem(frequenciesMHz[index]));
+    frequencyTable_->clear();
+    for (const auto frequencyMHz : frequenciesMHz) {
+        auto* item = new QListWidgetItem(formatDecimal(frequencyMHz), frequencyTable_);
+        item->setTextAlignment(Qt::AlignCenter);
+        item->setToolTip(tr("%1 MHz").arg(formatDecimal(frequencyMHz)));
+    }
     updateWorkload();
     updateReadiness();
 }
@@ -1020,24 +1153,26 @@ void OptimizationWorkspace::setExplicitFrequencies(
 void OptimizationWorkspace::addExplicitFrequency(double frequencyMHz)
 {
     if (!std::isfinite(frequencyMHz) || frequencyMHz <= 0.0) return;
-    const auto row = frequencyTable_->rowCount();
-    frequencyTable_->insertRow(row);
-    frequencyTable_->setItem(row, 0, numericItem(frequencyMHz));
+    auto frequencies = explicitFrequencies();
+    frequencies.push_back(frequencyMHz);
+    setExplicitFrequencies(analysis::frequencyPlanPoints({
+        analysis::FrequencyPlanMode::Explicit, std::move(frequencies), {}}));
 }
 
 void OptimizationWorkspace::removeSelectedFrequencies()
 {
     if (!frequencyTable_->isEnabled()) return;
     std::set<int, std::greater<>> rows;
-    for (const auto* item : frequencyTable_->selectedItems()) rows.insert(item->row());
-    for (const auto row : rows) frequencyTable_->removeRow(row);
+    for (const auto* item : frequencyTable_->selectedItems())
+        rows.insert(frequencyTable_->row(item));
+    for (const auto row : rows) delete frequencyTable_->takeItem(row);
     updateWorkload();
     updateReadiness();
 }
 
 void OptimizationWorkspace::clearExplicitFrequencies()
 {
-    if (!frequencyTable_->isEnabled() || frequencyTable_->rowCount() == 0) return;
+    if (!frequencyTable_->isEnabled() || frequencyTable_->count() == 0) return;
     QMessageBox confirmation(this);
     confirmation.setWindowTitle(tr("Clear Selected Frequencies"));
     confirmation.setText(tr("Clear every frequency from the editable list?\n"
@@ -1047,7 +1182,7 @@ void OptimizationWorkspace::clearExplicitFrequencies()
     confirmation.addButton(QMessageBox::Cancel);
     confirmation.exec();
     if (confirmation.clickedButton() != clearButton) return;
-    frequencyTable_->setRowCount(0);
+    frequencyTable_->clear();
     updateWorkload();
     updateReadiness();
 }
@@ -1178,6 +1313,7 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
         || candidates_[static_cast<std::size_t>(row)].feedpoints.empty()) {
         candidateDetailLabel_->setText(
             tr("Frequency details are unavailable because this candidate did not complete with impedance results."));
+        candidateDetailPlots_->setResults({}, tr("this candidate"));
         return;
     }
 
@@ -1209,6 +1345,17 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
         .arg(candidate.value, 0, 'f', 3)
         .arg(selectedValueSuffix_)
         .arg(feedpoints.size()));
+    analysis::AnalysisResult detailResult;
+    detailResult.feedpoints = feedpoints;
+    detailResult.referenceImpedanceOhms = activeObjective_.referenceImpedance;
+    candidateDetailPlots_->setResults(detailResult,
+        tr("candidate %1 = %2%3")
+            .arg(selectedSymbol_.isEmpty() ? tr("value") : selectedSymbol_)
+            .arg(candidate.value, 0, 'f', 3)
+            .arg(selectedValueSuffix_));
+    if (evaluation && evaluation->feedpoint)
+        candidateDetailPlots_->setSelectedFrequency(
+            evaluation->feedpoint->frequencyMHz);
 }
 
 void OptimizationWorkspace::resetCandidateDetails()
@@ -1216,7 +1363,8 @@ void OptimizationWorkspace::resetCandidateDetails()
     detailCandidateRow_ = -1;
     candidateDetailsTable_->setRowCount(0);
     candidateDetailLabel_->setText(
-        tr("Double-click a completed candidate to view its frequency results."));
+        tr("Double-click a completed candidate to view its frequency table and plots."));
+    candidateDetailPlots_->setResults({}, tr("a selected candidate"));
 }
 
 void OptimizationWorkspace::updateCandidateRowToolTip(int row)
@@ -1227,7 +1375,7 @@ void OptimizationWorkspace::updateCandidateRowToolTip(int row)
     const auto inProgress = statusItem != nullptr
         && (statusItem->text() == tr("Pending") || statusItem->text() == tr("Running"));
     const auto toolTip = hasDetails
-        ? tr("Double-click to view frequency results for this candidate.")
+        ? tr("Double-click to view the frequency table, SWR, and impedance plots for this candidate.")
         : inProgress
             ? tr("Frequency details will be available after this candidate completes.")
             : tr("Frequency details are unavailable because this candidate did not complete with impedance results.");
@@ -1293,7 +1441,7 @@ void OptimizationWorkspace::updateReadiness()
     removeFrequencyButton_->setEnabled(editable && explicitMode);
     pasteFrequencyButton_->setEnabled(editable && explicitMode);
     clearFrequencyButton_->setEnabled(
-        editable && explicitMode && frequencyTable_->rowCount() > 0);
+        editable && explicitMode && frequencyTable_->count() > 0);
     addAmateurBandButton_->setEnabled(editable && explicitMode);
     const auto continuousMode = !singleFrequency
         && selectedFrequencyMode() == FrequencyMode::Continuous;
@@ -1724,9 +1872,9 @@ auto OptimizationWorkspace::selectedFrequencyPlan() const -> analysis::Frequency
 auto OptimizationWorkspace::explicitFrequencies() const -> std::vector<double>
 {
     std::vector<double> frequencies;
-    frequencies.reserve(static_cast<std::size_t>(frequencyTable_->rowCount()));
-    for (auto row = 0; row < frequencyTable_->rowCount(); ++row) {
-        const auto* item = frequencyTable_->item(row, 0);
+    frequencies.reserve(static_cast<std::size_t>(frequencyTable_->count()));
+    for (auto row = 0; row < frequencyTable_->count(); ++row) {
+        const auto* item = frequencyTable_->item(row);
         if (item == nullptr) continue;
         bool valid{};
         const auto frequencyMHz = item->text().toDouble(&valid);
@@ -1735,6 +1883,31 @@ auto OptimizationWorkspace::explicitFrequencies() const -> std::vector<double>
     }
     return analysis::frequencyPlanPoints({
         analysis::FrequencyPlanMode::Explicit, std::move(frequencies), {}});
+}
+
+auto OptimizationWorkspace::captureFrequencySelection() const -> FrequencySelectionState
+{
+    return {
+        .mode = selectedFrequencyMode(),
+        .explicitFrequenciesMHz = explicitFrequencies(),
+        .continuousStartMHz = continuousStartControl_->value(),
+        .continuousStopMHz = continuousStopControl_->value(),
+        .continuousStepMHz = continuousStepControl_->value(),
+    };
+}
+
+void OptimizationWorkspace::restoreFrequencySelection(
+    const FrequencySelectionState& state)
+{
+    setExplicitFrequencies(state.explicitFrequenciesMHz);
+    continuousStartControl_->setValue(state.continuousStartMHz);
+    continuousStopControl_->setValue(state.continuousStopMHz);
+    continuousStepControl_->setValue(state.continuousStepMHz);
+    const auto modeIndex = frequencyModeControl_->findData(static_cast<int>(state.mode));
+    if (modeIndex >= 0) frequencyModeControl_->setCurrentIndex(modeIndex);
+    updateFrequencyControls();
+    updateWorkload();
+    updateReadiness();
 }
 
 auto OptimizationWorkspace::objectiveName(analysis::OptimizationObjectiveKind kind) const -> QString

@@ -629,21 +629,38 @@ The results area has **Candidates** and **Plots** views. The plot shows total
 objective score against the swept parameter together with the enabled weighted
 SWR, resistance, and reactance contributions. Lower values are better, and the
 best candidate is marked. Hover for exact values; double-click a marker to open
-the same frequency-detail window used by the candidate table.
+the same candidate-detail window used by the candidate table. That window offers
+both a frequency table and SWR/impedance plots generated from the candidate's
+retained feedpoint results. Inspecting these plots does not create a normal
+analysis run or replace the active model.
 
-The compact setup band keeps **Symbols & Expressions** beside **Sweep &
-Frequencies**. Sweep settings use an interactive grid whose value cells contain
-the appropriate dropdown or numeric control. The divider can be dragged
-horizontally, while the candidate result table retains most of the workspace
-below. Decimal values are displayed and entered to three places
-throughout the optimizer; archived raw solver output remains unchanged.
+Choose **Parameter Sweep** or **Adaptive Optimize** first, then use the focused
+**Parameter**, **Frequencies**, and **Objective** setup tabs. Method-specific
+controls appear inside **Parameter**: Candidate count for a sweep, or the
+evaluation and tolerance limits for adaptive optimization. A compact study
+summary keeps the selected variable, range, frequency count, and goal visible
+while moving between setup tabs. Both methods continue to share one candidate
+table and plot area below the configuration. Decimal values are displayed and
+entered to three places throughout the optimizer; archived raw solver output
+remains unchanged.
+
+**Reset Search Defaults** restores Candidate count to 7 for Parameter Sweep, or
+Maximum evaluations to 21, Parameter tolerance to 0.010, and Score tolerance to
+0.001 for Adaptive Optimize. It does not change the variable, range, frequency
+plan, or objective. Optimizer numeric fields respond to the mouse wheel only
+while focused, preventing accidental changes while scrolling the setup area.
+
+Use **Hide Setup** when working on a smaller display or when the candidate
+results need most of the window. Configuration controls scroll independently
+when vertical space is limited, while the Candidates/Plots tab bar remains
+visible. The divider between setup and results can also be adjusted manually.
 
 For **Minimax**, **Frequency Source** controls the
 frequencies calculated for every candidate:
 
 - **Use Model FR Sweep** keeps the model's existing `FR` definition.
 - **Use Selected Frequencies** evaluates only the explicit MHz values in the
-  editable list. Add values individually or paste a list separated by spaces,
+  responsive wrapped grid. Add values individually or paste a list separated by spaces,
   commas, semicolons, or new lines. This supports separated bands without
   calculating every frequency between them. Select rows and press **Delete** or
   **Backspace** to remove them. **Clear All** empties only this editable list
@@ -655,6 +672,11 @@ frequencies calculated for every candidate:
 - **Custom Continuous Sweep** evaluates an independent linear range using the
   entered start, stop, and step frequencies. These points apply only to the
   parameter sweep and do not rewrite the active model's `FR` card.
+
+The selected frequency source, editable frequency list, and custom continuous
+sweep values remain available while moving between workspaces, refreshing the
+same model, or temporarily inspecting a historical optimization session. They
+reset when a different model is opened and are not retained after Workbench exits.
 
 The workload summary shows candidate count × frequency count before the sweep.
 

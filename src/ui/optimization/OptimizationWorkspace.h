@@ -19,16 +19,19 @@ class QComboBox;
 class QDialog;
 class QDoubleSpinBox;
 class QLabel;
+class QListWidget;
 class QProgressBar;
 class QPushButton;
 class QSplitter;
 class QSpinBox;
 class QTableWidget;
+class QTabBar;
 class QTabWidget;
 
 namespace necwb::ui {
 
 class CandidatePlotsView;
+class SweepPlotsView;
 
 class OptimizationWorkspace final : public QWidget {
 public:
@@ -58,6 +61,14 @@ private:
     enum class SearchMethod {
         ParameterSweep,
         Adaptive
+    };
+
+    struct FrequencySelectionState {
+        FrequencyMode mode{FrequencyMode::ModelSweep};
+        std::vector<double> explicitFrequenciesMHz;
+        double continuousStartMHz{};
+        double continuousStopMHz{};
+        double continuousStepMHz{};
     };
 
     struct Candidate {
@@ -101,6 +112,8 @@ private:
     [[nodiscard]] auto selectedSearchMethod() const -> SearchMethod;
     [[nodiscard]] auto selectedFrequencyPlan() const -> analysis::FrequencyPlan;
     [[nodiscard]] auto explicitFrequencies() const -> std::vector<double>;
+    [[nodiscard]] auto captureFrequencySelection() const -> FrequencySelectionState;
+    void restoreFrequencySelection(const FrequencySelectionState& state);
     [[nodiscard]] auto objectiveName(analysis::OptimizationObjectiveKind kind) const -> QString;
 
     QTableWidget* variablesTable_{};
@@ -116,7 +129,7 @@ private:
     QComboBox* frequencyModeControl_{};
     QWidget* explicitFrequencyPanel_{};
     QWidget* continuousFrequencyPanel_{};
-    QTableWidget* frequencyTable_{};
+    QListWidget* frequencyTable_{};
     QDoubleSpinBox* frequencyEntryControl_{};
     QPushButton* addFrequencyButton_{};
     QPushButton* removeFrequencyButton_{};
@@ -130,11 +143,15 @@ private:
     QDoubleSpinBox* minimumControl_{};
     QDoubleSpinBox* maximumControl_{};
     QSpinBox* pointsControl_{};
-    QTabWidget* searchMethodTabs_{};
+    QTabBar* searchMethodTabs_{};
+    QLabel* searchBudgetLabel_{};
+    QLabel* adaptiveParameterToleranceLabel_{};
+    QLabel* adaptiveScoreToleranceLabel_{};
     QSpinBox* adaptiveMaximumEvaluationsControl_{};
     QDoubleSpinBox* adaptiveParameterToleranceControl_{};
     QDoubleSpinBox* adaptiveScoreToleranceControl_{};
     QDoubleSpinBox* referenceImpedanceControl_{};
+    QLabel* studySummaryLabel_{};
     QPushButton* runButton_{};
     QPushButton* cancelButton_{};
     QPushButton* applyBestButton_{};
@@ -146,6 +163,7 @@ private:
     QDialog* candidateDetailsWindow_{};
     QLabel* candidateDetailLabel_{};
     QTableWidget* candidateDetailsTable_{};
+    SweepPlotsView* candidateDetailPlots_{};
     QWidget* historicalBanner_{};
     QLabel* historicalBannerTitle_{};
     QPushButton* returnToCurrentWorkButton_{};
@@ -160,6 +178,7 @@ private:
     std::vector<double> modelFrequenciesMHz_;
     std::vector<double> activeFrequenciesMHz_;
     std::optional<AnalysisRunRecord> sessionRecord_;
+    std::optional<FrequencySelectionState> activeFrequencySelection_;
     QString source_;
     QString sourceFile_;
     QString backend_;
@@ -179,6 +198,7 @@ private:
     bool externalRunActive_{};
     bool cancelRequested_{};
     bool historicalSession_{};
+    bool contextInitialized_{};
 };
 
 }

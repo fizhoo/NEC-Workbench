@@ -38,20 +38,24 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QListView>
 #include <QPainter>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QTextDocument>
 #include <QTableWidget>
 #include <QTabWidget>
+#include <QTabBar>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QToolButton>
 #include <QPushButton>
+#include <QWheelEvent>
 #include <QShortcut>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSplitter>
+#include <QStandardPaths>
 
 #include <cstdlib>
 #include <algorithm>
@@ -73,6 +77,7 @@ auto main(int argc, char* argv[]) -> int
             " 1 11 1.0E+00 0.0E+00 1.0E-02 0.0E+00 7.5E+01 1.5E+01 0 0 5.0E-03\n";
         return output.write(solverOutput) == solverOutput.size() ? EXIT_SUCCESS : EXIT_FAILURE;
     }
+    QStandardPaths::setTestModeEnabled(true);
     QApplication application(argc, argv);
     if (necwb::ui::formatDecimal(1.2) != QStringLiteral("1.200")
         || necwb::ui::formatDecimal(0.0004) != QStringLiteral("4.000e-04")) {
@@ -253,14 +258,20 @@ auto main(int argc, char* argv[]) -> int
     optimization.setContext(optimizationSource,
         QStringLiteral("symbol-units.nec"), QStringLiteral("nec2"), {}, 120, false);
     application.processEvents();
-    auto* optimizationConfiguration = optimization.findChild<QSplitter*>(
-        QStringLiteral("optimizationConfigurationSplitter"));
+    auto* optimizationConfiguration = optimization.findChild<QWidget*>(
+        QStringLiteral("optimizationConfigurationPanel"));
+    auto* optimizationConfigurationTabs = optimization.findChild<QTabWidget*>(
+        QStringLiteral("optimizationConfigurationTabs"));
     auto* optimizationWorkspaceSplitter = optimization.findChild<QSplitter*>(
         QStringLiteral("optimizationWorkspaceSplitter"));
     auto* optimizationResultsPanel = optimization.findChild<QWidget*>(
         QStringLiteral("optimizationResultsPanel"));
-    auto* optimizationResultsScrollArea = optimization.findChild<QScrollArea*>(
-        QStringLiteral("optimizationResultsScrollArea"));
+    auto* optimizationConfigurationScrollArea = optimization.findChild<QScrollArea*>(
+        QStringLiteral("optimizationConfigurationScrollArea"));
+    auto* optimizationConfigurationDetails = optimization.findChild<QWidget*>(
+        QStringLiteral("optimizationConfigurationDetails"));
+    auto* optimizationToggleSetup = optimization.findChild<QPushButton*>(
+        QStringLiteral("optimizationToggleSetup"));
     auto* optimizationResultsTable = optimization.findChild<QTableWidget*>(
         QStringLiteral("optimizationResultsTable"));
     auto* optimizationResultViews = optimization.findChild<QTabWidget*>(
@@ -271,10 +282,16 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationCandidateDetailsWindow"));
     auto* optimizationCandidateDetails = optimization.findChild<QTableWidget*>(
         QStringLiteral("optimizationCandidateDetails"));
+    auto* optimizationCandidateDetailViews = optimization.findChild<QTabWidget*>(
+        QStringLiteral("optimizationCandidateDetailViews"));
+    auto* optimizationCandidateDetailPlots = optimization.findChild<QWidget*>(
+        QStringLiteral("optimizationCandidateDetailPlots"));
     auto* optimizationVariables = optimization.findChild<QTableWidget*>(
         QStringLiteral("optimizationVariablesTable"));
-    auto* optimizationSweepSettings = optimization.findChild<QTableWidget*>(
-        QStringLiteral("optimizationSweepSettingsTable"));
+    auto* optimizationParameterSettings = optimization.findChild<QWidget*>(
+        QStringLiteral("optimizationParameterSettings"));
+    auto* optimizationObjectiveSettings = optimization.findChild<QWidget*>(
+        QStringLiteral("optimizationObjectiveSettings"));
     auto* optimizationObjectiveCriteria = optimization.findChild<QTableWidget*>(
         QStringLiteral("optimizationObjectiveCriteria"));
     auto* optimizationSwrWeight = optimization.findChild<QDoubleSpinBox*>(
@@ -289,17 +306,21 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationReactanceTarget"));
     auto* optimizationVariableControl = optimization.findChild<QComboBox*>(
         QStringLiteral("optimizationVariableControl"));
-    auto* optimizationVariablesHeading = optimization.findChild<QLabel*>(
-        QStringLiteral("optimizationVariablesHeading"));
-    auto* optimizationSweepHeading = optimization.findChild<QLabel*>(
-        QStringLiteral("optimizationSweepHeading"));
+    auto* optimizationMinimum = optimization.findChild<QDoubleSpinBox*>(
+        QStringLiteral("optimizationMinimum"));
+    auto* optimizationMaximum = optimization.findChild<QDoubleSpinBox*>(
+        QStringLiteral("optimizationMaximum"));
+    auto* optimizationSearchBudgetLabel = optimization.findChild<QLabel*>(
+        QStringLiteral("optimizationSearchBudgetLabel"));
+    auto* optimizationStudySummary = optimization.findChild<QLabel*>(
+        QStringLiteral("optimizationStudySummary"));
     auto* optimizationFrequencyMode = optimization.findChild<QComboBox*>(
         QStringLiteral("optimizationFrequencyMode"));
     auto* optimizationObjective = optimization.findChild<QComboBox*>(
         QStringLiteral("optimizationObjectiveControl"));
     auto* optimizationTargetFrequency = optimization.findChild<QDoubleSpinBox*>(
         QStringLiteral("optimizationTargetFrequency"));
-    auto* optimizationFrequencyTable = optimization.findChild<QTableWidget*>(
+    auto* optimizationFrequencyTable = optimization.findChild<QListWidget*>(
         QStringLiteral("optimizationFrequencyTable"));
     auto* optimizationAddAmateurBand = optimization.findChild<QPushButton*>(
         QStringLiteral("optimizationAddAmateurBand"));
@@ -319,10 +340,18 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationWorkload"));
     auto* optimizationApplyBest = optimization.findChild<QPushButton*>(
         QStringLiteral("optimizationApplyBest"));
-    auto* optimizationSearchMethods = optimization.findChild<QTabWidget*>(
+    auto* optimizationSearchMethods = optimization.findChild<QTabBar*>(
         QStringLiteral("optimizationSearchMethodTabs"));
+    auto* optimizationParameterToleranceLabel = optimization.findChild<QLabel*>(
+        QStringLiteral("optimizationParameterToleranceLabel"));
+    auto* optimizationScoreToleranceLabel = optimization.findChild<QLabel*>(
+        QStringLiteral("optimizationScoreToleranceLabel"));
+    auto* optimizationResetSearchDefaults = optimization.findChild<QPushButton*>(
+        QStringLiteral("optimizationResetSearchDefaults"));
     auto* optimizationAdaptiveMaximum = optimization.findChild<QSpinBox*>(
         QStringLiteral("optimizationAdaptiveMaximumEvaluations"));
+    auto* optimizationCandidateCount = optimization.findChild<QSpinBox*>(
+        QStringLiteral("optimizationCandidateCount"));
     auto* optimizationAdaptiveParameterTolerance = optimization.findChild<QDoubleSpinBox*>(
         QStringLiteral("optimizationAdaptiveParameterTolerance"));
     auto* optimizationAdaptiveScoreTolerance = optimization.findChild<QDoubleSpinBox*>(
@@ -346,13 +375,53 @@ auto main(int argc, char* argv[]) -> int
         if (addSelected != nullptr) addSelected->click();
     });
     if (optimizationAddAmateurBand != nullptr) optimizationAddAmateurBand->click();
+    QStringList selectedFrequencies;
+    if (optimizationFrequencyTable != nullptr) {
+        for (auto row = 0; row < optimizationFrequencyTable->count(); ++row)
+            selectedFrequencies.push_back(optimizationFrequencyTable->item(row)->text());
+    }
+    optimization.setContext(QStringLiteral("CM refreshed model\n") + optimizationSource,
+        QStringLiteral("symbol-units.nec"), QStringLiteral("nec2"), {}, 120, false);
+    auto sameModelFrequenciesPreserved = optimizationFrequencyMode != nullptr
+        && optimizationFrequencyMode->currentData().toInt() == 1
+        && optimizationFrequencyTable != nullptr
+        && optimizationFrequencyTable->count() == selectedFrequencies.size();
+    for (auto row = 0; sameModelFrequenciesPreserved
+         && row < optimizationFrequencyTable->count(); ++row) {
+        sameModelFrequenciesPreserved = optimizationFrequencyTable->item(row)->text()
+            == selectedFrequencies.at(row);
+    }
+    necwb::ui::AnalysisRunStore optimizationRunStore;
+    auto historicalOptimization = optimizationRunStore.create(QStringLiteral("nec2"),
+        QStringLiteral("historical.nec"), QStringLiteral("optimization-session"));
+    historicalOptimization.status = QStringLiteral("Completed");
+    optimizationRunStore.save(historicalOptimization);
+    QFile historicalMetadata(QDir(historicalOptimization.directory).filePath(
+        QStringLiteral("optimization-session.json")));
+    const auto historicalMetadataWritten = historicalMetadata.open(
+            QIODevice::WriteOnly | QIODevice::Truncate)
+        && historicalMetadata.write(
+            "{\"frequencyMode\":\"explicit\",\"frequenciesMHz\":[3.5,28.4]}") > 0;
+    historicalMetadata.close();
+    const auto historicalFrequencySelectionLoaded = historicalMetadataWritten
+        && optimization.loadSession(historicalOptimization.id)
+        && optimizationFrequencyTable != nullptr
+        && optimizationFrequencyTable->count() == 2;
+    optimization.leaveHistoricalSession();
+    auto activeFrequenciesRestored = optimizationFrequencyMode != nullptr
+        && optimizationFrequencyMode->currentData().toInt() == 1
+        && optimizationFrequencyTable != nullptr
+        && optimizationFrequencyTable->count() == selectedFrequencies.size();
+    for (auto row = 0; activeFrequenciesRestored
+         && row < optimizationFrequencyTable->count(); ++row) {
+        activeFrequenciesRestored = optimizationFrequencyTable->item(row)->text()
+            == selectedFrequencies.at(row);
+    }
+    optimizationRunStore.removeGroup(
+        historicalOptimization.id, historicalOptimization.directory);
+    if (optimizationConfigurationTabs != nullptr) optimizationConfigurationTabs->setCurrentIndex(1);
     optimization.resize(760, 560);
     application.processEvents();
-    const auto settingsBottom = optimizationSweepSettings == nullptr ? 0
-        : optimizationSweepSettings->mapTo(&optimization,
-              QPoint(0, optimizationSweepSettings->height())).y();
-    const auto frequencyPanelTop = optimizationExplicitFrequencies == nullptr ? 0
-        : optimizationExplicitFrequencies->mapTo(&optimization, QPoint{}).y();
     const auto configurationBottom = optimizationConfiguration == nullptr ? 0
         : optimizationConfiguration->mapTo(&optimization,
               QPoint(0, optimizationConfiguration->height())).y();
@@ -362,6 +431,16 @@ auto main(int argc, char* argv[]) -> int
         && optimizationAddAmateurBand != nullptr
         && optimizationExplicitFrequencies->rect().contains(
             optimizationAddAmateurBand->geometry());
+    const auto frequencyGridFlowsHorizontally = optimizationFrequencyTable != nullptr
+        && optimizationFrequencyTable->count() > 1
+        && optimizationFrequencyTable->visualItemRect(
+            optimizationFrequencyTable->item(1)).center().x()
+            > optimizationFrequencyTable->visualItemRect(
+                optimizationFrequencyTable->item(0)).center().x()
+        && optimizationFrequencyTable->visualItemRect(
+            optimizationFrequencyTable->item(1)).center().y()
+            == optimizationFrequencyTable->visualItemRect(
+                optimizationFrequencyTable->item(0)).center().y();
     const auto frequencyShortcuts = optimizationFrequencyTable == nullptr
         ? QList<QShortcut*>{} : optimizationFrequencyTable->findChildren<QShortcut*>();
     const auto hasDeleteShortcut = std::ranges::any_of(frequencyShortcuts, [](const auto* shortcut) {
@@ -385,6 +464,7 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("7 candidates × 36 frequencies"));
     if (optimizationObjective != nullptr) optimizationObjective->setCurrentIndex(1);
     if (optimizationTargetFrequency != nullptr) optimizationTargetFrequency->setValue(14.2);
+    if (optimizationConfigurationTabs != nullptr) optimizationConfigurationTabs->setCurrentIndex(2);
     application.processEvents();
     const auto selectedFrequencyObjectiveValid = optimizationFrequencyMode != nullptr
         && !optimizationFrequencyMode->isEnabled()
@@ -395,32 +475,96 @@ auto main(int argc, char* argv[]) -> int
         && optimizationWorkload != nullptr
         && optimizationWorkload->text().contains(
             QStringLiteral("7 candidates × 1 frequency"));
+    const auto objectiveTopAligned = optimizationObjective != nullptr
+        && optimizationObjectiveCriteria != nullptr
+        && optimizationObjective->mapTo(&optimization, QPoint{}).y()
+            == optimizationObjectiveCriteria->mapTo(&optimization, QPoint{}).y();
+    if (optimizationConfigurationTabs != nullptr) optimizationConfigurationTabs->setCurrentIndex(0);
     if (optimizationSearchMethods != nullptr) optimizationSearchMethods->setCurrentIndex(1);
     application.processEvents();
+    if (optimizationAdaptiveMaximum != nullptr) optimizationAdaptiveMaximum->setValue(35);
+    if (optimizationAdaptiveParameterTolerance != nullptr)
+        optimizationAdaptiveParameterTolerance->setValue(2.0);
+    if (optimizationAdaptiveScoreTolerance != nullptr)
+        optimizationAdaptiveScoreTolerance->setValue(3.0);
+    if (optimizationResetSearchDefaults != nullptr) optimizationResetSearchDefaults->click();
+    const auto verticalCenter = [&optimization](const QWidget* widget) {
+        return widget == nullptr ? -1
+            : widget->mapTo(&optimization, QPoint(0, widget->height() / 2)).y();
+    };
+    const auto adaptiveGridAligned = verticalCenter(optimizationVariableControl)
+            == verticalCenter(optimizationAdaptiveMaximum)
+        && verticalCenter(optimizationMinimum) == verticalCenter(optimizationMaximum)
+        && verticalCenter(optimizationAdaptiveParameterTolerance)
+            == verticalCenter(optimizationAdaptiveScoreTolerance)
+        && optimizationSearchBudgetLabel != nullptr
+        && optimizationSearchBudgetLabel->alignment()
+            == (Qt::AlignRight | Qt::AlignVCenter);
     const auto adaptiveControlsValid = optimizationSearchMethods != nullptr
         && optimizationSearchMethods->count() == 2
         && optimizationSearchMethods->tabText(0) == QStringLiteral("Parameter Sweep")
         && optimizationSearchMethods->tabText(1) == QStringLiteral("Adaptive Optimize")
+        && optimizationParameterToleranceLabel != nullptr
+        && optimizationParameterToleranceLabel->isVisible()
+        && optimizationScoreToleranceLabel != nullptr
+        && optimizationScoreToleranceLabel->isVisible()
         && optimizationAdaptiveMaximum != nullptr && optimizationAdaptiveMaximum->value() == 21
         && optimizationAdaptiveParameterTolerance != nullptr
         && optimizationAdaptiveParameterTolerance->value() == 0.010
         && optimizationAdaptiveScoreTolerance != nullptr
         && optimizationAdaptiveScoreTolerance->value() == 0.001
         && optimizationWorkload != nullptr
-        && optimizationWorkload->text().contains(QStringLiteral("Up to 21 candidates"));
+        && optimizationWorkload->text().contains(QStringLiteral("Up to 21 candidates"))
+        && adaptiveGridAligned;
     if (optimizationSearchMethods != nullptr) optimizationSearchMethods->setCurrentIndex(0);
+    if (optimizationCandidateCount != nullptr) optimizationCandidateCount->setValue(12);
+    if (optimizationResetSearchDefaults != nullptr) optimizationResetSearchDefaults->click();
+    application.processEvents();
+    const auto sweepControlsValid = optimizationParameterToleranceLabel != nullptr
+        && !optimizationParameterToleranceLabel->isVisible()
+        && optimizationScoreToleranceLabel != nullptr
+        && !optimizationScoreToleranceLabel->isVisible()
+        && optimizationCandidateCount != nullptr
+        && optimizationCandidateCount->value() == 7
+        && verticalCenter(optimizationVariableControl)
+            == verticalCenter(optimizationCandidateCount);
+    auto wheelProtected = false;
+    if (optimizationCandidateCount != nullptr) {
+        optimizationCandidateCount->clearFocus();
+        const auto priorValue = optimizationCandidateCount->value();
+        QWheelEvent wheelEvent(QPointF(4, 4), QPointF(4, 4), {}, QPoint(0, 120),
+            Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(optimizationCandidateCount, &wheelEvent);
+        wheelProtected = optimizationCandidateCount->value() == priorValue;
+    }
     const auto optimizationDecimalControls = optimization.findChildren<QDoubleSpinBox*>();
     const auto optimizerUsesThreeDecimals = std::ranges::all_of(
         optimizationDecimalControls, [](const auto* control) { return control->decimals() == 3; });
+    if (optimizationToggleSetup != nullptr) optimizationToggleSetup->click();
+    application.processEvents();
+    const auto compactSetupValid = optimizationConfigurationDetails != nullptr
+        && !optimizationConfigurationDetails->isVisible()
+        && optimizationToggleSetup != nullptr
+        && optimizationToggleSetup->text() == QStringLiteral("Show Setup")
+        && optimizationResultViews != nullptr
+        && optimizationResultViews->isVisible()
+        && optimizationResultViews->tabBar()->isVisible();
+    if (optimizationToggleSetup != nullptr) optimizationToggleSetup->click();
+    application.processEvents();
     if (optimizationConfiguration == nullptr
-        || optimizationConfiguration->orientation() != Qt::Horizontal
-        || optimizationConfiguration->count() != 2
+        || optimizationConfigurationTabs == nullptr
+        || optimizationConfigurationTabs->count() != 3
+        || optimizationConfigurationTabs->tabText(0) != QStringLiteral("Parameter")
+        || optimizationConfigurationTabs->tabText(1) != QStringLiteral("Frequencies")
+        || optimizationConfigurationTabs->tabText(2) != QStringLiteral("Objective")
         || optimizationWorkspaceSplitter == nullptr
         || optimizationWorkspaceSplitter->orientation() != Qt::Vertical
         || optimizationWorkspaceSplitter->count() != 2
+        || optimizationWorkspaceSplitter->childrenCollapsible()
         || optimizationResultsPanel == nullptr
-        || optimizationResultsScrollArea == nullptr
-        || optimizationResultsScrollArea->verticalScrollBarPolicy() != Qt::ScrollBarAsNeeded
+        || optimizationConfigurationScrollArea == nullptr
+        || optimizationConfigurationScrollArea->verticalScrollBarPolicy()
+            != Qt::ScrollBarAsNeeded
         || optimizationResultsTable == nullptr
         || optimizationResultViews == nullptr || optimizationResultViews->count() != 2
         || optimizationCandidatePlots == nullptr
@@ -429,20 +573,33 @@ auto main(int argc, char* argv[]) -> int
         || optimizationCandidateDetails == nullptr
         || !optimizationCandidateDetailsWindow->isAncestorOf(
             optimizationCandidateDetails)
+        || optimizationCandidateDetailViews == nullptr
+        || optimizationCandidateDetailViews->count() != 2
+        || optimizationCandidateDetailViews->tabText(0) != QStringLiteral("Frequency Table")
+        || optimizationCandidateDetailViews->tabText(1)
+            != QStringLiteral("SWR & Impedance Plots")
+        || optimizationCandidateDetailPlots == nullptr
+        || !optimizationCandidateDetailsWindow->isAncestorOf(
+            optimizationCandidateDetailPlots)
         || optimization.findChild<QSplitter*>(
             QStringLiteral("optimizationResultsSplitter")) != nullptr
         || configurationBottom > resultsTop
         || optimizationVariables == nullptr
         || optimizationVariableControl == nullptr
-        || optimizationSweepSettings == nullptr
+        || optimizationMinimum == nullptr
+        || optimizationMaximum == nullptr
+        || optimizationSearchBudgetLabel == nullptr
+        || optimizationParameterSettings == nullptr
+        || optimizationObjectiveSettings == nullptr
         || optimizationObjectiveCriteria == nullptr
         || optimizationSwrWeight == nullptr || optimizationSwrWeight->value() != 1.0
         || optimizationResistanceWeight == nullptr || optimizationResistanceWeight->value() != 0.0
         || optimizationResistanceTarget == nullptr || optimizationResistanceTarget->value() != 50.0
         || optimizationReactanceWeight == nullptr || optimizationReactanceWeight->value() != 0.0
         || optimizationReactanceTarget == nullptr || optimizationReactanceTarget->value() != 0.0
-        || optimizationVariablesHeading == nullptr
-        || optimizationSweepHeading == nullptr
+        || optimizationStudySummary == nullptr
+        || !optimizationStudySummary->text().contains(QStringLiteral("LONG_FT"))
+        || !optimizationStudySummary->text().contains(QStringLiteral("Frequencies:"))
         || optimizationFrequencyMode == nullptr
         || optimizationObjective == nullptr
         || optimizationObjective->itemData(0, Qt::ToolTipRole).toString().isEmpty()
@@ -456,29 +613,44 @@ auto main(int argc, char* argv[]) -> int
         || optimizationContinuousStop == nullptr
         || optimizationContinuousStep == nullptr
         || optimizationApplyBest == nullptr || optimizationApplyBest->isEnabled()
+        || optimizationResetSearchDefaults == nullptr
+        || optimizationCandidateCount == nullptr
+        || !optimizationCandidateCount->toolTip().contains(
+            QStringLiteral("including both endpoints"))
+        || !optimizationCandidateCount->toolTip().contains(
+            QStringLiteral("every selected frequency"))
         || !adaptiveControlsValid
-        || settingsBottom > frequencyPanelTop
+        || !sweepControlsValid
+        || !wheelProtected
+        || !compactSetupValid
         || !frequencyControlsContained
+        || !frequencyGridFlowsHorizontally
         || !hasDeleteShortcut
         || !hasBackspaceShortcut
         || !continuousSweepValid
         || !selectedFrequencyObjectiveValid
-        || optimizationFrequencyTable->rowCount() != 7
-        || optimizationVariablesHeading->height() != optimizationSweepHeading->height()
-        || optimizationVariables->mapTo(&optimization, QPoint{}).y()
-            != optimizationSweepSettings->mapTo(&optimization, QPoint{}).y()
+        || !objectiveTopAligned
+        || optimizationFrequencyTable->viewMode() != QListView::IconMode
+        || !optimizationFrequencyTable->isWrapping()
+        || optimizationFrequencyTable->count() != 7
         || !optimizerUsesThreeDecimals
         || !optimizerResultsPreserved
-        || optimizationSweepSettings->rowCount() != 4
+        || !sameModelFrequenciesPreserved
+        || !historicalFrequencySelectionLoaded
+        || !activeFrequenciesRestored
         || optimizationObjectiveCriteria->rowCount() != 3
         || optimizationResultsTable->columnCount() != 8
         || optimizationVariables->columnCount() != 4
+        || optimizationVariables->columnWidth(0) != 80
+        || optimizationVariables->columnWidth(1) != 130
+        || optimizationVariables->columnWidth(2) != 95
+        || optimizationVariables->columnWidth(3) != 45
         || optimizationVariables->rowCount() != 3
         || optimizationVariables->item(0, 1)->text() != QStringLiteral("95")
+        || optimizationVariables->item(0, 1)->toolTip().isEmpty()
         || optimizationVariables->item(0, 2)->text() != QStringLiteral("95.000")
         || optimizationVariableControl->count() != 3
-        || optimizationVariableControl->findText(QStringLiteral("HALF")) < 0
-        || qobject_cast<QComboBox*>(optimizationSweepSettings->cellWidget(0, 1)) == nullptr) {
+        || optimizationVariableControl->findText(QStringLiteral("HALF")) < 0) {
         return EXIT_FAILURE;
     }
     necwb::ui::CurrentDistributionView currents;
