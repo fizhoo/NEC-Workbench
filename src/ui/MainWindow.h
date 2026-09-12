@@ -159,6 +159,8 @@ private:
     void showWireProperties(int tag);
     void editWire(const model::Wire& original, const model::Wire& updated);
     void editStructuredCard(std::size_t sourceLine, const QString& cardText);
+    void makeFieldOptimizable(std::size_t sourceLine,
+        std::size_t fieldIndex, const QString& fieldLabel);
     void addStructuredCard(const QString& cardText);
     void deleteStructuredCard(std::size_t sourceLine);
     void changeFrequency(const model::FrequencyDefinition& frequency);

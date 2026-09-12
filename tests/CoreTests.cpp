@@ -139,6 +139,24 @@ void testSymbolResolution()
     expect(removedSymbol && removedSymbol->find("SY half=length/2") != std::string::npos
             && removedSymbol->find("SY length=") == std::string::npos,
         "one assignment on a multi-symbol SY line can be removed");
+    const std::string fixedCard =
+        "CM fixed geometry\r\nGW 1 11 -5 0 6 5 0 6 0.001\r\nGE 0\r\n";
+    const auto parameterized = necwb::nec::parameterizeNecCardField(
+        fixedCard, 2, 2, "wire_x1");
+    expect(parameterized
+            && parameterized->find("SY wire_x1=-5\r\nGW 1 11 wire_x1 0 6 5 0 6 0.001")
+                != std::string::npos,
+        "a fixed numeric card field can be promoted to an inserted SY parameter");
+    const auto parameterizedResolution = parameterized
+        ? necwb::nec::NecSymbolResolver{}.resolve(*parameterized)
+        : necwb::nec::SymbolResolution{};
+    expect(parameterizedResolution.ok()
+            && parameterizedResolution.generatedDeck.find(
+                "GW 1 11 -5 0 6 5 0 6 0.001") != std::string::npos,
+        "a promoted field resolves back to the original numeric NEC card");
+    expect(!necwb::nec::parameterizeNecCardField(
+            "FR 0 1 0 0 start 0\n", 1, 4, "frequency"),
+        "an existing symbolic field is not promoted a second time");
     expect(resolution.resolvedSource.find("CE\r\n\r\n\r\n\r\nGW") != std::string::npos,
         "line-preserving resolution replaces each SY declaration with a blank source line");
     expect(resolution.generatedDeck.find("GW 1 21 -5 0 6 5 0 6 0.001") != std::string::npos,
@@ -1030,8 +1048,12 @@ void testAdaptiveSearch()
     const auto firstRefinement = search.nextCandidates();
     expect(firstRefinement == std::vector<double>({3.75, 6.25}),
         "adaptive search refines both neighbors of an interior best point");
+    expect(search.refinementRound() == 1,
+        "adaptive search numbers a left/right proposal batch as one refinement round");
     for (const auto value : firstRefinement) search.record(value, std::pow(value - 5.0, 2.0));
     const auto secondRefinement = search.nextCandidates();
+    expect(search.refinementRound() == 2,
+        "adaptive search advances its round only after proposing the next batch");
     for (const auto value : secondRefinement) search.record(value, std::pow(value - 5.0, 2.0));
     expect(search.nextCandidates().empty()
             && search.stopReason() == necwb::analysis::AdaptiveStopReason::ScoreTolerance,
@@ -1042,6 +1064,19 @@ void testAdaptiveSearch()
     expect(limited.nextCandidates().empty()
             && limited.stopReason() == necwb::analysis::AdaptiveStopReason::MaximumEvaluations,
         "adaptive search obeys its solver-evaluation budget");
+
+    necwb::analysis::AdaptiveSearch resolved({0.0, 1.0, 12, 0.2, 0.001});
+    for (const auto value : resolved.initialCandidates())
+        resolved.record(value, std::pow(value - 0.5, 2.0));
+    expect(resolved.nextCandidates().empty()
+            && resolved.stopReason() == necwb::analysis::AdaptiveStopReason::ParameterTolerance,
+        "adaptive search reports parameter tolerance when neither midpoint is far enough away");
+
+    necwb::analysis::AdaptiveSearch failed({0.0, 10.0, 12, 0.1, 0.001});
+    for (const auto value : failed.initialCandidates()) failed.record(value, std::nullopt);
+    expect(failed.nextCandidates().empty()
+            && failed.stopReason() == necwb::analysis::AdaptiveStopReason::NoSuccessfulCandidate,
+        "adaptive search reports when no candidate produced an objective score");
 }
 
 void testFrequencyPlans()

@@ -80,12 +80,18 @@ auto AdaptiveSearch::nextCandidates() -> std::vector<double>
     const auto remaining = settings_.maximumEvaluations
         - static_cast<int>(observations_.size());
     if (static_cast<int>(candidates.size()) > remaining) candidates.resize(remaining);
+    if (!candidates.empty()) ++refinementRound_;
     return candidates;
 }
 
 auto AdaptiveSearch::stopReason() const noexcept -> AdaptiveStopReason
 {
     return stopReason_;
+}
+
+auto AdaptiveSearch::refinementRound() const noexcept -> int
+{
+    return refinementRound_;
 }
 
 }

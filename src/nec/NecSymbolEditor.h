@@ -17,4 +17,8 @@ namespace necwb::nec {
 [[nodiscard]] auto removeSymbolDefinition(std::string_view source,
     std::size_t lineNumber, std::string_view name) -> std::optional<std::string>;
 
+[[nodiscard]] auto parameterizeNecCardField(std::string_view source,
+    std::size_t lineNumber, std::size_t fieldIndex,
+    std::string_view name) -> std::optional<std::string>;
+
 }

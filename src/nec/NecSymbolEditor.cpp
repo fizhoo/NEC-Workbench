@@ -1,8 +1,10 @@
 #include "nec/NecSymbolEditor.h"
 
+#include "nec/NecCardFieldEditor.h"
 #include "nec/NecParser.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <vector>
 
@@ -147,6 +149,22 @@ auto removeSymbolDefinition(std::string_view source,
         }
     }
     return joinSource(lines, document);
+}
+
+auto parameterizeNecCardField(std::string_view source, std::size_t lineNumber,
+    std::size_t fieldIndex, std::string_view name) -> std::optional<std::string>
+{
+    const auto document = NecParser{}.parse(source);
+    if (lineNumber == 0 || lineNumber > document.cards().size()) return std::nullopt;
+    const auto& card = document.cards()[lineNumber - 1];
+    if (fieldIndex >= card.fields.size()
+        || !necCardFieldIsNumeric(card.sourceText, fieldIndex)) return std::nullopt;
+    const auto replacement = replaceNecCardFields(card.sourceText,
+        std::array{NecFieldReplacement{fieldIndex, std::string(trim(name))}});
+    if (!replacement) return std::nullopt;
+    auto lines = sourceLines(document);
+    lines[lineNumber - 1] = *replacement;
+    return insertSymbolDefinition(joinSource(lines, document), name, card.fields[fieldIndex]);
 }
 
 }

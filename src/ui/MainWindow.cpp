@@ -66,6 +66,7 @@
 #include <QFormLayout>
 #include <QFrame>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
@@ -802,6 +803,10 @@ void MainWindow::createWorkspace()
         [this](int tag) { duplicateWire(tag); });
     connect(wireCardEditor_, &WireCardEditor::deleteWireRequested, this,
         [this](int tag) { deleteWire(tag); });
+    connect(wireCardEditor_, &WireCardEditor::fieldParameterizationRequested, this,
+        [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
+            makeFieldOptimizable(sourceLine, fieldIndex, fieldLabel);
+        });
     connect(structuredCardEditor_, &StructuredCardEditor::cardSelected, this,
         [this](std::size_t sourceLine) { editor_->goToLine(sourceLine); });
     connect(structuredCardEditor_, &StructuredCardEditor::cardEdited, this,
@@ -812,6 +817,10 @@ void MainWindow::createWorkspace()
         [this](const QString& cardText) { addStructuredCard(cardText); });
     connect(structuredCardEditor_, &StructuredCardEditor::cardDeleteRequested, this,
         [this](std::size_t sourceLine) { deleteStructuredCard(sourceLine); });
+    connect(structuredCardEditor_, &StructuredCardEditor::fieldParameterizationRequested, this,
+        [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
+            makeFieldOptimizable(sourceLine, fieldIndex, fieldLabel);
+        });
 
     workspace_ = new QTabWidget(modelWorkspace_);
     workspace_->setObjectName(QStringLiteral("geometryWorkspace"));
@@ -4342,6 +4351,68 @@ void MainWindow::editStructuredCard(std::size_t sourceLine, const QString& cardT
     if (source && QString::fromStdString(*source) != editor_->toPlainText())
         pushGeometrySourceEdit(tr("Edit structured card on line %1").arg(sourceLine),
             QString::fromStdString(*source));
+}
+
+void MainWindow::makeFieldOptimizable(std::size_t sourceLine,
+    std::size_t fieldIndex, const QString& fieldLabel)
+{
+    const auto source = editor_->toPlainText().toStdString();
+    const auto document = nec::NecParser{}.parse(source);
+    if (sourceLine == 0 || sourceLine > document.cards().size()) return;
+    const auto& card = document.cards()[sourceLine - 1];
+    if (fieldIndex >= card.fields.size()
+        || !nec::necCardFieldIsNumeric(card.sourceText, fieldIndex)) {
+        statusBar()->showMessage(tr("Only fixed numeric fields can be made optimizable."), 5000);
+        return;
+    }
+
+    auto fieldName = fieldLabel.section(QLatin1Char('('), 0, 0).trimmed().toLower();
+    fieldName.replace(QRegularExpression(QStringLiteral("[^a-z0-9_]+")), QStringLiteral("_"));
+    fieldName.remove(QRegularExpression(QStringLiteral("^_+|_+$")));
+    auto baseName = QString::fromStdString(card.mnemonic).toLower();
+    if (!fieldName.isEmpty()) baseName += QLatin1Char('_') + fieldName;
+    if (baseName.isEmpty() || baseName.front().isDigit())
+        baseName.prepend(QStringLiteral("parameter_"));
+
+    const auto resolution = nec::NecSymbolResolver{}.resolve(source);
+    const auto nameUsed = [&resolution](const QString& candidate) {
+        return std::ranges::any_of(resolution.definitions, [&candidate](const auto& definition) {
+            return QString::fromStdString(definition.name).compare(
+                candidate, Qt::CaseInsensitive) == 0;
+        });
+    };
+    auto suggestion = baseName;
+    for (auto suffix = 2; nameUsed(suggestion); ++suffix)
+        suggestion = QStringLiteral("%1_%2").arg(baseName).arg(suffix);
+
+    bool accepted = false;
+    const auto name = QInputDialog::getText(this, tr("Make Optimizable"),
+        tr("Parameter name (set its search range in Optimize):"),
+        QLineEdit::Normal, suggestion, &accepted).trimmed();
+    if (!accepted || name.isEmpty()) return;
+    const QRegularExpression validName(QStringLiteral("^[A-Za-z_][A-Za-z0-9_]*$"));
+    if (!validName.match(name).hasMatch() || nameUsed(name)) {
+        QMessageBox::warning(this, tr("Invalid Parameter Name"),
+            tr("Use a unique name beginning with a letter or underscore, followed only by letters, numbers, or underscores."));
+        return;
+    }
+
+    const auto updated = nec::parameterizeNecCardField(
+        source, sourceLine, fieldIndex, name.toStdString());
+    if (!updated) {
+        statusBar()->showMessage(tr("The selected field could not be made optimizable."), 5000);
+        return;
+    }
+    const auto updatedResolution = nec::NecSymbolResolver{}.resolve(*updated);
+    if (!updatedResolution.ok()) {
+        QMessageBox::warning(this, tr("Parameter Error"),
+            tr("The parameter could not be created: %1")
+                .arg(QString::fromStdString(updatedResolution.diagnostics.front().message)));
+        return;
+    }
+    pushGeometrySourceEdit(tr("Make %1 optimizable as %2").arg(fieldLabel, name),
+        QString::fromStdString(*updated));
+    statusBar()->showMessage(tr("Created %1. Set its bounds in Optimize.").arg(name), 5000);
 }
 
 void MainWindow::addStructuredCard(const QString& cardText)

@@ -1,5 +1,7 @@
 #include "ui/cards/StructuredCardEditor.h"
 
+#include "nec/NecCardFieldEditor.h"
+
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QColor>
@@ -10,6 +12,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QHBoxLayout>
+#include <QMenu>
 #include <QPainter>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -301,6 +304,7 @@ StructuredCardEditor::StructuredCardEditor(QWidget* parent) : QWidget(parent)
     table_->setAlternatingRowColors(true);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
+    table_->setContextMenuPolicy(Qt::CustomContextMenu);
     table_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed
         | QAbstractItemView::SelectedClicked);
     table_->verticalHeader()->hide();
@@ -330,6 +334,24 @@ StructuredCardEditor::StructuredCardEditor(QWidget* parent) : QWidget(parent)
     connect(table_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
         if (!updating_) commitCell(item);
     });
+    connect(table_, &QTableWidget::customContextMenuRequested, this,
+        [this](const QPoint& position) {
+            auto* item = table_->itemAt(position);
+            if (item == nullptr || item->column() < 2
+                || table_->item(item->row(), 0) == nullptr) return;
+            const auto mnemonic = table_->item(item->row(), 1)->text();
+            const auto fieldIndex = item->column() - 2;
+            if (fieldType(mnemonic, fieldIndex) != FieldType::Number
+                || !choicesFor(mnemonic, fieldIndex).empty()
+                || !parsesAs<double>(item->text())) return;
+            QMenu menu(this);
+            auto* action = menu.addAction(tr("Make Optimizable…"));
+            if (menu.exec(table_->viewport()->mapToGlobal(position)) != action) return;
+            emit fieldParameterizationRequested(
+                table_->item(item->row(), 0)->data(SourceLineRole).toULongLong(),
+                static_cast<std::size_t>(fieldIndex),
+                table_->horizontalHeaderItem(item->column())->text());
+        });
     connect(addButton_, &QPushButton::clicked, this, [this] {
         const auto familyIndex = currentFamilyIndex();
         if (familyIndex < 0) return;
@@ -442,7 +464,14 @@ void StructuredCardEditor::refreshTable()
         for (auto column = 0; column < fieldCount; ++column) {
             const auto value = column < static_cast<int>(card.fields.size())
                 ? QString::fromStdString(card.fields[static_cast<std::size_t>(column)]) : QString{};
-            table_->setItem(row, column+2, new QTableWidgetItem(value));
+            auto* item = new QTableWidgetItem(value);
+            if (!value.isEmpty() && !nec::necCardFieldIsNumeric(
+                    card.sourceText, static_cast<std::size_t>(column))) {
+                item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+                item->setToolTip(tr(
+                    "This value is controlled by an SY expression. Edit the parameter or raw source."));
+            }
+            table_->setItem(row, column+2, item);
         }
         static_cast<void>(validateRow(row));
     }
@@ -514,6 +543,7 @@ auto StructuredCardEditor::validateRow(int row) -> bool
     for (auto fieldIndex = 0; fieldIndex < fields.size(); ++fieldIndex) {
         auto* cell = table_->item(row, fieldIndex+2);
         QString error;
+        if (!(cell->flags() & Qt::ItemIsEditable)) continue;
         if (fields[fieldIndex].isEmpty()) {
             if (fieldIndex < required) error = tr("This field is required for %1.").arg(mnemonic);
         } else if (fieldType(mnemonic, fieldIndex) == FieldType::Integer

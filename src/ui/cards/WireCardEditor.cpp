@@ -7,6 +7,7 @@
 #include <QHBoxLayout>
 #include <QComboBox>
 #include <QLabel>
+#include <QMenu>
 #include <QPalette>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -73,6 +74,7 @@ WireCardEditor::WireCardEditor(QWidget* parent)
     table_->setAlternatingRowColors(true);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
+    table_->setContextMenuPolicy(Qt::CustomContextMenu);
     table_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed
         | QAbstractItemView::SelectedClicked);
     table_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
@@ -106,6 +108,21 @@ WireCardEditor::WireCardEditor(QWidget* parent)
             validateAndCommitRow(item->row(), item->column());
         }
     });
+    connect(table_, &QTableWidget::customContextMenuRequested, this,
+        [this](const QPoint& position) {
+            auto* item = table_->itemAt(position);
+            if (item == nullptr || item->column() < X1 || item->column() > Radius
+                || !(item->flags() & Qt::ItemIsEditable)) return;
+            const auto* wire = model_.wireByTag(
+                table_->item(item->row(), Tag)->data(WireTagRole).toInt());
+            if (wire == nullptr) return;
+            QMenu menu(this);
+            auto* action = menu.addAction(tr("Make Optimizable…"));
+            if (menu.exec(table_->viewport()->mapToGlobal(position)) != action) return;
+            emit fieldParameterizationRequested(wire->sourceLine,
+                static_cast<std::size_t>(item->column()),
+                table_->horizontalHeaderItem(item->column())->text());
+        });
     updateUnitLabels();
     updateActionStates();
 }

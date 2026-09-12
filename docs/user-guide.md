@@ -618,6 +618,13 @@ table, plots, history, and **Apply Best to Model** action:
   current best candidate. It stops at the evaluation budget, parameter tolerance,
   or after repeated rounds remain within the score-improvement tolerance.
 
+An adaptive refinement round normally evaluates two candidates: one midpoint on
+the left of the current best value and one on the right. The score tolerance
+compares the best result after the complete round, not each candidate separately.
+The search stops after two consecutive completed rounds fail to improve the best
+score by more than the configured tolerance. Candidate status labels identify the
+initial samples and each round's left and right trials.
+
 Adaptive Optimize is a transparent derivative-free coarse-to-fine search. It is
 more efficient than a dense sweep when the useful region is localized, but a
 parameter sweep remains valuable for inspecting the full objective landscape.
@@ -625,35 +632,37 @@ The latest candidate table remains visible when moving to another workspace and
 returning to Optimize. It resets only after the active model source changes or a
 new sweep begins.
 
-The results area has **Candidates** and **Plots** views. The plot shows total
-objective score against the swept parameter together with the enabled weighted
-SWR, resistance, and reactance contributions. Lower values are better, and the
-best candidate is marked. Hover for exact values; double-click a marker to open
-the same candidate-detail window used by the candidate table. That window offers
-both a frequency table and SWR/impedance plots generated from the candidate's
-retained feedpoint results. Inspecting these plots does not create a normal
-analysis run or replace the active model.
+The Optimize workspace keeps one compact setup pane on the left and gives the
+expanding right side to results. Choose **Parameter Sweep** or **Adaptive
+Optimize** from the mode selector above the workspace. The same row shows the
+active variable, range, frequency count, objective, and Run/Stop controls.
 
-Choose **Parameter Sweep** or **Adaptive Optimize** first, then use the focused
-**Parameter**, **Frequencies**, and **Objective** setup tabs. Method-specific
-controls appear inside **Parameter**: Candidate count for a sweep, or the
-evaluation and tolerance limits for adaptive optimization. A compact study
-summary keeps the selected variable, range, frequency count, and goal visible
-while moving between setup tabs. Both methods continue to share one candidate
-table and plot area below the configuration. Decimal values are displayed and
-entered to three places throughout the optimizer; archived raw solver output
-remains unchanged.
+The left pane keeps **Variable**, **Frequencies**, and **Objective** visible as
+sections of one study rather than separate setup pages. Variable, bounds, and
+the search budget remain directly editable. Frequencies and Objective show the
+active source, range, criteria, targets, and reference impedance as compact
+summaries; use their **Edit…** buttons for the full controls. Accepting an editor
+keeps the changes, while Cancel restores the complete prior setup. Only
+method-specific controls change when the search mode changes. The pane scrolls
+independently on smaller displays and can be resized with the horizontal divider
+without forcing the results area into a second page.
+
+The right pane shows the candidate table and objective plot together, separated
+by an adjustable vertical divider. The plot shows total objective score against
+the swept parameter together with the enabled weighted SWR, resistance, and
+reactance contributions. Lower values are better, and the best candidate is
+marked. Hover for exact values; double-click a marker to open the same
+candidate-detail window used by the candidate table. That window offers both a
+frequency table and SWR/impedance plots generated from the candidate's retained
+feedpoint results. Inspecting these plots does not create a normal analysis run
+or replace the active model. Decimal values are displayed and entered to three
+places throughout the optimizer; archived raw solver output remains unchanged.
 
 **Reset Search Defaults** restores Candidate count to 7 for Parameter Sweep, or
 Maximum evaluations to 21, Parameter tolerance to 0.010, and Score tolerance to
 0.001 for Adaptive Optimize. It does not change the variable, range, frequency
 plan, or objective. Optimizer numeric fields respond to the mouse wheel only
 while focused, preventing accidental changes while scrolling the setup area.
-
-Use **Hide Setup** when working on a smaller display or when the candidate
-results need most of the window. Configuration controls scroll independently
-when vertical space is limited, while the Candidates/Plots tab bar remains
-visible. The divider between setup and results can also be adjusted manually.
 
 For **Minimax**, **Frequency Source** controls the
 frequencies calculated for every candidate:
@@ -695,6 +704,13 @@ calculated expressions in its variable selector. Selecting an expression-based
 symbol overrides its resolved value for that candidate before later symbol
 expressions and NEC cards are evaluated. Workbench does not try to determine
 whether the selected symbol materially affects the final model.
+
+Fixed continuous numeric fields can be promoted without manually editing raw source.
+Right-click a wire coordinate or radius in **NEC Source → Structured Cards → Wires**, or
+a continuous numeric field in **Other Supported Cards**, then choose **Make Optimizable…**.
+Workbench inserts an `SY` definition initialized to the existing value and replaces the
+selected field with that symbol. Set its minimum and maximum in Optimize. Integer and
+categorical fields are intentionally excluded until discrete optimization is supported.
 
 For Parameter Sweep, “Complete” means every requested candidate was attempted;
 it is not convergence. Adaptive Optimize reports its stopping reason separately.

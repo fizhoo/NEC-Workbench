@@ -34,6 +34,8 @@ signals:
     void addWireRequested();
     void duplicateWireRequested(int tag);
     void deleteWireRequested(int tag);
+    void fieldParameterizationRequested(std::size_t sourceLine,
+        std::size_t fieldIndex, QString fieldLabel);
 
 private:
     void updateActionStates();

@@ -29,6 +29,8 @@ signals:
     void cardEdited(std::size_t sourceLine, QString cardText);
     void cardAddRequested(QString cardText);
     void cardDeleteRequested(std::size_t sourceLine);
+    void fieldParameterizationRequested(std::size_t sourceLine,
+        std::size_t fieldIndex, QString fieldLabel);
 
 private:
     void refreshFamilies();

@@ -71,12 +71,27 @@ private:
         double continuousStepMHz{};
     };
 
+    struct StudySetup {
+        SearchMethod searchMethod{SearchMethod::ParameterSweep};
+        QString variable;
+        double minimum{};
+        double maximum{};
+        int candidateLimit{};
+        double parameterTolerance{};
+        double scoreTolerance{};
+        FrequencySelectionState frequencySelection;
+        std::vector<double> frequenciesMHz;
+        analysis::OptimizationObjectiveSpec objective;
+    };
+
     struct Candidate {
         double value{};
         int row{};
         AnalysisRunRecord record;
         std::vector<analysis::FeedpointResult> feedpoints;
         std::optional<analysis::OptimizationObjectiveResult> evaluation;
+        int refinementRound{};
+        QString trialRole;
     };
 
     void populateVariables(const nec::SymbolResolution& resolution);
@@ -84,6 +99,7 @@ private:
     void updateObjectiveControls();
     void updateFrequencyControls();
     void updateSearchMethodControls();
+    void updateSetupSummaries();
     void updateWorkload();
     void showCandidateDetails(int row);
     void updateCandidateDetails(int row);
@@ -98,13 +114,18 @@ private:
     void clearExplicitFrequencies();
     void chooseAmateurBands();
     void pasteExplicitFrequencies();
+    void editFrequencySetup();
+    void editObjectiveSetup();
+    void restoreObjectiveSetup(const analysis::OptimizationObjectiveSpec& objective);
     void startSweep();
     void cancelSweep();
     void startNextCandidate();
     [[nodiscard]] auto prepareAdaptiveRound() -> bool;
-    void appendCandidate(double value);
+    void appendCandidate(double value, int refinementRound = 0,
+        QString trialRole = {});
     void finishCurrentCandidate(CandidateEvaluationResult result);
     void finishSweep();
+    void saveSessionCompletionMetadata();
     auto writeCandidateMetadata(const Candidate& candidate) -> bool;
     void setCandidateStatus(int row, const QString& status);
     [[nodiscard]] auto selectedObjective() const -> analysis::OptimizationObjectiveSpec;
@@ -112,6 +133,7 @@ private:
     [[nodiscard]] auto selectedSearchMethod() const -> SearchMethod;
     [[nodiscard]] auto selectedFrequencyPlan() const -> analysis::FrequencyPlan;
     [[nodiscard]] auto explicitFrequencies() const -> std::vector<double>;
+    [[nodiscard]] auto currentStudySetup() const -> StudySetup;
     [[nodiscard]] auto captureFrequencySelection() const -> FrequencySelectionState;
     void restoreFrequencySelection(const FrequencySelectionState& state);
     [[nodiscard]] auto objectiveName(analysis::OptimizationObjectiveKind kind) const -> QString;
@@ -140,6 +162,9 @@ private:
     QDoubleSpinBox* continuousStopControl_{};
     QDoubleSpinBox* continuousStepControl_{};
     QLabel* workloadLabel_{};
+    QLabel* frequencySummaryLabel_{};
+    QPushButton* editFrequencyButton_{};
+    QDialog* frequencyDialog_{};
     QDoubleSpinBox* minimumControl_{};
     QDoubleSpinBox* maximumControl_{};
     QSpinBox* pointsControl_{};
@@ -152,6 +177,9 @@ private:
     QDoubleSpinBox* adaptiveScoreToleranceControl_{};
     QDoubleSpinBox* referenceImpedanceControl_{};
     QLabel* studySummaryLabel_{};
+    QLabel* objectiveSummaryLabel_{};
+    QPushButton* editObjectiveButton_{};
+    QDialog* objectiveDialog_{};
     QPushButton* runButton_{};
     QPushButton* cancelButton_{};
     QPushButton* applyBestButton_{};

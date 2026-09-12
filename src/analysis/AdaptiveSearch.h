@@ -30,6 +30,7 @@ public:
     void record(double value, std::optional<double> score);
     [[nodiscard]] auto nextCandidates() -> std::vector<double>;
     [[nodiscard]] auto stopReason() const noexcept -> AdaptiveStopReason;
+    [[nodiscard]] auto refinementRound() const noexcept -> int;
 
 private:
     struct Observation {
@@ -41,6 +42,7 @@ private:
     std::vector<Observation> observations_;
     double previousBestScore_{};
     int stagnantRounds_{};
+    int refinementRound_{};
     AdaptiveStopReason stopReason_{AdaptiveStopReason::None};
 };
 
