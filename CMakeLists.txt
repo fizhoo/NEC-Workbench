@@ -16,6 +16,8 @@ add_library(necwb_core
     src/analysis/AverageGainTest.cpp
     src/analysis/FrequencyPlan.cpp
     src/analysis/NecOutputParser.cpp
+    src/analysis/NelderMeadSearch.cpp
+    src/analysis/NelderMeadSearch.h
     src/analysis/OptimizationObjective.cpp
     src/analysis/SegmentationConvergence.cpp
     src/analysis/SolverCommand.cpp
@@ -59,6 +61,8 @@ if(NECWB_BUILD_GUI)
         src/ui/MainWindow.h
         src/ui/DetachablePanel.cpp
         src/ui/DetachablePanel.h
+        src/ui/ParameterFieldStyle.cpp
+        src/ui/ParameterFieldStyle.h
         src/ui/analysis/AnalysisSetupEditor.cpp
         src/ui/analysis/AnalysisSetupEditor.h
         src/ui/analysis/AnalysisRequestEditor.cpp
@@ -73,6 +77,8 @@ if(NECWB_BUILD_GUI)
         src/ui/analysis/ImpedanceResultsView.h
         src/ui/analysis/ResultsSummaryView.cpp
         src/ui/analysis/ResultsSummaryView.h
+        src/ui/analysis/RunReviewWindow.cpp
+        src/ui/analysis/RunReviewWindow.h
         src/ui/analysis/SolverProcessRunner.cpp
         src/ui/analysis/SolverProcessRunner.h
         src/ui/analysis/SweepPlotsView.cpp
@@ -137,6 +143,15 @@ if(NECWB_BUILD_GUI)
         BUNDLE DESTINATION .
         RUNTIME DESTINATION bin
     )
+
+    if(UNIX AND NOT APPLE)
+        install(FILES packaging/nec-workbench.desktop
+            DESTINATION share/applications
+        )
+        install(FILES packaging/nec-workbench.svg
+            DESTINATION share/icons/hicolor/scalable/apps
+        )
+    endif()
 endif()
 
 if(NECWB_BUILD_TESTS)

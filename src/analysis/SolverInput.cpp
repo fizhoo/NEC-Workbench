@@ -70,14 +70,42 @@ auto normalizeSolverDeck(std::string_view source) -> std::string
 auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
     RadiationSweepMode mode) -> std::string
 {
+    FrequencyPlan plan;
+    if (!setup.frequency || setup.frequency->count <= 1
+        || mode == RadiationSweepMode::EveryFrequency) {
+        plan.mode = FrequencyPlanMode::ModelSweep;
+    } else {
+        plan.mode = FrequencyPlanMode::Explicit;
+        std::vector<int> indexes;
+        if (mode == RadiationSweepMode::RepresentativeFrequencies) {
+            indexes = {setup.frequency->count - 1, 0,
+                (setup.frequency->count - 1) / 2};
+            std::ranges::sort(indexes);
+            const auto duplicates = std::ranges::unique(indexes);
+            indexes.erase(duplicates.begin(), duplicates.end());
+        } else {
+            indexes = {(setup.frequency->count - 1) / 2};
+        }
+        for (const auto index : indexes)
+            plan.pointsMHz.push_back(frequencyAt(*setup.frequency, index));
+    }
+    return prepareSolverInput(source, setup, plan);
+}
+
+auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
+    const FrequencyPlan& radiationFrequencies) -> std::string
+{
     const auto compatibleSource = normalizeSolverDeck(source);
-    if (!setup.frequency || setup.radiationPatterns.empty() || setup.frequency->count <= 1) {
+    if (setup.radiationPatterns.empty()
+        || radiationFrequencies.mode == FrequencyPlanMode::ModelSweep) {
         return compatibleSource;
     }
-    if (mode == RadiationSweepMode::EveryFrequency) return compatibleSource;
+    const auto frequencies = frequencyPlanPoints(radiationFrequencies);
+    if (frequencies.empty()) return compatibleSource;
 
     auto lines = splitLines(compatibleSource);
-    const auto frequencyLine = setup.frequency->sourceLine;
+    const auto frequencyLine = setup.frequency
+        ? setup.frequency->sourceLine : std::size_t{};
     std::vector<std::size_t> patternLines;
     patternLines.reserve(setup.radiationPatterns.size());
     for (const auto& pattern : setup.radiationPatterns) patternLines.push_back(pattern.sourceLine);
@@ -88,7 +116,7 @@ auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
     auto insertionIndex = lines.size();
     for (std::size_t index = 0; index < lines.size(); ++index) {
         const auto sourceLine = index + 1;
-        if (sourceLine == frequencyLine) {
+        if (frequencyLine != 0 && sourceLine == frequencyLine) {
             continue;
         }
         if (std::ranges::find(patternLines, sourceLine) != patternLines.end()
@@ -101,29 +129,15 @@ auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
 
     insertionIndex = std::min(insertionIndex, retained.size());
     const nec::NecWriter writer;
-    std::vector<int> patternIndexes;
-    if (mode == RadiationSweepMode::RepresentativeFrequencies) {
-        patternIndexes = {setup.frequency->count - 1, 0,
-            (setup.frequency->count - 1) / 2};
-        std::ranges::sort(patternIndexes);
-        const auto duplicates = std::ranges::unique(patternIndexes);
-        patternIndexes.erase(duplicates.begin(), duplicates.end());
-    } else {
-        patternIndexes = {(setup.frequency->count - 1) / 2};
-    }
-
     std::vector<std::string> requests;
-    requests.reserve(static_cast<std::size_t>(setup.frequency->count)
+    requests.reserve(frequencies.size()
         * (setup.radiationPatterns.size() + 1));
-    requests.push_back(writer.writeFrequencyCard(*setup.frequency));
+    if (setup.frequency) requests.push_back(writer.writeFrequencyCard(*setup.frequency));
     requests.push_back(setup.executionRequest
         ? writer.writeExecutionCard(*setup.executionRequest) : std::string{"XQ 0"});
-    for (const auto index : patternIndexes) {
-        auto point = *setup.frequency;
-        point.steppingMode = 0;
-        point.count = 1;
-        point.startMHz = frequencyAt(*setup.frequency, index);
-        point.step = 0.0;
+    for (const auto frequencyMHz : frequencies) {
+        model::FrequencyDefinition point;
+        point.startMHz = frequencyMHz;
         requests.push_back(writer.writeFrequencyCard(point));
         for (const auto& pattern : setup.radiationPatterns)
             requests.push_back(writer.writeRadiationPatternCard(pattern));

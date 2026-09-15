@@ -1,18 +1,28 @@
 #include "ui/analysis/AnalysisRequestEditor.h"
 
 #include "ui/DisplayFormat.h"
+#include "ui/PendingEditIndicator.h"
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QLabel>
+#include <QListView>
+#include <QListWidget>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSettings>
+#include <QShortcut>
 #include <QSignalBlocker>
+#include <QStackedWidget>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
@@ -24,6 +34,7 @@ namespace {
 constexpr auto SourceLineRole = Qt::UserRole;
 
 enum class PatternType { Full3D, Horizontal, Vertical, Custom };
+enum class PatternFrequencyMode { ModelSweep, Single, Selected, Continuous };
 
 auto angleControl(QWidget* parent, double minimum, double maximum) -> QDoubleSpinBox*
 {
@@ -90,29 +101,147 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
     auto* patternGroup = new QGroupBox(tr("Far-Field Radiation Patterns"), this);
     auto* patternLayout = new QVBoxLayout(patternGroup);
 
-    auto* frequencyPolicyGroup = new QGroupBox(tr("Radiation Frequencies for All Patterns"), patternGroup);
+    auto* frequencyPolicyGroup = new QGroupBox(tr("Pattern Frequencies"), patternGroup);
     frequencyPolicyGroup->setObjectName(QStringLiteral("radiationFrequencyPolicyGroup"));
     auto* frequencyPolicyLayout = new QVBoxLayout(frequencyPolicyGroup);
     auto* frequencyPolicyRow = new QHBoxLayout;
-    radiationSweepControl_ = new QComboBox(frequencyPolicyGroup);
-    radiationSweepControl_->setObjectName(QStringLiteral("radiationSweepMode"));
-    radiationSweepControl_->addItem(tr("Center frequency only (recommended)"),
-        static_cast<int>(analysis::RadiationSweepMode::CenterFrequencyOnly));
-    radiationSweepControl_->addItem(tr("Start, center, and end"),
-        static_cast<int>(analysis::RadiationSweepMode::RepresentativeFrequencies));
-    radiationSweepControl_->addItem(tr("Every frequency"),
-        static_cast<int>(analysis::RadiationSweepMode::EveryFrequency));
-    const auto savedMode = QSettings{}.value(QStringLiteral("analysis/radiationSweepMode"),
-        static_cast<int>(analysis::RadiationSweepMode::CenterFrequencyOnly)).toInt();
-    radiationSweepControl_->setCurrentIndex(
-        std::max(0, radiationSweepControl_->findData(savedMode)));
+    radiationFrequencyModeControl_ = new QComboBox(frequencyPolicyGroup);
+    radiationFrequencyModeControl_->setObjectName(QStringLiteral("radiationFrequencyMode"));
+    radiationFrequencyModeControl_->addItem(tr("Use Model FR Frequencies"),
+        static_cast<int>(PatternFrequencyMode::ModelSweep));
+    radiationFrequencyModeControl_->addItem(tr("Single Frequency"),
+        static_cast<int>(PatternFrequencyMode::Single));
+    radiationFrequencyModeControl_->addItem(tr("Use Selected Frequencies"),
+        static_cast<int>(PatternFrequencyMode::Selected));
+    radiationFrequencyModeControl_->addItem(tr("Custom Continuous Sweep"),
+        static_cast<int>(PatternFrequencyMode::Continuous));
+    const auto savedMode = QSettings{}.value(QStringLiteral("analysis/patternFrequencyMode"),
+        static_cast<int>(PatternFrequencyMode::Single)).toInt();
+    radiationFrequencyModeControl_->setCurrentIndex(
+        std::max(0, radiationFrequencyModeControl_->findData(savedMode)));
     frequencyPolicyRow->addWidget(new QLabel(tr("Run every RP request at:"), frequencyPolicyGroup));
-    frequencyPolicyRow->addWidget(radiationSweepControl_);
+    frequencyPolicyRow->addWidget(radiationFrequencyModeControl_, 1);
     frequencyPolicyRow->addStretch();
+    radiationFrequencyPages_ = new QStackedWidget(frequencyPolicyGroup);
+
+    auto* modelFrequencyPage = new QLabel(tr(
+        "Uses the model's FR card directly. NEC calculates every RP request at every FR point."),
+        radiationFrequencyPages_);
+    modelFrequencyPage->setWordWrap(true);
+    radiationFrequencyPages_->addWidget(modelFrequencyPage);
+
+    auto* singleFrequencyPage = new QWidget(radiationFrequencyPages_);
+    auto* singleFrequencyLayout = new QHBoxLayout(singleFrequencyPage);
+    singleFrequencyLayout->setContentsMargins(0, 0, 0, 0);
+    singleFrequencyControl_ = new QDoubleSpinBox(singleFrequencyPage);
+    singleFrequencyControl_->setObjectName(QStringLiteral("radiationSingleFrequency"));
+    singleFrequencyControl_->setDecimals(3);
+    singleFrequencyControl_->setRange(0.000001, 1.0e9);
+    singleFrequencyControl_->setSuffix(tr(" MHz"));
+    singleFrequencyLayout->addWidget(new QLabel(tr("Frequency"), singleFrequencyPage));
+    singleFrequencyLayout->addWidget(singleFrequencyControl_);
+    singleFrequencyLayout->addStretch();
+    radiationFrequencyPages_->addWidget(singleFrequencyPage);
+
+    auto* selectedFrequencyPage = new QWidget(radiationFrequencyPages_);
+    auto* selectedFrequencyLayout = new QVBoxLayout(selectedFrequencyPage);
+    selectedFrequencyLayout->setContentsMargins(0, 0, 0, 0);
+    auto* selectedFrequencyActions = new QHBoxLayout;
+    frequencyEntryControl_ = new QDoubleSpinBox(selectedFrequencyPage);
+    frequencyEntryControl_->setObjectName(QStringLiteral("radiationFrequencyEntry"));
+    frequencyEntryControl_->setDecimals(3);
+    frequencyEntryControl_->setRange(0.000001, 1.0e9);
+    frequencyEntryControl_->setSuffix(tr(" MHz"));
+    auto* addFrequency = new QPushButton(tr("Add"), selectedFrequencyPage);
+    auto* addAmateurBandCenters = new QPushButton(
+        tr("Amateur Band Centers…"), selectedFrequencyPage);
+    addAmateurBandCenters->setObjectName(
+        QStringLiteral("radiationAddAmateurBandCenters"));
+    addAmateurBandCenters->setToolTip(tr(
+        "Add one representative center frequency for each selected amateur band."));
+    auto* pasteFrequencies = new QPushButton(tr("Paste List…"), selectedFrequencyPage);
+    auto* removeFrequencies = new QPushButton(tr("Remove"), selectedFrequencyPage);
+    auto* clearFrequencies = new QPushButton(tr("Clear All"), selectedFrequencyPage);
+    clearFrequencies->setObjectName(QStringLiteral("radiationClearFrequencies"));
+    selectedFrequencyActions->addWidget(frequencyEntryControl_);
+    selectedFrequencyActions->addWidget(addFrequency);
+    selectedFrequencyActions->addWidget(addAmateurBandCenters);
+    selectedFrequencyActions->addStretch();
+    selectedFrequencyActions->addWidget(pasteFrequencies);
+    selectedFrequencyActions->addWidget(removeFrequencies);
+    selectedFrequencyActions->addWidget(clearFrequencies);
+    selectedFrequencies_ = new QListWidget(selectedFrequencyPage);
+    selectedFrequencies_->setObjectName(QStringLiteral("radiationSelectedFrequencies"));
+    selectedFrequencies_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    selectedFrequencies_->setViewMode(QListView::IconMode);
+    selectedFrequencies_->setFlow(QListView::LeftToRight);
+    selectedFrequencies_->setWrapping(true);
+    selectedFrequencies_->setResizeMode(QListView::Adjust);
+    selectedFrequencies_->setMovement(QListView::Static);
+    selectedFrequencies_->setUniformItemSizes(true);
+    selectedFrequencies_->setGridSize(QSize(92, 28));
+    selectedFrequencies_->setSpacing(2);
+    selectedFrequencies_->setMinimumHeight(72);
+    selectedFrequencies_->setMaximumHeight(120);
+    selectedFrequencies_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    selectedFrequencies_->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    selectedFrequencyLayout->addLayout(selectedFrequencyActions);
+    selectedFrequencyLayout->addWidget(new QLabel(
+        tr("Selected frequencies (MHz)"), selectedFrequencyPage));
+    selectedFrequencyLayout->addWidget(selectedFrequencies_);
+    radiationFrequencyPages_->addWidget(selectedFrequencyPage);
+
+    auto* continuousFrequencyPage = new QWidget(radiationFrequencyPages_);
+    auto* continuousFrequencyLayout = new QHBoxLayout(continuousFrequencyPage);
+    continuousFrequencyLayout->setContentsMargins(0, 0, 0, 0);
+    continuousStartControl_ = new QDoubleSpinBox(continuousFrequencyPage);
+    continuousStopControl_ = new QDoubleSpinBox(continuousFrequencyPage);
+    continuousStepControl_ = new QDoubleSpinBox(continuousFrequencyPage);
+    continuousStartControl_->setObjectName(QStringLiteral("radiationContinuousStart"));
+    continuousStopControl_->setObjectName(QStringLiteral("radiationContinuousStop"));
+    continuousStepControl_->setObjectName(QStringLiteral("radiationContinuousStep"));
+    for (auto* control : {continuousStartControl_, continuousStopControl_,
+             continuousStepControl_}) {
+        control->setDecimals(3);
+        control->setRange(0.000001, 1.0e9);
+        control->setSuffix(tr(" MHz"));
+    }
+    continuousStartControl_->setValue(14.0);
+    continuousStopControl_->setValue(14.35);
+    continuousStepControl_->setValue(0.05);
+    const QSettings frequencySettings;
+    singleFrequencyInitialized_ = frequencySettings.contains(
+        QStringLiteral("analysis/patternSingleFrequencyMHz"));
+    selectedFrequenciesInitialized_ = frequencySettings.contains(
+        QStringLiteral("analysis/patternSelectedFrequenciesMHz"));
+    singleFrequencyControl_->setValue(frequencySettings.value(
+        QStringLiteral("analysis/patternSingleFrequencyMHz"), 14.175).toDouble());
+    continuousStartControl_->setValue(frequencySettings.value(
+        QStringLiteral("analysis/patternContinuousStartMHz"), 14.0).toDouble());
+    continuousStopControl_->setValue(frequencySettings.value(
+        QStringLiteral("analysis/patternContinuousStopMHz"), 14.35).toDouble());
+    continuousStepControl_->setValue(frequencySettings.value(
+        QStringLiteral("analysis/patternContinuousStepMHz"), 0.05).toDouble());
+    continuousFrequencyLayout->addWidget(new QLabel(tr("Start"), continuousFrequencyPage));
+    continuousFrequencyLayout->addWidget(continuousStartControl_);
+    continuousFrequencyLayout->addWidget(new QLabel(tr("Stop"), continuousFrequencyPage));
+    continuousFrequencyLayout->addWidget(continuousStopControl_);
+    continuousFrequencyLayout->addWidget(new QLabel(tr("Step"), continuousFrequencyPage));
+    continuousFrequencyLayout->addWidget(continuousStepControl_);
+    radiationFrequencyPages_->addWidget(continuousFrequencyPage);
+
     sweepCostLabel_ = new QLabel(frequencyPolicyGroup);
     sweepCostLabel_->setWordWrap(true);
+    applyFrequencyButton_ = new QPushButton(tr("Apply Pattern Frequencies"), frequencyPolicyGroup);
+    applyFrequencyButton_->setObjectName(QStringLiteral("applyRadiationFrequenciesButton"));
+    applyFrequencyButton_->setToolTip(tr(
+        "Apply this frequency selection to every RP request without changing the RP cards."));
+    auto* frequencyApplyRow = new QHBoxLayout;
+    frequencyApplyRow->addWidget(sweepCostLabel_, 1);
+    frequencyApplyRow->addWidget(applyFrequencyButton_);
     frequencyPolicyLayout->addLayout(frequencyPolicyRow);
-    frequencyPolicyLayout->addWidget(sweepCostLabel_);
+    frequencyPolicyLayout->addWidget(radiationFrequencyPages_);
+    frequencyPolicyLayout->addLayout(frequencyApplyRow);
     patternLayout->addWidget(frequencyPolicyGroup);
 
     patterns_ = new QTableWidget(0, 4, patternGroup);
@@ -195,11 +324,11 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
     angleColumns->addWidget(phiGroup, 1);
     selectedPatternLayout->addLayout(angleColumns);
 
-    auto* applyPattern = new QPushButton(tr("Apply Selected Pattern"), patternControls_);
-    applyPattern->setObjectName(QStringLiteral("applyRadiationPatternButton"));
+    applyPatternButton_ = new QPushButton(tr("Apply Selected Pattern"), patternControls_);
+    applyPatternButton_->setObjectName(QStringLiteral("applyRadiationPatternButton"));
     auto* patternActions = new QHBoxLayout;
     patternActions->addStretch();
-    patternActions->addWidget(applyPattern);
+    patternActions->addWidget(applyPatternButton_);
     selectedPatternLayout->addLayout(patternActions);
     patternLayout->addWidget(patternControls_);
 
@@ -227,6 +356,7 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
         for (auto row = 0; row < patterns_->rowCount(); ++row) {
             if (patterns_->item(row, 0)->data(SourceLineRole).toULongLong() != 0) continue;
             patterns_->selectRow(row);
+            setPatternPending(true);
             return;
         }
         addPatternDraft({37, 36, 0.0, 0.0, 5.0, 10.0, 0});
@@ -245,7 +375,7 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
         else emit patternDeleteRequested(sourceLine);
         loadSelectedPattern();
     });
-    connect(applyPattern, &QPushButton::clicked, this, [this] {
+    connect(applyPatternButton_, &QPushButton::clicked, this, [this] {
         if (patterns_->currentRow() < 0) return;
         if (thetaEndControl_->value() < thetaStartControl_->value()
             || phiEndControl_->value() < phiStartControl_->value()) {
@@ -257,6 +387,7 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
         auto pattern = patternRequest();
         pattern.sourceLine = patterns_->item(patterns_->currentRow(), 0)
             ->data(SourceLineRole).toULongLong();
+        setPatternPending(false);
         emit patternChanged(pattern);
     });
     connect(patterns_, &QTableWidget::currentCellChanged, this,
@@ -267,9 +398,13 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
         if (static_cast<PatternType>(typeValue) != PatternType::Custom)
             lastPatternPreset_ = typeValue;
         applyPatternPreset(typeValue);
+        setPatternPending(true);
     });
     connect(resetPatternButton_, &QPushButton::clicked, this, [this] {
-        if (lastPatternPreset_ >= 0) applyPatternPreset(lastPatternPreset_);
+        if (lastPatternPreset_ >= 0) {
+            applyPatternPreset(lastPatternPreset_);
+            setPatternPending(true);
+        }
     });
     for (auto* control : {thetaStartControl_, thetaEndControl_, thetaStepControl_,
              phiStartControl_, phiEndControl_, phiStepControl_})
@@ -278,12 +413,76 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
                 if (loadingPattern_) return;
                 updatePatternTypeFromFields();
                 updatePatternControls();
+                setPatternPending(true);
             });
-    connect(radiationSweepControl_, &QComboBox::currentIndexChanged, this, [this] {
-        QSettings{}.setValue(QStringLiteral("analysis/radiationSweepMode"),
-            radiationSweepControl_->currentData().toInt());
+    connect(radiationFrequencyModeControl_, &QComboBox::currentIndexChanged,
+        this, [this] {
+            if (!loadingFrequency_) setFrequencyPending(true);
+            updateFrequencyControls();
+        });
+    connect(singleFrequencyControl_, &QDoubleSpinBox::valueChanged,
+        this, [this] {
+            if (!loadingFrequency_) setFrequencyPending(true);
+            updatePatternControls();
+        });
+    for (auto* control : {continuousStartControl_, continuousStopControl_,
+             continuousStepControl_}) {
+        connect(control, &QDoubleSpinBox::valueChanged, this,
+            [this] {
+                if (!loadingFrequency_) setFrequencyPending(true);
+                updatePatternControls();
+            });
+    }
+    connect(addFrequency, &QPushButton::clicked, this,
+        [this] { addSelectedFrequency(frequencyEntryControl_->value()); });
+    connect(removeFrequencies, &QPushButton::clicked,
+        this, [this] { removeSelectedFrequencies(); });
+    connect(addAmateurBandCenters, &QPushButton::clicked,
+        this, [this] { chooseAmateurBandCenters(); });
+    connect(clearFrequencies, &QPushButton::clicked, this, [this] {
+        selectedFrequencies_->clear();
+        setFrequencyPending(true);
         updatePatternControls();
     });
+    connect(pasteFrequencies, &QPushButton::clicked, this, [this] {
+        bool accepted{};
+        const auto text = QInputDialog::getMultiLineText(this, tr("Paste Pattern Frequencies"),
+            tr("Enter MHz values separated by spaces, commas, semicolons, or new lines:"),
+            {}, &accepted);
+        if (!accepted) return;
+        for (const auto& value : text.split(
+                 QRegularExpression(QStringLiteral("[\\s,;]+")), Qt::SkipEmptyParts)) {
+            bool valid{};
+            const auto frequencyMHz = value.toDouble(&valid);
+            if (valid) addSelectedFrequency(frequencyMHz);
+        }
+    });
+    auto* deleteFrequency = new QShortcut(QKeySequence(Qt::Key_Delete), selectedFrequencies_);
+    connect(deleteFrequency, &QShortcut::activated,
+        this, [this] { removeSelectedFrequencies(); });
+    auto* backspaceFrequency = new QShortcut(
+        QKeySequence(Qt::Key_Backspace), selectedFrequencies_);
+    connect(backspaceFrequency, &QShortcut::activated,
+        this, [this] { removeSelectedFrequencies(); });
+    const auto savedFrequencies = frequencySettings.value(
+        QStringLiteral("analysis/patternSelectedFrequenciesMHz")).toString()
+        .split(QLatin1Char(','), Qt::SkipEmptyParts);
+    for (const auto& value : savedFrequencies) {
+        bool valid{};
+        const auto frequencyMHz = value.toDouble(&valid);
+        if (valid) addSelectedFrequency(frequencyMHz);
+    }
+    connect(applyFrequencyButton_, &QPushButton::clicked, this, [this] {
+        if (analysis::frequencyPlanPoints(
+                frequencyPlan(captureFrequencySelection())).empty()) return;
+        appliedFrequencySelection_ = captureFrequencySelection();
+        persistFrequencySelection();
+        setFrequencyPending(false);
+        updatePatternControls();
+    });
+    updateFrequencyControls();
+    frequencySelectionInitialized_ = true;
+    appliedFrequencySelection_ = captureFrequencySelection();
     updatePatternControls();
     setReadiness({tr("Model has not been checked yet.")});
 }
@@ -298,7 +497,32 @@ void AnalysisRequestEditor::setData(const model::ModelSetup& setup)
     patterns_->setRowCount(static_cast<int>(setup_.radiationPatterns.size()));
     for (auto row = 0; row < static_cast<int>(setup_.radiationPatterns.size()); ++row)
         updatePatternTableRow(row, setup_.radiationPatterns[row]);
+    const auto frequencies = modelFrequencies();
+    auto initializedFrequencyDefaults = false;
+    loadingFrequency_ = true;
+    if (!frequencies.empty()) {
+        if (!singleFrequencyInitialized_) {
+            singleFrequencyControl_->setValue(frequencies[frequencies.size() / 2]);
+            singleFrequencyInitialized_ = true;
+            initializedFrequencyDefaults = true;
+        }
+        if (!selectedFrequenciesInitialized_) {
+            addSelectedFrequency(frequencies.front());
+            if (frequencies.size() > 2)
+                addSelectedFrequency(frequencies[frequencies.size() / 2]);
+            if (frequencies.size() > 1) addSelectedFrequency(frequencies.back());
+            selectedFrequenciesInitialized_ = true;
+            initializedFrequencyDefaults = true;
+        }
+    }
+    loadingFrequency_ = false;
+    if (initializedFrequencyDefaults) {
+        appliedFrequencySelection_ = captureFrequencySelection();
+        persistFrequencySelection();
+        setFrequencyPending(false);
+    }
     selectPattern(selectedLine);
+    updateFrequencyControls();
     updatePatternControls();
 }
 
@@ -314,6 +538,20 @@ void AnalysisRequestEditor::selectPattern(std::size_t sourceLine)
     loadSelectedPattern();
 }
 
+auto AnalysisRequestEditor::hasPendingEdits() const noexcept -> bool
+{
+    return patternPending_ || frequencyPending_;
+}
+
+void AnalysisRequestEditor::discardPendingEdits()
+{
+    const auto appliedFrequencies = appliedFrequencySelection_;
+    setData(setup_);
+    restoreFrequencySelection(appliedFrequencies);
+    setPatternPending(false);
+    setFrequencyPending(false);
+}
+
 void AnalysisRequestEditor::addPatternDraft(const model::RadiationPatternRequest& pattern)
 {
     for (auto row = 0; row < patterns_->rowCount(); ++row) {
@@ -327,6 +565,7 @@ void AnalysisRequestEditor::addPatternDraft(const model::RadiationPatternRequest
     updatePatternTableRow(row, pattern);
     patterns_->selectRow(row);
     loadSelectedPattern();
+    setPatternPending(true);
 }
 
 void AnalysisRequestEditor::updatePatternTableRow(
@@ -380,7 +619,10 @@ void AnalysisRequestEditor::loadSelectedPattern()
 {
     const auto row = patterns_->currentRow();
     patternControls_->setEnabled(row >= 0);
-    if (row < 0) return;
+    if (row < 0) {
+        setPatternPending(false);
+        return;
+    }
     const auto* item = patterns_->item(row, 0);
     model::RadiationPatternRequest pattern;
     pattern.thetaCount = item->data(Qt::UserRole + 1).toInt();
@@ -402,6 +644,7 @@ void AnalysisRequestEditor::loadSelectedPattern()
     phiStepControl_->setValue(std::max(pattern.phiStep, 0.001));
     loadingPattern_ = false;
     resetPatternButton_->setEnabled(lastPatternPreset_ >= 0);
+    setPatternPending(item->data(SourceLineRole).toULongLong() == 0);
     updatePatternControls();
 }
 
@@ -433,25 +676,38 @@ auto AnalysisRequestEditor::angularCount(double start, double end, double step) 
     return std::max(1, static_cast<int>(std::floor((end - start) / step + 1.0e-9)) + 1);
 }
 
-auto AnalysisRequestEditor::radiationSweepMode() const -> analysis::RadiationSweepMode
+auto AnalysisRequestEditor::radiationFrequencyPlan() const -> analysis::FrequencyPlan
 {
-    return static_cast<analysis::RadiationSweepMode>(
-        radiationSweepControl_->currentData().toInt());
+    return frequencyPlan(appliedFrequencySelection_);
+}
+
+auto AnalysisRequestEditor::frequencyPlan(
+    const FrequencySelectionState& state) const -> analysis::FrequencyPlan
+{
+    const auto mode = static_cast<PatternFrequencyMode>(state.mode);
+    switch (mode) {
+    case PatternFrequencyMode::ModelSweep:
+        return {analysis::FrequencyPlanMode::ModelSweep, modelFrequencies(), {}};
+    case PatternFrequencyMode::Single:
+        return {analysis::FrequencyPlanMode::Explicit, {state.singleMHz}, {}};
+    case PatternFrequencyMode::Selected:
+        return {analysis::FrequencyPlanMode::Explicit, state.selectedMHz, {}};
+    case PatternFrequencyMode::Continuous:
+        return {analysis::FrequencyPlanMode::Explicit, {},
+            {{state.continuousStartMHz, state.continuousStopMHz,
+                state.continuousStepMHz}}};
+    }
+    return {};
 }
 
 void AnalysisRequestEditor::updatePatternControls()
 {
-    const auto frequencyCount = setup_.frequency ? std::max(1, setup_.frequency->count) : 1;
-    auto radiationFrequencyCount = 1;
-    if (frequencyCount > 1) {
-        switch (radiationSweepMode()) {
-        case analysis::RadiationSweepMode::CenterFrequencyOnly: radiationFrequencyCount = 1; break;
-        case analysis::RadiationSweepMode::RepresentativeFrequencies:
-            radiationFrequencyCount = std::min(3, frequencyCount); break;
-        case analysis::RadiationSweepMode::EveryFrequency:
-            radiationFrequencyCount = frequencyCount; break;
-        }
-    }
+    const auto draftFrequencyPlan = frequencyPlan(captureFrequencySelection());
+    const auto draftFrequencyPoints = analysis::frequencyPlanPoints(draftFrequencyPlan);
+    applyFrequencyButton_->setEnabled(!draftFrequencyPoints.empty());
+    const auto radiationFrequencyCount = static_cast<int>((frequencyPending_
+        ? draftFrequencyPoints
+        : analysis::frequencyPlanPoints(radiationFrequencyPlan())).size());
     auto anglesPerFrequency = qlonglong{};
     for (const auto& pattern : setup_.radiationPatterns)
         anglesPerFrequency += static_cast<qlonglong>(pattern.thetaCount) * pattern.phiCount;
@@ -464,6 +720,197 @@ void AnalysisRequestEditor::updatePatternControls()
         "%1 RP request(s) · %2 radiation frequency calculation(s) · approximately %3 samples.")
         .arg(patterns_->rowCount()).arg(radiationFrequencyCount)
         .arg(anglesPerFrequency * radiationFrequencyCount));
+}
+
+void AnalysisRequestEditor::setPatternPending(bool pending)
+{
+    patternPending_ = pending;
+    setPendingEditIndicator(applyPatternButton_, pending);
+}
+
+void AnalysisRequestEditor::setFrequencyPending(bool pending)
+{
+    frequencyPending_ = pending;
+    setPendingEditIndicator(applyFrequencyButton_, pending);
+}
+
+void AnalysisRequestEditor::updateFrequencyControls()
+{
+    const auto page = radiationFrequencyModeControl_->currentData().toInt();
+    radiationFrequencyPages_->setCurrentIndex(page);
+    updatePatternControls();
+}
+
+void AnalysisRequestEditor::addSelectedFrequency(double frequencyMHz)
+{
+    if (!std::isfinite(frequencyMHz) || frequencyMHz <= 0.0) return;
+    std::vector<double> frequencies;
+    frequencies.reserve(static_cast<std::size_t>(selectedFrequencies_->count()) + 1);
+    for (auto row = 0; row < selectedFrequencies_->count(); ++row)
+        frequencies.push_back(selectedFrequencies_->item(row)->data(Qt::UserRole).toDouble());
+    frequencies.push_back(frequencyMHz);
+    std::ranges::sort(frequencies);
+    const auto duplicates = std::ranges::unique(frequencies);
+    frequencies.erase(duplicates.begin(), duplicates.end());
+    const QSignalBlocker blocker(selectedFrequencies_);
+    selectedFrequencies_->clear();
+    for (const auto frequency : frequencies) {
+        auto* item = new QListWidgetItem(formatDecimal(frequency), selectedFrequencies_);
+        item->setTextAlignment(Qt::AlignCenter);
+        item->setToolTip(tr("%1 MHz").arg(formatDecimal(frequency)));
+        item->setData(Qt::UserRole, frequency);
+    }
+    if (!loadingFrequency_) setFrequencyPending(true);
+    updatePatternControls();
+}
+
+void AnalysisRequestEditor::removeSelectedFrequencies()
+{
+    const auto selected = selectedFrequencies_->selectedItems();
+    for (auto* item : selected) delete item;
+    if (selected.empty()) return;
+    setFrequencyPending(true);
+    updatePatternControls();
+}
+
+void AnalysisRequestEditor::chooseAmateurBandCenters()
+{
+    const auto& presets = analysis::amateurBandPresets();
+    QDialog dialog(this);
+    dialog.setObjectName(QStringLiteral("radiationAmateurBandCenterDialog"));
+    dialog.setWindowTitle(tr("Add Amateur Band Centers"));
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* description = new QLabel(tr(
+        "Select one or more bands. This adds one representative center frequency per band; "
+        "it does not calculate the entire band."), &dialog);
+    description->setWordWrap(true);
+    layout->addWidget(description);
+
+    auto* bandLayout = new QGridLayout;
+    std::vector<QCheckBox*> checks;
+    checks.reserve(presets.size());
+    for (std::size_t index = 0; index < presets.size(); ++index) {
+        const auto& preset = presets[index];
+        const auto centerMHz = (preset.startMHz + preset.endMHz) / 2.0;
+        auto* check = new QCheckBox(tr("%1  (%2 MHz)")
+            .arg(QString::fromUtf8(preset.name.data(),
+                static_cast<qsizetype>(preset.name.size())))
+            .arg(centerMHz, 0, 'f', 3), &dialog);
+        check->setObjectName(QStringLiteral("radiationAmateurBandCenterCheck%1").arg(index));
+        checks.push_back(check);
+        bandLayout->addWidget(check, static_cast<int>(index % 6),
+            static_cast<int>(index / 6));
+    }
+    layout->addLayout(bandLayout);
+
+    auto* selectionRow = new QHBoxLayout;
+    auto* selectAll = new QPushButton(tr("Select All"), &dialog);
+    auto* clearSelection = new QPushButton(tr("Clear"), &dialog);
+    auto* summary = new QLabel(&dialog);
+    summary->setObjectName(QStringLiteral("radiationAmateurBandCenterSummary"));
+    selectionRow->addWidget(selectAll);
+    selectionRow->addWidget(clearSelection);
+    selectionRow->addStretch();
+    selectionRow->addWidget(summary);
+    layout->addLayout(selectionRow);
+
+    auto* dialogButtons = new QDialogButtonBox(QDialogButtonBox::Cancel, &dialog);
+    auto* addSelected = dialogButtons->addButton(
+        tr("Add Selected Centers"), QDialogButtonBox::AcceptRole);
+    addSelected->setObjectName(QStringLiteral("radiationAddSelectedBandCenters"));
+    layout->addWidget(dialogButtons);
+    const auto updateSummary = [&checks, summary, addSelected] {
+        const auto count = static_cast<int>(std::ranges::count_if(checks,
+            [](const auto* check) { return check->isChecked(); }));
+        summary->setText(QObject::tr("%1 center frequency point(s)").arg(count));
+        addSelected->setEnabled(count > 0);
+    };
+    for (auto* check : checks)
+        connect(check, &QCheckBox::toggled, &dialog, updateSummary);
+    connect(selectAll, &QPushButton::clicked, &dialog, [&checks] {
+        for (auto* check : checks) check->setChecked(true);
+    });
+    connect(clearSelection, &QPushButton::clicked, &dialog, [&checks] {
+        for (auto* check : checks) check->setChecked(false);
+    });
+    connect(dialogButtons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(dialogButtons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    updateSummary();
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    for (std::size_t index = 0; index < checks.size(); ++index) {
+        if (!checks[index]->isChecked()) continue;
+        addSelectedFrequency((presets[index].startMHz + presets[index].endMHz) / 2.0);
+    }
+}
+
+void AnalysisRequestEditor::persistFrequencySelection() const
+{
+    if (!frequencySelectionInitialized_) return;
+    QSettings settings;
+    settings.setValue(QStringLiteral("analysis/patternFrequencyMode"),
+        radiationFrequencyModeControl_->currentData().toInt());
+    settings.setValue(QStringLiteral("analysis/patternSingleFrequencyMHz"),
+        singleFrequencyControl_->value());
+    settings.setValue(QStringLiteral("analysis/patternContinuousStartMHz"),
+        continuousStartControl_->value());
+    settings.setValue(QStringLiteral("analysis/patternContinuousStopMHz"),
+        continuousStopControl_->value());
+    settings.setValue(QStringLiteral("analysis/patternContinuousStepMHz"),
+        continuousStepControl_->value());
+    QStringList frequencies;
+    for (auto row = 0; row < selectedFrequencies_->count(); ++row)
+        frequencies.append(QString::number(
+            selectedFrequencies_->item(row)->data(Qt::UserRole).toDouble(), 'g', 15));
+    settings.setValue(QStringLiteral("analysis/patternSelectedFrequenciesMHz"),
+        frequencies.join(QLatin1Char(',')));
+}
+
+auto AnalysisRequestEditor::captureFrequencySelection() const
+    -> FrequencySelectionState
+{
+    FrequencySelectionState state;
+    state.mode = radiationFrequencyModeControl_->currentData().toInt();
+    state.singleMHz = singleFrequencyControl_->value();
+    state.selectedMHz.reserve(static_cast<std::size_t>(selectedFrequencies_->count()));
+    for (auto row = 0; row < selectedFrequencies_->count(); ++row)
+        state.selectedMHz.push_back(
+            selectedFrequencies_->item(row)->data(Qt::UserRole).toDouble());
+    state.continuousStartMHz = continuousStartControl_->value();
+    state.continuousStopMHz = continuousStopControl_->value();
+    state.continuousStepMHz = continuousStepControl_->value();
+    return state;
+}
+
+void AnalysisRequestEditor::restoreFrequencySelection(
+    const FrequencySelectionState& state)
+{
+    loadingFrequency_ = true;
+    const auto modeIndex = radiationFrequencyModeControl_->findData(state.mode);
+    if (modeIndex >= 0) radiationFrequencyModeControl_->setCurrentIndex(modeIndex);
+    singleFrequencyControl_->setValue(state.singleMHz);
+    continuousStartControl_->setValue(state.continuousStartMHz);
+    continuousStopControl_->setValue(state.continuousStopMHz);
+    continuousStepControl_->setValue(state.continuousStepMHz);
+    selectedFrequencies_->clear();
+    for (const auto frequencyMHz : state.selectedMHz)
+        addSelectedFrequency(frequencyMHz);
+    loadingFrequency_ = false;
+    radiationFrequencyPages_->setCurrentIndex(state.mode);
+    updatePatternControls();
+}
+
+auto AnalysisRequestEditor::modelFrequencies() const -> std::vector<double>
+{
+    std::vector<double> frequencies;
+    if (!setup_.frequency) return frequencies;
+    frequencies.reserve(static_cast<std::size_t>(std::max(1, setup_.frequency->count)));
+    for (auto index = 0; index < std::max(1, setup_.frequency->count); ++index) {
+        frequencies.push_back(setup_.frequency->steppingMode == 1
+            ? setup_.frequency->startMHz * std::pow(setup_.frequency->step, index)
+            : setup_.frequency->startMHz + index * setup_.frequency->step);
+    }
+    return frequencies;
 }
 
 void AnalysisRequestEditor::setReadiness(const QStringList& blockingReasons)

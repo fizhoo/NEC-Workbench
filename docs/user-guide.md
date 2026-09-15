@@ -238,6 +238,13 @@ Edit standard voltage-source `EX 0` cards by wire, segment, magnitude, and phase
 Selections synchronize with source markers in the 2D/3D Geometry views and the
 Project tree.
 
+The **Feed System** section sets the model reference impedance used by SWR
+tables, plots, dashboard summaries, and optimizer defaults. **Apply Reference
+Impedance** writes the canonical `Z0` compatibility card. **Use Default 50 Ω**
+removes that card and returns Workbench calculations to 50 ohms. This value is
+reporting and matching metadata; it does not alter the NEC electromagnetic field
+solution or a `TL` card's characteristic impedance.
+
 ### Loads & Networks
 
 Path: **Model → Loads & Transmission Lines**
@@ -403,7 +410,7 @@ Choose the data the solver should produce:
 - Any number of existing or new far-field radiation requests (`RP`)
 - Full-3D, horizontal-cut, vertical-cut, and custom-grid pattern types
 - Theta and phi sampling ranges for the selected request
-- Which frequencies in a sweep receive radiation calculations
+- Which frequencies receive radiation calculations for every RP request
 
 The far-field table lists every RP card from NEC Source. **Add Pattern** and
 **Duplicate** create a draft; **Apply Selected Pattern** writes only that row,
@@ -414,13 +421,27 @@ Pattern type describes the RP sampling shape, so changing the fixed theta of a
 horizontal cut does not make it Custom. **Reset to Preset** restores the standard
 angles and steps for the selected Full 3D, Horizontal, or Vertical pattern type.
 Sampling arrangements that do not match one of those shapes are labeled Custom.
-The global **Radiation Frequencies for All Patterns** policy appears above the
-request table; it applies to every RP row. Selected-pattern theta and phi ranges
-are arranged in separate side-by-side columns below the table.
+The global **Pattern Frequencies** selector appears above the request table and
+applies to every RP row. Choose the model's complete `FR` sweep, one frequency,
+an editable list of separated frequencies, or an independent continuous range.
+For selected frequencies, **Amateur Band Centers…** adds one representative
+center frequency for each checked band (for example, 20 m adds 14.175 MHz).
+It does not add a whole-band sweep; duplicate centers are removed and every
+added value remains editable or removable.
+Frequency-mode, list, single-frequency, and continuous-range edits highlight
+**Apply Pattern Frequencies**. That button commits the global frequency plan
+used by every RP request; it does not rewrite any RP card. Leaving Requests with
+an unapplied pattern or frequency edit asks whether to return or discard it.
+The complete model `FR` sweep still runs for feedpoint impedance and SWR when a
+smaller pattern-frequency set is selected. Only the expensive `RP` calculations
+are limited. The workload line shows patterns × frequencies and the approximate
+angular sample count before running.
 
-Center-only and representative radiation modes limit the expensive `RP`
-calculations only. The complete `FR` sweep is still executed for feedpoint
-impedance and SWR, even when the authored model has no explicit `XQ` card.
+Changing a selected pattern type or theta/phi field highlights **Apply Selected
+Pattern** because those values belong to that RP card. Applying the row,
+selecting another row, or reloading the model clears the pending indicator.
+Selected-pattern theta and phi ranges are arranged in
+separate side-by-side columns below the table.
 
 The readiness panel explains anything still blocking a run.
 
@@ -459,8 +480,9 @@ reduce the content area or use the page scroll bars to reach additional fields.
 
 ### Summary
 
-Results displays current or historical solver output. Results and Run History
-are available even when no model is currently open.
+Results displays the active model's solver output and provides Run History.
+Historical runs open in the separate Run Review window. Results and Run History
+remain available even when no model is currently open.
 
 Path: **Results** on the top workspace bar
 
@@ -499,32 +521,34 @@ be selected at a time.
 
 Ordinary analyses appear as individual rows. An optimization sweep appears as
 one **Optimization** session row; its candidate runs remain stored as children
-but do not flood the main list. View the session to restore its candidate table
-in Optimize as an archived, read-only session. A segmentation study similarly appears as one **Convergence** row
+but do not flood the main list. Review the session to restore its candidate table
+in Run Review as an archived, read-only session. A segmentation study similarly appears as one **Convergence** row
 with hidden child levels. Deleting either session deletes its child runs as a
 group.
 
-- Click **View Run Results** or double-click a run to display archived results without changing the active model.
+- Click **Open Run Review** or double-click a run to inspect it in one reusable, separate window without changing the active model.
 - Click **Inspect Input Snapshot** to view the run's immutable `model.nec` deck in a read-only window.
 - Click **Open Snapshot as New Model** only when you intentionally want the archived deck to replace the editor as an untitled editable copy.
 - Click **Open Run Folder** to inspect archived files.
 - Click **Delete Run** to permanently remove the selected run directory.
 - Use **Cancel Active Run** while a solver process is running.
 
-Viewing an ordinary historical analysis leaves Model and Analysis attached
-to the active model. Results loads the archived `model.nec` internally only for historical
-geometry and radiation overlays. A persistent banner identifies the viewed run, states that
-it is archived output, and names the active model separately. When results from the active
-model are available, **Return to Current Work** restores them without changing the editor.
+**Run Review** is separate from the main Results workspace and never contains a
+Runs tab, avoiding a circular history-navigation flow. Opening another row updates
+the same window rather than creating accumulating windows. Ordinary analyses show
+only available Summary, Impedance, Currents, Radiation, and Raw Output pages. AGT,
+optimization, and convergence rows instead show their relevant read-only review.
 
-Every historical view provides **Return to Current Work**. It returns to the
-workspace that was active before history was opened, or to the active model's
-results when those were being viewed. Historical optimization and convergence
-sessions disable their setup and Run controls; archived sessions cannot be
-rerun in place or silently use the currently edited model.
+An ordinary run's **Summary** page shows a read-only **Input Snapshot** beside
+the result summary. Use its selector to compare the authored `model.source.nec`
+with the generated numeric `model.nec` sent to the solver. Older runs show whichever
+snapshot is available. The window persistently identifies both the historical run
+and the separately active model.
 
-AGT and convergence sessions reopen their Validation results without loading a
-temporary transformed test deck as the editable model.
+Historical optimization and convergence sessions disable their setup and Run
+controls; archived sessions cannot be rerun in place or silently use the currently
+edited model. Close their review or use **Return to Current Work** to dismiss the
+Run Review window.
 
 ### Validation
 
@@ -580,6 +604,13 @@ the selected frequency.
 
 Path: **Results → Radiation**
 
+The 2D and 3D pages each show a **Pattern frequency** selector containing only
+frequencies for which the solver returned RP data. Each entry also shows the
+number of available RP datasets. The two radiation selectors stay synchronized,
+but changing them does not move the global Results frequency used by Summary,
+Impedance, Currents, and Raw Output. A newly loaded run retains the last viewed
+pattern frequency when available; otherwise it selects an available RP frequency.
+
 The **2D Pattern** page provides polarization component, scale, cut orientation,
 and cut angle controls. Move the pointer over the plot for live angle, absolute
 dBi, and relative dB.
@@ -608,19 +639,26 @@ Next** for free-text search. Process messages remain in the Solver Output dock.
 
 Path: **Optimize** on the top workspace bar
 
-Optimize provides two bounded one-variable workflows that share the same `SY`
-selection, frequency plan, reference impedance, weighted objectives, candidate
-table, plots, history, and **Apply Best to Model** action:
+Optimize provides three bounded workflows that share the same `SY` definitions,
+frequency plan, reference impedance, weighted objectives, candidate table,
+history, and **Apply Best to Model** action:
 
 - **Parameter Sweep** exhaustively evaluates evenly spaced values between the
   bounds using **Sweep points**.
-- **Adaptive Optimize** starts with five values and refines midpoints around the
-  current best candidate. It stops at the evaluation budget, parameter tolerance,
-  or after repeated rounds remain within the score-improvement tolerance.
+- **Adaptive Optimize** changes every checked parameter together. It begins at
+  the center of all ranges plus each parameter's minimum and maximum boundary,
+  then performs progressively smaller coordinate trials around the best candidate.
+  It stops at the evaluation budget, per-parameter tolerance, or after repeated
+  rounds remain within the score-improvement tolerance.
+- **Nelder–Mead** changes every checked parameter using a derivative-free simplex.
+  It reflects the least useful point, expands promising moves, contracts weak moves,
+  and shrinks the simplex when necessary. It is usually the stronger general-purpose
+  choice for interacting continuous parameters.
 
-An adaptive refinement round normally evaluates two candidates: one midpoint on
-the left of the current best value and one on the right. The score tolerance
-compares the best result after the complete round, not each candidate separately.
+An adaptive refinement round can evaluate a lower and upper coordinate trial for
+each selected parameter while holding the other parameters at the current best
+values. The score tolerance compares the best result after the complete round,
+not each candidate separately.
 The search stops after two consecutive completed rounds fail to improve the best
 score by more than the configured tolerance. Candidate status labels identify the
 initial samples and each round's left and right trials.
@@ -628,18 +666,25 @@ initial samples and each round's left and right trials.
 Adaptive Optimize is a transparent derivative-free coarse-to-fine search. It is
 more efficient than a dense sweep when the useful region is localized, but a
 parameter sweep remains valuable for inspecting the full objective landscape.
+Nelder–Mead is also derivative-free, but its simplex can move several parameters
+together instead of considering only one coordinate direction at a time. Bounds
+are enforced on every proposed candidate. It stops at the evaluation budget, when
+the simplex fits within every parameter tolerance, or when a contracted simplex's
+scores remain within the score tolerance.
 The latest candidate table remains visible when moving to another workspace and
 returning to Optimize. It resets only after the active model source changes or a
 new sweep begins.
 
 The Optimize workspace keeps one compact setup pane on the left and gives the
 expanding right side to results. Choose **Parameter Sweep** or **Adaptive
-Optimize** from the mode selector above the workspace. The same row shows the
+Optimize**, or **Nelder-Mead** from the mode selector above the workspace. The same row shows the
 active variable, range, frequency count, objective, and Run/Stop controls.
 
 The left pane keeps **Variable**, **Frequencies**, and **Objective** visible as
-sections of one study rather than separate setup pages. Variable, bounds, and
-the search budget remain directly editable. Frequencies and Objective show the
+sections of one study rather than separate setup pages. Parameter Sweep shows a
+single variable and range. Adaptive Optimize and Nelder–Mead show a compact table where each
+checked parameter has its own Minimum, Maximum, and Tolerance; double-click those
+cells to edit them. Frequencies and Objective show the
 active source, range, criteria, targets, and reference impedance as compact
 summaries; use their **Edit…** buttons for the full controls. Accepting an editor
 keeps the changes, while Cancel restores the complete prior setup. Only
@@ -649,7 +694,8 @@ without forcing the results area into a second page.
 
 The right pane shows the candidate table and objective plot together, separated
 by an adjustable vertical divider. The plot shows total objective score against
-the swept parameter together with the enabled weighted SWR, resistance, and
+the swept parameter for a single-variable study, or evaluation number for a
+multivariable study, together with the enabled weighted SWR, resistance, and
 reactance contributions. Lower values are better, and the best candidate is
 marked. Hover for exact values; double-click a marker to open the same
 candidate-detail window used by the candidate table. That window offers both a
@@ -659,8 +705,8 @@ or replace the active model. Decimal values are displayed and entered to three
 places throughout the optimizer; archived raw solver output remains unchanged.
 
 **Reset Search Defaults** restores Candidate count to 7 for Parameter Sweep, or
-Maximum evaluations to 21, Parameter tolerance to 0.010, and Score tolerance to
-0.001 for Adaptive Optimize. It does not change the variable, range, frequency
+Maximum evaluations to 21 and Score tolerance to 0.001 for Adaptive Optimize.
+It does not change selected parameters, their ranges and tolerances, the frequency
 plan, or objective. Optimizer numeric fields respond to the mouse wheel only
 while focused, preventing accidental changes while scrolling the setup area.
 
@@ -707,13 +753,18 @@ whether the selected symbol materially affects the final model.
 
 Fixed continuous numeric fields can be promoted without manually editing raw source.
 Right-click a wire coordinate or radius in **NEC Source → Structured Cards → Wires**, or
-a continuous numeric field in **Other Supported Cards**, then choose **Make Optimizable…**.
-Workbench inserts an `SY` definition initialized to the existing value and replaces the
-selected field with that symbol. Set its minimum and maximum in Optimize. Integer and
-categorical fields are intentionally excluded until discrete optimization is supported.
+a continuous numeric field in **Other Supported Cards**, then choose **Parameterize Field…**.
+The dialog can create an `SY` definition initialized to the existing value or link the field
+to an existing parameter. Parameter-controlled fields offer **Change Parameter Link…** and
+**Replace With Current Numeric Value** on their context menu. Set new parameter bounds in
+Optimize. Integer and categorical fields remain excluded until discrete optimization is supported.
+Parameter-controlled cells use a subtle accent, italic text, and an `ƒx` icon; hover over
+one to see its source expression. Other arithmetic expressions remain read-only without
+the parameter accent.
 
 For Parameter Sweep, “Complete” means every requested candidate was attempted;
-it is not convergence. Adaptive Optimize reports its stopping reason separately.
+it is not convergence. Adaptive Optimize and Nelder–Mead report their stopping
+reasons separately.
 Future tolerance analysis will perturb a finalist to measure construction and
 component sensitivity.
 
@@ -743,10 +794,18 @@ feedpoint impedance that produced each score. Hover over a candidate for guidanc
 then double-click it to open one reusable, non-modal frequency-results window.
 That window shows SWR, resistance, and reactance at every calculated frequency;
 the frequency that determines the objective is bold. Double-clicking another row
-updates the same window instead of opening another copy. After a successful sweep,
-**Apply Best to Model** replaces only the selected `SY` expression with the best
-numeric candidate. The source edit is explicit and undoable; archived candidate
-runs remain unchanged.
+updates the same window instead of opening another copy. The window is explicitly
+labeled as optimization-candidate data rather than official active-model results.
+After a successful study, **Apply Best to Model** replaces every optimized `SY`
+expression with the winning candidate's numeric values in one explicit, undoable
+source edit. The candidate window also provides **Apply This Candidate to Model**
+for a manually selected row and **Apply This Candidate and Run**. The latter applies
+that candidate and starts a normal analysis with the active model's current Analysis
+requests, creating an ordinary run and complete Results entry. Applying alone does
+not run the solver. The completed study, candidate frequency table, and SWR/R/X
+plots remain visible after either apply action so the applied candidate can still
+be reviewed. A later unrelated model edit clears the now-stale optimization study.
+Archived candidate runs remain unchanged.
 
 Parameter Sweep submits each value to the shared Candidate Evaluator used as the
 foundation for future optimizer algorithms. That service resolves symbols,

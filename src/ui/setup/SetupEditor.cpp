@@ -156,6 +156,29 @@ SetupEditor::SetupEditor(QWidget* parent)
     sourcesPage_->setObjectName(QStringLiteral("sourcesEditorPage"));
     auto* sourcesPageLayout = new QVBoxLayout(sourcesPage_);
     sourcesPageLayout->setContentsMargins(12, 12, 12, 12);
+    auto* feedGroup = new QGroupBox(tr("Feed System"), sourcesPage_);
+    auto* feedLayout = new QFormLayout(feedGroup);
+    referenceImpedanceControl_ = createDecimalControl(feedGroup);
+    referenceImpedanceControl_->setObjectName(QStringLiteral("sourceReferenceImpedance"));
+    referenceImpedanceControl_->setDecimals(DisplayDecimalPlaces);
+    referenceImpedanceControl_->setRange(0.001, 1000000.0);
+    referenceImpedanceControl_->setValue(50.0);
+    referenceImpedanceControl_->setSuffix(tr(" Ω"));
+    referenceImpedanceControl_->setToolTip(tr(
+        "Reference impedance used for Workbench SWR, matching results, and optimizer defaults. "
+        "It is stored as the Z0 compatibility card and does not change the NEC field solution."));
+    auto* referenceButtons = new QHBoxLayout;
+    applyReferenceImpedanceButton_ = new QPushButton(tr("Apply Reference Impedance"), feedGroup);
+    applyReferenceImpedanceButton_->setObjectName(
+        QStringLiteral("applyReferenceImpedanceButton"));
+    removeReferenceImpedanceButton_ = new QPushButton(tr("Use Default 50 Ω"), feedGroup);
+    removeReferenceImpedanceButton_->setObjectName(
+        QStringLiteral("removeReferenceImpedanceButton"));
+    referenceButtons->addWidget(applyReferenceImpedanceButton_);
+    referenceButtons->addWidget(removeReferenceImpedanceButton_);
+    referenceButtons->addStretch();
+    feedLayout->addRow(tr("Reference impedance"), referenceImpedanceControl_);
+    feedLayout->addRow(referenceButtons);
     auto* excitationGroup = new QGroupBox(tr("Voltage Sources (EX 0)"), sourcesPage_);
     auto* excitationLayout = new QVBoxLayout(excitationGroup);
     excitationTable_ = new QTableWidget(excitationGroup);
@@ -200,6 +223,7 @@ SetupEditor::SetupEditor(QWidget* parent)
     frequencyPageLayout->addStretch();
     environmentPageLayout->addWidget(groundGroup);
     environmentPageLayout->addStretch();
+    sourcesPageLayout->addWidget(feedGroup);
     sourcesPageLayout->addWidget(excitationGroup, 1);
 
     connect(frequencySweepControl_, &QCheckBox::toggled, this, [this] {
@@ -275,6 +299,20 @@ SetupEditor::SetupEditor(QWidget* parent)
         setGroundPending(false);
         emit groundChanged(ground);
     });
+    connect(referenceImpedanceControl_, &QDoubleSpinBox::valueChanged,
+        this, [this] { if (!updating_) setReferenceImpedancePending(true); });
+    connect(applyReferenceImpedanceButton_, &QPushButton::clicked, this, [this] {
+        model::ReferenceImpedanceDefinition reference;
+        reference.ohms = referenceImpedanceControl_->value();
+        reference.sourceLine = setup_.referenceImpedance
+            ? setup_.referenceImpedance->sourceLine : 0;
+        setReferenceImpedancePending(false);
+        emit referenceImpedanceChanged(reference);
+    });
+    connect(removeReferenceImpedanceButton_, &QPushButton::clicked, this, [this] {
+        if (setup_.referenceImpedance)
+            emit referenceImpedanceDeleteRequested(setup_.referenceImpedance->sourceLine);
+    });
     connect(excitationTable_, &QTableWidget::itemSelectionChanged, this, [this] {
         loadSelectedExcitation();
         updateExcitationActions();
@@ -327,6 +365,7 @@ SetupEditor::SetupEditor(QWidget* parent)
     updateExcitationActions();
     setFrequencyPending(false);
     setGroundPending(false);
+    setReferenceImpedancePending(false);
     setExcitationPending(false);
 }
 
@@ -334,7 +373,7 @@ auto SetupEditor::hasPendingEdits(const QWidget* page) const -> bool
 {
     if (page == frequencyPage_) return frequencyPending_;
     if (page == environmentPage_) return groundPending_;
-    if (page == sourcesPage_) return excitationPending_;
+    if (page == sourcesPage_) return excitationPending_ || referenceImpedancePending_;
     return false;
 }
 
@@ -414,6 +453,9 @@ void SetupEditor::setData(const model::AntennaModel& model, const model::ModelSe
         updateGroundPresetSelection();
     }
 
+    referenceImpedanceControl_->setValue(model::referenceImpedanceOhms(setup_));
+    removeReferenceImpedanceButton_->setEnabled(setup_.referenceImpedance.has_value());
+
     excitationTable_->setRowCount(static_cast<int>(setup_.excitations.size()));
     auto row = 0;
     for (const auto& excitation : setup_.excitations) {
@@ -430,6 +472,7 @@ void SetupEditor::setData(const model::AntennaModel& model, const model::ModelSe
     updating_ = false;
     setFrequencyPending(false);
     setGroundPending(false);
+    setReferenceImpedancePending(false);
     setExcitationPending(false);
     addExcitationButton_->setEnabled(!model_.empty());
     updateFrequencyControls();
@@ -544,6 +587,12 @@ void SetupEditor::setGroundPending(bool pending)
 {
     groundPending_ = pending;
     setPendingEditIndicator(applyGroundButton_, pending);
+}
+
+void SetupEditor::setReferenceImpedancePending(bool pending)
+{
+    referenceImpedancePending_ = pending;
+    setPendingEditIndicator(applyReferenceImpedanceButton_, pending);
 }
 
 void SetupEditor::setExcitationPending(bool pending)

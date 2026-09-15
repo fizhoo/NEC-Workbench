@@ -292,6 +292,8 @@ public:
         clearHover();
         setProperty("pointCount", series_.empty()
             ? 0 : static_cast<int>(series_.front().points.size()));
+        setProperty("seriesCount", static_cast<int>(series_.size()));
+        setProperty("xAxisLabel", xAxisLabel_);
         setProperty("xValuesAscending", series_.empty()
             || std::ranges::is_sorted(series_.front().points, {}, &QPointF::x));
         setProperty("bestX", selectedFrequencyMHz_);

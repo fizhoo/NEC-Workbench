@@ -2,6 +2,7 @@
 
 #include "analysis/AnalysisResult.h"
 #include "analysis/AdaptiveSearch.h"
+#include "analysis/NelderMeadSearch.h"
 #include "analysis/OptimizationObjective.h"
 #include "model/ModelSetup.h"
 #include "nec/NecSymbolResolver.h"
@@ -13,6 +14,7 @@
 
 #include <functional>
 #include <optional>
+#include <utility>
 #include <vector>
 
 class QComboBox;
@@ -44,7 +46,10 @@ public:
     void setRunsChangedCallback(std::function<void()> callback);
     void setRunningChangedCallback(std::function<void()> callback);
     void setReturnToCurrentWorkCallback(std::function<void()> callback);
-    void setApplyParameterCallback(std::function<bool(QString, double)> callback);
+    void setApplyParameterCallback(
+        std::function<bool(std::vector<std::pair<QString, double>>)> callback);
+    void setApplyAndRunCallback(
+        std::function<bool(std::vector<std::pair<QString, double>>)> callback);
     auto loadSession(const QString& sessionId) -> bool;
     void leaveHistoricalSession();
     [[nodiscard]] auto isRunning() const noexcept -> bool;
@@ -60,7 +65,8 @@ private:
 
     enum class SearchMethod {
         ParameterSweep,
-        Adaptive
+        Adaptive,
+        NelderMead
     };
 
     struct FrequencySelectionState {
@@ -72,6 +78,14 @@ private:
     };
 
     struct StudySetup {
+        struct VariableRange {
+            QString name;
+            double resolvedValue{};
+            double minimum{};
+            double maximum{};
+            double tolerance{0.01};
+        };
+
         SearchMethod searchMethod{SearchMethod::ParameterSweep};
         QString variable;
         double minimum{};
@@ -79,6 +93,7 @@ private:
         int candidateLimit{};
         double parameterTolerance{};
         double scoreTolerance{};
+        std::vector<VariableRange> variables;
         FrequencySelectionState frequencySelection;
         std::vector<double> frequenciesMHz;
         analysis::OptimizationObjectiveSpec objective;
@@ -86,6 +101,7 @@ private:
 
     struct Candidate {
         double value{};
+        std::vector<double> values;
         int row{};
         AnalysisRunRecord record;
         std::vector<analysis::FeedpointResult> feedpoints;
@@ -95,6 +111,9 @@ private:
     };
 
     void populateVariables(const nec::SymbolResolution& resolution);
+    [[nodiscard]] auto selectedAdaptiveVariables() const
+        -> std::vector<StudySetup::VariableRange>;
+    [[nodiscard]] auto candidateDescription(const Candidate& candidate) const -> QString;
     void updateBounds();
     void updateObjectiveControls();
     void updateFrequencyControls();
@@ -104,6 +123,10 @@ private:
     void showCandidateDetails(int row);
     void updateCandidateDetails(int row);
     void resetCandidateDetails();
+    void updateCandidateActionState();
+    [[nodiscard]] auto candidateParameterValues(int row) const
+        -> std::vector<std::pair<QString, double>>;
+    void applyCandidate(int row, bool runAfterApply);
     void updateCandidateRowToolTip(int row);
     void updateCandidatePlots();
     void updateReadiness();
@@ -120,9 +143,11 @@ private:
     void startSweep();
     void cancelSweep();
     void startNextCandidate();
-    [[nodiscard]] auto prepareAdaptiveRound() -> bool;
+    [[nodiscard]] auto prepareNextSearchCandidates() -> bool;
     void appendCandidate(double value, int refinementRound = 0,
         QString trialRole = {});
+    void appendCandidate(std::vector<double> values, int refinementRound,
+        QString trialRole);
     void finishCurrentCandidate(CandidateEvaluationResult result);
     void finishSweep();
     void saveSessionCompletionMetadata();
@@ -137,8 +162,17 @@ private:
     [[nodiscard]] auto captureFrequencySelection() const -> FrequencySelectionState;
     void restoreFrequencySelection(const FrequencySelectionState& state);
     [[nodiscard]] auto objectiveName(analysis::OptimizationObjectiveKind kind) const -> QString;
+    [[nodiscard]] static auto isMultivariable(SearchMethod method) noexcept -> bool;
+    [[nodiscard]] auto searchMethodName(SearchMethod method) const -> QString;
+    [[nodiscard]] static auto searchMethodId(SearchMethod method) -> QString;
+    [[nodiscard]] auto currentSearchIteration() const noexcept -> int;
+    [[nodiscard]] auto currentStopReasonId() const -> QString;
 
     QTableWidget* variablesTable_{};
+    QWidget* parameterSettings_{};
+    QLabel* variableLabel_{};
+    QLabel* minimumLabel_{};
+    QLabel* maximumLabel_{};
     QComboBox* variableControl_{};
     QComboBox* objectiveControl_{};
     QDoubleSpinBox* targetFrequencyControl_{};
@@ -192,6 +226,8 @@ private:
     QLabel* candidateDetailLabel_{};
     QTableWidget* candidateDetailsTable_{};
     SweepPlotsView* candidateDetailPlots_{};
+    QPushButton* applyCandidateButton_{};
+    QPushButton* applyCandidateAndRunButton_{};
     QWidget* historicalBanner_{};
     QLabel* historicalBannerTitle_{};
     QPushButton* returnToCurrentWorkButton_{};
@@ -200,7 +236,8 @@ private:
     std::function<void()> runsChangedCallback_;
     std::function<void()> runningChangedCallback_;
     std::function<void()> returnToCurrentWorkCallback_;
-    std::function<bool(QString, double)> applyParameterCallback_;
+    std::function<bool(std::vector<std::pair<QString, double>>)> applyParameterCallback_;
+    std::function<bool(std::vector<std::pair<QString, double>>)> applyAndRunCallback_;
     std::vector<nec::SymbolDefinition> definitions_;
     std::vector<Candidate> candidates_;
     std::vector<double> modelFrequenciesMHz_;
@@ -212,14 +249,16 @@ private:
     QString backend_;
     QString executable_;
     QString selectedSymbol_;
+    std::vector<StudySetup::VariableRange> activeVariables_;
     QString selectedValueSuffix_;
     analysis::OptimizationObjectiveSpec activeObjective_;
     SearchMethod activeSearchMethod_{SearchMethod::ParameterSweep};
     int timeoutSeconds_{120};
     std::size_t candidateIndex_{};
     double bestScore_{};
-    QString adaptiveStopReason_;
-    std::optional<analysis::AdaptiveSearch> adaptiveSearch_;
+    QString searchStopReason_;
+    std::optional<analysis::AdaptiveVectorSearch> adaptiveVectorSearch_;
+    std::optional<analysis::NelderMeadSearch> nelderMeadSearch_;
     int bestRow_{-1};
     int detailCandidateRow_{-1};
     bool modelValid_{};
@@ -227,6 +266,7 @@ private:
     bool cancelRequested_{};
     bool historicalSession_{};
     bool contextInitialized_{};
+    bool preserveStudyOnNextContextUpdate_{};
 };
 
 }

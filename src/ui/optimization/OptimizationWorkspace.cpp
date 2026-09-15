@@ -54,6 +54,7 @@
 #include <cmath>
 #include <limits>
 #include <set>
+#include <unordered_map>
 #include <utility>
 
 namespace necwb::ui {
@@ -152,22 +153,22 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     historicalBanner_->hide();
     variablesTable_ = new QTableWidget(this);
     variablesTable_->setObjectName(QStringLiteral("optimizationVariablesTable"));
-    variablesTable_->setColumnCount(4);
+    variablesTable_->setColumnCount(6);
     variablesTable_->setHorizontalHeaderLabels(
-        {tr("Symbol"), tr("Expression"), tr("Resolved Value"), tr("Line")});
-    variablesTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        {tr("Use"), tr("Symbol"), tr("Value"), tr("Minimum"), tr("Maximum"), tr("Tolerance")});
+    variablesTable_->setEditTriggers(
+        QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
     variablesTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     variablesTable_->setSelectionMode(QAbstractItemView::SingleSelection);
     variablesTable_->verticalHeader()->hide();
     variablesTable_->setTextElideMode(Qt::ElideRight);
-    variablesTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
-    variablesTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
-    variablesTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
-    variablesTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Fixed);
-    variablesTable_->horizontalHeader()->resizeSection(0, 80);
-    variablesTable_->horizontalHeader()->resizeSection(1, 130);
-    variablesTable_->horizontalHeader()->resizeSection(2, 95);
-    variablesTable_->horizontalHeader()->resizeSection(3, 45);
+    variablesTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    variablesTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    for (auto column = 2; column < 6; ++column)
+        variablesTable_->horizontalHeader()->setSectionResizeMode(column, QHeaderView::Stretch);
+    variablesTable_->setToolTip(tr(
+        "Adaptive Optimize and Nelder–Mead change every checked parameter. "
+        "Double-click Minimum, Maximum, or Tolerance to edit it."));
 
     variableControl_ = new QComboBox(this);
     variableControl_->setObjectName(QStringLiteral("optimizationVariableControl"));
@@ -285,6 +286,13 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     searchMethodTabs_->setExpanding(true);
     searchMethodTabs_->addTab(tr("Parameter Sweep"));
     searchMethodTabs_->addTab(tr("Adaptive Optimize"));
+    searchMethodTabs_->addTab(tr("Nelder-Mead"));
+    searchMethodTabs_->setTabToolTip(0, tr(
+        "Exhaustively test evenly spaced values for one parameter."));
+    searchMethodTabs_->setTabToolTip(1, tr(
+        "Refine one or more parameters with transparent coordinate trials around the current best."));
+    searchMethodTabs_->setTabToolTip(2, tr(
+        "Optimize one or more continuous parameters with a bounded derivative-free simplex search."));
 
     adaptiveMaximumEvaluationsControl_ = new FocusWheelSpinBox(this);
     adaptiveMaximumEvaluationsControl_->setObjectName(
@@ -292,7 +300,8 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     adaptiveMaximumEvaluationsControl_->setRange(5, 101);
     adaptiveMaximumEvaluationsControl_->setValue(21);
     adaptiveMaximumEvaluationsControl_->setToolTip(tr(
-        "Maximum solver candidates, including the initial five-point search."));
+        "Maximum solver candidates. Adaptive starts near the center and boundaries; "
+        "Nelder–Mead starts with one simplex vertex per selected parameter plus one."));
     adaptiveParameterToleranceControl_ = new FocusWheelDoubleSpinBox(this);
     adaptiveParameterToleranceControl_->setObjectName(
         QStringLiteral("optimizationAdaptiveParameterTolerance"));
@@ -407,18 +416,19 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
 
     auto* variableSection = new QGroupBox(tr("Variable"), setupContent);
     variableSection->setObjectName(QStringLiteral("optimizationVariableSection"));
-    auto* parameterSettings = new QWidget(variableSection);
-    parameterSettings->setObjectName(QStringLiteral("optimizationParameterSettings"));
+    parameterSettings_ = new QWidget(variableSection);
+    parameterSettings_->setObjectName(QStringLiteral("optimizationParameterSettings"));
     auto* variableSectionLayout = new QVBoxLayout(variableSection);
     variableSectionLayout->setContentsMargins(6, 8, 6, 6);
-    variableSectionLayout->addWidget(parameterSettings);
-    auto* parameterGrid = new QGridLayout(parameterSettings);
+    variableSectionLayout->addWidget(parameterSettings_);
+    variableSectionLayout->addWidget(variablesTable_, 1);
+    auto* parameterGrid = new QGridLayout(parameterSettings_);
     parameterGrid->setContentsMargins(0, 0, 0, 0);
     parameterGrid->setHorizontalSpacing(6);
     parameterGrid->setVerticalSpacing(4);
-    const auto gridLabel = [parameterSettings](const QString& text,
+    const auto gridLabel = [this](const QString& text,
                                const QString& objectName = {}) {
-        auto* label = new QLabel(text, parameterSettings);
+        auto* label = new QLabel(text, parameterSettings_);
         label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         if (!objectName.isEmpty()) label->setObjectName(objectName);
         return label;
@@ -431,14 +441,17 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     pointsControl_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     adaptiveMaximumEvaluationsControl_->setSizePolicy(
         QSizePolicy::Expanding, QSizePolicy::Fixed);
-    searchBudgetLabel_ = new QLabel(tr("Candidate count"), parameterSettings);
+    searchBudgetLabel_ = new QLabel(tr("Candidate count"), parameterSettings_);
     searchBudgetLabel_->setObjectName(QStringLiteral("optimizationSearchBudgetLabel"));
     searchBudgetLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    parameterGrid->addWidget(gridLabel(tr("Variable")), 0, 0);
+    variableLabel_ = gridLabel(tr("Variable"));
+    minimumLabel_ = gridLabel(tr("Minimum"));
+    maximumLabel_ = gridLabel(tr("Maximum"));
+    parameterGrid->addWidget(variableLabel_, 0, 0);
     parameterGrid->addWidget(variableControl_, 0, 1);
-    parameterGrid->addWidget(gridLabel(tr("Minimum")), 1, 0);
+    parameterGrid->addWidget(minimumLabel_, 1, 0);
     parameterGrid->addWidget(minimumControl_, 1, 1);
-    parameterGrid->addWidget(gridLabel(tr("Maximum")), 2, 0);
+    parameterGrid->addWidget(maximumLabel_, 2, 0);
     parameterGrid->addWidget(maximumControl_, 2, 1);
     parameterGrid->addWidget(searchBudgetLabel_, 3, 0);
     parameterGrid->addWidget(pointsControl_, 3, 1);
@@ -452,7 +465,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     parameterGrid->addWidget(adaptiveScoreToleranceLabel_, 5, 0);
     parameterGrid->addWidget(adaptiveScoreToleranceControl_, 5, 1);
 
-    auto* resetSearchDefaultsButton = new QPushButton(tr("Reset Search Defaults"), parameterSettings);
+    auto* resetSearchDefaultsButton = new QPushButton(tr("Reset Search Defaults"), parameterSettings_);
     resetSearchDefaultsButton->setObjectName(
         QStringLiteral("optimizationResetSearchDefaults"));
     resetSearchDefaultsButton->setToolTip(tr(
@@ -461,7 +474,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     parameterGrid->setColumnStretch(1, 1);
 
     connect(resetSearchDefaultsButton, &QPushButton::clicked, this, [this] {
-        if (selectedSearchMethod() == SearchMethod::Adaptive) {
+        if (isMultivariable(selectedSearchMethod())) {
             adaptiveMaximumEvaluationsControl_->setValue(21);
             adaptiveParameterToleranceControl_->setValue(0.010);
             adaptiveScoreToleranceControl_->setValue(0.001);
@@ -644,8 +657,24 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     candidateDetailViews->setDocumentMode(true);
     candidateDetailViews->addTab(candidateDetailsTable_, tr("Frequency Table"));
     candidateDetailViews->addTab(candidateDetailPlots_, tr("SWR & Impedance Plots"));
+    applyCandidateButton_ = new QPushButton(tr("Apply This Candidate to Model"),
+        candidateDetailsWindow_);
+    applyCandidateButton_->setObjectName(QStringLiteral("optimizationApplyCandidate"));
+    applyCandidateButton_->setToolTip(tr(
+        "Update the active model's optimized SY values without running an analysis."));
+    applyCandidateAndRunButton_ = new QPushButton(tr("Apply This Candidate and Run"),
+        candidateDetailsWindow_);
+    applyCandidateAndRunButton_->setObjectName(
+        QStringLiteral("optimizationApplyCandidateAndRun"));
+    applyCandidateAndRunButton_->setToolTip(tr(
+        "Update the active model's optimized SY values, then start a normal analysis using the model's current requests."));
+    auto* candidateActionRow = new QHBoxLayout;
+    candidateActionRow->addStretch();
+    candidateActionRow->addWidget(applyCandidateButton_);
+    candidateActionRow->addWidget(applyCandidateAndRunButton_);
     detailLayout->addWidget(candidateDetailLabel_);
     detailLayout->addWidget(candidateDetailViews, 1);
+    detailLayout->addLayout(candidateActionRow);
     resetCandidateDetails();
 
     auto* resultsPanel = new QWidget(this);
@@ -742,21 +771,23 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     connect(resultsTable_, &QTableWidget::cellDoubleClicked,
         this, [this](int row, int) { showCandidateDetails(row); });
     connect(variablesTable_, &QTableWidget::cellClicked, this, [this](int row, int) {
-        const auto* item = variablesTable_->item(row, 0);
+        const auto* item = variablesTable_->item(row, 1);
         const auto index = item == nullptr ? -1 : variableControl_->findText(item->text());
         if (index >= 0) variableControl_->setCurrentIndex(index);
+    });
+    connect(variablesTable_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem*) {
+        updateWorkload();
+        updateReadiness();
     });
     connect(runButton_, &QPushButton::clicked, this, [this] { startSweep(); });
     connect(cancelButton_, &QPushButton::clicked, this, [this] { cancelSweep(); });
     connect(applyBestButton_, &QPushButton::clicked, this, [this] {
-        if (bestRow_ < 0 || static_cast<std::size_t>(bestRow_) >= candidates_.size()
-            || !applyParameterCallback_) return;
-        const auto symbol = selectedSymbol_;
-        const auto value = candidates_[static_cast<std::size_t>(bestRow_)].value;
-        if (applyParameterCallback_(symbol, value))
-            statusLabel_->setText(tr("Applied %1 = %2 to the active model.")
-                .arg(symbol).arg(value, 0, 'g', 15));
+        applyCandidate(bestRow_, false);
     });
+    connect(applyCandidateButton_, &QPushButton::clicked,
+        this, [this] { applyCandidate(detailCandidateRow_, false); });
+    connect(applyCandidateAndRunButton_, &QPushButton::clicked,
+        this, [this] { applyCandidate(detailCandidateRow_, true); });
     connect(evaluator_, &CandidateEvaluator::finished, this,
         [this](CandidateEvaluationResult result) {
             finishCurrentCandidate(std::move(result));
@@ -773,6 +804,7 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
     QString executable, int timeoutSeconds, bool modelValid)
 {
     if (isRunning() || historicalSession_) return;
+    const auto preserveStudy = std::exchange(preserveStudyOnNextContextUpdate_, false);
     const auto sourceUnchanged = source_ == source && sourceFile_ == sourceFile;
     const auto preserveFrequencySelection = contextInitialized_ && sourceFile_ == sourceFile;
     const auto frequencySelection = preserveFrequencySelection
@@ -809,14 +841,16 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
         frequencyTable_->clear();
     }
     if (frequencySelection) restoreFrequencySelection(*frequencySelection);
-    candidates_.clear();
-    candidateIndex_ = 0;
-    bestScore_ = std::numeric_limits<double>::infinity();
-    bestRow_ = -1;
-    resultsTable_->setRowCount(0);
-    candidatePlots_->clear();
-    bestLabel_->setText(tr("No optimization results yet."));
-    resetCandidateDetails();
+    if (!preserveStudy) {
+        candidates_.clear();
+        candidateIndex_ = 0;
+        bestScore_ = std::numeric_limits<double>::infinity();
+        bestRow_ = -1;
+        resultsTable_->setRowCount(0);
+        candidatePlots_->clear();
+        bestLabel_->setText(tr("No optimization results yet."));
+        resetCandidateDetails();
+    }
     updateWorkload();
     updateReadiness();
 }
@@ -849,9 +883,16 @@ void OptimizationWorkspace::setReturnToCurrentWorkCallback(std::function<void()>
 }
 
 void OptimizationWorkspace::setApplyParameterCallback(
-    std::function<bool(QString, double)> callback)
+    std::function<bool(std::vector<std::pair<QString, double>>)> callback)
 {
     applyParameterCallback_ = std::move(callback);
+    updateReadiness();
+}
+
+void OptimizationWorkspace::setApplyAndRunCallback(
+    std::function<bool(std::vector<std::pair<QString, double>>)> callback)
+{
+    applyAndRunCallback_ = std::move(callback);
     updateReadiness();
 }
 
@@ -876,12 +917,16 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         QStringLiteral("optimization-session.json")));
     const auto sessionMetadata = sessionMetadataFile.open(QIODevice::ReadOnly)
         ? QJsonDocument::fromJson(sessionMetadataFile.readAll()).object() : QJsonObject{};
-    const auto adaptiveSession = sessionMetadata.value(
-        QStringLiteral("searchMethod")).toString() == QStringLiteral("adaptive");
-    adaptiveStopReason_ = sessionMetadata.value(
+    const auto storedSearchMethod = sessionMetadata.value(
+        QStringLiteral("searchMethod")).toString();
+    const auto restoredSearchMethod = storedSearchMethod == QStringLiteral("nelder-mead")
+        ? SearchMethod::NelderMead
+        : storedSearchMethod == QStringLiteral("adaptive")
+            ? SearchMethod::Adaptive : SearchMethod::ParameterSweep;
+    searchStopReason_ = sessionMetadata.value(
         QStringLiteral("stopDescription")).toString();
-    searchMethodTabs_->setCurrentIndex(adaptiveSession ? 1 : 0);
-    activeSearchMethod_ = adaptiveSession ? SearchMethod::Adaptive : SearchMethod::ParameterSweep;
+    searchMethodTabs_->setCurrentIndex(static_cast<int>(restoredSearchMethod));
+    activeSearchMethod_ = restoredSearchMethod;
     adaptiveMaximumEvaluationsControl_->setValue(sessionMetadata.value(
         QStringLiteral("candidateCount")).toInt(21));
     adaptiveParameterToleranceControl_->setValue(sessionMetadata.value(
@@ -889,6 +934,23 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
     adaptiveScoreToleranceControl_->setValue(sessionMetadata.value(
         QStringLiteral("scoreTolerance")).toDouble(0.001));
     selectedSymbol_ = sessionMetadata.value(QStringLiteral("variable")).toString();
+    activeVariables_.clear();
+    for (const auto value : sessionMetadata.value(QStringLiteral("variables")).toArray()) {
+        const auto variable = value.toObject();
+        activeVariables_.push_back({
+            variable.value(QStringLiteral("name")).toString(),
+            variable.value(QStringLiteral("resolvedValue")).toDouble(),
+            variable.value(QStringLiteral("minimum")).toDouble(),
+            variable.value(QStringLiteral("maximum")).toDouble(),
+            variable.value(QStringLiteral("tolerance")).toDouble(0.01),
+        });
+    }
+    if (activeVariables_.empty() && !selectedSymbol_.isEmpty()) {
+        activeVariables_.push_back({selectedSymbol_, 0.0,
+            sessionMetadata.value(QStringLiteral("minimum")).toDouble(),
+            sessionMetadata.value(QStringLiteral("maximum")).toDouble(),
+            sessionMetadata.value(QStringLiteral("parameterTolerance")).toDouble(0.01)});
+    }
     activeFrequenciesMHz_.clear();
     for (const auto value : sessionMetadata.value(QStringLiteral("frequenciesMHz")).toArray()) {
         const auto frequencyMHz = value.toDouble();
@@ -929,7 +991,10 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         if (selectedSymbol_.isEmpty()) selectedSymbol_ = metadata.value(QStringLiteral("variable")).toString();
         selectedValueSuffix_ = metadata.value(QStringLiteral("unit")).toString();
         if (!selectedValueSuffix_.isEmpty()) selectedValueSuffix_.prepend(' ');
-        resultsTable_->setItem(row, ValueColumn, numericItem(value));
+        std::vector<double> candidateValues;
+        for (const auto variableValue : metadata.value(QStringLiteral("variables")).toArray())
+            candidateValues.push_back(variableValue.toObject().value(QStringLiteral("value")).toDouble());
+        if (candidateValues.empty()) candidateValues.push_back(value);
         QFile outputFile(QDir(candidateRecords[index].directory).filePath(QStringLiteral("model.out")));
         analysis::AnalysisResult result;
         if (outputFile.open(QIODevice::ReadOnly))
@@ -970,10 +1035,18 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
                 bestRow_ = row;
             }
         }
-        candidates_.push_back(Candidate{
-            value, row, candidateRecords[index], result.feedpoints, evaluation,
-            metadata.value(QStringLiteral("refinementRound")).toInt(),
-            metadata.value(QStringLiteral("trialRole")).toString()});
+        Candidate candidate;
+        candidate.value = value;
+        candidate.values = std::move(candidateValues);
+        candidate.row = row;
+        candidate.record = candidateRecords[index];
+        candidate.feedpoints = std::move(result.feedpoints);
+        candidate.evaluation = evaluation;
+        candidate.refinementRound = metadata.value(QStringLiteral("refinementRound")).toInt();
+        candidate.trialRole = metadata.value(QStringLiteral("trialRole")).toString();
+        candidates_.push_back(std::move(candidate));
+        resultsTable_->setItem(row, ValueColumn,
+            new QTableWidgetItem(candidateDescription(candidates_.back())));
         setCandidateStatus(row, candidateRecords[index].status);
         updateCandidateRowToolTip(row);
     }
@@ -986,10 +1059,10 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
             session->backend.isEmpty() ? tr("Unknown backend") : session->backend));
     historicalBanner_->show();
     runButton_->setText(tr("Historical Session — Read Only"));
-    statusLabel_->setText(adaptiveStopReason_.isEmpty()
+    statusLabel_->setText(searchStopReason_.isEmpty()
         ? tr("Historical optimization session · %1").arg(session->status)
         : tr("Historical optimization session · %1 · %2")
-            .arg(session->status, adaptiveStopReason_));
+            .arg(session->status, searchStopReason_));
     bestLabel_->setText(session->summary.isEmpty() ? tr("No optimization summary is available.") : session->summary);
     activeObjective_ = restoredObjective;
     updateCandidatePlots();
@@ -1032,6 +1105,29 @@ void OptimizationWorkspace::cancel()
 
 void OptimizationWorkspace::populateVariables(const nec::SymbolResolution& resolution)
 {
+    struct SavedRange {
+        Qt::CheckState checked{Qt::Unchecked};
+        double minimum{};
+        double maximum{};
+        double tolerance{0.01};
+    };
+    std::unordered_map<std::string, SavedRange> savedRanges;
+    for (auto row = 0; row < variablesTable_->rowCount(); ++row) {
+        const auto* useItem = variablesTable_->item(row, 0);
+        const auto* nameItem = variablesTable_->item(row, 1);
+        if (useItem == nullptr || nameItem == nullptr) continue;
+        bool minimumValid{};
+        bool maximumValid{};
+        bool toleranceValid{};
+        const auto minimum = variablesTable_->item(row, 3)->text().toDouble(&minimumValid);
+        const auto maximum = variablesTable_->item(row, 4)->text().toDouble(&maximumValid);
+        const auto tolerance = variablesTable_->item(row, 5)->text().toDouble(&toleranceValid);
+        if (minimumValid && maximumValid && toleranceValid) {
+            savedRanges.emplace(nameItem->text().toStdString(),
+                SavedRange{useItem->checkState(), minimum, maximum, tolerance});
+        }
+    }
+    const QSignalBlocker blocker(variablesTable_);
     definitions_ = resolution.definitions;
     variablesTable_->setRowCount(static_cast<int>(definitions_.size()));
     variableControl_->clear();
@@ -1042,24 +1138,70 @@ void OptimizationWorkspace::populateVariables(const nec::SymbolResolution& resol
     for (std::size_t index = 0; index < definitions_.size(); ++index) {
         const auto& definition = definitions_[index];
         const auto row = static_cast<int>(index);
-        variablesTable_->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(definition.name)));
-        auto* expressionItem = new QTableWidgetItem(
-            QString::fromStdString(definition.expression));
-        expressionItem->setToolTip(tr("Full expression: %1").arg(expressionItem->text()));
-        variablesTable_->setItem(row, 1, expressionItem);
+        const auto name = QString::fromStdString(definition.name);
+        auto* useItem = new QTableWidgetItem;
+        useItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable | Qt::ItemIsSelectable);
+        useItem->setCheckState(index == 0 ? Qt::Checked : Qt::Unchecked);
+        variablesTable_->setItem(row, 0, useItem);
+        auto* nameItem = new QTableWidgetItem(name);
+        nameItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        nameItem->setToolTip(tr("Expression: %1\nSource line: %2")
+            .arg(QString::fromStdString(definition.expression))
+            .arg(definition.lineNumber));
+        variablesTable_->setItem(row, 1, nameItem);
         auto* valueItem = numericItem(definition.value);
+        valueItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         valueItem->setToolTip(tr(
             "Resolved numeric SY value. No physical unit is inferred from where the symbol is used."));
         variablesTable_->setItem(row, 2, valueItem);
-        variablesTable_->setItem(row, 3,
-            new QTableWidgetItem(QString::number(definition.lineNumber)));
-        variableControl_->addItem(QString::fromStdString(definition.name), definition.value);
+        auto minimum = definition.value == 0.0 ? -1.0 : definition.value * 0.8;
+        auto maximum = definition.value == 0.0 ? 1.0 : definition.value * 1.2;
+        if (minimum > maximum) std::swap(minimum, maximum);
+        auto tolerance = 0.01;
+        if (const auto saved = savedRanges.find(definition.name); saved != savedRanges.end()) {
+            useItem->setCheckState(saved->second.checked);
+            minimum = saved->second.minimum;
+            maximum = saved->second.maximum;
+            tolerance = saved->second.tolerance;
+        }
+        for (const auto& [column, value] : std::vector<std::pair<int, double>>{
+                 {3, minimum}, {4, maximum}, {5, tolerance}}) {
+            auto* item = numericItem(value);
+            item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
+            variablesTable_->setItem(row, column, item);
+        }
+        variableControl_->addItem(name, definition.value);
     }
     statusLabel_->setText(resolution.ok()
         ? definitions_.empty() ? tr("Add SY declarations to enable parameter optimization.")
             : tr("Choose one resolved symbol and a bounded range.")
         : tr("Resolve the model's SY expression errors before optimizing."));
     updateBounds();
+}
+
+auto OptimizationWorkspace::selectedAdaptiveVariables() const
+    -> std::vector<StudySetup::VariableRange>
+{
+    std::vector<StudySetup::VariableRange> variables;
+    for (auto row = 0; row < variablesTable_->rowCount(); ++row) {
+        const auto* useItem = variablesTable_->item(row, 0);
+        const auto* nameItem = variablesTable_->item(row, 1);
+        if (useItem == nullptr || nameItem == nullptr || useItem->checkState() != Qt::Checked)
+            continue;
+        bool resolvedValid{};
+        bool minimumValid{};
+        bool maximumValid{};
+        bool toleranceValid{};
+        const auto resolved = variablesTable_->item(row, 2)->text().toDouble(&resolvedValid);
+        const auto minimum = variablesTable_->item(row, 3)->text().toDouble(&minimumValid);
+        const auto maximum = variablesTable_->item(row, 4)->text().toDouble(&maximumValid);
+        const auto tolerance = variablesTable_->item(row, 5)->text().toDouble(&toleranceValid);
+        const auto invalid = std::numeric_limits<double>::quiet_NaN();
+        variables.push_back({nameItem->text(), resolvedValid ? resolved : invalid,
+            minimumValid ? minimum : invalid, maximumValid ? maximum : invalid,
+            toleranceValid ? tolerance : invalid});
+    }
+    return variables;
 }
 
 void OptimizationWorkspace::updateBounds()
@@ -1069,7 +1211,8 @@ void OptimizationWorkspace::updateBounds()
     selectedValueSuffix_.clear();
     minimumControl_->setSuffix({});
     maximumControl_->setSuffix({});
-    resultsTable_->horizontalHeaderItem(ValueColumn)->setText(tr("Value"));
+    resultsTable_->horizontalHeaderItem(ValueColumn)->setText(
+        isMultivariable(selectedSearchMethod()) ? tr("Parameters") : tr("Value"));
     auto first = value == 0.0 ? -1.0 : value * 0.8;
     auto second = value == 0.0 ? 1.0 : value * 1.2;
     if (first > second) std::swap(first, second);
@@ -1110,23 +1253,34 @@ void OptimizationWorkspace::updateFrequencyControls()
 
 void OptimizationWorkspace::updateSearchMethodControls()
 {
-    const auto adaptive = selectedSearchMethod() == SearchMethod::Adaptive;
-    searchBudgetLabel_->setText(adaptive ? tr("Maximum evaluations") : tr("Candidate count"));
-    pointsControl_->setVisible(!adaptive);
-    adaptiveMaximumEvaluationsControl_->setVisible(adaptive);
-    adaptiveParameterToleranceLabel_->setVisible(adaptive);
-    adaptiveParameterToleranceControl_->setVisible(adaptive);
-    adaptiveScoreToleranceLabel_->setVisible(adaptive);
-    adaptiveScoreToleranceControl_->setVisible(adaptive);
-    pointsControl_->setEnabled(!adaptive && !isRunning() && !historicalSession_);
-    adaptiveMaximumEvaluationsControl_->setEnabled(adaptive && !isRunning()
+    const auto method = selectedSearchMethod();
+    const auto multivariable = isMultivariable(method);
+    resultsTable_->horizontalHeaderItem(ValueColumn)->setText(
+        multivariable ? tr("Parameters") : tr("Value"));
+    variablesTable_->setVisible(multivariable);
+    variableLabel_->setVisible(!multivariable);
+    variableControl_->setVisible(!multivariable);
+    minimumLabel_->setVisible(!multivariable);
+    minimumControl_->setVisible(!multivariable);
+    maximumLabel_->setVisible(!multivariable);
+    maximumControl_->setVisible(!multivariable);
+    searchBudgetLabel_->setText(multivariable ? tr("Maximum evaluations") : tr("Candidate count"));
+    pointsControl_->setVisible(!multivariable);
+    adaptiveMaximumEvaluationsControl_->setVisible(multivariable);
+    adaptiveParameterToleranceLabel_->setVisible(false);
+    adaptiveParameterToleranceControl_->setVisible(false);
+    adaptiveScoreToleranceLabel_->setVisible(multivariable);
+    adaptiveScoreToleranceControl_->setVisible(multivariable);
+    pointsControl_->setEnabled(!multivariable && !isRunning() && !historicalSession_);
+    adaptiveMaximumEvaluationsControl_->setEnabled(multivariable && !isRunning()
         && !historicalSession_);
-    adaptiveParameterToleranceControl_->setEnabled(adaptive && !isRunning()
+    adaptiveParameterToleranceControl_->setEnabled(multivariable && !isRunning()
         && !historicalSession_);
-    adaptiveScoreToleranceControl_->setEnabled(adaptive && !isRunning()
+    adaptiveScoreToleranceControl_->setEnabled(multivariable && !isRunning()
         && !historicalSession_);
     if (!historicalSession_)
-        runButton_->setText(adaptive ? tr("Run Adaptive Optimize") : tr("Run Parameter Sweep"));
+        runButton_->setText(method == SearchMethod::ParameterSweep
+            ? tr("Run Parameter Sweep") : tr("Run %1").arg(searchMethodName(method)));
     updateWorkload();
     updateReadiness();
 }
@@ -1176,9 +1330,9 @@ void OptimizationWorkspace::updateWorkload()
 {
     const auto setup = currentStudySetup();
     const auto frequencyCount = setup.frequenciesMHz.size();
-    const auto adaptive = setup.searchMethod == SearchMethod::Adaptive;
+    const auto multivariable = isMultivariable(setup.searchMethod);
     const auto candidateCount = setup.candidateLimit;
-    workloadLabel_->setText(adaptive
+    workloadLabel_->setText(multivariable
         ? tr("Up to %1 candidates × %2 %3 = up to %4 calculated points")
             .arg(candidateCount).arg(frequencyCount)
             .arg(frequencyCount == 1 ? tr("frequency") : tr("frequencies"))
@@ -1187,10 +1341,17 @@ void OptimizationWorkspace::updateWorkload()
             .arg(candidateCount).arg(frequencyCount)
             .arg(frequencyCount == 1 ? tr("frequency") : tr("frequencies"))
             .arg(static_cast<qulonglong>(candidateCount * frequencyCount)));
-    studySummaryLabel_->setText(tr("Variable: %1  |  Range: %2 to %3  |  Frequencies: %4  |  Goal: %5")
-        .arg(setup.variable.isEmpty() ? tr("None") : setup.variable)
-        .arg(formatDecimal(setup.minimum))
-        .arg(formatDecimal(setup.maximum))
+    QStringList variableNames;
+    for (const auto& variable : setup.variables) variableNames.append(variable.name);
+    const auto variableSummary = isMultivariable(setup.searchMethod)
+        ? tr("%1 parameter(s): %2").arg(variableNames.size()).arg(variableNames.join(QStringLiteral(", ")))
+        : setup.variable.isEmpty() ? tr("None") : setup.variable;
+    const auto rangeSummary = isMultivariable(setup.searchMethod)
+        ? tr("per-parameter bounds")
+        : tr("%1 to %2").arg(formatDecimal(setup.minimum), formatDecimal(setup.maximum));
+    studySummaryLabel_->setText(tr("Variables: %1  |  Range: %2  |  Frequencies: %3  |  Goal: %4")
+        .arg(variableSummary)
+        .arg(rangeSummary)
         .arg(frequencyCount)
         .arg(objectiveControl_->currentText()));
     updateSetupSummaries();
@@ -1426,6 +1587,7 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
         candidateDetailLabel_->setText(
             tr("Frequency details are unavailable because this candidate did not complete with impedance results."));
         candidateDetailPlots_->setResults({}, tr("this candidate"));
+        updateCandidateActionState();
         return;
     }
 
@@ -1452,22 +1614,20 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
             }
         }
     }
-    candidateDetailLabel_->setText(tr("Candidate %1 = %2%3 · %4 frequencies · objective point bold")
-        .arg(selectedSymbol_.isEmpty() ? tr("value") : selectedSymbol_)
-        .arg(candidate.value, 0, 'f', 3)
-        .arg(selectedValueSuffix_)
+    candidateDetailLabel_->setText(tr(
+        "Optimization Candidate — %1 · %2 frequencies · objective point bold\n"
+        "This is candidate data and does not represent the active model's official results.")
+        .arg(candidateDescription(candidate))
         .arg(feedpoints.size()));
     analysis::AnalysisResult detailResult;
     detailResult.feedpoints = feedpoints;
     detailResult.referenceImpedanceOhms = activeObjective_.referenceImpedance;
     candidateDetailPlots_->setResults(detailResult,
-        tr("candidate %1 = %2%3")
-            .arg(selectedSymbol_.isEmpty() ? tr("value") : selectedSymbol_)
-            .arg(candidate.value, 0, 'f', 3)
-            .arg(selectedValueSuffix_));
+        tr("candidate %1").arg(candidateDescription(candidate)));
     if (evaluation && evaluation->feedpoint)
         candidateDetailPlots_->setSelectedFrequency(
             evaluation->feedpoint->frequencyMHz);
+    updateCandidateActionState();
 }
 
 void OptimizationWorkspace::resetCandidateDetails()
@@ -1477,6 +1637,54 @@ void OptimizationWorkspace::resetCandidateDetails()
     candidateDetailLabel_->setText(
         tr("Double-click a completed candidate to view its frequency table and plots."));
     candidateDetailPlots_->setResults({}, tr("a selected candidate"));
+    updateCandidateActionState();
+}
+
+void OptimizationWorkspace::updateCandidateActionState()
+{
+    const auto validCandidate = detailCandidateRow_ >= 0
+        && static_cast<std::size_t>(detailCandidateRow_) < candidates_.size()
+        && candidates_[static_cast<std::size_t>(detailCandidateRow_)].evaluation.has_value();
+    const auto editable = validCandidate && !historicalSession_ && modelValid_ && !isRunning();
+    applyCandidateButton_->setEnabled(editable && static_cast<bool>(applyParameterCallback_));
+    applyCandidateAndRunButton_->setEnabled(editable && static_cast<bool>(applyAndRunCallback_));
+}
+
+auto OptimizationWorkspace::candidateParameterValues(int row) const
+    -> std::vector<std::pair<QString, double>>
+{
+    std::vector<std::pair<QString, double>> values;
+    if (row < 0 || static_cast<std::size_t>(row) >= candidates_.size()) return values;
+    const auto& candidate = candidates_[static_cast<std::size_t>(row)];
+    values.reserve(std::min(activeVariables_.size(), candidate.values.size()));
+    for (auto index = std::size_t{};
+         index < activeVariables_.size() && index < candidate.values.size(); ++index) {
+        values.emplace_back(activeVariables_[index].name, candidate.values[index]);
+    }
+    return values;
+}
+
+void OptimizationWorkspace::applyCandidate(int row, bool runAfterApply)
+{
+    const auto values = candidateParameterValues(row);
+    if (values.empty()) return;
+    if (runAfterApply) {
+        if (!applyAndRunCallback_) return;
+        preserveStudyOnNextContextUpdate_ = true;
+        if (applyAndRunCallback_(values))
+            statusLabel_->setText(
+                tr("Applied the selected candidate and started a normal analysis."));
+        preserveStudyOnNextContextUpdate_ = false;
+        return;
+    }
+    preserveStudyOnNextContextUpdate_ = true;
+    const auto applied = applyParameterCallback_ && applyParameterCallback_(values);
+    preserveStudyOnNextContextUpdate_ = false;
+    if (applied) {
+        statusLabel_->setText(row == bestRow_
+            ? tr("Applied the best parameter values to the active model.")
+            : tr("Applied the selected candidate values to the active model."));
+    }
 }
 
 void OptimizationWorkspace::updateCandidateRowToolTip(int row)
@@ -1498,13 +1706,17 @@ void OptimizationWorkspace::updateCandidateRowToolTip(int row)
 
 void OptimizationWorkspace::updateCandidatePlots()
 {
+    const auto multivariable = activeVariables_.size() > 1;
     std::vector<CandidatePlotPoint> points;
     points.reserve(candidates_.size());
     for (const auto& candidate : candidates_) {
         if (!candidate.evaluation) continue;
-        points.push_back({candidate.row, candidate.value, *candidate.evaluation});
+        points.push_back({candidate.row,
+            multivariable ? static_cast<double>(candidate.row + 1) : candidate.value,
+            *candidate.evaluation});
     }
-    candidatePlots_->setCandidates(selectedSymbol_, selectedValueSuffix_, points, bestRow_);
+    candidatePlots_->setCandidates(multivariable ? tr("Evaluation Number") : selectedSymbol_,
+        multivariable ? QString{} : selectedValueSuffix_, points, bestRow_);
 }
 
 void OptimizationWorkspace::updateReadiness()
@@ -1514,18 +1726,30 @@ void OptimizationWorkspace::updateReadiness()
     const auto hasFrequencies = !setup.frequenciesMHz.empty();
     const auto hasObjective = setup.objective.swrWeight + setup.objective.resistanceWeight
         + setup.objective.reactanceWeight > 0.0;
-    const auto ready = !historicalSession_ && modelValid_ && variableControl_->count() > 0
+    const auto hasVariables = !setup.variables.empty()
+        && std::ranges::all_of(setup.variables, [](const auto& variable) {
+            return std::isfinite(variable.minimum) && std::isfinite(variable.maximum)
+                && std::isfinite(variable.tolerance) && variable.minimum < variable.maximum
+                && variable.tolerance > 0.0;
+        });
+    const auto hasSearchBudget = !isMultivariable(setup.searchMethod)
+        || setup.candidateLimit >= static_cast<int>(setup.variables.size()) + 1;
+    const auto ready = !historicalSession_ && modelValid_ && hasVariables
         && !externalRunActive_
-        && hasFrequencies && hasObjective
+        && hasFrequencies && hasObjective && hasSearchBudget
         && !isRunning() && analysis::isBackendRunnable(backend_.toStdString())
         && executable.exists() && executable.isFile() && executable.isExecutable();
     runButton_->setEnabled(ready);
-    runButton_->setToolTip(hasObjective ? QString{}
-        : tr("Set at least one objective weight above zero."));
+    runButton_->setToolTip(!hasVariables
+        ? tr("Select at least one parameter and enter valid bounds and tolerance.")
+        : !hasSearchBudget
+            ? tr("Increase Maximum evaluations to at least the selected parameter count plus one.")
+        : hasObjective ? QString{} : tr("Set at least one objective weight above zero."));
     cancelButton_->setEnabled(isRunning());
     applyBestButton_->setEnabled(!historicalSession_ && modelValid_ && !isRunning()
         && bestRow_ >= 0 && static_cast<std::size_t>(bestRow_) < candidates_.size()
         && static_cast<bool>(applyParameterCallback_));
+    updateCandidateActionState();
     const auto editable = !isRunning() && !historicalSession_;
     editFrequencyButton_->setEnabled(editable);
     editObjectiveButton_->setEnabled(editable);
@@ -1537,12 +1761,12 @@ void OptimizationWorkspace::updateReadiness()
     frequencyModeControl_->setEnabled(editable && !singleFrequency);
     minimumControl_->setEnabled(editable);
     maximumControl_->setEnabled(editable);
-    const auto adaptive = selectedSearchMethod() == SearchMethod::Adaptive;
+    const auto multivariable = isMultivariable(selectedSearchMethod());
     searchMethodTabs_->setEnabled(editable);
-    pointsControl_->setEnabled(editable && !adaptive);
-    adaptiveMaximumEvaluationsControl_->setEnabled(editable && adaptive);
-    adaptiveParameterToleranceControl_->setEnabled(editable && adaptive);
-    adaptiveScoreToleranceControl_->setEnabled(editable && adaptive);
+    pointsControl_->setEnabled(editable && !multivariable);
+    adaptiveMaximumEvaluationsControl_->setEnabled(editable && multivariable);
+    adaptiveParameterToleranceControl_->setEnabled(editable && multivariable);
+    adaptiveScoreToleranceControl_->setEnabled(editable && multivariable);
     referenceImpedanceControl_->setEnabled(editable);
     for (auto* control : {swrWeightControl_, resistanceWeightControl_, resistanceTargetControl_,
              reactanceWeightControl_, reactanceTargetControl_}) control->setEnabled(editable);
@@ -1567,12 +1791,15 @@ void OptimizationWorkspace::updateReadiness()
 
 void OptimizationWorkspace::startSweep()
 {
-    if (!runButton_->isEnabled() || minimumControl_->value() >= maximumControl_->value()) {
-        statusLabel_->setText(tr("Minimum must be less than maximum."));
+    if (!runButton_->isEnabled()) {
+        statusLabel_->setText(tr("Select valid parameter bounds, frequencies, and an objective."));
         return;
     }
     const auto setup = currentStudySetup();
-    selectedSymbol_ = setup.variable;
+    activeVariables_ = setup.variables;
+    QStringList activeNames;
+    for (const auto& variable : activeVariables_) activeNames.append(variable.name);
+    selectedSymbol_ = activeNames.join(QStringLiteral(", "));
     activeObjective_ = setup.objective;
     activeSearchMethod_ = setup.searchMethod;
     activeFrequenciesMHz_ = setup.frequenciesMHz;
@@ -1587,22 +1814,33 @@ void OptimizationWorkspace::startSweep()
     sessionRecord_->status = QStringLiteral("Running");
     const auto candidateLimit = setup.candidateLimit;
     sessionRecord_->candidateCount = candidateLimit;
-    sessionRecord_->summary = activeSearchMethod_ == SearchMethod::Adaptive
-        ? tr("Adaptive optimize %1 · %2 · up to %3 candidates × %4 frequencies")
+    sessionRecord_->summary = isMultivariable(activeSearchMethod_)
+        ? tr("%1 %2 · %3 · up to %4 candidates × %5 frequencies")
+            .arg(searchMethodName(activeSearchMethod_))
             .arg(selectedSymbol_, objectiveName(activeObjective_.kind))
             .arg(candidateLimit).arg(activeFrequenciesMHz_.size())
         : tr("Parameter sweep %1 · %2 · %3 candidates × %4 frequencies")
             .arg(selectedSymbol_, objectiveName(activeObjective_.kind))
             .arg(candidateLimit).arg(activeFrequenciesMHz_.size());
     runStore_.save(*sessionRecord_);
+    QJsonArray variableMetadata;
+    for (const auto& variable : activeVariables_) {
+        variableMetadata.append(QJsonObject{
+            {QStringLiteral("name"), variable.name},
+            {QStringLiteral("resolvedValue"), variable.resolvedValue},
+            {QStringLiteral("minimum"), variable.minimum},
+            {QStringLiteral("maximum"), variable.maximum},
+            {QStringLiteral("tolerance"), variable.tolerance},
+        });
+    }
     const auto sessionMetadata = QJsonObject{
-        {QStringLiteral("version"), 4},
+        {QStringLiteral("version"), 6},
         {QStringLiteral("variable"), selectedSymbol_},
         {QStringLiteral("minimum"), setup.minimum},
         {QStringLiteral("maximum"), setup.maximum},
+        {QStringLiteral("variables"), variableMetadata},
         {QStringLiteral("candidateCount"), candidateLimit},
-        {QStringLiteral("searchMethod"), activeSearchMethod_ == SearchMethod::Adaptive
-            ? QStringLiteral("adaptive") : QStringLiteral("parameter-sweep")},
+        {QStringLiteral("searchMethod"), searchMethodId(activeSearchMethod_)},
         {QStringLiteral("parameterTolerance"), setup.parameterTolerance},
         {QStringLiteral("scoreTolerance"), setup.scoreTolerance},
         {QStringLiteral("objective"), activeObjective_.kind
@@ -1637,13 +1875,36 @@ void OptimizationWorkspace::startSweep()
     resultsTable_->setRowCount(0);
     const auto minimum = setup.minimum;
     const auto maximum = setup.maximum;
-    adaptiveSearch_.reset();
+    adaptiveVectorSearch_.reset();
+    nelderMeadSearch_.reset();
     if (activeSearchMethod_ == SearchMethod::Adaptive) {
-        adaptiveSearch_.emplace(analysis::AdaptiveSearchSettings{
-            minimum, maximum, candidateLimit,
-            setup.parameterTolerance, setup.scoreTolerance});
-        for (const auto value : adaptiveSearch_->initialCandidates())
-            appendCandidate(value, 0, QStringLiteral("initial"));
+        std::vector<analysis::AdaptiveVectorVariable> variables;
+        variables.reserve(activeVariables_.size());
+        for (const auto& variable : activeVariables_)
+            variables.push_back({variable.minimum, variable.maximum, variable.tolerance});
+        adaptiveVectorSearch_.emplace(analysis::AdaptiveVectorSearchSettings{
+            std::move(variables), candidateLimit, setup.scoreTolerance});
+        for (const auto& proposal : adaptiveVectorSearch_->initialCandidates()) {
+            const auto role = proposal.variableIndex < 0
+                ? QStringLiteral("initial-center")
+                : tr("initial %1 %2").arg(activeVariables_[static_cast<std::size_t>(
+                      proposal.variableIndex)].name,
+                      proposal.direction < 0 ? tr("minimum") : tr("maximum"));
+            appendCandidate(proposal.values, 0, role);
+        }
+    } else if (activeSearchMethod_ == SearchMethod::NelderMead) {
+        std::vector<analysis::NelderMeadVariable> variables;
+        variables.reserve(activeVariables_.size());
+        for (const auto& variable : activeVariables_) {
+            variables.push_back({variable.resolvedValue, variable.minimum,
+                variable.maximum, variable.tolerance});
+        }
+        nelderMeadSearch_.emplace(analysis::NelderMeadSettings{
+            std::move(variables), candidateLimit, setup.scoreTolerance});
+        for (const auto& proposal : nelderMeadSearch_->initialCandidates()) {
+            appendCandidate(proposal.values, proposal.iteration,
+                QString::fromLatin1(proposal.role.data(), static_cast<qsizetype>(proposal.role.size())));
+        }
     } else {
         for (auto index = 0; index < candidateLimit; ++index) {
             const auto fraction = static_cast<double>(index)
@@ -1655,17 +1916,18 @@ void OptimizationWorkspace::startSweep()
     candidateIndex_ = 0;
     bestScore_ = std::numeric_limits<double>::infinity();
     bestRow_ = -1;
-    adaptiveStopReason_.clear();
+    searchStopReason_.clear();
     cancelRequested_ = false;
     progress_->setRange(0, candidateLimit);
     progress_->setValue(0);
-    progress_->setFormat(activeSearchMethod_ == SearchMethod::Adaptive
+    progress_->setFormat(isMultivariable(activeSearchMethod_)
         ? tr("%v of up to %m evaluations") : tr("%v / %m candidates (%p%)"));
-    bestLabel_->setText(activeSearchMethod_ == SearchMethod::Adaptive
-        ? tr("Adaptive optimization in progress…") : tr("Sweep in progress…"));
+    bestLabel_->setText(isMultivariable(activeSearchMethod_)
+        ? tr("%1 in progress…").arg(searchMethodName(activeSearchMethod_))
+        : tr("Sweep in progress…"));
     statusLabel_->setText(tr("Running %1 with %2 initial candidates × %3 %4 for %5.")
-        .arg(activeSearchMethod_ == SearchMethod::Adaptive
-            ? tr("adaptive optimization") : tr("parameter sweep"))
+        .arg(activeSearchMethod_ == SearchMethod::ParameterSweep
+            ? tr("parameter sweep") : searchMethodName(activeSearchMethod_))
         .arg(count).arg(activeFrequenciesMHz_.size())
         .arg(activeFrequenciesMHz_.size() == 1 ? tr("frequency") : tr("frequencies"))
         .arg(selectedSymbol_));
@@ -1684,47 +1946,99 @@ void OptimizationWorkspace::cancelSweep()
 void OptimizationWorkspace::appendCandidate(double value, int refinementRound,
     QString trialRole)
 {
+    appendCandidate(std::vector<double>{value}, refinementRound, std::move(trialRole));
+}
+
+void OptimizationWorkspace::appendCandidate(std::vector<double> values,
+    int refinementRound, QString trialRole)
+{
     const auto row = resultsTable_->rowCount();
     resultsTable_->insertRow(row);
-    candidates_.push_back(Candidate{
-        value, row, {}, {}, {}, refinementRound, std::move(trialRole)});
-    auto* valueItem = numericItem(value);
-    valueItem->setText(valueItem->text() + selectedValueSuffix_);
+    Candidate candidate;
+    candidate.value = values.empty() ? 0.0 : values.front();
+    candidate.values = std::move(values);
+    candidate.row = row;
+    candidate.refinementRound = refinementRound;
+    candidate.trialRole = std::move(trialRole);
+    candidates_.push_back(std::move(candidate));
+    auto* valueItem = new QTableWidgetItem(candidateDescription(candidates_.back()));
+    valueItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
     resultsTable_->setItem(row, ValueColumn, valueItem);
     setCandidateStatus(row, tr("Pending"));
 }
 
-auto OptimizationWorkspace::prepareAdaptiveRound() -> bool
+auto OptimizationWorkspace::candidateDescription(const Candidate& candidate) const -> QString
 {
-    if (!adaptiveSearch_) return false;
-    const auto proposals = adaptiveSearch_->nextCandidates();
-    const auto round = adaptiveSearch_->refinementRound();
-    const auto bestValue = bestRow_ >= 0
-        ? candidates_[static_cast<std::size_t>(bestRow_)].value : 0.0;
-    for (const auto proposal : proposals) {
-        appendCandidate(proposal, round,
-            proposal < bestValue ? QStringLiteral("left") : QStringLiteral("right"));
+    if (activeVariables_.size() <= 1 || candidate.values.size() <= 1)
+        return formatDecimal(candidate.value) + selectedValueSuffix_;
+    QStringList values;
+    for (auto index = std::size_t{};
+         index < activeVariables_.size() && index < candidate.values.size(); ++index) {
+        values.append(tr("%1=%2").arg(activeVariables_[index].name,
+            formatDecimal(candidate.values[index])));
+    }
+    return values.join(QStringLiteral("; "));
+}
+
+auto OptimizationWorkspace::prepareNextSearchCandidates() -> bool
+{
+    if (activeSearchMethod_ == SearchMethod::NelderMead && nelderMeadSearch_) {
+        if (const auto proposal = nelderMeadSearch_->nextCandidate()) {
+            appendCandidate(proposal->values, proposal->iteration,
+                QString::fromLatin1(proposal->role.data(),
+                    static_cast<qsizetype>(proposal->role.size())));
+            return true;
+        }
+        switch (nelderMeadSearch_->stopReason()) {
+        case analysis::NelderMeadStopReason::MaximumEvaluations:
+            searchStopReason_ = tr("the maximum evaluation limit was reached");
+            break;
+        case analysis::NelderMeadStopReason::ParameterTolerance:
+            searchStopReason_ = tr("the simplex contracted within every parameter tolerance");
+            break;
+        case analysis::NelderMeadStopReason::ScoreTolerance:
+            searchStopReason_ = tr("the contracted simplex scores differ by no more than %1")
+                .arg(adaptiveScoreToleranceControl_->value(), 0, 'f', DisplayDecimalPlaces);
+            break;
+        case analysis::NelderMeadStopReason::NoSuccessfulCandidate:
+            searchStopReason_ = tr("the initial simplex produced no successful candidate");
+            break;
+        case analysis::NelderMeadStopReason::None:
+            searchStopReason_ = tr("search completed");
+            break;
+        }
+        return false;
+    }
+    if (!adaptiveVectorSearch_) return false;
+    const auto proposals = adaptiveVectorSearch_->nextCandidates();
+    const auto round = adaptiveVectorSearch_->refinementRound();
+    for (const auto& proposal : proposals) {
+        const auto variableName = proposal.variableIndex >= 0
+            && static_cast<std::size_t>(proposal.variableIndex) < activeVariables_.size()
+            ? activeVariables_[static_cast<std::size_t>(proposal.variableIndex)].name : QString{};
+        appendCandidate(proposal.values, round,
+            tr("%1 %2").arg(variableName,
+                proposal.direction < 0 ? tr("lower") : tr("upper")));
     }
     if (!proposals.empty()) return true;
-    switch (adaptiveSearch_->stopReason()) {
+    switch (adaptiveVectorSearch_->stopReason()) {
     case analysis::AdaptiveStopReason::MaximumEvaluations:
-        adaptiveStopReason_ = tr("the maximum evaluation limit was reached");
+        searchStopReason_ = tr("the maximum evaluation limit was reached");
         break;
     case analysis::AdaptiveStopReason::ParameterTolerance:
-        adaptiveStopReason_ = tr(
-            "no new midpoint could be placed at least %1 from the current best parameter value")
-            .arg(adaptiveParameterToleranceControl_->value(), 0, 'f', DisplayDecimalPlaces);
+        searchStopReason_ = tr(
+            "no new coordinate trial could satisfy its parameter tolerance");
         break;
     case analysis::AdaptiveStopReason::ScoreTolerance:
-        adaptiveStopReason_ = tr(
+        searchStopReason_ = tr(
             "two consecutive refinement rounds improved the best objective score by no more than %1")
             .arg(adaptiveScoreToleranceControl_->value(), 0, 'f', DisplayDecimalPlaces);
         break;
     case analysis::AdaptiveStopReason::NoSuccessfulCandidate:
-        adaptiveStopReason_ = tr("no successful candidate was available to refine");
+        searchStopReason_ = tr("no successful candidate was available to refine");
         break;
     case analysis::AdaptiveStopReason::None:
-        adaptiveStopReason_ = tr("search completed");
+        searchStopReason_ = tr("search completed");
         break;
     }
     return !proposals.empty();
@@ -1733,31 +2047,24 @@ auto OptimizationWorkspace::prepareAdaptiveRound() -> bool
 void OptimizationWorkspace::startNextCandidate()
 {
     if (!cancelRequested_ && candidateIndex_ >= candidates_.size()
-        && activeSearchMethod_ == SearchMethod::Adaptive && prepareAdaptiveRound()) {
-        progress_->setFormat(tr("Refinement round %1 · %v of up to %m evaluations")
-            .arg(adaptiveSearch_->refinementRound()));
-        statusLabel_->setText(tr("Refinement round %1: testing both sides around %2 = %3%4.")
-            .arg(adaptiveSearch_->refinementRound())
-            .arg(selectedSymbol_)
-            .arg(candidates_[static_cast<std::size_t>(bestRow_)].value, 0, 'f', 3)
-            .arg(selectedValueSuffix_));
+        && isMultivariable(activeSearchMethod_) && prepareNextSearchCandidates()) {
+        const auto iteration = activeSearchMethod_ == SearchMethod::Adaptive
+            ? adaptiveVectorSearch_->refinementRound() : nelderMeadSearch_->iteration() + 1;
+        progress_->setFormat(tr("%1 iteration %2 · %v of up to %m evaluations")
+            .arg(searchMethodName(activeSearchMethod_)).arg(iteration));
     }
     if (cancelRequested_ || candidateIndex_ >= candidates_.size()) {
         finishSweep();
         return;
     }
     auto& candidate = candidates_[candidateIndex_];
-    if (activeSearchMethod_ == SearchMethod::Adaptive) {
+    if (isMultivariable(activeSearchMethod_)) {
         statusLabel_->setText(candidate.refinementRound == 0
-            ? tr("Initial search: evaluating %1 = %2%3.")
-                .arg(selectedSymbol_).arg(candidate.value, 0, 'f', 3)
-                .arg(selectedValueSuffix_)
-            : tr("Refinement round %1: evaluating the %2 trial, %3 = %4%5.")
+            ? tr("Initial search: evaluating %1.").arg(candidateDescription(candidate))
+            : tr("Iteration %1: evaluating %2 · %3.")
                 .arg(candidate.refinementRound)
-                .arg(candidate.trialRole == QStringLiteral("left")
-                    ? tr("left") : tr("right"))
-                .arg(selectedSymbol_).arg(candidate.value, 0, 'f', 3)
-                .arg(selectedValueSuffix_));
+                .arg(candidate.trialRole)
+                .arg(candidateDescription(candidate)));
     }
     candidate.record = runStore_.create(backend_, sourceFile_.isEmpty()
         ? QStringLiteral("Untitled model.nec") : sourceFile_,
@@ -1766,8 +2073,10 @@ void OptimizationWorkspace::startNextCandidate()
         candidate.record.status = QStringLiteral("Failed");
         runStore_.save(candidate.record);
         setCandidateStatus(candidate.row, tr("Could not write candidate metadata"));
-        if (activeSearchMethod_ == SearchMethod::Adaptive && adaptiveSearch_)
-            adaptiveSearch_->record(candidate.value, std::nullopt);
+        if (activeSearchMethod_ == SearchMethod::Adaptive && adaptiveVectorSearch_)
+            adaptiveVectorSearch_->record(candidate.values, std::nullopt);
+        if (activeSearchMethod_ == SearchMethod::NelderMead && nelderMeadSearch_)
+            nelderMeadSearch_->record(candidate.values, std::nullopt);
         ++candidateIndex_;
         progress_->setValue(static_cast<int>(candidateIndex_));
         QTimer::singleShot(0, this, [this] { startNextCandidate(); });
@@ -1777,9 +2086,14 @@ void OptimizationWorkspace::startNextCandidate()
     candidate.record.status = QStringLiteral("Running");
     runStore_.save(candidate.record);
     setCandidateStatus(candidate.row, tr("Running"));
+    std::unordered_map<std::string, double> variableValues;
+    for (auto index = std::size_t{};
+         index < activeVariables_.size() && index < candidate.values.size(); ++index) {
+        variableValues.emplace(activeVariables_[index].name.toStdString(), candidate.values[index]);
+    }
     evaluator_->start({
         .authoredSource = source_,
-        .variableValues = {{selectedSymbol_.toStdString(), candidate.value}},
+        .variableValues = std::move(variableValues),
         .frequencyPlan = activeObjective_.kind != analysis::OptimizationObjectiveKind::SwrAtFrequency
                 && selectedFrequencyMode() == FrequencyMode::ModelSweep
             ? analysis::FrequencyPlan{analysis::FrequencyPlanMode::ModelSweep,
@@ -1849,8 +2163,12 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
             : result.status == CandidateEvaluationStatus::TimedOut
                 ? QStringLiteral("Timed Out") : QStringLiteral("Failed");
     }
-    if (activeSearchMethod_ == SearchMethod::Adaptive && adaptiveSearch_)
-        adaptiveSearch_->record(candidate.value,
+    if (activeSearchMethod_ == SearchMethod::Adaptive && adaptiveVectorSearch_)
+        adaptiveVectorSearch_->record(candidate.values,
+            candidate.evaluation
+                ? std::optional<double>{candidate.evaluation->score} : std::nullopt);
+    if (activeSearchMethod_ == SearchMethod::NelderMead && nelderMeadSearch_)
+        nelderMeadSearch_->record(candidate.values,
             candidate.evaluation
                 ? std::optional<double>{candidate.evaluation->score} : std::nullopt);
     runStore_.save(candidate.record);
@@ -1858,8 +2176,8 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
     progress_->setValue(static_cast<int>(candidateIndex_));
     if (sessionRecord_) {
         sessionRecord_->summary = tr("%1 %2 · %3/%4 candidates complete")
-            .arg(activeSearchMethod_ == SearchMethod::Adaptive
-                ? tr("Adaptive optimize") : tr("Parameter sweep"))
+            .arg(activeSearchMethod_ == SearchMethod::ParameterSweep
+                ? tr("Parameter sweep") : searchMethodName(activeSearchMethod_))
             .arg(selectedSymbol_).arg(candidateIndex_).arg(candidates_.size());
         runStore_.save(*sessionRecord_);
     }
@@ -1871,16 +2189,18 @@ void OptimizationWorkspace::finishSweep()
     if (cancelRequested_) {
         for (std::size_t index = candidateIndex_; index < candidates_.size(); ++index)
             setCandidateStatus(candidates_[index].row, tr("Skipped"));
-        statusLabel_->setText(activeSearchMethod_ == SearchMethod::Adaptive
-            ? tr("Adaptive optimization canceled.") : tr("Parameter sweep canceled."));
-        progress_->setFormat(activeSearchMethod_ == SearchMethod::Adaptive
+        statusLabel_->setText(isMultivariable(activeSearchMethod_)
+            ? tr("%1 canceled.").arg(searchMethodName(activeSearchMethod_))
+            : tr("Parameter sweep canceled."));
+        progress_->setFormat(isMultivariable(activeSearchMethod_)
             ? tr("Canceled — %v of up to %m evaluations")
             : tr("Canceled — %v / %m candidates"));
     } else {
-        statusLabel_->setText(activeSearchMethod_ == SearchMethod::Adaptive
-            ? tr("Adaptive optimization complete: %1.").arg(adaptiveStopReason_)
+        statusLabel_->setText(isMultivariable(activeSearchMethod_)
+            ? tr("%1 complete: %2.").arg(
+                searchMethodName(activeSearchMethod_), searchStopReason_)
             : tr("Parameter sweep complete."));
-        if (activeSearchMethod_ == SearchMethod::Adaptive) {
+        if (isMultivariable(activeSearchMethod_)) {
             const auto evaluations = static_cast<int>(candidates_.size());
             progress_->setRange(0, std::max(1, evaluations));
             progress_->setValue(evaluations);
@@ -1896,10 +2216,8 @@ void OptimizationWorkspace::finishSweep()
         for (auto column = 0; column < ResultColumnCount; ++column) {
             if (auto* item = resultsTable_->item(bestRow_, column)) item->setFont(font);
         }
-        bestLabel_->setText(tr("Best candidate: %1 = %2%3, %4 = %5")
-            .arg(selectedSymbol_)
-            .arg(candidates_[static_cast<std::size_t>(bestRow_)].value, 0, 'f', 3)
-            .arg(selectedValueSuffix_)
+        bestLabel_->setText(tr("Best candidate: %1, %2 = %3")
+            .arg(candidateDescription(candidates_[static_cast<std::size_t>(bestRow_)]))
             .arg(objectiveName(activeObjective_.kind))
             .arg(bestScore_, 0, 'f', 3));
     } else {
@@ -1908,9 +2226,9 @@ void OptimizationWorkspace::finishSweep()
     if (sessionRecord_) {
         sessionRecord_->candidateCount = static_cast<int>(candidates_.size());
         sessionRecord_->status = cancelRequested_ ? QStringLiteral("Canceled") : QStringLiteral("Completed");
-        sessionRecord_->summary = activeSearchMethod_ == SearchMethod::Adaptive
-                && !adaptiveStopReason_.isEmpty()
-            ? tr("%1 · Stopped: %2").arg(bestLabel_->text(), adaptiveStopReason_)
+        sessionRecord_->summary = isMultivariable(activeSearchMethod_)
+                && !searchStopReason_.isEmpty()
+            ? tr("%1 · Stopped: %2").arg(bestLabel_->text(), searchStopReason_)
             : bestLabel_->text();
         saveSessionCompletionMetadata();
         runStore_.save(*sessionRecord_);
@@ -1931,25 +2249,11 @@ void OptimizationWorkspace::saveSessionCompletionMetadata()
         ? QJsonDocument::fromJson(file.readAll()).object() : QJsonObject{};
     file.close();
     metadata.insert(QStringLiteral("evaluations"), static_cast<int>(candidates_.size()));
-    metadata.insert(QStringLiteral("refinementRounds"),
-        adaptiveSearch_ ? adaptiveSearch_->refinementRound() : 0);
+    metadata.insert(QStringLiteral("refinementRounds"), currentSearchIteration());
     metadata.insert(QStringLiteral("stopReason"), cancelRequested_
-        ? QStringLiteral("canceled")
-        : adaptiveSearch_ && adaptiveSearch_->stopReason()
-                == analysis::AdaptiveStopReason::MaximumEvaluations
-            ? QStringLiteral("maximum-evaluations")
-        : adaptiveSearch_ && adaptiveSearch_->stopReason()
-                == analysis::AdaptiveStopReason::ParameterTolerance
-            ? QStringLiteral("parameter-tolerance")
-        : adaptiveSearch_ && adaptiveSearch_->stopReason()
-                == analysis::AdaptiveStopReason::ScoreTolerance
-            ? QStringLiteral("score-tolerance")
-        : adaptiveSearch_ && adaptiveSearch_->stopReason()
-                == analysis::AdaptiveStopReason::NoSuccessfulCandidate
-            ? QStringLiteral("no-successful-candidate")
-            : QStringLiteral("completed"));
+        ? QStringLiteral("canceled") : currentStopReasonId());
     metadata.insert(QStringLiteral("stopDescription"), cancelRequested_
-        ? tr("canceled by the user") : adaptiveStopReason_);
+        ? tr("canceled by the user") : searchStopReason_);
     writeFile(path, QJsonDocument(metadata).toJson(QJsonDocument::Indented));
 }
 
@@ -1957,13 +2261,21 @@ auto OptimizationWorkspace::writeCandidateMetadata(const Candidate& candidate) -
 {
     const QDir directory(candidate.record.directory);
     const auto frequencyMode = selectedFrequencyMode();
+    QJsonArray variableValues;
+    for (auto index = std::size_t{};
+         index < activeVariables_.size() && index < candidate.values.size(); ++index) {
+        variableValues.append(QJsonObject{
+            {QStringLiteral("name"), activeVariables_[index].name},
+            {QStringLiteral("value"), candidate.values[index]},
+        });
+    }
     const auto metadata = QJsonObject{
-        {QStringLiteral("version"), 4},
+        {QStringLiteral("version"), 6},
         {QStringLiteral("variable"), selectedSymbol_},
         {QStringLiteral("value"), candidate.value},
+        {QStringLiteral("variables"), variableValues},
         {QStringLiteral("unit"), selectedValueSuffix_.trimmed()},
-        {QStringLiteral("searchMethod"), activeSearchMethod_ == SearchMethod::Adaptive
-            ? QStringLiteral("adaptive") : QStringLiteral("parameter-sweep")},
+        {QStringLiteral("searchMethod"), searchMethodId(activeSearchMethod_)},
         {QStringLiteral("refinementRound"), candidate.refinementRound},
         {QStringLiteral("trialRole"), candidate.trialRole},
         {QStringLiteral("objective"), activeObjective_.kind
@@ -1998,13 +2310,12 @@ void OptimizationWorkspace::setCandidateStatus(int row, const QString& status)
     auto displayStatus = status;
     if (row >= 0 && static_cast<std::size_t>(row) < candidates_.size()) {
         const auto& candidate = candidates_[static_cast<std::size_t>(row)];
-        if (candidate.trialRole == QStringLiteral("initial"))
+        if (candidate.trialRole.startsWith(QStringLiteral("initial")))
             displayStatus = tr("Initial sample · %1").arg(status);
         else if (!candidate.trialRole.isEmpty())
-            displayStatus = tr("Round %1 · %2 trial · %3")
+            displayStatus = tr("Iteration %1 · %2 · %3")
                 .arg(candidate.refinementRound)
-                .arg(candidate.trialRole == QStringLiteral("left")
-                    ? tr("left") : tr("right"))
+                .arg(candidate.trialRole)
                 .arg(status);
     }
     resultsTable_->setItem(row, StatusColumn, new QTableWidgetItem(displayStatus));
@@ -2038,8 +2349,11 @@ auto OptimizationWorkspace::selectedFrequencyMode() const -> FrequencyMode
 
 auto OptimizationWorkspace::selectedSearchMethod() const -> SearchMethod
 {
-    return searchMethodTabs_->currentIndex() == 1
-        ? SearchMethod::Adaptive : SearchMethod::ParameterSweep;
+    switch (searchMethodTabs_->currentIndex()) {
+    case 1: return SearchMethod::Adaptive;
+    case 2: return SearchMethod::NelderMead;
+    default: return SearchMethod::ParameterSweep;
+    }
 }
 
 auto OptimizationWorkspace::selectedFrequencyPlan() const -> analysis::FrequencyPlan
@@ -2080,15 +2394,23 @@ auto OptimizationWorkspace::explicitFrequencies() const -> std::vector<double>
 auto OptimizationWorkspace::currentStudySetup() const -> StudySetup
 {
     const auto searchMethod = selectedSearchMethod();
+    auto variables = isMultivariable(searchMethod)
+        ? selectedAdaptiveVariables() : std::vector<StudySetup::VariableRange>{};
+    if (searchMethod == SearchMethod::ParameterSweep && variableControl_->currentIndex() >= 0) {
+        variables.push_back({variableControl_->currentText(),
+            variableControl_->currentData().toDouble(), minimumControl_->value(),
+            maximumControl_->value(), adaptiveParameterToleranceControl_->value()});
+    }
     return {
         .searchMethod = searchMethod,
         .variable = variableControl_->currentText(),
         .minimum = minimumControl_->value(),
         .maximum = maximumControl_->value(),
-        .candidateLimit = searchMethod == SearchMethod::Adaptive
+        .candidateLimit = isMultivariable(searchMethod)
             ? adaptiveMaximumEvaluationsControl_->value() : pointsControl_->value(),
         .parameterTolerance = adaptiveParameterToleranceControl_->value(),
         .scoreTolerance = adaptiveScoreToleranceControl_->value(),
+        .variables = std::move(variables),
         .frequencySelection = captureFrequencySelection(),
         .frequenciesMHz = analysis::frequencyPlanPoints(selectedFrequencyPlan()),
         .objective = selectedObjective(),
@@ -2125,6 +2447,69 @@ auto OptimizationWorkspace::objectiveName(analysis::OptimizationObjectiveKind ki
     return kind == analysis::OptimizationObjectiveKind::WorstPointAcrossFrequencies
         ? tr("Minimax score")
         : tr("Selected-frequency score");
+}
+
+auto OptimizationWorkspace::isMultivariable(SearchMethod method) noexcept -> bool
+{
+    return method != SearchMethod::ParameterSweep;
+}
+
+auto OptimizationWorkspace::searchMethodName(SearchMethod method) const -> QString
+{
+    switch (method) {
+    case SearchMethod::ParameterSweep: return tr("Parameter Sweep");
+    case SearchMethod::Adaptive: return tr("Adaptive Optimize");
+    case SearchMethod::NelderMead: return tr("Nelder–Mead");
+    }
+    return tr("Optimization");
+}
+
+auto OptimizationWorkspace::searchMethodId(SearchMethod method) -> QString
+{
+    switch (method) {
+    case SearchMethod::ParameterSweep: return QStringLiteral("parameter-sweep");
+    case SearchMethod::Adaptive: return QStringLiteral("adaptive");
+    case SearchMethod::NelderMead: return QStringLiteral("nelder-mead");
+    }
+    return QStringLiteral("parameter-sweep");
+}
+
+auto OptimizationWorkspace::currentSearchIteration() const noexcept -> int
+{
+    if (adaptiveVectorSearch_) return adaptiveVectorSearch_->refinementRound();
+    if (nelderMeadSearch_) return nelderMeadSearch_->iteration();
+    return 0;
+}
+
+auto OptimizationWorkspace::currentStopReasonId() const -> QString
+{
+    if (nelderMeadSearch_) {
+        switch (nelderMeadSearch_->stopReason()) {
+        case analysis::NelderMeadStopReason::MaximumEvaluations:
+            return QStringLiteral("maximum-evaluations");
+        case analysis::NelderMeadStopReason::ParameterTolerance:
+            return QStringLiteral("parameter-tolerance");
+        case analysis::NelderMeadStopReason::ScoreTolerance:
+            return QStringLiteral("score-tolerance");
+        case analysis::NelderMeadStopReason::NoSuccessfulCandidate:
+            return QStringLiteral("no-successful-candidate");
+        case analysis::NelderMeadStopReason::None: break;
+        }
+    }
+    if (adaptiveVectorSearch_) {
+        switch (adaptiveVectorSearch_->stopReason()) {
+        case analysis::AdaptiveStopReason::MaximumEvaluations:
+            return QStringLiteral("maximum-evaluations");
+        case analysis::AdaptiveStopReason::ParameterTolerance:
+            return QStringLiteral("parameter-tolerance");
+        case analysis::AdaptiveStopReason::ScoreTolerance:
+            return QStringLiteral("score-tolerance");
+        case analysis::AdaptiveStopReason::NoSuccessfulCandidate:
+            return QStringLiteral("no-successful-candidate");
+        case analysis::AdaptiveStopReason::None: break;
+        }
+    }
+    return QStringLiteral("completed");
 }
 
 }

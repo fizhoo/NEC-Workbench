@@ -186,11 +186,17 @@ add and duplicate actions create drafts; apply and delete update only the select
 card through the undoable source path. Solver-output parsing assigns each
 radiation block a frequency-local dataset index so 2D cuts and 3D grids remain
 selectable rather than being merged.
-For an every-frequency radiation request, solver preparation preserves the
+The global Results frequency drives summary, impedance, current, and raw-output
+navigation. Radiation views maintain a synchronized category-local selector
+populated exclusively from RP-bearing frequencies, preventing impedance-only FR
+points from crowding or misleading the pattern controls.
+For a model-FR radiation request, solver preparation preserves the
 model's native `FR` sweep and `RP` sequence instead of expanding it into one
-command pair per frequency. Representative and center-only policies still
-create explicit one-frequency solver requests. This keeps large native sweeps
-compact and avoids stressing legacy fixed-format NEC-2 parsers.
+command pair per frequency. Single-frequency, explicit-list, and custom-range
+policies use the shared frequency-plan expansion and create explicit
+one-frequency `FR` plus `RP` request blocks while retaining the original sweep
+for impedance and SWR. This keeps large model-wide sweeps compact while allowing
+independent control over expensive radiation calculations.
 The readiness summary requires a freshly checked valid model, supported `FR` and
 `EX` definitions, at least one result request, and a runnable solver path. Any raw
 source edit immediately invalidates readiness until Check Model runs again.
@@ -229,14 +235,16 @@ Results Raw NEC Output tab and Solver Output dock; `model.nec`, `model.out`, and
 `run.log` remain in the run directory. Runs support a configurable timeout and
 manual cancellation. Each directory includes versioned JSON metadata; records
 are discovered on startup, incomplete records are marked Interrupted, and
-using View Run Results or double-clicking a historical row reloads its log,
-result tables, and plots without replacing the editable document. The archived
-`model.nec` is parsed separately for result geometry and radiation overlays. A
-persistent result-context banner distinguishes historical output from the active
-model, while explicit actions inspect the archived deck read-only or open it as
-an untitled editable model. Historical optimization and convergence sessions use
-the same return context, expose read-only session banners, and cannot re-enable
-execution against the current editor. Parsing raw
+using Open Run Review or double-clicking a historical row loads one reusable,
+top-level review window without replacing the editable document or the active
+Results workspace. The review window owns separate view instances but reuses the
+same parsing, plotting, optimization-session, and convergence-session components.
+It never includes Run History itself. The archived `model.nec` is parsed separately
+for result geometry and radiation overlays. Its Summary presents `model.source.nec`
+and the generated `model.nec` in a read-only split panel, while an explicit action
+can open the solver snapshot as a new editable model. Historical optimization and
+convergence sessions expose read-only session banners and cannot re-enable execution
+against the current editor. Parsing raw
 NEC output into structured result objects is a
 separate core layer. The first parser reads each frequency block's antenna-input
 rows into backend-neutral feedpoint results. Results Numerical Results shows
@@ -353,12 +361,15 @@ Optimization candidates use the same external solver adapter and durable run
 store as ordinary analysis. A reusable, non-widget `CandidateEvaluator` owns SY
 overrides, numeric deck generation, validation, artifact writing, solver process
 lifecycle, timeout/cancel handling, output parsing, and objective evaluation.
-Parameter Sweep now sequences candidate requests and renders returned results;
-the one-variable adaptive optimizer uses the same path while a Qt-free
-`AdaptiveSearch` planner chooses bounded midpoint refinements around the current
-best candidate and owns evaluation-budget, parameter-tolerance, and score-tolerance
-stopping rules. Future optimizer algorithms can use the evaluator without
-duplicating solver logic. A Qt-free `FrequencyPlan` normalizes model sweeps, individual
+Parameter Sweep sequences single-variable candidate requests and renders returned
+results; Adaptive Optimize uses the same path while a Qt-free
+`AdaptiveVectorSearch` planner chooses bounded coordinate refinements around the
+current best parameter vector. A second Qt-free `NelderMeadSearch` planner performs
+bounded derivative-free simplex reflection, expansion, contraction, and shrink
+steps for one or more variables. Both planners own their evaluation-budget,
+per-parameter-tolerance, and score-tolerance stopping rules and report an explicit
+reason to the workspace and archived session metadata. Future optimizer algorithms
+can use the evaluator without duplicating solver logic. A Qt-free `FrequencyPlan` normalizes model sweeps, individual
 points, and one or more ranges into sorted, duplicate-free evaluation points.
 The impedance objective builder combines weighted SWR, resistance-target error,
 and reactance-target error. Ohmic errors are normalized by reference impedance
@@ -374,10 +385,12 @@ both. Explicit sets are emitted as repeated
 single-frequency `FR`/`XQ` blocks, which permits disconnected bands in one
 candidate process. Parsed feedpoint rows remain attached to each candidate so
 the workspace can show its full frequency-by-frequency SWR and impedance detail.
-Applying the best candidate delegates one numeric `SY` replacement back to
-`MainWindow` so the ordinary source command, validation, and Undo/Redo path remains
-the only model-mutation mechanism.
-An `optimization.json` artifact records the variable, value, evaluation mode,
+Applying the best or a selected candidate delegates all selected numeric `SY`
+replacements back to `MainWindow` as one source edit so validation and Undo/Redo
+remain the only model-mutation mechanism. **Apply This Candidate and Run** uses the
+same edit path, rechecks the resulting active model, and then enters the ordinary
+analysis runner; it does not promote or mutate the archived candidate artifacts.
+An `optimization.json` artifact records the variables, values, evaluation mode,
 frequency mode and points, selected objective frequency, reference impedance,
 criterion weights, and impedance targets used for each generated numeric deck.
 
@@ -397,3 +410,16 @@ See [Development Roadmap](roadmap.md) for the broader sequence and parking lot.
 
 Solver executables are never bundled. NEC-4 and NEC-5 support will accept paths
 to user-provided licensed executables.
+
+## Pattern-Frequency Solver Decks
+
+The Analysis Requests frequency plan is a run-time policy and does not rewrite the
+authored model. Every run preserves that source as `model.source.nec`. When the
+model's complete `FR` sweep is selected for patterns, the generated numeric
+`model.nec` retains the normalized model request sequence. For a single, selected,
+or custom continuous pattern-frequency plan, Workbench removes the generated
+deck's original `FR`, `XQ`, and `RP` request cards and emits one combined solver
+sequence: the original `FR` definition followed by `XQ` for impedance and currents,
+then a one-point `FR` followed by every configured `RP` request for each chosen
+pattern frequency. The backend therefore runs once while avoiding radiation
+calculations at unselected sweep points.

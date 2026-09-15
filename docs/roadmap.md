@@ -18,15 +18,28 @@ configured by the user and are not bundled.
 - One-variable bounded sweeps with model-sweep or explicit-frequency SWR objectives
 - Shared candidate evaluator for parameter sweeps and future optimizer algorithms
 - Candidate objective plots with exact weighted SWR, resistance, and reactance contributions
-- One-variable adaptive coarse-to-fine optimization with explicit stopping criteria
-- Explicit, undoable application of the best sweep value to its active `SY` definition
-- Shared frequency plans with model, continuous, explicit-point, and amateur-band modes
+- Multi-variable adaptive coordinate refinement with per-parameter bounds and tolerances
+- Bounded multi-variable Nelder–Mead search using the shared candidate evaluator
+- Explicit, undoable application of the best candidate values to their active `SY` definitions
+- Model-level `Z0` feed reference shared by SWR results and optimizer defaults
+- Shared frequency plans for optimization and model, single, explicit-list, or continuous RP requests
 - Static model-adequacy checks for segmentation, thin-wire ratios, sources, and junctions
 - Single-frequency lossless Average Gain Test with archived Validation results
 - Segmentation convergence studies with EX, LD, and TL attachment remapping
 - Linux development builds and automated Windows packaging
 
-## Next: Model Adequacy
+## Next: NEC Card Coverage
+
+1. Inventory the complete NEC-2 card set and publish a support matrix.
+2. Ensure valid unsupported cards are preserved unchanged through editing and saving.
+3. Add parsing, validation, project-tree identity, and structured fields in practical groups.
+4. Verify generated decks with `nec2c` examples for every newly understood card.
+
+Card support will distinguish **Preserved**, **Understood**, and **Structured Editable**
+instead of claiming that every preserved extension has a dedicated editor. This coverage
+pass is followed by release stabilization, regression models, and packaging.
+
+## Later: Model Adequacy
 
 Static checks are only the first layer. Following Cebik's guidance, AGT and
 convergence are necessary but not sufficient tests of model adequacy. The next
@@ -56,20 +69,20 @@ Parameterization is the required foundation for both model templates and
 optimization. It should remain a Workbench feature rather than depending on a
 particular solver's extensions.
 
-## Then: Adaptive Optimization
+## Later: Optimization Analysis
 
 1. Add finalist sensitivity/tolerance analysis for parameter perturbations.
 2. Add gain and pattern objectives, weights, and constraints.
-3. Add bounded multi-parameter optimization.
+3. Add two-variable grid sweeps and objective heat maps.
 4. Add explicit Compare Runs and baseline-versus-candidate overlays.
 
 Explicit frequency sets and editable amateur-band presets provide the initial
 multi-band foundation. Per-frequency weights and pass/fail constraints remain
 future refinements rather than complicating the first workflow.
 
-The first optimizer should favor transparent, reproducible behavior over a
-large collection of algorithms. Additional search methods can be added behind a
-common optimizer interface later.
+Parameter Sweep, Adaptive Optimize, and Nelder–Mead now share the same variables,
+frequency plans, objectives, candidate artifacts, and Apply actions. Further methods
+should be added only when they offer a clear advantage over these reproducible baselines.
 
 ## Modeling and Analysis Improvements
 

@@ -3,6 +3,7 @@
 #include "analysis/AverageGainTest.h"
 #include "analysis/FrequencyPlan.h"
 #include "analysis/NecOutputParser.h"
+#include "analysis/NelderMeadSearch.h"
 #include "analysis/OptimizationObjective.h"
 #include "analysis/SegmentationConvergence.h"
 #include "analysis/SolverInput.h"
@@ -157,6 +158,26 @@ void testSymbolResolution()
     expect(!necwb::nec::parameterizeNecCardField(
             "FR 0 1 0 0 start 0\n", 1, 4, "frequency"),
         "an existing symbolic field is not promoted a second time");
+    const auto relinkedField = necwb::nec::replaceNecCardFieldExpression(
+        "SY first=5\nSY second=6\nGW 1 11 first 0 0 10 0 0 .001\n",
+        3, 2, "second");
+    expect(relinkedField && relinkedField->find(
+            "GW 1 11 second 0 0 10 0 0 .001") != std::string::npos,
+        "a parameter-controlled field can be linked to a different existing symbol");
+    const auto detachedField = relinkedField
+        ? necwb::nec::replaceNecCardFieldExpression(*relinkedField, 3, 2, "6")
+        : std::optional<std::string>{};
+    expect(detachedField && detachedField->find(
+            "GW 1 11 6 0 0 10 0 0 .001") != std::string::npos,
+        "a parameter link can be replaced by its resolved numeric value");
+    const auto controlledFields = necwb::nec::necCardFieldsReferencingSymbols(
+        "SY length=10, half=length/2\nGW 1 11 -half 0 0 half 0 0 0.001\n"
+        "FR 0 1 0 0 14+0.175 0\n", std::array<std::string, 2>{"length", "half"});
+    expect(controlledFields.contains(2)
+            && controlledFields.at(2).at(2) == "-half"
+            && controlledFields.at(2).at(5) == "half"
+            && !controlledFields.contains(3),
+        "parameter-controlled field detection distinguishes SY references from numeric expressions");
     expect(resolution.resolvedSource.find("CE\r\n\r\n\r\n\r\nGW") != std::string::npos,
         "line-preserving resolution replaces each SY declaration with a blank source line");
     expect(resolution.generatedDeck.find("GW 1 21 -5 0 6 5 0 6 0.001") != std::string::npos,
@@ -794,6 +815,25 @@ void testRadiationSweepSolverInput()
             && representative.find("FR 0 1 0 0 14.5 0\nRP") != std::string::npos,
         "representative radiation requests start, center, and end patterns");
 
+    const necwb::analysis::FrequencyPlan selectedPatternFrequencies{
+        necwb::analysis::FrequencyPlanMode::Explicit, {14.1, 14.4}, {}};
+    const auto selectedPatterns = necwb::analysis::prepareSolverInput(
+        source, setup, selectedPatternFrequencies);
+    expect(countOccurrences(selectedPatterns, "FR 0 3 0 0 14 0.25") == 1
+            && countOccurrences(selectedPatterns, "RP 0 19 12 1000") == 2
+            && countOccurrences(selectedPatterns, "RP 0 1 360 1000") == 2
+            && selectedPatterns.find("FR 0 1 0 0 14.1 0\nRP") != std::string::npos
+            && selectedPatterns.find("FR 0 1 0 0 14.4 0\nRP") != std::string::npos,
+        "selected pattern frequencies retain impedance sweep and repeat every RP request");
+
+    const necwb::analysis::FrequencyPlan continuousPatternFrequencies{
+        necwb::analysis::FrequencyPlanMode::Explicit, {}, {{14.0, 14.1, 0.05}}};
+    const auto continuousPatterns = necwb::analysis::prepareSolverInput(
+        source, setup, continuousPatternFrequencies);
+    expect(countOccurrences(continuousPatterns, "RP 0 19 12 1000") == 3
+            && continuousPatterns.find("FR 0 1 0 0 14.05 0\nRP") != std::string::npos,
+        "continuous pattern frequency range expands through the shared frequency plan");
+
     const std::string sourceWithoutExecution =
         "CM sweep\nCE\nGW 1 11 0 0 0 1 0 0 .001\nGE 0\n"
         "EX 0 1 6 0 1 0\nFR 0 36 0 0 14 0.01\nGN 2 0 0 0 13 .005\n"
@@ -1077,6 +1117,62 @@ void testAdaptiveSearch()
     expect(failed.nextCandidates().empty()
             && failed.stopReason() == necwb::analysis::AdaptiveStopReason::NoSuccessfulCandidate,
         "adaptive search reports when no candidate produced an objective score");
+
+    necwb::analysis::AdaptiveVectorSearch vectorSearch({
+        {{0.0, 10.0, 0.1}, {100.0, 200.0, 1.0}}, 15, 0.001});
+    const auto initialVectors = vectorSearch.initialCandidates();
+    expect(initialVectors.size() == 5
+            && initialVectors.front().values == std::vector<double>({5.0, 150.0})
+            && initialVectors[1].values == std::vector<double>({0.0, 150.0})
+            && initialVectors[4].values == std::vector<double>({5.0, 200.0}),
+        "multi-variable adaptive search samples the center and each variable boundary");
+    for (const auto& candidate : initialVectors) {
+        const auto score = std::pow(candidate.values[0] - 4.0, 2.0)
+            + std::pow((candidate.values[1] - 140.0) / 10.0, 2.0);
+        vectorSearch.record(candidate.values, score);
+    }
+    const auto refinedVectors = vectorSearch.nextCandidates();
+    expect(!refinedVectors.empty()
+            && std::ranges::all_of(refinedVectors, [](const auto& candidate) {
+                return candidate.values.size() == 2;
+            }),
+        "multi-variable adaptive search proposes bounded coordinate refinements");
+}
+
+void testNelderMeadSearch()
+{
+    necwb::analysis::NelderMeadSearch search({
+        {{.initial = 8.0, .minimum = 0.0, .maximum = 10.0, .tolerance = 0.001},
+            {.initial = 2.0, .minimum = -5.0, .maximum = 5.0, .tolerance = 0.001}},
+        100,
+        1.0e-8,
+    });
+    auto bestScore = std::numeric_limits<double>::infinity();
+    const auto evaluate = [&search, &bestScore](const auto& proposal) {
+        const auto score = std::pow(proposal.values[0] - 3.0, 2.0)
+            + std::pow(proposal.values[1] + 1.0, 2.0);
+        bestScore = std::min(bestScore, score);
+        search.record(proposal.values, score);
+    };
+    const auto initial = search.initialCandidates();
+    expect(initial.size() == 3 && initial.front().values == std::vector<double>({8.0, 2.0}),
+        "Nelder-Mead creates one bounded simplex vertex per variable plus the initial point");
+    for (const auto& proposal : initial) evaluate(proposal);
+    while (const auto proposal = search.nextCandidate()) evaluate(*proposal);
+    expect(bestScore < 1.0e-3,
+        "Nelder-Mead converges near the minimum of a bounded two-variable objective");
+    expect(search.evaluationCount() <= 100 && search.iteration() > 0,
+        "Nelder-Mead tracks iterations and obeys its evaluation budget");
+    expect(search.stopReason() != necwb::analysis::NelderMeadStopReason::None,
+        "Nelder-Mead reports an explicit stopping reason");
+
+    necwb::analysis::NelderMeadSearch failed({
+        {{.initial = 0.5, .minimum = 0.0, .maximum = 1.0, .tolerance = 0.01}}, 8, 0.001});
+    for (const auto& proposal : failed.initialCandidates())
+        failed.record(proposal.values, std::nullopt);
+    expect(!failed.nextCandidate()
+            && failed.stopReason() == necwb::analysis::NelderMeadStopReason::NoSuccessfulCandidate,
+        "Nelder-Mead stops when its initial simplex has no successful candidates");
 }
 
 void testFrequencyPlans()
@@ -1233,6 +1329,7 @@ auto main() -> int
     testNecOutputParsing();
     testOptimizationObjectives();
     testAdaptiveSearch();
+    testNelderMeadSearch();
     testFrequencyPlans();
     testAverageGainTestPreparation();
     testSegmentationConvergencePreparation();

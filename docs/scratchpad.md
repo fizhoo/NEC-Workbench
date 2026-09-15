@@ -38,11 +38,25 @@ Ideas recorded here are discussion items, not implementation commitments. Status
 
 **Direction:** Implement normalization as a results-display transformation using the solver's reported accepted input power. Keep the original solver values available for reproducibility and apply the same scale consistently to currents and field strengths.
 
+## Radiation Requests
+
+### Amateur-Band Pattern Frequencies
+
+- **Status:** Center Implemented; Expanded Modes Parking Lot
+- Extend **Amateur Band Centers…** with selectable frequency coverage modes.
+- **Center** already adds one representative center frequency for each selected band.
+- **Band Edges** adds the lower and upper engineering edges for each selected band.
+- **Full Band Sweep** adds the complete preset range and step for each selected band.
+- Show the resulting frequency and pattern-calculation counts before accepting the selection.
+- Keep generated frequencies editable and remove duplicates automatically.
+
+**Direction:** Implement center frequencies first because radiation calculations are comparatively expensive. Add edge and full-sweep modes only after the simpler picker is tested and the workload impact remains obvious.
+
 ## Optimization
 
 ### Candidate Result Exploration
 
-- **Status:** Parking Lot / Likely Near-Term
+- **Status:** Implemented Experiment / Revisit; Potential Revert
 - Optimization candidates currently belong to an optimization session rather than the normal analysis Results workflow.
 - Preserve candidate SWR, impedance, gain, and other available result curves so they remain inspectable after optimization completes.
 - Keep these results clearly identified as optimization-candidate data rather than ordinary model runs.
@@ -50,3 +64,27 @@ Ideas recorded here are discussion items, not implementation commitments. Status
 - Consider an explicit **Promote Candidate** or **Apply and Run** action when the user wants a candidate to become a normal model analysis.
 
 **Direction:** Treat the optimization session as its own result container. The optimizer should retain summary curves for all candidates and permit detailed inspection of one candidate at a time. A candidate only becomes a normal Results run after an explicit action, keeping run history understandable while preserving useful optimization data.
+
+**Revisit note:** Candidate inspection plus **Apply This Candidate to Model** and
+**Apply This Candidate and Run** are intentionally isolated in the reusable details
+window. Re-evaluate whether the run shortcut adds enough value beyond **Apply Best
+to Model** and the normal Run action. Keep this checkpoint easy to remove if it
+makes the optimization workflow feel ambiguous or crowded. For the current trial,
+applying a candidate intentionally preserves its frequency table and SWR/R/X plots;
+unrelated subsequent model edits still clear stale study data.
+
+## Results Comparison
+
+### Multiple Run Graph Overlays
+
+- **Status:** Parking Lot / Likely Near-Term
+- Overlay impedance, SWR, gain, and other compatible result curves from multiple runs.
+- Keep every curve clearly labeled by source model, run date, and candidate or analysis identity.
+- Allow individual runs and quantities to be shown or hidden without reopening them.
+- Require compatible result types and coordinate/frequency domains; explain when two runs cannot be overlaid directly.
+- Keep comparison selections separate from the active model and ordinary single-run Results context.
+
+**Direction:** First add a deliberate **Compare Runs** workflow for two ordinary
+analysis runs, beginning with impedance and SWR. Add gain and radiation-pattern
+overlays only after frequency, cut-plane, polarization, and normalization matching
+are explicit enough to prevent misleading comparisons.

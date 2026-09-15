@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=NEC Workbench
+Comment=Model and analyze antennas with NEC
+Exec=nec-workbench
+Icon=nec-workbench
+Categories=Science;Engineering;
+Terminal=false

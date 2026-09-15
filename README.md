@@ -21,23 +21,23 @@ The current foundation provides:
 - An editable `GW` wire-card table synchronized with source, geometry, project selection, and undo/redo
 - A Model Parameters editor for adding, updating, deleting, and resolving `SY` expressions
 - Categorized, schema-specific Structured Cards navigation over the authoritative NEC deck
-- An undoable Apply Best action that writes a parameter-sweep winner back through `SY`
+- An undoable Apply Best action that writes one or more optimization winners back through `SY`
 - Selectable metric/imperial display units with automatic unit-friendly snap intervals or physical preservation
 - Persistent Geometry Settings for automatic/manual grids, minor divisions, visibility, and snap tolerance
 - Synchronized XY, XZ, and YZ wire views with live coordinates, engineering grids, fit, zoom, pan, and selection
 - Interactive software-rendered 3D model view with orbit, pan, zoom, fit, axes, picking, and synchronized selection
 - Structured FR frequency sweeps and EX voltage sources with validation, undo/redo, and 2D/3D feed markers
 - Selectable EX markers with contextual properties, deletion, and nearest-segment source creation from 2D/3D wires
-- Dedicated EX Properties dialog plus batch source management under Model → Sources
+- Dedicated EX Properties dialog plus source and feed-reference management under Model → Sources
 - Structured GN/GE ground environments: free space, perfect, real/fast, real/Sommerfeld, and average-ground preset
 - Persistent Analysis backend selection for NEC-2, OpenNEC, NEC-4-compatible, or custom executables
 - Managed XQ/RP result requests with far-field angular grids and live analysis-readiness validation
 - Asynchronous `nec2c` execution with timeout/cancel controls, run history, live output, and preserved artifacts
 - Persistent selectable run history that reloads historical raw output, tables, and plots
 - Persistent open-model indicator plus model filenames, timestamps, and backends across history and results
-- Structured feedpoint results with frequency, complex impedance, phase, power, and 50-ohm SWR tables
+- Structured feedpoint results with frequency, complex impedance, phase, power, and model-referenced SWR tables
 - Engineering-style sweep plots with logarithmic SWR, logarithmic resistance, independent linear reactance, and raw-value hover readouts
-- Exhaustive parameter sweeps and bounded adaptive optimization with weighted objectives, candidate plots, and undoable Apply Best
+- Exhaustive one-variable sweeps plus bounded multi-variable adaptive and Nelder–Mead optimization with weighted objectives and undoable Apply Best
 - Parsed per-segment currents with selectable-frequency distribution plots and tables
 - Fully labeled, hover-tracked 2D gain cuts and layered 3D antenna, segment-current, and radiation results
 - Previewable wavelength-based automatic segmentation with undo and safe EX source remapping
@@ -77,15 +77,17 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-## Windows Downloads
+## Build Downloads
 
-Every push to `main` runs the Windows build workflow on GitHub. To try the latest
-build, open the repository's **Actions** page, select the newest successful
-**Windows Build** run, and download the `NEC-Workbench-Windows-x64` artifact.
-Extract the ZIP and run `nec-workbench.exe`.
+Every push to `main` runs Windows and Linux packaging workflows on GitHub. Open
+the repository's **Actions** page and download an artifact from a successful run:
 
-The package includes the required Qt runtime files but does not include an NEC
-solver. Select a separately installed Windows-compatible solver executable in
+- `NEC-Workbench-Windows-x64`: extract the ZIP and run `nec-workbench.exe`.
+- `NEC-Workbench-Linux-x86_64`: extract the ZIP, make the AppImage executable,
+  and run it.
+
+The packages include the required Qt runtime files but do not include an NEC
+solver. Select a separately installed compatible solver executable in
 **Analysis → Solver** when calculation support is needed.
 
 ## Architecture

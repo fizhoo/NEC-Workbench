@@ -1,9 +1,12 @@
 #include "nec/NecCardFieldEditor.h"
 
+#include "nec/NecParser.h"
+
 #include <algorithm>
 #include <charconv>
 #include <cctype>
 #include <functional>
+#include <unordered_set>
 #include <vector>
 
 namespace necwb::nec {
@@ -70,6 +73,50 @@ auto necCardFieldIsNumeric(std::string_view source, std::size_t fieldIndex) -> b
     const auto parsed = std::from_chars(
         normalized.data(), normalized.data() + normalized.size(), value);
     return parsed.ec == std::errc{} && parsed.ptr == normalized.data() + normalized.size();
+}
+
+auto necCardFieldsReferencingSymbols(std::string_view source,
+    std::span<const std::string> symbolNames) -> NecParameterFieldMap
+{
+    std::unordered_set<std::string> names;
+    for (const auto& name : symbolNames) {
+        auto normalized = name;
+        std::ranges::transform(normalized, normalized.begin(), [](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+        names.insert(std::move(normalized));
+    }
+    NecParameterFieldMap result;
+    const auto document = NecParser{}.parse(source);
+    for (const auto& card : document.cards()) {
+        if (card.kind == NecCardKind::Symbol) continue;
+        for (std::size_t fieldIndex = 0; fieldIndex < card.fields.size(); ++fieldIndex) {
+            const auto& expression = card.fields[fieldIndex];
+            auto position = std::size_t{};
+            while (position < expression.size()) {
+                const auto first = static_cast<unsigned char>(expression[position]);
+                if (!std::isalpha(first) && expression[position] != '_') {
+                    ++position;
+                    continue;
+                }
+                const auto begin = position++;
+                while (position < expression.size()) {
+                    const auto character = static_cast<unsigned char>(expression[position]);
+                    if (!std::isalnum(character) && expression[position] != '_') break;
+                    ++position;
+                }
+                auto identifier = expression.substr(begin, position-begin);
+                std::ranges::transform(identifier, identifier.begin(), [](unsigned char character) {
+                    return static_cast<char>(std::tolower(character));
+                });
+                if (names.contains(identifier)) {
+                    result[card.lineNumber][fieldIndex] = expression;
+                    break;
+                }
+            }
+        }
+    }
+    return result;
 }
 
 }

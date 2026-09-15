@@ -1,5 +1,7 @@
 #include "ui/cards/WireCardEditor.h"
 
+#include "ui/ParameterFieldStyle.h"
+
 #include "model/WireGauge.h"
 
 #include <QAbstractItemView>
@@ -111,17 +113,28 @@ WireCardEditor::WireCardEditor(QWidget* parent)
     connect(table_, &QTableWidget::customContextMenuRequested, this,
         [this](const QPoint& position) {
             auto* item = table_->itemAt(position);
-            if (item == nullptr || item->column() < X1 || item->column() > Radius
-                || !(item->flags() & Qt::ItemIsEditable)) return;
+            if (item == nullptr || item->column() < X1 || item->column() > Radius) return;
             const auto* wire = model_.wireByTag(
                 table_->item(item->row(), Tag)->data(WireTagRole).toInt());
             if (wire == nullptr) return;
+            const auto parameterLine = parameterControlledFields_.find(wire->sourceLine);
+            const auto parameterControlled = parameterLine != parameterControlledFields_.end()
+                && parameterLine->second.contains(static_cast<std::size_t>(item->column()));
+            if (!parameterControlled && !(item->flags() & Qt::ItemIsEditable)) return;
             QMenu menu(this);
-            auto* action = menu.addAction(tr("Make Optimizable…"));
-            if (menu.exec(table_->viewport()->mapToGlobal(position)) != action) return;
-            emit fieldParameterizationRequested(wire->sourceLine,
-                static_cast<std::size_t>(item->column()),
-                table_->horizontalHeaderItem(item->column())->text());
+            auto* parameterize = menu.addAction(parameterControlled
+                ? tr("Change Parameter Link…") : tr("Parameterize Field…"));
+            auto* detach = parameterControlled
+                ? menu.addAction(tr("Replace With Current Numeric Value")) : nullptr;
+            const auto* selected = menu.exec(table_->viewport()->mapToGlobal(position));
+            const auto label = table_->horizontalHeaderItem(item->column())->text();
+            if (selected == parameterize) {
+                emit fieldParameterizationRequested(wire->sourceLine,
+                    static_cast<std::size_t>(item->column()), label);
+            } else if (selected == detach) {
+                emit fieldDetachmentRequested(wire->sourceLine,
+                    static_cast<std::size_t>(item->column()), label);
+            }
         });
     updateUnitLabels();
     updateActionStates();
@@ -151,8 +164,20 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
             if (symbolicLine != symbolicGeometryFields_.end()
                 && symbolicLine->second.contains(column)) {
                 item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-                item->setToolTip(tr(
-                    "This value is controlled by an SY expression. Edit the parameter or raw source."));
+                const auto parameterLine = parameterControlledFields_.find(wire.sourceLine);
+                const auto parameterField = parameterLine == parameterControlledFields_.end()
+                    ? nullptr : [&parameterLine, column] {
+                        const auto found = parameterLine->second.find(
+                            static_cast<std::size_t>(column));
+                        return found == parameterLine->second.end() ? nullptr : &found->second;
+                    }();
+                if (parameterField != nullptr) {
+                    styleParameterControlledField(item, table_,
+                        QString::fromStdString(*parameterField));
+                } else {
+                    item->setToolTip(tr(
+                        "This value is controlled by an expression. Edit the raw NEC source."));
+                }
             }
             table_->setItem(row, column, item);
         }
@@ -191,6 +216,11 @@ void WireCardEditor::setSymbolicGeometryFields(
     std::unordered_map<std::size_t, std::unordered_set<int>> sourceFields)
 {
     symbolicGeometryFields_ = std::move(sourceFields);
+}
+
+void WireCardEditor::setParameterControlledFields(nec::NecParameterFieldMap sourceFields)
+{
+    parameterControlledFields_ = std::move(sourceFields);
 }
 
 void WireCardEditor::setLengthUnit(model::LengthUnit unit)

@@ -167,4 +167,19 @@ auto parameterizeNecCardField(std::string_view source, std::size_t lineNumber,
     return insertSymbolDefinition(joinSource(lines, document), name, card.fields[fieldIndex]);
 }
 
+auto replaceNecCardFieldExpression(std::string_view source, std::size_t lineNumber,
+    std::size_t fieldIndex, std::string_view expression) -> std::optional<std::string>
+{
+    const auto document = NecParser{}.parse(source);
+    if (lineNumber == 0 || lineNumber > document.cards().size()) return std::nullopt;
+    const auto& card = document.cards()[lineNumber - 1];
+    if (fieldIndex >= card.fields.size() || trim(expression).empty()) return std::nullopt;
+    const auto replacement = replaceNecCardFields(card.sourceText,
+        std::array{NecFieldReplacement{fieldIndex, std::string(trim(expression))}});
+    if (!replacement) return std::nullopt;
+    auto lines = sourceLines(document);
+    lines[lineNumber - 1] = *replacement;
+    return joinSource(lines, document);
+}
+
 }

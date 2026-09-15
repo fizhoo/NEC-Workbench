@@ -21,4 +21,8 @@ namespace necwb::nec {
     std::size_t lineNumber, std::size_t fieldIndex,
     std::string_view name) -> std::optional<std::string>;
 
+[[nodiscard]] auto replaceNecCardFieldExpression(std::string_view source,
+    std::size_t lineNumber, std::size_t fieldIndex,
+    std::string_view expression) -> std::optional<std::string>;
+
 }

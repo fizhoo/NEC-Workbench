@@ -41,9 +41,9 @@ auto main(int argc, char* argv[]) -> int
         });
     evaluator.start({
         .authoredSource = QStringLiteral(
-            "SY HALF=5\nGW 1 21 -HALF 0 6 HALF 0 6 0.001\nGE 0\n"
+            "SY HALF=5\nSY HEIGHT=6\nGW 1 21 -HALF 0 HEIGHT HALF 0 HEIGHT 0.001\nGE 0\n"
             "EX 0 1 11 0 1 0\nFR 0 2 0 0 7 0.1\nRP 0 19 37 1000 0 0 5 10\nEN\n"),
-        .variableValues = {{"half", 6.0}},
+        .variableValues = {{"half", 6.0}, {"height", 8.0}},
         .frequencyPlan = {necwb::analysis::FrequencyPlanMode::ModelSweep, {7.0, 14.0}, {}},
         .objective = {.kind = necwb::analysis::OptimizationObjectiveKind::SwrAtFrequency,
             .referenceImpedance = 50.0, .targetFrequencyMHz = 14.0},
@@ -66,7 +66,7 @@ auto main(int argc, char* argv[]) -> int
         && evaluation.frequencyCount == 2 && evaluation.analysis.feedpoints.size() == 2
         && evaluation.objective && evaluation.objective->feedpoint
         && evaluation.objective->feedpoint->frequencyMHz == 14.0
-        && deck.contains(QStringLiteral("GW 1 21 -6 0 6 6 0 6 0.001"))
+        && deck.contains(QStringLiteral("GW 1 21 -6 0 8 6 0 8 0.001"))
         && deck.contains(QStringLiteral("FR 0 1 0 0 14 0"))
         && !deck.contains(QStringLiteral("FR 0 2 0 0 7 0.1"))
         && !deck.contains(QStringLiteral("FR 0 1 0 0 7 0"))

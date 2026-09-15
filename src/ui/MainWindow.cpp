@@ -28,6 +28,7 @@
 #include "ui/analysis/ConvergenceWorkspace.h"
 #include "ui/analysis/ImpedanceResultsView.h"
 #include "ui/analysis/ResultsSummaryView.h"
+#include "ui/analysis/RunReviewWindow.h"
 #include "ui/analysis/SweepPlotsView.h"
 #include "ui/analysis/FieldResultsViews.h"
 #include "ui/editor/NecEditor.h"
@@ -280,13 +281,6 @@ auto averageGainEnvironmentId(analysis::AverageGainEnvironment environment) -> Q
         ? QStringLiteral("perfect-ground") : QStringLiteral("free-space");
 }
 
-auto averageGainEnvironmentFromId(const QString& id) -> analysis::AverageGainEnvironment
-{
-    return id == QStringLiteral("perfect-ground")
-        ? analysis::AverageGainEnvironment::PerfectGround
-        : analysis::AverageGainEnvironment::FreeSpace;
-}
-
 auto averageGainClassificationName(analysis::AverageGainClassification classification) -> QString
 {
     switch (classification) {
@@ -480,7 +474,10 @@ MainWindow::MainWindow()
         previousAnalysisWorkspaceIndex_ = index;
         updateUndoActions();
     });
-    connect(sourceWorkspace_, &QTabWidget::currentChanged, this, [this] { updateUndoActions(); });
+    connect(sourceWorkspace_, &QTabWidget::currentChanged, this, [this](int index) {
+        if (index == structuredSourceTabIndex_ && !modelChecked_) checkModel();
+        updateUndoActions();
+    });
     connect(moduleStack_, &QStackedWidget::currentChanged, this, [this] { updateUndoActions(); });
 
     restoreWorkspaceLayout();
@@ -703,14 +700,8 @@ void MainWindow::createActions()
         showModule(resultsModuleIndex_);
         if (!resultsAvailable_) resultsWorkspace_->setCurrentIndex(analysisRunsTabIndex_);
     });
-    connect(optimizeModuleAction_, &QAction::triggered, this, [this] {
-        if (historicalSessionViewActive_) {
-            leaveHistoricalSessionViews();
-            historicalReviewActive_ = false;
-            historicalSessionViewActive_ = false;
-        }
-        showModule(optimizeModuleIndex_);
-    });
+    connect(optimizeModuleAction_, &QAction::triggered,
+        this, [this] { showModule(optimizeModuleIndex_); });
 }
 
 void MainWindow::createWorkspace()
@@ -807,6 +798,10 @@ void MainWindow::createWorkspace()
         [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
             makeFieldOptimizable(sourceLine, fieldIndex, fieldLabel);
         });
+    connect(wireCardEditor_, &WireCardEditor::fieldDetachmentRequested, this,
+        [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
+            detachFieldParameter(sourceLine, fieldIndex, fieldLabel);
+        });
     connect(structuredCardEditor_, &StructuredCardEditor::cardSelected, this,
         [this](std::size_t sourceLine) { editor_->goToLine(sourceLine); });
     connect(structuredCardEditor_, &StructuredCardEditor::cardEdited, this,
@@ -820,6 +815,10 @@ void MainWindow::createWorkspace()
     connect(structuredCardEditor_, &StructuredCardEditor::fieldParameterizationRequested, this,
         [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
             makeFieldOptimizable(sourceLine, fieldIndex, fieldLabel);
+        });
+    connect(structuredCardEditor_, &StructuredCardEditor::fieldDetachmentRequested, this,
+        [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
+            detachFieldParameter(sourceLine, fieldIndex, fieldLabel);
         });
 
     workspace_ = new QTabWidget(modelWorkspace_);
@@ -993,6 +992,12 @@ void MainWindow::createWorkspace()
         [this](std::size_t sourceLine) { deleteFrequency(sourceLine); });
     connect(setupEditor_, &SetupEditor::groundChanged, this,
         [this](model::GroundDefinition ground) { changeGround(ground); });
+    connect(setupEditor_, &SetupEditor::referenceImpedanceChanged, this,
+        [this](model::ReferenceImpedanceDefinition reference) {
+            changeReferenceImpedance(reference);
+        });
+    connect(setupEditor_, &SetupEditor::referenceImpedanceDeleteRequested, this,
+        [this](std::size_t sourceLine) { deleteReferenceImpedance(sourceLine); });
     connect(setupEditor_, &SetupEditor::excitationChanged, this,
         [this](model::Excitation excitation) { changeExcitation(excitation); });
     connect(setupEditor_, &SetupEditor::excitationDeleteRequested, this,
@@ -1109,7 +1114,7 @@ void MainWindow::createWorkspace()
     runsHeading->setFont(runsHeadingFont);
     auto* runsDescription = new QLabel(tr(
         "Analysis runs appear individually. Optimization candidates are grouped under one session row. "
-        "View or double-click a row to inspect its archived results without changing the active model."), runsPage_);
+        "Open or double-click a row to inspect it in the separate, reusable Run Review window."), runsPage_);
     runsDescription->setWordWrap(true);
     analysisRuns_ = new QTableWidget(0, RunColumnCount, runsPage_);
     analysisRuns_->setObjectName(QStringLiteral("analysisRunsTable"));
@@ -1124,7 +1129,7 @@ void MainWindow::createWorkspace()
     auto* runManagementButtons = new QHBoxLayout;
     cancelRunButton_ = new QPushButton(tr("Cancel Active Run"), runsPage_);
     cancelRunButton_->setEnabled(false);
-    openRunResultsButton_ = new QPushButton(tr("View Run Results"), runsPage_);
+    openRunResultsButton_ = new QPushButton(tr("Open Run Review"), runsPage_);
     openRunResultsButton_->setObjectName(QStringLiteral("openRunResultsButton"));
     openRunResultsButton_->setEnabled(false);
     inspectRunInputButton_ = new QPushButton(tr("Inspect Input Snapshot"), runsPage_);
@@ -1219,13 +1224,9 @@ void MainWindow::createResultsWorkspace()
     auto resultsContextFont = resultsContextTitleLabel_->font();
     resultsContextFont.setBold(true);
     resultsContextTitleLabel_->setFont(resultsContextFont);
-    returnToActiveResultsButton_ = new QPushButton(tr("Return to Current Work"), resultsContextFrame);
-    returnToActiveResultsButton_->setObjectName(QStringLiteral("returnToActiveResultsButton"));
-    returnToActiveResultsButton_->setVisible(false);
     detachResultsButton_ = new QPushButton(tr("Detach Results"), resultsContextFrame);
     detachResultsButton_->setObjectName(QStringLiteral("detachResultsButton"));
     resultsContextHeading->addWidget(resultsContextTitleLabel_, 1);
-    resultsContextHeading->addWidget(returnToActiveResultsButton_);
     resultsContextHeading->addWidget(detachResultsButton_);
     resultsContextDetailLabel_ = new QLabel(
         tr("Select a run from Results → Runs, or analyze the active model."), resultsContextFrame);
@@ -1236,8 +1237,6 @@ void MainWindow::createResultsWorkspace()
     resultsContextLayout->addLayout(resultsContextHeading);
     resultsContextLayout->addWidget(resultsContextDetailLabel_);
     resultsContextLayout->addWidget(activeModelResultsLabel_);
-    connect(returnToActiveResultsButton_, &QPushButton::clicked,
-        this, [this] { returnToCurrentWork(); });
     connect(detachResultsButton_, &QPushButton::clicked, this, [this] { toggleResultsDetached(); });
     resultsStatusLabel_ = new QLabel(tr("No analysis results are loaded."), resultsContent_);
     resultsStatusLabel_->setContentsMargins(12, 7, 12, 7);
@@ -1275,7 +1274,6 @@ void MainWindow::createResultsWorkspace()
         resultsAvailable_ = true;
         resultsStatusLabel_->setText(tr("Model validation — %1").arg(summary));
     });
-    convergenceWorkspace_->setReturnToCurrentWorkCallback([this] { returnToCurrentWork(); });
 
     auto* impedanceTabs = new QTabWidget(resultsWorkspace_);
     impedanceTabs->setDocumentMode(true);
@@ -1356,9 +1354,22 @@ void MainWindow::createOptimizationWorkspace()
     optimizationWorkspace_ = new OptimizationWorkspace(moduleStack_);
     optimizationWorkspace_->setRunsChangedCallback([this] { loadRunHistory(); });
     optimizationWorkspace_->setRunningChangedCallback([this] { synchronizeRunnerState(); });
-    optimizationWorkspace_->setReturnToCurrentWorkCallback([this] { returnToCurrentWork(); });
     optimizationWorkspace_->setApplyParameterCallback(
-        [this](const QString& name, double value) { return applyOptimizedParameter(name, value); });
+        [this](std::vector<std::pair<QString, double>> values) {
+            return applyOptimizedParameters(values);
+        });
+    optimizationWorkspace_->setApplyAndRunCallback(
+        [this](std::vector<std::pair<QString, double>> values) {
+            if (!applyOptimizedParameters(values)) return false;
+            checkModel();
+            if (modelErrorCount_ != 0 || !runAction_->isEnabled()) {
+                statusBar()->showMessage(
+                    tr("Optimized values were applied, but the model is not ready to run."), 5000);
+                return false;
+            }
+            startAnalysis();
+            return solverRunner_->isRunning();
+        });
     optimizeModuleIndex_ = moduleStack_->addWidget(optimizationWorkspace_);
 }
 
@@ -1386,8 +1397,7 @@ auto MainWindow::showModule(int index) -> bool
         return true;
     }
     moduleStack_->setCurrentIndex(index);
-    if (index != resultsModuleIndex_ && !historicalSessionViewActive_)
-        lastNonResultsModuleIndex_ = index;
+    if (index != resultsModuleIndex_) lastNonResultsModuleIndex_ = index;
     if (index == homeModuleIndex_) {
         homeModuleAction_->setChecked(true);
         dashboardStack_->setCurrentIndex(hasNecModel_ ? 1 : 0);
@@ -1421,16 +1431,20 @@ auto MainWindow::confirmPendingEdits(QWidget* page) -> bool
         && page == loadNetworkEditor_ && loadNetworkEditor_->hasPendingEdits();
     const auto parameterPending = parameterEditor_ != nullptr
         && page == parameterEditor_ && parameterEditor_->hasPendingEdits();
-    if (!setupPending && !networkPending && !parameterPending) return true;
+    const auto requestPending = analysisRequestEditor_ != nullptr && page != nullptr
+        && (page == analysisRequestEditor_ || page->isAncestorOf(analysisRequestEditor_))
+        && analysisRequestEditor_->hasPendingEdits();
+    if (!setupPending && !networkPending && !parameterPending && !requestPending) return true;
 
-    const auto answer = QMessageBox::warning(this, tr("Unapplied Model Changes"), tr(
-        "This page contains changes that have not been applied to the NEC model.\n\n"
+    const auto answer = QMessageBox::warning(this, tr("Unapplied Changes"), tr(
+        "This page contains changes that have not been applied.\n\n"
         "Choose Cancel to return and use the highlighted Apply button, or discard the edits."),
         QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Cancel);
     if (answer != QMessageBox::Discard) return false;
     if (setupPending) setupEditor_->discardPendingEdits(page);
     if (networkPending) loadNetworkEditor_->discardPendingEdits();
     if (parameterPending) parameterEditor_->discardPendingEdits();
+    if (requestPending) analysisRequestEditor_->discardPendingEdits();
     return true;
 }
 
@@ -2337,6 +2351,13 @@ void MainWindow::checkModel()
 
     editor_->setDiagnostics(result.diagnostics);
     updateDeckUnitControls(deckUnitInfo);
+    std::vector<std::string> parameterNames;
+    parameterNames.reserve(resolution.definitions.size());
+    for (const auto& definition : resolution.definitions)
+        parameterNames.push_back(definition.name);
+    const auto parameterFields = nec::necCardFieldsReferencingSymbols(
+        editor_->toPlainText().toStdString(), parameterNames);
+    wireCardEditor_->setParameterControlledFields(parameterFields);
     updateWireCardEditor();
     xyView_->setModel(currentModel_);
     xzView_->setModel(currentModel_);
@@ -2354,6 +2375,7 @@ void MainWindow::checkModel()
     setupEditor_->setData(currentModel_, currentSetup_);
     loadNetworkEditor_->setData(currentModel_, currentSetup_);
     analysisRequestEditor_->setData(currentSetup_);
+    structuredCardEditor_->setParameterControlledFields(parameterFields);
     structuredCardEditor_->setDocument(document);
     dashboardPage_->setModel(currentModel_, currentSetup_, solverBackendId_, true,
         modelErrorCount_, modelWarningCount_);
@@ -2394,8 +2416,8 @@ void MainWindow::clearCheckResults()
     averageGainResultsView_->markStale();
     dashboardPage_->markConvergenceStale();
     convergenceWorkspace_->markStale();
-    if (resultsAvailable_ && !displayingHistoricalResults_) dashboardPage_->markResultsStale();
-    if (resultsAvailable_ && !displayingHistoricalResults_)
+    if (resultsAvailable_) dashboardPage_->markResultsStale();
+    if (resultsAvailable_)
         resultsStatusLabel_->setText(tr("STALE — the NEC model changed after these results were calculated."));
     updateAnalysisReadiness();
 }
@@ -2879,27 +2901,46 @@ void MainWindow::deleteParameter(std::size_t sourceLine, const QString& name)
         QString::fromStdString(*updated));
 }
 
-auto MainWindow::applyOptimizedParameter(const QString& name, double value) -> bool
+auto MainWindow::applyOptimizedParameters(
+    const std::vector<std::pair<QString, double>>& values) -> bool
 {
-    const auto resolution = nec::NecSymbolResolver{}.resolve(editor_->toPlainText().toStdString());
-    const auto found = std::ranges::find_if(resolution.definitions, [&name](const auto& definition) {
-        return QString::fromStdString(definition.name).compare(name, Qt::CaseInsensitive) == 0;
-    });
-    if (found == resolution.definitions.end()) {
-        statusBar()->showMessage(tr("Parameter %1 no longer exists in the active model.").arg(name), 5000);
-        return false;
+    if (values.empty()) return false;
+    auto source = editor_->toPlainText().toStdString();
+    const auto resolution = nec::NecSymbolResolver{}.resolve(source);
+    QStringList names;
+    for (const auto& [name, value] : values) {
+        const auto found = std::ranges::find_if(resolution.definitions, [&name](const auto& definition) {
+            return QString::fromStdString(definition.name).compare(name, Qt::CaseInsensitive) == 0;
+        });
+        if (found == resolution.definitions.end()) {
+            statusBar()->showMessage(
+                tr("Parameter %1 no longer exists in the active model.").arg(name), 5000);
+            return false;
+        }
+        const auto updated = nec::replaceSymbolDefinition(source, found->lineNumber,
+            found->name, found->name, QString::number(value, 'g', 15).toStdString());
+        if (!updated) return false;
+        source = *updated;
+        names.append(name);
     }
-    const auto originalSource = editor_->toPlainText();
+    const auto updatedResolution = nec::NecSymbolResolver{}.resolve(source);
+    if (!updatedResolution.ok()) return false;
+    if (QString::fromStdString(source) == editor_->toPlainText()) return false;
+    pushGeometrySourceEdit(tr("Apply optimized parameters"), QString::fromStdString(source));
     showEditor(EditorDestination::Parameters);
-    changeParameter(found->lineNumber, QString::fromStdString(found->name),
-        QString::fromStdString(found->name), QString::number(value, 'g', 15));
-    const auto applied = editor_->toPlainText() != originalSource;
-    if (applied) {
-        parameterEditor_->selectParameter(found->lineNumber, QString::fromStdString(found->name));
-        statusBar()->showMessage(tr("Applied sweep winner to %1. Use Undo to restore its expression.")
-            .arg(name), 5000);
+    if (values.size() == 1) {
+        const auto found = std::ranges::find_if(updatedResolution.definitions,
+            [&values](const auto& definition) {
+                return QString::fromStdString(definition.name).compare(
+                    values.front().first, Qt::CaseInsensitive) == 0;
+            });
+        if (found != updatedResolution.definitions.end())
+            parameterEditor_->selectParameter(found->lineNumber,
+                QString::fromStdString(found->name));
     }
-    return applied;
+    statusBar()->showMessage(tr("Applied optimized values to %1. Use Undo to restore them.")
+        .arg(names.join(QStringLiteral(", "))), 5000);
+    return true;
 }
 
 void MainWindow::changeGround(const model::GroundDefinition& ground)
@@ -2936,6 +2977,20 @@ void MainWindow::changeGround(const model::GroundDefinition& ground)
         }
     }
     pushGeometrySourceEdit(tr("Change ground environment"), lines.join(QLatin1Char('\n')));
+}
+
+void MainWindow::changeReferenceImpedance(
+    const model::ReferenceImpedanceDefinition& reference)
+{
+    upsertSetupCard(reference.sourceLine == 0
+            ? tr("Add reference impedance") : tr("Edit reference impedance"),
+        reference.sourceLine,
+        QStringLiteral("Z0 %1").arg(reference.ohms, 0, 'g', 15), false);
+}
+
+void MainWindow::deleteReferenceImpedance(std::size_t sourceLine)
+{
+    deleteSetupCard(tr("Remove reference impedance"), sourceLine);
 }
 
 void MainWindow::changeExcitation(const model::Excitation& excitation)
@@ -3211,11 +3266,6 @@ void MainWindow::synchronizeRunnerState()
 
 void MainWindow::showConvergenceStudy()
 {
-    if (historicalSessionViewActive_) {
-        leaveHistoricalSessionViews();
-        historicalReviewActive_ = false;
-        historicalSessionViewActive_ = false;
-    }
     showModule(resultsModuleIndex_);
     resultsWorkspace_->setCurrentIndex(averageGainResultsTabIndex_);
     validationWorkspace_->setCurrentIndex(convergenceValidationTabIndex_);
@@ -3273,7 +3323,7 @@ void MainWindow::startAnalysis()
     const auto generatedSetup = nec::NecSetupConverter{}.convert(generatedDocument);
     const auto solverInput = analysis::prepareSolverInput(
         resolution.generatedDeck, generatedSetup,
-        analysisRequestEditor_->radiationSweepMode());
+        analysisRequestEditor_->radiationFrequencyPlan());
     inputFile.write(QByteArray::fromStdString(solverInput));
     inputFile.close();
 
@@ -3572,6 +3622,7 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
         if (currentRunPurpose_ == SolverRunPurpose::Analysis) {
             const auto context = runContext(*currentRunRecord_);
             resultsSummaryView_->setResults(result, context);
+            resultsSummaryView_->clearInputSnapshot();
             analysisResultsView_->setResults(result, context);
             visualizePlotsView_->setResults(result, context);
             currentResultsView_->setModel(currentModel_);
@@ -3729,35 +3780,28 @@ void MainWindow::loadSelectedRun()
     const auto row = analysisRuns_->currentRow();
     const auto* item = analysisRuns_->item(row, RunStartedColumn);
     if (item != nullptr) {
-        captureHistoricalReturnContext();
-        if (item->data(RunTypeRole).toString() == QStringLiteral("optimization-session")) {
-            historicalSessionViewActive_ = true;
-            if (optimizationWorkspace_->loadSession(item->data(RunIdRole).toString()))
-                showModule(optimizeModuleIndex_);
-            else historicalSessionViewActive_ = false;
-            return;
+        AnalysisRunRecord record;
+        record.id = item->data(RunIdRole).toString();
+        record.directory = item->data(RunDirectoryRole).toString();
+        record.runType = item->data(RunTypeRole).toString();
+        record.sourceFile = analysisRuns_->item(row, RunModelColumn)->text();
+        record.started = QDateTime::fromString(
+            analysisRuns_->item(row, RunStartedColumn)->text(), QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+        record.backend = analysisRuns_->item(row, RunBackendColumn)->text();
+        record.status = analysisRuns_->item(row, RunStatusColumn)->text();
+        if (runReviewWindow_ == nullptr) {
+            runReviewWindow_ = new RunReviewWindow(this);
+            runReviewWindow_->setOpenSnapshotCallback(
+                [this](const QString& directory, const QString& modelName, const QString& context) {
+                    if (!loadRunModel(directory, modelName, context)) return;
+                    activeModelResultsDirectory_ = directory;
+                    activeModelResultsContext_ = context;
+                    displayRunArtifacts(directory, context);
+                });
         }
-        if (item->data(RunTypeRole).toString() == QStringLiteral("convergence-session")) {
-            historicalSessionViewActive_ = true;
-            if (convergenceWorkspace_->loadSession(item->data(RunIdRole).toString())) {
-                showModule(resultsModuleIndex_);
-                resultsWorkspace_->setCurrentIndex(averageGainResultsTabIndex_);
-                validationWorkspace_->setCurrentIndex(convergenceValidationTabIndex_);
-            } else historicalSessionViewActive_ = false;
-            return;
-        }
-        const auto directory = item->data(RunDirectoryRole).toString();
-        const auto modelName = analysisRuns_->item(row, RunModelColumn)->text();
-        const auto started = analysisRuns_->item(row, RunStartedColumn)->text();
-        const auto backend = analysisRuns_->item(row, RunBackendColumn)->text();
-        const auto context = item->data(RunContextRole).toString();
-        if (item->data(RunTypeRole).toString() == QStringLiteral("average-gain-test")) {
-            displayAverageGainTestArtifacts(directory, context);
-            showHistoricalResultsContext(modelName, started, backend);
-            return;
-        }
-        displayRunArtifacts(directory, context);
-        showHistoricalResultsContext(modelName, started, backend);
+        const auto activeModelName = !hasNecModel_ ? QString{}
+            : currentFile_.isEmpty() ? tr("Untitled model.nec") : QFileInfo(currentFile_).fileName();
+        runReviewWindow_->showRun(record, activeModelName);
     }
 }
 
@@ -3809,11 +3853,9 @@ void MainWindow::openSelectedRunSnapshot()
     const auto modelName = analysisRuns_->item(row, RunModelColumn)->text();
     const auto context = item->data(RunContextRole).toString();
     if (!loadRunModel(directory, modelName, context)) return;
-    historicalReviewActive_ = false;
-    historicalSessionViewActive_ = false;
     activeModelResultsDirectory_ = directory;
     activeModelResultsContext_ = context;
-    displayRunArtifacts(directory, context, false);
+    displayRunArtifacts(directory, context);
 }
 
 auto MainWindow::loadRunModel(const QString& directory, const QString& modelName,
@@ -3862,9 +3904,9 @@ void MainWindow::updateRunSelectionActions()
     const auto selectedType = hasSelection
         ? analysisRuns_->item(row, RunStartedColumn)->data(RunTypeRole).toString() : QString{};
     openRunResultsButton_->setText(selectedType == QStringLiteral("optimization-session")
-        ? tr("View Optimization")
-        : selectedType == QStringLiteral("convergence-session") ? tr("View Convergence")
-        : selectedType == QStringLiteral("average-gain-test") ? tr("View Validation") : tr("View Run Results"));
+        ? tr("Review Optimization")
+        : selectedType == QStringLiteral("convergence-session") ? tr("Review Convergence")
+        : selectedType == QStringLiteral("average-gain-test") ? tr("Review AGT") : tr("Open Run Review"));
     const auto hasInputSnapshot = hasSelection
         && QFileInfo::exists(QDir(analysisRuns_->item(row, RunStartedColumn)
             ->data(RunDirectoryRole).toString()).filePath(QStringLiteral("model.nec")));
@@ -3909,13 +3951,12 @@ void MainWindow::deleteSelectedRun()
     if (activeModelResultsDirectory_ == directory) {
         activeModelResultsDirectory_.clear();
         activeModelResultsContext_.clear();
-        if (displayingHistoricalResults_) returnToActiveResultsButton_->setVisible(false);
     }
     if (displayedRunDirectory_ == directory) clearDisplayedResults();
     updateRunSelectionActions();
 }
 
-void MainWindow::displayRunArtifacts(const QString& directory, const QString& context, bool historical)
+void MainWindow::displayRunArtifacts(const QString& directory, const QString& context)
 {
     QFile logFile(QDir(directory).filePath(QStringLiteral("run.log")));
     const auto logText = logFile.open(QIODevice::ReadOnly)
@@ -3987,91 +4028,25 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
             archivedModelAvailable = true;
         }
     }
+    resultsSummaryView_->clearInputSnapshot();
     radiation3DView_->setResults(result, context);
     setDisplayedResults(result);
     displayedRunDirectory_ = directory;
     resultsAvailable_ = true;
     resultsStatusLabel_->setText(archivedModelAvailable
-        ? (historical ? tr("Archived input loaded for result geometry — %1").arg(context)
-                      : tr("Active model results — %1").arg(context))
+        ? tr("Active model results — %1").arg(context)
         : tr("Results loaded — archived model.nec is missing or invalid · %1").arg(context));
-    if (!historical) showActiveResultsContext(context);
+    showActiveResultsContext(context);
     showModule(resultsModuleIndex_);
     resultsWorkspace_->setCurrentIndex(resultsSummaryTabIndex_);
-    statusBar()->showMessage(historical
-        ? tr("Displaying historical run: %1").arg(directory)
-        : tr("Displaying active model results: %1").arg(directory), 5000);
-}
-
-void MainWindow::captureHistoricalReturnContext()
-{
-    if (historicalReviewActive_) return;
-    historicalReviewActive_ = true;
-    historicalReturnResultsTabIndex_ = resultsWorkspace_->currentIndex();
-    if (moduleStack_->currentIndex() == resultsModuleIndex_
-        && !activeModelResultsDirectory_.isEmpty()
-        && displayedRunDirectory_ == activeModelResultsDirectory_) {
-        historicalReturnModuleIndex_ = resultsModuleIndex_;
-    } else {
-        historicalReturnModuleIndex_ = lastNonResultsModuleIndex_;
-    }
-}
-
-void MainWindow::leaveHistoricalSessionViews()
-{
-    optimizationWorkspace_->leaveHistoricalSession();
-    convergenceWorkspace_->leaveHistoricalSession();
-    optimizationWorkspace_->setContext(editor_->toPlainText(), currentFile_,
-        solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_,
-        modelChecked_ && modelErrorCount_ == 0);
-    convergenceWorkspace_->setContext(editor_->toPlainText(), currentFile_,
-        solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_,
-        modelChecked_ && modelErrorCount_ == 0);
-}
-
-void MainWindow::returnToCurrentWork()
-{
-    leaveHistoricalSessionViews();
-    historicalSessionViewActive_ = false;
-    historicalReviewActive_ = false;
-    returnToActiveResultsButton_->setVisible(false);
-    if (historicalReturnModuleIndex_ == resultsModuleIndex_
-        && !activeModelResultsDirectory_.isEmpty()) {
-        if (QFileInfo::exists(activeModelResultsDirectory_)) {
-            displayRunArtifacts(activeModelResultsDirectory_, activeModelResultsContext_, false);
-            resultsWorkspace_->setCurrentIndex(historicalReturnResultsTabIndex_ == analysisRunsTabIndex_
-                ? resultsSummaryTabIndex_ : historicalReturnResultsTabIndex_);
-            return;
-        }
-        activeModelResultsDirectory_.clear();
-        activeModelResultsContext_.clear();
-    }
-    const auto target = historicalReturnModuleIndex_ >= 0
-        ? historicalReturnModuleIndex_ : homeModuleIndex_;
-    showModule(target);
-}
-
-void MainWindow::showHistoricalResultsContext(const QString& modelName, const QString& started,
-    const QString& backend)
-{
-    displayingHistoricalResults_ = true;
-    resultsContextTitleLabel_->setText(tr("Historical Run — %1 — %2 — %3")
-        .arg(modelName, started, backend.isEmpty() ? tr("Unknown backend") : backend));
-    resultsContextDetailLabel_->setText(tr(
-        "This is archived output and does not represent or modify the active editor."));
-    updateActiveModelResultsLabel();
-    returnToActiveResultsButton_->setVisible(true);
+    statusBar()->showMessage(tr("Displaying active model results: %1").arg(directory), 5000);
 }
 
 void MainWindow::showActiveResultsContext(const QString& context)
 {
-    displayingHistoricalResults_ = false;
-    historicalReviewActive_ = false;
-    historicalSessionViewActive_ = false;
     resultsContextTitleLabel_->setText(tr("Active Model Results"));
     resultsContextDetailLabel_->setText(tr("Latest solver output for the active editor — %1").arg(context));
     updateActiveModelResultsLabel();
-    returnToActiveResultsButton_->setVisible(false);
 }
 
 void MainWindow::updateActiveModelResultsLabel()
@@ -4082,68 +4057,6 @@ void MainWindow::updateActiveModelResultsLabel()
     }
     const auto name = currentFile_.isEmpty() ? tr("Untitled model.nec") : QFileInfo(currentFile_).fileName();
     activeModelResultsLabel_->setText(tr("Active Model: %1").arg(name));
-}
-
-void MainWindow::displayAverageGainTestArtifacts(const QString& directory, const QString& context)
-{
-    clearDisplayedResults();
-    QFile logFile(QDir(directory).filePath(QStringLiteral("run.log")));
-    solverOutput_->setPlainText(logFile.open(QIODevice::ReadOnly)
-        ? QString::fromLocal8Bit(logFile.readAll()) : tr("No run log is available."));
-
-    QFile metadataFile(QDir(directory).filePath(QStringLiteral("agt.json")));
-    auto frequencyMHz = 0.0;
-    auto environment = analysis::AverageGainEnvironment::FreeSpace;
-    if (metadataFile.open(QIODevice::ReadOnly)) {
-        const auto metadata = QJsonDocument::fromJson(metadataFile.readAll()).object();
-        frequencyMHz = metadata.value(QStringLiteral("frequencyMHz")).toDouble();
-        environment = averageGainEnvironmentFromId(
-            metadata.value(QStringLiteral("environment")).toString());
-    }
-
-    QFile outputFile(QDir(directory).filePath(QStringLiteral("model.out")));
-    if (!outputFile.open(QIODevice::ReadOnly)) {
-        const auto message = tr("Historical AGT is incomplete — model.out is missing or unreadable.");
-        averageGainResultsView_->setFailure(message, context);
-        resultsStatusLabel_->setText(tr("%1 %2").arg(message, context));
-        showModule(resultsModuleIndex_);
-        resultsWorkspace_->setCurrentIndex(averageGainResultsTabIndex_);
-        validationWorkspace_->setCurrentIndex(averageGainValidationTabIndex_);
-        return;
-    }
-    const auto outputBytes = outputFile.readAll();
-    analysisOutput_->setPlainText(QString::fromLocal8Bit(outputBytes));
-    const auto result = analysis::NecOutputParser{}.parse(std::string_view(
-        outputBytes.constData(), static_cast<std::size_t>(outputBytes.size())));
-    if (!result.averagePowerGain) {
-        const auto message = tr("The archived solver output contains no AVERAGE POWER GAIN value.");
-        averageGainResultsView_->setFailure(message, context);
-        resultsStatusLabel_->setText(tr("Historical AGT failed — %1").arg(context));
-    } else {
-        const auto expected = environment == analysis::AverageGainEnvironment::PerfectGround
-            ? 2.0 : 1.0;
-        const auto assessment = analysis::assessAverageGain(*result.averagePowerGain, expected);
-        averageGainResultsView_->setResult(assessment, frequencyMHz, environment,
-            result.averagingSolidAnglePi, context);
-        resultsStatusLabel_->setText(tr("Historical Average Gain Test — %1").arg(context));
-        resultsAvailable_ = true;
-        displayedRunDirectory_ = directory;
-        const auto selectedRow = analysisRuns_->currentRow();
-        if (selectedRow >= 0) {
-            AnalysisRunRecord summary;
-            summary.runType = QStringLiteral("average-gain-test");
-            summary.summary = tr("AGT %1 · %2").arg(formatDecimal(assessment.normalizedGain))
-                .arg(averageGainClassificationName(assessment.classification));
-            analysisRuns_->setItem(selectedRow, RunResultsColumn,
-                new QTableWidgetItem(runResultsText(summary)));
-            analysisRuns_->setItem(selectedRow, RunOutputSizeColumn,
-                new QTableWidgetItem(formatByteSize(outputBytes.size())));
-        }
-    }
-    showModule(resultsModuleIndex_);
-    resultsWorkspace_->setCurrentIndex(averageGainResultsTabIndex_);
-    validationWorkspace_->setCurrentIndex(averageGainValidationTabIndex_);
-    statusBar()->showMessage(tr("Displaying historical AGT: %1").arg(directory), 5000);
 }
 
 void MainWindow::setDisplayedResults(const analysis::AnalysisResult& result)
@@ -4288,12 +4201,10 @@ void MainWindow::clearDisplayedResults()
     setDisplayedResults(empty);
     displayedRunDirectory_.clear();
     resultsAvailable_ = false;
-    displayingHistoricalResults_ = false;
     resultsContextTitleLabel_->setText(tr("No Results Loaded"));
     resultsContextDetailLabel_->setText(
         tr("Select a run from Results → Runs, or analyze the active model."));
     updateActiveModelResultsLabel();
-    returnToActiveResultsButton_->setVisible(false);
     resultsStatusLabel_->setText(tr("No analysis results are loaded."));
 }
 
@@ -4360,11 +4271,20 @@ void MainWindow::makeFieldOptimizable(std::size_t sourceLine,
     const auto document = nec::NecParser{}.parse(source);
     if (sourceLine == 0 || sourceLine > document.cards().size()) return;
     const auto& card = document.cards()[sourceLine - 1];
-    if (fieldIndex >= card.fields.size()
-        || !nec::necCardFieldIsNumeric(card.sourceText, fieldIndex)) {
-        statusBar()->showMessage(tr("Only fixed numeric fields can be made optimizable."), 5000);
+    if (fieldIndex >= card.fields.size()) return;
+    const auto resolution = nec::NecSymbolResolver{}.resolve(source);
+    if (!resolution.ok()) {
+        QMessageBox::warning(this, tr("Parameter Error"),
+            tr("Resolve the current symbol error before changing parameter links: %1")
+                .arg(QString::fromStdString(resolution.diagnostics.front().message)));
         return;
     }
+    const auto resolvedDocument = nec::NecParser{}.parse(resolution.resolvedSource);
+    if (sourceLine > resolvedDocument.cards().size()
+        || fieldIndex >= resolvedDocument.cards()[sourceLine - 1].fields.size()) return;
+    const auto currentExpression = QString::fromStdString(card.fields[fieldIndex]);
+    const auto resolvedValue = QString::fromStdString(
+        resolvedDocument.cards()[sourceLine - 1].fields[fieldIndex]);
 
     auto fieldName = fieldLabel.section(QLatin1Char('('), 0, 0).trimmed().toLower();
     fieldName.replace(QRegularExpression(QStringLiteral("[^a-z0-9_]+")), QStringLiteral("_"));
@@ -4374,7 +4294,6 @@ void MainWindow::makeFieldOptimizable(std::size_t sourceLine,
     if (baseName.isEmpty() || baseName.front().isDigit())
         baseName.prepend(QStringLiteral("parameter_"));
 
-    const auto resolution = nec::NecSymbolResolver{}.resolve(source);
     const auto nameUsed = [&resolution](const QString& candidate) {
         return std::ranges::any_of(resolution.definitions, [&candidate](const auto& definition) {
             return QString::fromStdString(definition.name).compare(
@@ -4385,22 +4304,100 @@ void MainWindow::makeFieldOptimizable(std::size_t sourceLine,
     for (auto suffix = 2; nameUsed(suggestion); ++suffix)
         suggestion = QStringLiteral("%1_%2").arg(baseName).arg(suffix);
 
-    bool accepted = false;
-    const auto name = QInputDialog::getText(this, tr("Make Optimizable"),
-        tr("Parameter name (set its search range in Optimize):"),
-        QLineEdit::Normal, suggestion, &accepted).trimmed();
-    if (!accepted || name.isEmpty()) return;
+    QDialog dialog(this);
+    dialog.setObjectName(QStringLiteral("parameterizeFieldDialog"));
+    dialog.setWindowTitle(tr("Parameterize Field"));
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* form = new QFormLayout;
+    auto* fieldValue = new QLabel(tr("%1 → %2").arg(currentExpression, resolvedValue), &dialog);
+    fieldValue->setObjectName(QStringLiteral("parameterizeCurrentValue"));
+    auto* mode = new QComboBox(&dialog);
+    mode->setObjectName(QStringLiteral("parameterizeMode"));
+    mode->addItem(tr("Create New Parameter"), 0);
+    if (!resolution.definitions.empty()) mode->addItem(tr("Use Existing Parameter"), 1);
+    auto* newName = new QLineEdit(suggestion, &dialog);
+    newName->setObjectName(QStringLiteral("parameterizeNewName"));
+    auto* existing = new QComboBox(&dialog);
+    existing->setObjectName(QStringLiteral("parameterizeExistingSymbol"));
+    for (const auto& definition : resolution.definitions) {
+        existing->addItem(tr("%1 = %2")
+            .arg(QString::fromStdString(definition.name))
+            .arg(definition.value, 0, 'g', 12),
+            QString::fromStdString(definition.name));
+    }
+    const auto directSymbol = std::ranges::find_if(resolution.definitions,
+        [&currentExpression](const auto& definition) {
+            return QString::fromStdString(definition.name).compare(
+                currentExpression, Qt::CaseInsensitive) == 0;
+        });
+    if (directSymbol != resolution.definitions.end()) {
+        mode->setCurrentIndex(mode->findData(1));
+        existing->setCurrentIndex(existing->findData(
+            QString::fromStdString(directSymbol->name)));
+    }
+    auto* preview = new QLabel(&dialog);
+    preview->setObjectName(QStringLiteral("parameterizePreview"));
+    preview->setWordWrap(true);
+    form->addRow(tr("Current field"), fieldValue);
+    form->addRow(tr("Action"), mode);
+    form->addRow(tr("New parameter name"), newName);
+    form->addRow(tr("Existing parameter"), existing);
+    form->addRow(tr("Preview"), preview);
+    auto* newNameLabel = form->labelForField(newName);
+    auto* existingLabel = form->labelForField(existing);
+    layout->addLayout(form);
+    auto* note = new QLabel(tr(
+        "The selected field will reference the parameter. Configure optimization bounds in Optimize."),
+        &dialog);
+    note->setWordWrap(true);
+    layout->addWidget(note);
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    layout->addWidget(buttons);
+    const auto updateDialog = [mode, newName, existing, preview, resolvedValue,
+                                  newNameLabel, existingLabel] {
+        const auto create = mode->currentData().toInt() == 0;
+        newName->setVisible(create);
+        newNameLabel->setVisible(create);
+        existing->setVisible(!create);
+        existingLabel->setVisible(!create);
+        preview->setText(create
+            ? QObject::tr("Create SY %1=%2 and link this field to %1.")
+                .arg(newName->text().trimmed(), resolvedValue)
+            : QObject::tr("Link this field to %1.")
+                .arg(existing->currentData().toString()));
+    };
+    connect(mode, &QComboBox::currentIndexChanged, &dialog, updateDialog);
+    connect(newName, &QLineEdit::textChanged, &dialog, updateDialog);
+    connect(existing, &QComboBox::currentIndexChanged, &dialog, updateDialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    updateDialog();
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    const auto create = mode->currentData().toInt() == 0;
+    const auto name = create ? newName->text().trimmed() : existing->currentData().toString();
+    if (name.isEmpty()) return;
     const QRegularExpression validName(QStringLiteral("^[A-Za-z_][A-Za-z0-9_]*$"));
-    if (!validName.match(name).hasMatch() || nameUsed(name)) {
+    if (create && (!validName.match(name).hasMatch() || nameUsed(name))) {
         QMessageBox::warning(this, tr("Invalid Parameter Name"),
             tr("Use a unique name beginning with a letter or underscore, followed only by letters, numbers, or underscores."));
         return;
     }
 
-    const auto updated = nec::parameterizeNecCardField(
-        source, sourceLine, fieldIndex, name.toStdString());
+    auto sourceForParameter = std::optional<std::string>{source};
+    if (create && !nec::necCardFieldIsNumeric(card.sourceText, fieldIndex)) {
+        sourceForParameter = nec::replaceNecCardFieldExpression(
+            source, sourceLine, fieldIndex, resolvedValue.toStdString());
+    }
+    const auto updated = !sourceForParameter ? std::optional<std::string>{}
+        : create
+            ? nec::parameterizeNecCardField(
+                *sourceForParameter, sourceLine, fieldIndex, name.toStdString())
+            : nec::replaceNecCardFieldExpression(
+                source, sourceLine, fieldIndex, name.toStdString());
     if (!updated) {
-        statusBar()->showMessage(tr("The selected field could not be made optimizable."), 5000);
+        statusBar()->showMessage(tr("The selected field could not be parameterized."), 5000);
         return;
     }
     const auto updatedResolution = nec::NecSymbolResolver{}.resolve(*updated);
@@ -4410,9 +4407,36 @@ void MainWindow::makeFieldOptimizable(std::size_t sourceLine,
                 .arg(QString::fromStdString(updatedResolution.diagnostics.front().message)));
         return;
     }
-    pushGeometrySourceEdit(tr("Make %1 optimizable as %2").arg(fieldLabel, name),
+    pushGeometrySourceEdit(create
+            ? tr("Parameterize %1 as new %2").arg(fieldLabel, name)
+            : tr("Link %1 to %2").arg(fieldLabel, name),
         QString::fromStdString(*updated));
-    statusBar()->showMessage(tr("Created %1. Set its bounds in Optimize.").arg(name), 5000);
+    statusBar()->showMessage(create
+        ? tr("Created %1. Set its bounds in Optimize.").arg(name)
+        : tr("Linked %1 to %2.").arg(fieldLabel, name), 5000);
+}
+
+void MainWindow::detachFieldParameter(std::size_t sourceLine,
+    std::size_t fieldIndex, const QString& fieldLabel)
+{
+    const auto source = editor_->toPlainText().toStdString();
+    const auto resolution = nec::NecSymbolResolver{}.resolve(source);
+    if (!resolution.ok()) {
+        QMessageBox::warning(this, tr("Parameter Error"),
+            tr("Resolve the current symbol error before detaching this field."));
+        return;
+    }
+    const auto resolvedDocument = nec::NecParser{}.parse(resolution.resolvedSource);
+    if (sourceLine == 0 || sourceLine > resolvedDocument.cards().size()
+        || fieldIndex >= resolvedDocument.cards()[sourceLine - 1].fields.size()) return;
+    const auto numericValue = resolvedDocument.cards()[sourceLine - 1].fields[fieldIndex];
+    const auto updated = nec::replaceNecCardFieldExpression(
+        source, sourceLine, fieldIndex, numericValue);
+    if (!updated) return;
+    pushGeometrySourceEdit(tr("Detach parameter from %1").arg(fieldLabel),
+        QString::fromStdString(*updated));
+    statusBar()->showMessage(tr("Replaced %1 with its current numeric value.").arg(fieldLabel),
+        5000);
 }
 
 void MainWindow::addStructuredCard(const QString& cardText)

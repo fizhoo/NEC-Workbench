@@ -17,6 +17,7 @@ build.ninja
 *.dll
 *.dylib
 *.exe
+*.AppImage
 
 # Editor and desktop files
 .vscode/

@@ -1,6 +1,7 @@
 #include "ui/cards/StructuredCardEditor.h"
 
 #include "nec/NecCardFieldEditor.h"
+#include "ui/ParameterFieldStyle.h"
 
 #include <QAbstractItemView>
 #include <QApplication>
@@ -342,15 +343,27 @@ StructuredCardEditor::StructuredCardEditor(QWidget* parent) : QWidget(parent)
             const auto mnemonic = table_->item(item->row(), 1)->text();
             const auto fieldIndex = item->column() - 2;
             if (fieldType(mnemonic, fieldIndex) != FieldType::Number
-                || !choicesFor(mnemonic, fieldIndex).empty()
-                || !parsesAs<double>(item->text())) return;
+                || !choicesFor(mnemonic, fieldIndex).empty()) return;
+            const auto sourceLine = table_->item(item->row(), 0)
+                ->data(SourceLineRole).toULongLong();
+            const auto parameterLine = parameterControlledFields_.find(sourceLine);
+            const auto parameterControlled = parameterLine != parameterControlledFields_.end()
+                && parameterLine->second.contains(static_cast<std::size_t>(fieldIndex));
+            if (!parameterControlled && !parsesAs<double>(item->text())) return;
             QMenu menu(this);
-            auto* action = menu.addAction(tr("Make Optimizable…"));
-            if (menu.exec(table_->viewport()->mapToGlobal(position)) != action) return;
-            emit fieldParameterizationRequested(
-                table_->item(item->row(), 0)->data(SourceLineRole).toULongLong(),
-                static_cast<std::size_t>(fieldIndex),
-                table_->horizontalHeaderItem(item->column())->text());
+            auto* parameterize = menu.addAction(parameterControlled
+                ? tr("Change Parameter Link…") : tr("Parameterize Field…"));
+            auto* detach = parameterControlled
+                ? menu.addAction(tr("Replace With Current Numeric Value")) : nullptr;
+            const auto* selected = menu.exec(table_->viewport()->mapToGlobal(position));
+            const auto label = table_->horizontalHeaderItem(item->column())->text();
+            if (selected == parameterize) {
+                emit fieldParameterizationRequested(sourceLine,
+                    static_cast<std::size_t>(fieldIndex), label);
+            } else if (selected == detach) {
+                emit fieldDetachmentRequested(sourceLine,
+                    static_cast<std::size_t>(fieldIndex), label);
+            }
         });
     connect(addButton_, &QPushButton::clicked, this, [this] {
         const auto familyIndex = currentFamilyIndex();
@@ -372,6 +385,12 @@ void StructuredCardEditor::setDocument(const nec::NecDocument& document)
     document_ = document;
     refreshFamilies();
     refreshTable();
+}
+
+void StructuredCardEditor::setParameterControlledFields(
+    nec::NecParameterFieldMap sourceFields)
+{
+    parameterControlledFields_ = std::move(sourceFields);
 }
 
 auto StructuredCardEditor::selectCard(std::size_t sourceLine) -> bool
@@ -468,8 +487,20 @@ void StructuredCardEditor::refreshTable()
             if (!value.isEmpty() && !nec::necCardFieldIsNumeric(
                     card.sourceText, static_cast<std::size_t>(column))) {
                 item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-                item->setToolTip(tr(
-                    "This value is controlled by an SY expression. Edit the parameter or raw source."));
+                const auto parameterLine = parameterControlledFields_.find(card.lineNumber);
+                const auto parameterField = parameterLine == parameterControlledFields_.end()
+                    ? nullptr : [&parameterLine, column] {
+                        const auto found = parameterLine->second.find(
+                            static_cast<std::size_t>(column));
+                        return found == parameterLine->second.end() ? nullptr : &found->second;
+                    }();
+                if (parameterField != nullptr) {
+                    styleParameterControlledField(item, table_,
+                        QString::fromStdString(*parameterField));
+                } else {
+                    item->setToolTip(tr(
+                        "This value is controlled by an expression. Edit the raw NEC source."));
+                }
             }
             table_->setItem(row, column+2, item);
         }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "nec/NecDocument.h"
+#include "nec/NecCardFieldEditor.h"
 
 #include <QWidget>
 
@@ -22,6 +23,7 @@ class StructuredCardEditor final : public QWidget {
 public:
     explicit StructuredCardEditor(QWidget* parent = nullptr);
     void setDocument(const nec::NecDocument& document);
+    void setParameterControlledFields(nec::NecParameterFieldMap sourceFields);
     auto selectCard(std::size_t sourceLine) -> bool;
 
 signals:
@@ -30,6 +32,8 @@ signals:
     void cardAddRequested(QString cardText);
     void cardDeleteRequested(std::size_t sourceLine);
     void fieldParameterizationRequested(std::size_t sourceLine,
+        std::size_t fieldIndex, QString fieldLabel);
+    void fieldDetachmentRequested(std::size_t sourceLine,
         std::size_t fieldIndex, QString fieldLabel);
 
 private:
@@ -44,6 +48,7 @@ private:
     [[nodiscard]] auto familyItem(int familyIndex) const -> QTreeWidgetItem*;
 
     nec::NecDocument document_;
+    nec::NecParameterFieldMap parameterControlledFields_;
     QTreeWidget* families_{};
     QTableWidget* table_{};
     QLabel* description_{};

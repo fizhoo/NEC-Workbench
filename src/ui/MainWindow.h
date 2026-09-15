@@ -50,6 +50,7 @@ class Geometry3DView;
 class GeometryView;
 class ImpedanceResultsView;
 class ResultsSummaryView;
+class RunReviewWindow;
 class AverageGainResultsView;
 class ConvergenceWorkspace;
 class SweepPlotsView;
@@ -161,6 +162,8 @@ private:
     void editStructuredCard(std::size_t sourceLine, const QString& cardText);
     void makeFieldOptimizable(std::size_t sourceLine,
         std::size_t fieldIndex, const QString& fieldLabel);
+    void detachFieldParameter(std::size_t sourceLine,
+        std::size_t fieldIndex, const QString& fieldLabel);
     void addStructuredCard(const QString& cardText);
     void deleteStructuredCard(std::size_t sourceLine);
     void changeFrequency(const model::FrequencyDefinition& frequency);
@@ -168,8 +171,11 @@ private:
     void changeParameter(std::size_t sourceLine, const QString& originalName,
         const QString& name, const QString& expression);
     void deleteParameter(std::size_t sourceLine, const QString& name);
-    auto applyOptimizedParameter(const QString& name, double value) -> bool;
+    auto applyOptimizedParameters(
+        const std::vector<std::pair<QString, double>>& values) -> bool;
     void changeGround(const model::GroundDefinition& ground);
+    void changeReferenceImpedance(const model::ReferenceImpedanceDefinition& reference);
+    void deleteReferenceImpedance(std::size_t sourceLine);
     void changeExcitation(const model::Excitation& excitation);
     void addExcitationAt(int wireTag, int segment);
     void showExcitationEditor(std::size_t sourceLine);
@@ -208,13 +214,7 @@ private:
         const QString& runContext) -> bool;
     void deleteSelectedRun();
     void updateRunSelectionActions();
-    void displayRunArtifacts(const QString& directory, const QString& context, bool historical = true);
-    void displayAverageGainTestArtifacts(const QString& directory, const QString& context);
-    void returnToCurrentWork();
-    void captureHistoricalReturnContext();
-    void leaveHistoricalSessionViews();
-    void showHistoricalResultsContext(const QString& modelName, const QString& started,
-        const QString& backend);
+    void displayRunArtifacts(const QString& directory, const QString& context);
     void showActiveResultsContext(const QString& context);
     void updateActiveModelResultsLabel();
     void setDisplayedResults(const analysis::AnalysisResult& result);
@@ -305,6 +305,7 @@ private:
     AnalysisSetupEditor* analysisSetupEditor_{};
     AnalysisRequestEditor* analysisRequestEditor_{};
     ResultsSummaryView* resultsSummaryView_{};
+    RunReviewWindow* runReviewWindow_{};
     AverageGainResultsView* averageGainResultsView_{};
     ConvergenceWorkspace* convergenceWorkspace_{};
     ImpedanceResultsView* analysisResultsView_{};
@@ -345,7 +346,6 @@ private:
     QLabel* resultsContextTitleLabel_{};
     QLabel* resultsContextDetailLabel_{};
     QLabel* activeModelResultsLabel_{};
-    QPushButton* returnToActiveResultsButton_{};
     QPushButton* detachResultsButton_{};
     QLabel* resultsStatusLabel_{};
     QLabel* resultsAvailabilityLabel_{};
@@ -398,17 +398,12 @@ private:
     int resultsModuleIndex_{};
     int optimizeModuleIndex_{};
     int lastNonResultsModuleIndex_{-1};
-    int historicalReturnModuleIndex_{-1};
-    int historicalReturnResultsTabIndex_{-1};
     bool updatingSourceFromGeometry_{};
     std::size_t modelErrorCount_{};
     std::size_t modelWarningCount_{};
     bool modelChecked_{};
     bool hasNecModel_{};
     bool resultsAvailable_{};
-    bool displayingHistoricalResults_{};
-    bool historicalReviewActive_{};
-    bool historicalSessionViewActive_{};
     bool resultsDetached_{};
     std::optional<std::pair<int, int>> pendingTransmissionLineEndpoint_;
 };
