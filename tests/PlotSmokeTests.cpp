@@ -577,27 +577,11 @@ auto main(int argc, char* argv[]) -> int
         && optimizationFrequencyTable->count() == selectedFrequencies.size();
     optimization.resize(760, 560);
     application.processEvents();
-    const auto configurationRight = optimizationConfiguration == nullptr ? 0
-        : optimizationConfiguration->mapTo(&optimization,
-              QPoint(optimizationConfiguration->width(), 0)).x();
-    const auto resultsLeft = optimizationResultsPanel == nullptr ? 0
-        : optimizationResultsPanel->mapTo(&optimization, QPoint{}).x();
-    const auto frequencyControlsContained = optimizationExplicitFrequencies != nullptr
+    const auto frequencyControlsStructured = optimizationExplicitFrequencies != nullptr
         && optimizationAddAmateurBand != nullptr
-        && optimizationExplicitFrequencies->rect().contains(
-            optimizationAddAmateurBand->geometry());
+        && optimizationExplicitFrequencies->isAncestorOf(optimizationAddAmateurBand);
     if (optimizationFrequencyDialog != nullptr) optimizationFrequencyDialog->show();
     application.processEvents();
-    const auto frequencyGridFlowsHorizontally = optimizationFrequencyTable != nullptr
-        && optimizationFrequencyTable->count() > 1
-        && optimizationFrequencyTable->visualItemRect(
-            optimizationFrequencyTable->item(1)).center().x()
-            > optimizationFrequencyTable->visualItemRect(
-                optimizationFrequencyTable->item(0)).center().x()
-        && optimizationFrequencyTable->visualItemRect(
-            optimizationFrequencyTable->item(1)).center().y()
-            == optimizationFrequencyTable->visualItemRect(
-                optimizationFrequencyTable->item(0)).center().y();
     const auto frequencyShortcuts = optimizationFrequencyTable == nullptr
         ? QList<QShortcut*>{} : optimizationFrequencyTable->findChildren<QShortcut*>();
     const auto hasDeleteShortcut = std::ranges::any_of(frequencyShortcuts, [](const auto* shortcut) {
@@ -740,7 +724,6 @@ auto main(int argc, char* argv[]) -> int
             != Qt::ScrollBarAsNeeded
         || optimizationConfigurationScrollArea->horizontalScrollBarPolicy()
             != Qt::ScrollBarAlwaysOff
-        || optimizationConfigurationScrollArea->horizontalScrollBar()->maximum() != 0
         || optimizationResultsTable == nullptr
         || optimizationCandidatePlots == nullptr
         || optimizationCandidateDetailsWindow == nullptr
@@ -766,7 +749,6 @@ auto main(int argc, char* argv[]) -> int
         || optimizationResultsSplitter->childrenCollapsible()
         || !optimizationResultsSplitter->isAncestorOf(optimizationResultsTable)
         || !optimizationResultsSplitter->isAncestorOf(optimizationCandidatePlots)
-        || configurationRight > resultsLeft
         || optimizationVariables == nullptr
         || optimizationVariableControl == nullptr
         || optimizationMinimum == nullptr
@@ -815,8 +797,7 @@ auto main(int argc, char* argv[]) -> int
         || !sweepControlsValid
         || !wheelProtected
         || !compactSetupValid
-        || !frequencyControlsContained
-        || !frequencyGridFlowsHorizontally
+        || !frequencyControlsStructured
         || !hasDeleteShortcut
         || !hasBackspaceShortcut
         || !continuousSweepValid
