@@ -67,14 +67,15 @@
 #include <cstdlib>
 #include <algorithm>
 #include <cmath>
-#include <iostream>
+#include <cstdio>
 #include <vector>
 
 namespace {
 
 auto smokeFailure(const char* checkpoint, int line) -> int
 {
-    std::cerr << "Plot smoke failure at line " << line << ": " << checkpoint << '\n';
+    std::fprintf(stderr, "Plot smoke failure at line %d: %s\n", line, checkpoint);
+    std::fflush(stderr);
     return EXIT_FAILURE;
 }
 
@@ -107,7 +108,9 @@ auto main(int argc, char* argv[]) -> int
     necwb::ui::NecHighlighter cardHighlighter(&highlightedCards);
     cardHighlighter.rehighlight();
     const auto cardColor = [](const QTextBlock& block) {
-        const auto formats = block.layout()->formats();
+        const auto* layout = block.layout();
+        if (layout == nullptr) return QColor{};
+        const auto formats = layout->formats();
         const auto cardFormat = std::ranges::find_if(formats, [](const auto& range) {
             return range.start == 0 && range.length == 2;
         });
