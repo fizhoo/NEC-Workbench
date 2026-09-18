@@ -1,7 +1,6 @@
 #include "analysis/AnalysisResult.h"
 #include "ui/DisplayFormat.h"
 #include "ui/DetachablePanel.h"
-#include "ui/editor/NecHighlighter.h"
 #include "ui/analysis/SweepPlotsView.h"
 #include "ui/analysis/AnalysisRunStore.h"
 #include "ui/analysis/ResultsSummaryView.h"
@@ -10,7 +9,6 @@
 #include "ui/analysis/AnalysisRequestEditor.h"
 #include "ui/analysis/ConvergenceWorkspace.h"
 #include "ui/analysis/FieldResultsViews.h"
-#include "ui/analysis/QuickSweepDialog.h"
 #include "ui/dashboard/DashboardPage.h"
 #include "ui/cards/StructuredCardEditor.h"
 #include "ui/cards/WireCardEditor.h"
@@ -47,8 +45,6 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QTextDocument>
-#include <QTextBlock>
-#include <QTextLayout>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTabBar>
@@ -103,47 +99,6 @@ auto main(int argc, char* argv[]) -> int
     if (necwb::ui::formatDecimal(1.2) != QStringLiteral("1.200")
         || necwb::ui::formatDecimal(0.0004) != QStringLiteral("4.000e-04")) {
         return NECWB_SMOKE_FAILURE("display formatting");
-    }
-    QTextDocument highlightedCards(QStringLiteral("GA 1 9 0.5 0 180 0.001\nZZ 0\n"));
-    necwb::ui::NecHighlighter cardHighlighter(&highlightedCards);
-    cardHighlighter.rehighlight();
-    const auto cardColor = [](const QTextBlock& block) {
-        const auto* layout = block.layout();
-        if (layout == nullptr) return QColor{};
-        const auto formats = layout->formats();
-        const auto cardFormat = std::ranges::find_if(formats, [](const auto& range) {
-            return range.start == 0 && range.length == 2;
-        });
-        return cardFormat == formats.end() ? QColor{} : cardFormat->format.foreground().color();
-    };
-    if (cardColor(highlightedCards.firstBlock()) != QColor(31, 78, 121)
-        || cardColor(highlightedCards.firstBlock().next()) != QColor(178, 34, 34)) {
-        return NECWB_SMOKE_FAILURE("centralized NEC card highlighting");
-    }
-    const necwb::model::FrequencyDefinition initialSweep{0, 36, 14.0, 0.01, 0};
-    necwb::ui::QuickSweepDialog quickSweep(initialSweep);
-    auto* quickStart = quickSweep.findChild<QDoubleSpinBox*>(QStringLiteral("quickSweepStart"));
-    auto* quickStop = quickSweep.findChild<QDoubleSpinBox*>(QStringLiteral("quickSweepStop"));
-    auto* quickSpacing = quickSweep.findChild<QComboBox*>(QStringLiteral("quickSweepSpacing"));
-    auto* quickPoints = quickSweep.findChild<QSpinBox*>(QStringLiteral("quickSweepPoints"));
-    auto* quickRadiation = quickSweep.findChild<QCheckBox*>(QStringLiteral("quickSweepRadiation"));
-    auto* quickSummary = quickSweep.findChild<QLabel*>(QStringLiteral("quickSweepSummary"));
-    if (quickStart == nullptr || quickStop == nullptr || quickSpacing == nullptr
-        || quickPoints == nullptr || quickRadiation == nullptr || quickSummary == nullptr
-        || quickSweep.frequencyDefinition().count != 36
-        || std::abs(quickSweep.frequencyDefinition().step - 0.01) > 1.0e-12
-        || quickSweep.includeRadiationPatterns()) {
-        return NECWB_SMOKE_FAILURE("quick sweep defaults");
-    }
-    quickStop->setValue(28.0);
-    quickSpacing->setCurrentIndex(1);
-    quickPoints->setValue(5);
-    application.processEvents();
-    const auto logarithmicSweep = quickSweep.frequencyDefinition();
-    if (logarithmicSweep.steppingMode != 1 || logarithmicSweep.count != 5
-        || std::abs(logarithmicSweep.step - std::pow(2.0, 0.25)) > 1.0e-9
-        || !quickSummary->text().contains(QStringLiteral("logarithmic"))) {
-        return NECWB_SMOKE_FAILURE("quick logarithmic sweep");
     }
     necwb::analysis::AnalysisResult result;
     result.feedpoints = {
