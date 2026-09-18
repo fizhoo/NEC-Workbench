@@ -7,6 +7,7 @@
 #include "analysis/NecOutputParser.h"
 #include "analysis/SolverInput.h"
 #include "nec/NecModelChecker.h"
+#include "nec/NecCardCatalog.h"
 #include "nec/DeckGeometryUnits.h"
 #include "nec/NecModelConverter.h"
 #include "nec/NecCardFieldEditor.h"
@@ -27,6 +28,7 @@
 #include "ui/analysis/AverageGainResultsView.h"
 #include "ui/analysis/ConvergenceWorkspace.h"
 #include "ui/analysis/ImpedanceResultsView.h"
+#include "ui/analysis/QuickSweepDialog.h"
 #include "ui/analysis/ResultsSummaryView.h"
 #include "ui/analysis/RunReviewWindow.h"
 #include "ui/analysis/SweepPlotsView.h"
@@ -69,6 +71,7 @@
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLayout>
@@ -272,7 +275,12 @@ auto runContext(const AnalysisRunRecord& record) -> QString
     const auto started = record.started.isValid()
         ? record.started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : record.id;
     const auto backend = record.backend.isEmpty() ? QObject::tr("Unknown backend") : record.backend;
-    return QObject::tr("Model: %1 · Run: %2 · Backend: %3").arg(modelName, started, backend);
+    const auto purpose = record.runType == QStringLiteral("quick-sweep")
+        ? record.summary.isEmpty() ? QObject::tr(" · Quick Sweep")
+                                   : QObject::tr(" · Quick Sweep: %1").arg(record.summary)
+        : QString{};
+    return QObject::tr("Model: %1 · Run: %2%3 · Backend: %4")
+        .arg(modelName, started, purpose, backend);
 }
 
 auto averageGainEnvironmentId(analysis::AverageGainEnvironment environment) -> QString
@@ -509,25 +517,31 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
 void MainWindow::createActions()
 {
+    const auto icon = [](const char* name) {
+        return QIcon(QStringLiteral(":/icons/")
+            + QString::fromLatin1(name) + QStringLiteral(".svg"));
+    };
+
     newAction_ = new QAction(tr("&New NEC Model"), this);
     newAction_->setObjectName(QStringLiteral("newModelAction"));
-    newAction_->setIcon(style()->standardIcon(QStyle::SP_FileIcon));
+    newAction_->setIcon(icon("new"));
     newAction_->setShortcut(QKeySequence::New);
     connect(newAction_, &QAction::triggered, this, [this] { newModel(); });
 
     openAction_ = new QAction(tr("&Open NEC File…"), this);
     openAction_->setObjectName(QStringLiteral("openNecFileAction"));
-    openAction_->setIcon(style()->standardIcon(QStyle::SP_DialogOpenButton));
+    openAction_->setIcon(icon("open"));
     openAction_->setShortcut(QKeySequence::Open);
     connect(openAction_, &QAction::triggered, this, [this] { openFile(); });
 
     saveAction_ = new QAction(tr("&Save"), this);
-    saveAction_->setIcon(style()->standardIcon(QStyle::SP_DialogSaveButton));
+    saveAction_->setIcon(icon("save"));
     saveAction_->setShortcut(QKeySequence::Save);
     saveAction_->setEnabled(false);
     connect(saveAction_, &QAction::triggered, this, [this] { saveFile(); });
 
     saveAsAction_ = new QAction(tr("Save &As…"), this);
+    saveAsAction_->setIcon(icon("save"));
     saveAsAction_->setShortcut(QKeySequence::SaveAs);
     connect(saveAsAction_, &QAction::triggered, this, [this] { saveFileAs(); });
 
@@ -553,20 +567,30 @@ void MainWindow::createActions()
         [] { invokeFocusedEditCommand("paste"); });
 
     checkAction_ = new QAction(tr("&Check Model"), this);
-    checkAction_->setIcon(style()->standardIcon(QStyle::SP_DialogApplyButton));
+    checkAction_->setIcon(icon("check"));
     checkAction_->setShortcut(QKeySequence(Qt::Key_F7));
     checkAction_->setStatusTip(tr("Check NEC cards and model geometry"));
     connect(checkAction_, &QAction::triggered, this, [this] { checkModel(); });
 
     runAction_ = new QAction(tr("&Run Analysis"), this);
-    runAction_->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+    runAction_->setIcon(icon("run"));
     runAction_->setEnabled(false);
     runAction_->setStatusTip(tr("Run the checked model with the selected NEC engine"));
     connect(runAction_, &QAction::triggered, this, [this] { startAnalysis(); });
 
+    quickSweepAction_ = new QAction(tr("Quick Frequency &Sweep…"), this);
+    quickSweepAction_->setObjectName(QStringLiteral("quickFrequencySweepAction"));
+    quickSweepAction_->setIcon(icon("quick-sweep"));
+    quickSweepAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_F6));
+    quickSweepAction_->setEnabled(false);
+    quickSweepAction_->setStatusTip(tr(
+        "Run a temporary frequency sweep without changing the model's FR card"));
+    connect(quickSweepAction_, &QAction::triggered,
+        this, [this] { startQuickFrequencySweep(); });
+
     stopAction_ = new QAction(tr("&Stop"), this);
     stopAction_->setObjectName(QStringLiteral("stopAnalysisAction"));
-    stopAction_->setIcon(style()->standardIcon(QStyle::SP_MediaStop));
+    stopAction_->setIcon(icon("stop"));
     stopAction_->setEnabled(false);
     stopAction_->setStatusTip(tr("Stop the active analysis or validation solver process"));
     connect(stopAction_, &QAction::triggered, this, [this] {
@@ -576,20 +600,21 @@ void MainWindow::createActions()
     });
 
     averageGainAction_ = new QAction(tr("Run &Average Gain Test…"), this);
-    averageGainAction_->setIcon(style()->standardIcon(QStyle::SP_DialogApplyButton));
+    averageGainAction_->setIcon(icon("validate"));
     averageGainAction_->setEnabled(false);
     averageGainAction_->setStatusTip(tr(
         "Run a single-frequency lossless Average Gain Test without modifying the source model"));
     connect(averageGainAction_, &QAction::triggered, this, [this] { startAverageGainTest(); });
 
     convergenceAction_ = new QAction(tr("Segmentation &Convergence…"), this);
-    convergenceAction_->setIcon(style()->standardIcon(QStyle::SP_BrowserReload));
+    convergenceAction_->setIcon(icon("frequency-sweep"));
     convergenceAction_->setEnabled(false);
     convergenceAction_->setStatusTip(tr(
         "Open the multi-run segmentation convergence study under Results Validation"));
     connect(convergenceAction_, &QAction::triggered, this, [this] { showConvergenceStudy(); });
 
     fitGeometryAction_ = new QAction(tr("&Fit Geometry"), this);
+    fitGeometryAction_->setIcon(icon("fit"));
     fitGeometryAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
     fitGeometryAction_->setStatusTip(tr("Fit geometry in all orthographic views"));
     connect(fitGeometryAction_, &QAction::triggered, this, [this] { fitAllGeometryViews(); });
@@ -615,21 +640,26 @@ void MainWindow::createActions()
     });
 
     geometrySettingsAction_ = new QAction(tr("Geometry Settings…"), this);
+    geometrySettingsAction_->setIcon(icon("settings"));
     connect(geometrySettingsAction_, &QAction::triggered, this, [this] { showGeometrySettings(); });
 
     autoSegmentationAction_ = new QAction(tr("Automatic Segmentation…"), this);
+    autoSegmentationAction_->setIcon(icon("structured-cards"));
     autoSegmentationAction_->setStatusTip(tr("Preview wavelength-based wire segment counts"));
     connect(autoSegmentationAction_, &QAction::triggered, this, [this] { showAutoSegmentation(); });
 
     undoAction_ = new QAction(tr("&Undo"), this);
+    undoAction_->setIcon(icon("undo"));
     undoAction_->setShortcut(QKeySequence::Undo);
     connect(undoAction_, &QAction::triggered, this, [this] { performUndo(); });
 
     redoAction_ = new QAction(tr("&Redo"), this);
+    redoAction_->setIcon(icon("redo"));
     redoAction_->setShortcut(QKeySequence::Redo);
     connect(redoAction_, &QAction::triggered, this, [this] { performRedo(); });
 
     detachResultsAction_ = new QAction(tr("Detach Results Window"), this);
+    detachResultsAction_->setIcon(icon("detach"));
     detachResultsAction_->setObjectName(QStringLiteral("detachResultsAction"));
     detachResultsAction_->setStatusTip(
         tr("Move the existing Results workspace into a separate reusable window"));
@@ -666,14 +696,17 @@ void MainWindow::createActions()
         [this] { setWorkspaceDensity(WorkspaceDensity::Spacious); });
 
     gettingStartedAction_ = new QAction(tr("&Getting Started"), this);
+    gettingStartedAction_->setIcon(icon("help"));
     gettingStartedAction_->setObjectName(QStringLiteral("gettingStartedAction"));
     connect(gettingStartedAction_, &QAction::triggered, this,
         [this] { showGettingStarted(); });
     userGuideAction_ = new QAction(tr("&User Guide"), this);
+    userGuideAction_->setIcon(icon("help"));
     userGuideAction_->setObjectName(QStringLiteral("userGuideAction"));
     connect(userGuideAction_, &QAction::triggered, this,
         [this] { openUserGuide(); });
     aboutAction_ = new QAction(tr("&About NEC Workbench"), this);
+    aboutAction_->setIcon(icon("help"));
     aboutAction_->setObjectName(QStringLiteral("aboutAction"));
     connect(aboutAction_, &QAction::triggered, this,
         [this] { showAboutDialog(); });
@@ -685,6 +718,10 @@ void MainWindow::createActions()
     analysisModuleAction_ = moduleGroup->addAction(tr("&Analysis"));
     resultsModuleAction_ = moduleGroup->addAction(tr("&Results"));
     optimizeModuleAction_ = moduleGroup->addAction(tr("&Optimize"));
+    modelModuleAction_->setIcon(icon("geometry"));
+    analysisModuleAction_->setIcon(icon("analysis"));
+    resultsModuleAction_->setIcon(icon("results"));
+    optimizeModuleAction_->setIcon(icon("optimize"));
     for (auto* action : moduleGroup->actions()) {
         action->setCheckable(true);
     }
@@ -712,7 +749,8 @@ void MainWindow::createWorkspace()
     centralLayout->setSpacing(0);
     auto* moduleNavigation = new QToolBar(tr("Workbench Modules"), central);
     moduleNavigation->setObjectName(QStringLiteral("moduleNavigationToolbar"));
-    moduleNavigation->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    moduleNavigation->setIconSize({18, 18});
+    moduleNavigation->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     moduleNavigation->addAction(homeModuleAction_);
     moduleNavigation->addSeparator();
     moduleNavigation->addAction(modelModuleAction_);
@@ -1583,6 +1621,7 @@ void MainWindow::updateDeckUnitControls(const nec::DeckGeometryUnitInfo& info)
         "This setting is independent of Geometry display units."));
     wireCardEditor_->setDeckScale(
         info.uniform ? info.scaleToMeters : 1.0, unitLabel);
+    structuredCardEditor_->setDeckUnitLabel(unitLabel);
 }
 
 auto MainWindow::deckScaleForSourceLine(std::size_t sourceLine) const -> double
@@ -1966,6 +2005,7 @@ void MainWindow::createMenusAndToolbar()
     auto* runMenu = menuBar()->addMenu(tr("&Run"));
     runMenu->setObjectName(QStringLiteral("runMenu"));
     runMenu->addAction(runAction_);
+    runMenu->addAction(quickSweepAction_);
     runMenu->addAction(stopAction_);
 
     auto* helpMenu = menuBar()->addMenu(tr("&Help"));
@@ -1977,6 +2017,7 @@ void MainWindow::createMenusAndToolbar()
 
     auto* toolbar = addToolBar(tr("Main"));
     toolbar->setObjectName(QStringLiteral("mainToolbar"));
+    toolbar->setIconSize({24, 24});
     toolbar->addAction(newAction_);
     toolbar->addAction(openAction_);
     toolbar->addAction(saveAction_);
@@ -1986,6 +2027,7 @@ void MainWindow::createMenusAndToolbar()
     toolbar->addSeparator();
     toolbar->addAction(checkAction_);
     toolbar->addAction(runAction_);
+    toolbar->addAction(quickSweepAction_);
     toolbar->addAction(stopAction_);
 }
 
@@ -2767,7 +2809,7 @@ void MainWindow::addWire(const model::Point3D& start, const model::Point3D& end)
 void MainWindow::splitWire(int tag, const model::Point3D& position)
 {
     const auto* wire = currentModel_.wireByTag(tag);
-    if (wire == nullptr || position == wire->start || position == wire->end) {
+    if (wire == nullptr || !wire->editable || position == wire->start || position == wire->end) {
         return;
     }
     if (wireHasSymbolicGeometry(wire->sourceLine)) {
@@ -2799,7 +2841,7 @@ void MainWindow::splitWire(int tag, const model::Point3D& position)
 void MainWindow::deleteWire(int tag)
 {
     const auto* wire = currentModel_.wireByTag(tag);
-    if (wire == nullptr) {
+    if (wire == nullptr || !wire->editable) {
         return;
     }
     auto lines = editor_->toPlainText().split(QLatin1Char('\n'), Qt::KeepEmptyParts);
@@ -2815,7 +2857,7 @@ void MainWindow::deleteWire(int tag)
 void MainWindow::duplicateWire(int tag)
 {
     const auto* wire = currentModel_.wireByTag(tag);
-    if (wire == nullptr) {
+    if (wire == nullptr || !wire->editable) {
         return;
     }
     auto lines = editor_->toPlainText().split(QLatin1Char('\n'), Qt::KeepEmptyParts);
@@ -2834,7 +2876,7 @@ void MainWindow::duplicateWire(int tag)
 void MainWindow::showWireProperties(int tag)
 {
     const auto* selectedWire = currentModel_.wireByTag(tag);
-    if (selectedWire == nullptr) {
+    if (selectedWire == nullptr || !selectedWire->editable) {
         return;
     }
     const auto original = *selectedWire;
@@ -3209,11 +3251,12 @@ void MainWindow::updateAnalysisReadiness()
     if (modelErrorCount_ != 0) {
         blockers.append(tr("Model check reports %1 error(s).").arg(static_cast<qulonglong>(modelErrorCount_)));
     }
-    if (!currentSetup_.frequency) {
-        blockers.append(tr("No supported FR frequency definition."));
-    }
     if (currentSetup_.excitations.empty()) {
         blockers.append(tr("No supported EX voltage source."));
+    }
+    auto quickSweepBlockers = blockers;
+    if (!currentSetup_.frequency) {
+        blockers.append(tr("No supported FR frequency definition."));
     }
     auto averageGainBlockers = blockers;
     if (!currentSetup_.executionRequest && currentSetup_.radiationPatterns.empty()) {
@@ -3221,19 +3264,24 @@ void MainWindow::updateAnalysisReadiness()
     }
     if (!analysis::isBackendRunnable(solverBackendId_.toStdString())) {
         blockers.append(tr("The selected backend does not have a process adapter yet."));
+        quickSweepBlockers.append(tr("The selected backend does not have a process adapter yet."));
     }
     const QFileInfo executable(solverExecutablePath_);
     if (solverExecutablePath_.isEmpty()) {
         blockers.append(tr("No solver executable selected."));
+        quickSweepBlockers.append(tr("No solver executable selected."));
     } else if (!executable.exists() || !executable.isFile() || !executable.isExecutable()) {
         blockers.append(tr("Solver executable path is not runnable."));
+        quickSweepBlockers.append(tr("Solver executable path is not runnable."));
     }
     if (optimizationWorkspace_->isRunning()) {
         blockers.append(tr("An optimization sweep is running."));
+        quickSweepBlockers.append(tr("An optimization sweep is running."));
         averageGainBlockers.append(tr("An optimization sweep is running."));
     }
     if (convergenceWorkspace_->isRunning()) {
         blockers.append(tr("A segmentation convergence study is running."));
+        quickSweepBlockers.append(tr("A segmentation convergence study is running."));
         averageGainBlockers.append(tr("A segmentation convergence study is running."));
     }
     if (!analysis::isBackendRunnable(solverBackendId_.toStdString())) {
@@ -3246,6 +3294,7 @@ void MainWindow::updateAnalysisReadiness()
     }
     analysisRequestEditor_->setReadiness(blockers);
     runAction_->setEnabled(blockers.empty() && !solverRunner_->isRunning());
+    quickSweepAction_->setEnabled(quickSweepBlockers.empty() && !solverRunner_->isRunning());
     averageGainAction_->setEnabled(averageGainBlockers.empty() && !solverRunner_->isRunning());
     convergenceAction_->setEnabled(modelChecked_ && modelErrorCount_ == 0
         && !solverRunner_->isRunning() && !optimizationWorkspace_->isRunning()
@@ -3283,9 +3332,63 @@ void MainWindow::startAnalysis()
         return;
     }
 
+    const auto source = editor_->toPlainText().toStdString();
+    const auto resolution = nec::NecSymbolResolver{}.resolve(source);
+    if (!resolution.ok()) {
+        QMessageBox::critical(this, tr("Run Failed"),
+            tr("The parameterized source could not be resolved."));
+        return;
+    }
+    const auto generatedDocument = nec::NecParser{}.parse(resolution.generatedDeck);
+    const auto generatedSetup = nec::NecSetupConverter{}.convert(generatedDocument);
+    const auto solverInput = analysis::prepareSolverInput(
+        resolution.generatedDeck, generatedSetup,
+        analysisRequestEditor_->radiationFrequencyPlan());
+    startAnalysisRun(source, solverInput, QStringLiteral("analysis"), {}, tr("NEC analysis"));
+}
+
+void MainWindow::startQuickFrequencySweep()
+{
+    if (solverRunner_->isRunning() || !quickSweepAction_->isEnabled()) return;
+    checkModel();
+    if (modelErrorCount_ != 0 || !quickSweepAction_->isEnabled()) {
+        statusBar()->showMessage(
+            tr("Quick sweep canceled: model validation found blocking errors."), 5000);
+        return;
+    }
+
+    const auto initial = currentSetup_.frequency.value_or(model::FrequencyDefinition{});
+    QuickSweepDialog dialog(initial, this, !currentSetup_.radiationPatterns.empty());
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    const auto source = editor_->toPlainText().toStdString();
+    const auto resolution = nec::NecSymbolResolver{}.resolve(source);
+    if (!resolution.ok()) {
+        QMessageBox::critical(this, tr("Quick Sweep Failed"),
+            tr("The parameterized source could not be resolved."));
+        return;
+    }
+    const auto sweep = dialog.frequencyDefinition();
+    const auto includeRadiation = dialog.includeRadiationPatterns();
+    const auto solverInput = analysis::prepareFrequencySweepInput(
+        resolution.generatedDeck, sweep, includeRadiation);
+    const auto summary = tr("%1–%2 MHz · %3 points · %4")
+        .arg(formatDecimal(sweep.startMHz), formatDecimal(model::frequencyEndMHz(sweep)))
+        .arg(sweep.count)
+        .arg(includeRadiation ? tr("with RP") : tr("impedance/current"));
+    startAnalysisRun(source, solverInput, QStringLiteral("quick-sweep"), summary,
+        tr("Quick frequency sweep"));
+}
+
+void MainWindow::startAnalysisRun(const std::string& authoredSource,
+    const std::string& solverInput, const QString& runType, const QString& summary,
+    const QString& activity)
+{
     currentRunPurpose_ = SolverRunPurpose::Analysis;
     currentRunRecord_ = runStore_.create(solverBackendId_, currentFile_.isEmpty()
-        ? QStringLiteral("Untitled model.nec") : currentFile_);
+        ? QStringLiteral("Untitled model.nec") : currentFile_, runType);
+    currentRunRecord_->summary = summary;
+    runStore_.save(*currentRunRecord_);
     currentRunDirectory_ = currentRunRecord_->directory;
     if (!QFileInfo::exists(currentRunDirectory_)) {
         QMessageBox::critical(this, tr("Run Failed"), tr("Could not create the solver run folder."));
@@ -3296,21 +3399,13 @@ void MainWindow::startAnalysis()
     const auto inputPath = QDir(currentRunDirectory_).filePath(QStringLiteral("model.nec"));
     const auto sourcePath = QDir(currentRunDirectory_).filePath(QStringLiteral("model.source.nec"));
     currentRunOutputPath_ = QDir(currentRunDirectory_).filePath(QStringLiteral("model.out"));
-    const auto source = editor_->toPlainText().toStdString();
-    const auto resolution = nec::NecSymbolResolver{}.resolve(source);
-    if (!resolution.ok()) {
-        QMessageBox::critical(this, tr("Run Failed"),
-            tr("The parameterized source could not be resolved."));
-        currentRunRecord_.reset();
-        return;
-    }
     QFile sourceFile(sourcePath);
     if (!sourceFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         QMessageBox::critical(this, tr("Run Failed"), sourceFile.errorString());
         currentRunRecord_.reset();
         return;
     }
-    sourceFile.write(QByteArray::fromStdString(source));
+    sourceFile.write(QByteArray::fromStdString(authoredSource));
     sourceFile.close();
 
     QFile inputFile(inputPath);
@@ -3319,11 +3414,6 @@ void MainWindow::startAnalysis()
         currentRunRecord_.reset();
         return;
     }
-    const auto generatedDocument = nec::NecParser{}.parse(resolution.generatedDeck);
-    const auto generatedSetup = nec::NecSetupConverter{}.convert(generatedDocument);
-    const auto solverInput = analysis::prepareSolverInput(
-        resolution.generatedDeck, generatedSetup,
-        analysisRequestEditor_->radiationFrequencyPlan());
     inputFile.write(QByteArray::fromStdString(solverInput));
     inputFile.close();
 
@@ -3333,10 +3423,11 @@ void MainWindow::startAnalysis()
             solverExecutablePath_.toStdString(), "model.nec", "model.out");
     } catch (const std::exception& error) {
         QMessageBox::critical(this, tr("Run Failed"), QString::fromLocal8Bit(error.what()));
+        currentRunRecord_.reset();
         return;
     }
 
-    startSolverProcess(command, tr("NEC analysis"));
+    startSolverProcess(command, activity);
 }
 
 void MainWindow::startAverageGainTest()
@@ -3699,7 +3790,9 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     appendSolverOutput(tr("\n\nRun status: %1\nElapsed: %2 seconds\n")
         .arg(status).arg(formatDecimal(processResult.durationSeconds)));
     const auto activity = currentRunPurpose_ == SolverRunPurpose::AverageGainTest
-        ? tr("Average Gain Test") : tr("Analysis");
+        ? tr("Average Gain Test")
+        : currentRunRecord_ && currentRunRecord_->runType == QStringLiteral("quick-sweep")
+            ? tr("Quick sweep") : tr("Analysis");
     statusBar()->showMessage(tr("%1 %2. Artifacts: %3")
         .arg(activity, status.toLower(), currentRunDirectory_), 10000);
     completeSolverActivity(status);
@@ -3746,7 +3839,8 @@ void MainWindow::addRunRecord(const AnalysisRunRecord& record, bool prepend)
     const auto type = record.runType == QStringLiteral("optimization-session")
         ? tr("Optimization")
         : record.runType == QStringLiteral("convergence-session") ? tr("Convergence")
-        : record.runType == QStringLiteral("average-gain-test") ? tr("AGT") : tr("Analysis");
+        : record.runType == QStringLiteral("average-gain-test") ? tr("AGT")
+        : record.runType == QStringLiteral("quick-sweep") ? tr("Quick Sweep") : tr("Analysis");
     const QStringList values{
         record.started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")),
         record.sourceFile.isEmpty() ? tr("Archived model.nec") : QFileInfo(record.sourceFile).fileName(),
@@ -4210,6 +4304,7 @@ void MainWindow::clearDisplayedResults()
 
 void MainWindow::editWire(const model::Wire& original, const model::Wire& updated)
 {
+    if (!original.editable) return;
     const auto block = editor_->document()->findBlockByNumber(
         static_cast<int>(original.sourceLine) - 1);
     if (!block.isValid()) return;
@@ -4446,7 +4541,7 @@ void MainWindow::addStructuredCard(const QString& cardText)
     auto lastGeometryIndex = -1;
     auto hasGeometryEnd = false;
     for (const auto& card : document.cards()) {
-        if (card.kind == nec::NecCardKind::GeometryWire)
+        if (nec::isGeometryCard(card.kind))
             lastGeometryIndex = static_cast<int>(card.lineNumber)-1;
         if (card.kind == nec::NecCardKind::GeometryEnd) hasGeometryEnd = true;
     }
@@ -4455,10 +4550,14 @@ void MainWindow::addStructuredCard(const QString& cardText)
             && currentSetup_.ground->type != model::GroundType::FreeSpace;
         lines.insert(lastGeometryIndex+1,
             QString::fromStdString(nec::NecWriter{}.writeGeometryEndCard(grounded ? 1 : 0)));
+        hasGeometryEnd = true;
     }
     const auto mnemonic = cardText.section(QLatin1Char(' '), 0, 0).toUpper();
+    const auto mnemonicText = mnemonic.toStdString();
+    const auto* cardSpec = nec::findNecCardSpec(mnemonicText);
+    const auto addingGeometry = cardSpec != nullptr && nec::isGeometryCard(cardSpec->kind);
     auto insertion = lines.size();
-    if (mnemonic == QStringLiteral("GS")) {
+    if (addingGeometry) {
         for (auto index = 0; index < lines.size(); ++index) {
             if (lines[index].trimmed().section(QLatin1Char(' '), 0, 0).compare(
                     QStringLiteral("GE"), Qt::CaseInsensitive) == 0) {
@@ -4468,7 +4567,7 @@ void MainWindow::addStructuredCard(const QString& cardText)
         }
     }
     for (auto index = 0; index < lines.size(); ++index) {
-        if (mnemonic == QStringLiteral("GS") && insertion != lines.size()) break;
+        if (addingGeometry && insertion != lines.size()) break;
         const auto lineMnemonic = lines[index].trimmed().section(QLatin1Char(' '), 0, 0).toUpper();
         if (lineMnemonic == QStringLiteral("EN")
             || (mnemonic != QStringLiteral("XQ") && lineMnemonic == QStringLiteral("XQ"))) {
@@ -4477,6 +4576,9 @@ void MainWindow::addStructuredCard(const QString& cardText)
         }
     }
     lines.insert(insertion, cardText);
+    if (addingGeometry && !hasGeometryEnd) {
+        lines.insert(insertion+1, QString::fromStdString(nec::NecWriter{}.writeGeometryEndCard(0)));
+    }
     pushGeometrySourceEdit(tr("Add %1 card").arg(mnemonic), lines.join(QLatin1Char('\n')));
 }
 
@@ -4694,26 +4796,18 @@ void MainWindow::updateProjectTree(const model::AntennaModel& antennaModel, cons
         category->setData(0, ItemKindRole, QStringLiteral("category"));
 
     const auto categoryFor = [&](const nec::NecCard& card) -> QTreeWidgetItem* {
-        const auto mnemonic = QString::fromStdString(card.mnemonic).toUpper();
-        if (card.kind == nec::NecCardKind::Comment) return comments;
-        if (card.kind == nec::NecCardKind::Symbol) return parameters;
-        if (card.kind == nec::NecCardKind::GeometryWire
-            || QStringList{QStringLiteral("GA"), QStringLiteral("GH"), QStringLiteral("GM"),
-                   QStringLiteral("GR"), QStringLiteral("GS"), QStringLiteral("GX"),
-                   QStringLiteral("SP"), QStringLiteral("SM"), QStringLiteral("SC"),
-                   QStringLiteral("GF")}.contains(mnemonic)) return geometry;
-        if (card.kind == nec::NecCardKind::GeometryEnd || card.kind == nec::NecCardKind::Ground
-            || QStringList{QStringLiteral("EK"), QStringLiteral("GD"), QStringLiteral("KH")}
-                   .contains(mnemonic)) return environment;
-        if (card.kind == nec::NecCardKind::Frequency || card.kind == nec::NecCardKind::Excitation)
-            return frequencySources;
-        if (card.kind == nec::NecCardKind::Load || card.kind == nec::NecCardKind::TransmissionLine
-            || card.kind == nec::NecCardKind::Network) return attachments;
-        if (card.kind == nec::NecCardKind::RadiationPattern || card.kind == nec::NecCardKind::Execute
-            || card.kind == nec::NecCardKind::End
-            || QStringList{QStringLiteral("NE"), QStringLiteral("NH"), QStringLiteral("PQ"),
-                   QStringLiteral("PT"), QStringLiteral("CP"), QStringLiteral("WG"),
-                   QStringLiteral("NX")}.contains(mnemonic)) return requests;
+        const auto* spec = nec::findNecCardSpec(card.mnemonic);
+        if (spec == nullptr) return other;
+        switch (spec->area) {
+        case nec::NecCardArea::Comments: return comments;
+        case nec::NecCardArea::Parameters: return parameters;
+        case nec::NecCardArea::Geometry: return geometry;
+        case nec::NecCardArea::Environment: return environment;
+        case nec::NecCardArea::FrequencySources: return frequencySources;
+        case nec::NecCardArea::LoadsNetworks: return attachments;
+        case nec::NecCardArea::RequestsExecution: return requests;
+        case nec::NecCardArea::Extensions: return other;
+        }
         return other;
     };
     const auto addCard = [&](QTreeWidgetItem* parent, const nec::NecCard& card, bool generic) {

@@ -16,8 +16,8 @@ The desktop menus provide the complete command inventory:
   default dock arrangement without changing the model.
 - **Model** contains Check Model, Automatic Segmentation, Average Gain Test,
   Segmentation Convergence, and Geometry Settings.
-- **Run** contains Run Analysis and a global Stop command for the active analysis,
-  validation study, or parameter sweep.
+- **Run** contains Run Analysis, Quick Frequency Sweep, and a global Stop command
+  for the active analysis, validation study, or parameter sweep.
 - **Help** contains Getting Started, the local User Guide, and About.
 
 ## Getting Started
@@ -143,6 +143,11 @@ Geometry provides synchronized graphical views of the checked antenna model.
 Changes made here rewrite the corresponding NEC source cards and participate in
 Undo/Redo.
 
+Workbench also displays wire arcs (`GA`), helical `GH` geometry, and tapered
+`GW`/`GC` wires. These generated paths retain their authored NEC cards and are
+read-only in the graphical editor; selection and segment-based source, load, and
+transmission-line placement still work. Flat-spiral `GH` geometry is not yet expanded.
+
 Path: **Model → Geometry**
 
 #### 2D Geometry
@@ -183,6 +188,9 @@ Path: **Model → Geometry → 3D Geometry**
 - Use **Isometric** to restore the standard 3D orientation.
 - Click wires and attached markers to synchronize selection across views and editors.
 - Right-click wires and markers for the same source/load actions available in 2D.
+
+Generated `GA`, `GH`, and `GC` paths can be inspected and selected in 3D, but their
+shape must currently be edited in Raw Source or Other NEC-2 Geometry Cards.
 
 The 3D geometry view currently supports selection and contextual editing; direct
 3D endpoint dragging is not yet implemented.
@@ -317,6 +325,9 @@ The structured editor groups supported card types under **Geometry**,
 **Program Control**. Selecting a leaf displays its card-specific columns:
 
 - **Wires (GW)** — tag, segments, endpoints, and radius
+- **GA Wire Arcs** — tag, segments, arc radius, start/end angles, and wire radius
+- **GH Helices and Spirals** — tag, segments, turn spacing, axial length,
+  start/end elliptical radii, and wire radius
 - **GS** — geometry-to-meter scale factor
 - **EX** — voltage and other excitation fields
 - **FR** — single frequency and sweep fields
@@ -332,8 +343,17 @@ written back to the source. Add and Delete actions operate on the selected card
 type and use the shared Undo/Redo history. The hierarchy changes navigation only;
 it does not duplicate the friendly editors or underlying source model.
 
-Unsupported cards remain preserved in raw source rather than being forced into
-an unsafe generic editor.
+GA and GH dimensional columns use the authored NEC deck length unit. Their field
+tooltips describe the NEC meaning, and adding either card places it before `GE`.
+Helical GH cards update the graphical model; valid flat-spiral GH cards remain
+source-editable but are not yet expanded graphically.
+
+Workbench recognizes the complete standard NEC-2 card vocabulary. Remaining geometry
+generators/transformations and additional control cards appear in generic fixed-field
+tables under **Other NEC-2 Geometry Cards** and **Other NEC-2 Control Cards**. These
+tables safely edit numeric fields but do not claim card-specific graphical behavior.
+Unknown extensions remain preserved in Raw Source. See
+[NEC Card Support](nec-card-support.md) for the support level of each mnemonic.
 
 `Z0` sets the reference impedance used by Workbench SWR displays and optimizer
 defaults; `ZO` is accepted as the legacy spelling. The value must be a positive
@@ -471,6 +491,24 @@ continues to show process messages as they become available.
 Canceled, timed-out, and failed runs retain their partial artifacts and output
 size in Run History, but Workbench does not load or parse the partial `model.out`
 on the GUI thread. This keeps stopping a large radiation sweep responsive.
+
+### Quick frequency sweep
+
+Path: the main toolbar or **Run → Quick Frequency Sweep** (`Ctrl+F6`)
+
+Quick Frequency Sweep evaluates the checked model over a temporary linear or
+logarithmic frequency range without changing its authored `FR` card. Linear mode
+uses a fixed MHz step; logarithmic mode uses a selected point count. The dialog
+shows the actual endpoint and number of generated frequencies before running.
+
+The default fast mode removes `RP` requests from the generated deck and calculates
+impedance, SWR, and currents with an inserted `XQ`. Enable **Include existing RP
+radiation requests** to retain the model's patterns at every sweep frequency; this
+can substantially increase solver time and output size.
+
+Run History identifies these records as **Quick Sweep**. `model.source.nec` retains
+the unchanged authored model while `model.nec` contains the temporary `FR` override,
+providing reproducible results without modifying or dirtying the editor.
 
 Solver and Requests pages scroll when the window is smaller than their usable
 content. Input controls retain their normal text height rather than collapsing;

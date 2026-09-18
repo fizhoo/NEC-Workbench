@@ -10,8 +10,10 @@
 #include "geometry/OrthographicProjection.h"
 #include "model/AutoSegmentation.h"
 #include "model/LengthUnit.h"
+#include "model/WireGeometry.h"
 #include "model/WireGauge.h"
 #include "nec/DeckGeometryUnits.h"
+#include "nec/NecCardCatalog.h"
 #include "nec/NecCardFieldEditor.h"
 #include "nec/NecModelConverter.h"
 #include "nec/NecModelChecker.h"
@@ -87,6 +89,29 @@ void testKnownCardsAreRecognized()
             && cards[14].kind == necwb::nec::NecCardKind::ReferenceImpedance,
         "canonical Z0 and legacy ZO reference impedance cards are recognized");
     expect(cards[15].kind == necwb::nec::NecCardKind::End, "EN recognized");
+}
+
+void testCompleteNec2CardCatalog()
+{
+    const auto catalog = necwb::nec::necCardCatalog();
+    expect(catalog.size() == 37, "catalog contains the complete NEC-2 vocabulary and Workbench extensions");
+    std::string source;
+    for (const auto& spec : catalog) source += std::string(spec.mnemonic) + '\n';
+    source += "ZZ 1\n";
+    const auto document = necwb::nec::NecParser{}.parse(source);
+    expect(document.cards().size() == catalog.size() + 1,
+        "catalog deck retains every standard and extension card");
+    for (std::size_t index = 0; index < catalog.size(); ++index) {
+        expect(document.cards()[index].kind != necwb::nec::NecCardKind::Unknown,
+            "every catalog card is recognized");
+    }
+    expect(document.cards().back().kind == necwb::nec::NecCardKind::Unknown,
+        "uncatalogued extensions remain distinguishable and preserved");
+    expect(necwb::nec::NecWriter{}.write(document) == source,
+        "recognized card coverage does not alter source round trips");
+    expect(necwb::nec::findNecCardSpec("GA")->kind == necwb::nec::NecCardKind::GeometryOther
+            && necwb::nec::findNecCardSpec("NE")->kind == necwb::nec::NecCardKind::ControlOther,
+        "generated geometry and additional controls have stable semantic groups");
 }
 
 void testSymbolResolution()
@@ -229,6 +254,32 @@ void testSymbolResolution()
             "FR 0 1 0 0 7.15 0\r\nXQ 0\r\n"
             "FR 0 1 0 0 21.2 0\r\nXQ 0\r\nEN\r\n",
         "explicit-frequency input sorts and deduplicates valid points while replacing old requests");
+    const necwb::model::FrequencyDefinition quickSweep{0, 36, 14.0, 0.01, 0};
+    const auto quickImpedance = necwb::analysis::prepareFrequencySweepInput(
+        "GW 1 11 0 0 0 1 0 0 .001\r\nGE 0\r\nEX 0 1 6 0 1 0\r\n"
+        "FR 0 1 0 0 7.1 0\r\nRP 0 19 37 1000 0 0 5 10\r\nEN\r\n",
+        quickSweep, false);
+    const auto quickImpedanceDocument = necwb::nec::NecParser{}.parse(quickImpedance);
+    const auto quickImpedanceSetup = necwb::nec::NecSetupConverter{}.convert(
+        quickImpedanceDocument);
+    expect(quickImpedanceSetup.frequency && quickImpedanceSetup.frequency->count == 36
+            && std::abs(quickImpedanceSetup.frequency->startMHz - 14.0) < 1.0e-12
+            && std::abs(quickImpedanceSetup.frequency->step - 0.01) < 1.0e-12
+            && quickImpedanceSetup.radiationPatterns.empty()
+            && quickImpedanceSetup.executionRequest.has_value()
+            && quickImpedance.find("\r\n") != std::string::npos,
+        "quick impedance sweep replaces FR, removes RP, inserts XQ, and preserves line endings");
+    const auto quickRadiation = necwb::analysis::prepareFrequencySweepInput(
+        "FR 0 1 0 0 7.1 0\nXQ 0\nRP 0 19 37 1000 0 0 5 10\nEN\n",
+        quickSweep, true);
+    const auto quickRadiationDocument = necwb::nec::NecParser{}.parse(quickRadiation);
+    const auto quickRadiationSetup = necwb::nec::NecSetupConverter{}.convert(
+        quickRadiationDocument);
+    expect(quickRadiationSetup.frequency && quickRadiationSetup.frequency->count == 36
+            && quickRadiationSetup.radiationPatterns.size() == 1
+            && !quickRadiationSetup.executionRequest.has_value()
+            && quickRadiation.find("FR 0 36 0 0 14 0.01\nRP") != std::string::npos,
+        "quick radiation sweep retains RP while replacing authored FR and XQ requests");
 
     const auto invalid = necwb::nec::NecSymbolResolver{}.resolve(
         "SY first=missing+1, good=2, GOOD=3, zero=1/0\n"
@@ -334,6 +385,50 @@ void testGeometryScaleConversion()
     }), "invalid GS scale factors are diagnosed");
 }
 
+void testGeneratedWireGeometryConversion()
+{
+    const auto document = necwb::nec::NecParser{}.parse(
+        "GW 1 4 0 0 0 4 0 0 0\n"
+        "GC 0 0 2 0.01 0.02\n"
+        "GA 2 4 1 0 90 0.01\n"
+        "GH 3 8 0.5 1 0.25 0.25 0.25 0.25 0.01\n"
+        "GS 0 0 2\n"
+        "GE 0\n");
+    const auto result = necwb::nec::NecModelConverter{}.convert(document);
+    expect(result.issues.empty() && result.model.wireCount() == 3,
+        "GC, GA, and GH produce semantic wire geometry");
+
+    const auto* tapered = result.model.wireByTag(1);
+    const auto* arc = result.model.wireByTag(2);
+    const auto* helix = result.model.wireByTag(3);
+    expect(tapered != nullptr && !tapered->editable && tapered->path.size() == 5
+            && std::abs(tapered->radius - 0.02) < 1.0e-12
+            && std::abs(tapered->endRadius - 0.04) < 1.0e-12
+            && std::abs(tapered->path[1].x - 8.0 / 15.0) < 1.0e-12,
+        "GC preserves tapered segment boundaries and endpoint radii through GS scaling");
+    expect(arc != nullptr && arc->geometryKind == necwb::model::WireGeometryKind::Arc
+            && arc->path.size() == 5 && std::abs(arc->start.x - 2.0) < 1.0e-12
+            && std::abs(arc->end.z - 2.0) < 1.0e-12,
+        "GA expands into scaled chord points in the XZ plane");
+    expect(helix != nullptr && helix->geometryKind == necwb::model::WireGeometryKind::Helix
+            && helix->path.size() == 9 && std::abs(helix->start.x - 0.5) < 1.0e-12
+            && std::abs(helix->end.z - 2.0) < 1.0e-12,
+        "GH expands into a scaled helix polyline");
+    const auto helixSegment = necwb::model::wireSegmentCenter(*helix, 2);
+    expect(helixSegment && std::abs(helixSegment->z - 0.375) < 1.0e-12,
+        "attachments resolve against generated curved-wire segment positions");
+
+    const auto invalid = necwb::nec::NecModelConverter{}.convert(necwb::nec::NecParser{}.parse(
+        "GW 1 3 0 0 0 1 0 0 0\nGE 0\n"));
+    expect(invalid.model.empty() && !invalid.issues.empty(),
+        "a zero-radius GW without a following GC card is rejected");
+
+    const auto spiral = necwb::nec::NecModelConverter{}.convert(necwb::nec::NecParser{}.parse(
+        "GH 8 40 0.05 0 0.1 0.1 0.2 0.2 0.001\nGE 0\n"));
+    expect(spiral.model.empty() && spiral.issues.empty(),
+        "valid flat-spiral GH remains preserved without claiming graphical expansion");
+}
+
 void testValidModelCheck()
 {
     const std::string source =
@@ -390,6 +485,19 @@ void testCardValidation()
     expect(result.diagnostics.front().lineNumber == 3, "card diagnostic retains source line");
 }
 
+void testGenericKnownCardValidation()
+{
+    const auto valid = necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
+        "GA 1 9 1 0 180 .001\nGE 0\nPT 0 0 0 0\nEN\n"));
+    expect(valid.errorCount() == 0,
+        "recognized NEC-2 geometry and control cards accept correctly typed fixed fields");
+
+    const auto invalid = necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
+        "GA 1 9 bad 0 180 .001\nGE 0\nPT bad 0 0 0\nEN\n"));
+    expect(invalid.errorCount() == 2,
+        "recognized generic cards diagnose integer and floating-point field errors");
+}
+
 void testGeometryCardOrdering()
 {
     const auto misplaced = necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
@@ -420,7 +528,7 @@ void testIncompleteModelCheck()
         "incomplete analysis setup remains editable rather than becoming a syntax error");
     expect(result.warningCount() == 3,
         "missing geometry, frequency, and source produce completeness warnings");
-    expect(result.diagnostics[0].message.find("no valid GW") != std::string::npos,
+    expect(result.diagnostics[0].message.find("no valid wire geometry") != std::string::npos,
         "incomplete model warning identifies missing wire geometry");
     expect(result.diagnostics[1].message.find("no supported FR") != std::string::npos,
         "incomplete setup warning identifies missing frequency");
@@ -1304,14 +1412,17 @@ auto main() -> int
     testRoundTripPreservesSource();
     testSourceLineEditing();
     testKnownCardsAreRecognized();
+    testCompleteNec2CardCatalog();
     testSymbolResolution();
     testCardFieldEditingPreservesExpressions();
     testWireConversion();
     testInvalidWireIsDiagnosed();
     testGeometryScaleConversion();
+    testGeneratedWireGeometryConversion();
     testValidModelCheck();
     testStaticModelAdequacyChecks();
     testCardValidation();
+    testGenericKnownCardValidation();
     testGeometryCardOrdering();
     testIncompleteModelCheck();
     testOrthographicProjection();

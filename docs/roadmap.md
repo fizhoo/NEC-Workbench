@@ -23,21 +23,27 @@ configured by the user and are not bundled.
 - Explicit, undoable application of the best candidate values to their active `SY` definitions
 - Model-level `Z0` feed reference shared by SWR results and optimizer defaults
 - Shared frequency plans for optimization and model, single, explicit-list, or continuous RP requests
+- Temporary linear/logarithmic Quick Frequency Sweeps with optional all-frequency RP output
 - Static model-adequacy checks for segmentation, thin-wire ratios, sources, and junctions
 - Single-frequency lossless Average Gain Test with archived Validation results
 - Segmentation convergence studies with EX, LD, and TL attachment remapping
 - Linux development builds and automated Windows packaging
+- Complete NEC-2 card recognition with centralized categories, fixed-field validation,
+  safe source preservation, and a published support matrix
+- Read-only semantic 2D/3D geometry for `GA`, helical `GH`, and tapered `GW`/`GC`,
+  with ordered `GS` scaling and segment-aware attachments
 
-## Next: NEC Card Coverage
+## Next: Geometry Card Semantics
 
-1. Inventory the complete NEC-2 card set and publish a support matrix.
-2. Ensure valid unsupported cards are preserved unchanged through editing and saving.
-3. Add parsing, validation, project-tree identity, and structured fields in practical groups.
-4. Verify generated decks with `nec2c` examples for every newly understood card.
+1. Apply `GM`, `GX`, and `GR` transformations in authored NEC order.
+2. Represent `SP`, `SM`, and `SC` surface patches without forcing them into wire models.
+3. Add flat-spiral `GH` semantics and dedicated editors only where card-specific labels
+   and constraints add value.
+4. Verify generated decks with `nec2c` examples for every newly expanded card.
 
-Card support will distinguish **Preserved**, **Understood**, and **Structured Editable**
-instead of claiming that every preserved extension has a dedicated editor. This coverage
-pass is followed by release stabilization, regression models, and packaging.
+Card support distinguishes **Preserved**, **Understood**, and **Structured Editable**
+instead of claiming that every recognized card already has complete graphical semantics.
+See `docs/nec-card-support.md` for the current matrix.
 
 ## Later: Model Adequacy
 

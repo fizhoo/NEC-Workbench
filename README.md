@@ -18,6 +18,7 @@ The current foundation provides:
 - Home, Model, Analysis, Results, and Optimize workspaces in one main window
 - Model groups Geometry, Parameters, Sources, Loads & Transmission Lines, Environment, and NEC Deck views
 - A live dashboard combining the shared NEC document, interactive 3D renderer, model summary, and quick results
+- Temporary linear or logarithmic frequency sweeps without modifying the authored NEC deck
 - An editable `GW` wire-card table synchronized with source, geometry, project selection, and undo/redo
 - A Model Parameters editor for adding, updating, deleting, and resolving `SY` expressions
 - Categorized, schema-specific Structured Cards navigation over the authoritative NEC deck
@@ -54,6 +55,7 @@ The current foundation provides:
 - [User Guide](docs/user-guide.md) — workspace paths, editing, analysis, results, and interaction controls
 - [Architecture](docs/architecture.md) — internal boundaries and current development milestones
 - [Roadmap](docs/roadmap.md) — parameterization, optimization, and planned improvements
+- [NEC Card Support](docs/nec-card-support.md) — complete NEC-2 coverage matrix and support levels
 
 ## Build
 
@@ -94,7 +96,8 @@ solver. Select a separately installed compatible solver executable in
 
 `necwb_core` deliberately has no Qt dependency. NEC source is represented by
 `NecDocument`; semantic antenna geometry is represented separately by
-`AntennaModel`. The solver command adapter and asynchronous Qt process runner
+`AntennaModel`, including read-only expanded paths for arcs, helices, and tapered
+wires. The solver command adapter and asynchronous Qt process runner
 keep backend-specific invocation separate from the model and results layers.
 
 Use **Tools → Check Model** or press `F7` to validate the open source deck.

@@ -18,6 +18,7 @@
 #include <QStringList>
 
 #include <optional>
+#include <string>
 #include <utility>
 
 class QAction;
@@ -195,6 +196,9 @@ private:
     void changeTransmissionLine(const model::TransmissionLineDefinition& line);
     void updateAnalysisReadiness();
     void startAnalysis();
+    void startQuickFrequencySweep();
+    void startAnalysisRun(const std::string& authoredSource, const std::string& solverInput,
+        const QString& runType, const QString& summary, const QString& activity);
     void startAverageGainTest();
     void showConvergenceStudy();
     void synchronizeRunnerState();
@@ -250,6 +254,7 @@ private:
     QAction* pasteAction_{};
     QAction* checkAction_{};
     QAction* runAction_{};
+    QAction* quickSweepAction_{};
     QAction* stopAction_{};
     QAction* averageGainAction_{};
     QAction* convergenceAction_{};

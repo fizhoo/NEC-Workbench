@@ -1,5 +1,6 @@
 #include "ui/analysis/FieldResultsViews.h"
 
+#include "model/WireGeometry.h"
 #include "ui/DisplayFormat.h"
 
 #include <QComboBox>
@@ -224,8 +225,10 @@ auto resultModelExtentFromOrigin(const model::AntennaModel& model) -> double
 {
     auto extent = 1.0e-12;
     for (const auto& wire : model.wires()) {
-        for (const auto& point : {wire.start, wire.end})
+        for (auto index = std::size_t{}; index < model::wirePathPointCount(wire); ++index) {
+            const auto& point = model::wirePathPoint(wire, index);
             extent = std::max({extent, std::abs(point.x), std::abs(point.y), std::abs(point.z)});
+        }
     }
     return extent;
 }
@@ -692,9 +695,13 @@ private:
     {
         if (model_.empty()) return;
         painter.setPen(QPen(QColor(245, 190, 45), 3));
-        for (const auto& wire : model_.wires())
-            painter.drawLine(project(normalized(wire.start, extent), scale),
-                project(normalized(wire.end, extent), scale));
+        for (const auto& wire : model_.wires()) {
+            for (auto index = std::size_t{1}; index < model::wirePathPointCount(wire); ++index) {
+                painter.drawLine(
+                    project(normalized(model::wirePathPoint(wire, index - 1), extent), scale),
+                    project(normalized(model::wirePathPoint(wire, index), extent), scale));
+            }
+        }
     }
     void drawCurrents(QPainter& painter, double scale, double extent)
     {
@@ -706,15 +713,10 @@ private:
         for (const auto& current : currents_) {
             const auto* wire = model_.wireByTag(current.wireTag);
             if (wire == nullptr || wire->segments <= 0 || current.segment < 1 || current.segment > wire->segments) continue;
-            const auto startFraction = static_cast<double>(current.segment - 1) / wire->segments;
-            const auto endFraction = static_cast<double>(current.segment) / wire->segments;
-            const auto interpolate = [wire](double fraction) {
-                return model::Point3D{wire->start.x + (wire->end.x-wire->start.x)*fraction,
-                    wire->start.y + (wire->end.y-wire->start.y)*fraction,
-                    wire->start.z + (wire->end.z-wire->start.z)*fraction};
-            };
-            const auto start = project(normalized(interpolate(startFraction), extent), scale);
-            const auto end = project(normalized(interpolate(endFraction), extent), scale);
+            const auto endpoints = model::wireSegmentEndpoints(*wire, current.segment);
+            if (!endpoints) continue;
+            const auto start = project(normalized(endpoints->first, extent), scale);
+            const auto end = project(normalized(endpoints->second, extent), scale);
             const auto ratio = current.magnitude / std::max(maximum, 1.0e-30);
             painter.setPen(QPen(QColor::fromHsvF((1.0-ratio)*0.67, 0.9, 0.95), 3.0 + 4.0*ratio));
             painter.drawLine(start, end);

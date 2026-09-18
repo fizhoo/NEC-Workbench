@@ -29,7 +29,8 @@ stay in the menu system.
 
 Menus and tabs have separate roles: tabs navigate among workspaces, menus expose
 the complete command inventory, and the main toolbar contains only frequent
-global actions. The Run menu owns the process-level Run and Stop commands. Stop
+global actions. The Run menu owns standard analysis, temporary Quick Frequency
+Sweep, and Stop commands. Stop
 delegates to the active ordinary solver, convergence study, or parameter sweep.
 Reset Layout affects only window/dock placement and never model or result data.
 
@@ -42,6 +43,12 @@ radiation, and immutable raw solver output. Optimize provides bounded
 single-variable SWR sweeps.
 Project remains a global dock. Bottom-tabbed Validation and Solver Output docks
 preserve diagnostics and process logs across every workspace.
+
+Quick Frequency Sweep uses the same archived-run and result pipeline as a normal
+analysis. The Qt dialog produces a `FrequencyDefinition`; the Qt-free SolverInput
+layer replaces `FR` and request cards only in the generated numeric deck. The
+authored source snapshot remains unchanged, and run metadata identifies the
+temporary override.
 
 Results uses one movable content widget rather than duplicated views. A stable
 host remains in the main module stack while the same widget is reparented into a
@@ -73,11 +80,18 @@ row positions the raw editor cursor on that card; editing a field rewrites only
 that mapped line through the existing source command, undo, parse, validation,
 and synchronization path. Supported families provide safe default Add actions
 and selection-aware Delete actions; both are undoable source edits, and new
-control cards are inserted before `XQ`/`EN` as appropriate. Unsupported cards
-remain untouched and available in Raw Source rather than being coerced into an
-unsafe generic schema.
+control cards are inserted before `XQ`/`EN` as appropriate. The Qt-free
+`NecCardCatalog` is the source of truth for standard NEC-2 mnemonics, fixed-field
+layouts, workspace categories, and support levels. Recognized cards without a
+dedicated editor are exposed through generic fixed-field tables; unknown solver
+extensions remain untouched and available in Raw Source.
 
-Model validation also enforces NEC section ordering: all `GW` geometry cards
+Recognition does not imply graphical expansion. Generated geometry and transformation
+cards are categorized and type-checked, but the geometry converter continues to render
+only semantics it implements. This boundary prevents the UI from inventing geometry
+while allowing card coverage to grow independently from source preservation.
+
+Model validation also enforces NEC section ordering: all recognized geometry cards
 must precede a terminating `GE`, and `GN`, `EX`, `FR`, loads, requests, and other
 control cards must follow that boundary. Wire insertion creates a missing `GE`
 when necessary, and structured control-card insertion preserves the boundary,
@@ -326,6 +340,15 @@ connection.
 `NecDocument` and `AntennaModel` are intentionally distinct. Parsing preserves
 every source line, including blank and unknown lines. Semantic conversion reads
 supported cards without discarding source it cannot yet interpret.
+
+The semantic `Wire` representation may contain segment-boundary path points and a
+geometry kind. This lets `GA`, helical `GH`, and tapered `GW`/`GC` cards participate
+in shared projection, fitting, attachment, and adequacy logic without rewriting the
+authored cards as many independent `GW` records. Generated paths are marked read-only;
+ordinary `GW` wires remain editable through source-backed commands.
+Dedicated Structured Cards families edit authored `GA` and `GH` fields directly;
+they never flatten generated paths into replacement `GW` cards. Add operations use
+the shared source-edit command path and insert geometry before `GE`.
 
 ## Parameterization Core
 

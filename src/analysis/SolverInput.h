@@ -30,4 +30,7 @@ enum class RadiationSweepMode {
 [[nodiscard]] auto prepareExplicitFrequencyInput(std::string_view source,
     std::span<const double> frequenciesMHz) -> std::string;
 
+[[nodiscard]] auto prepareFrequencySweepInput(std::string_view source,
+    const model::FrequencyDefinition& sweep, bool includeRadiationPatterns) -> std::string;
+
 }

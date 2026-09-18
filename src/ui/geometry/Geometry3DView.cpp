@@ -1,5 +1,6 @@
 #include "ui/geometry/Geometry3DView.h"
 
+#include "model/WireGeometry.h"
 #include "ui/DisplayFormat.h"
 
 #include <QContextMenuEvent>
@@ -11,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace necwb::ui {
@@ -151,8 +153,8 @@ void Geometry3DView::fitToView()
     auto minimumY = 1.0e300;
     auto maximumY = -1.0e300;
     for (const auto& wire : model_.wires()) {
-        for (const auto& point : {wire.start, wire.end}) {
-            const auto camera = cameraCoordinates(point);
+        for (auto point = std::size_t{}; point < model::wirePathPointCount(wire); ++point) {
+            const auto camera = cameraCoordinates(model::wirePathPoint(wire, point));
             minimumX = std::min(minimumX, camera.x);
             maximumX = std::max(maximumX, camera.x);
             minimumY = std::min(minimumY, camera.y);
@@ -216,7 +218,10 @@ void Geometry3DView::contextMenuEvent(QContextMenuEvent* event)
         selectedLoadLine_.reset();
         selectedTransmissionLine_.reset();
         emit wireSelected(*tag);
+        const auto* wire = model_.wireByTag(*tag);
+        const auto editable = wire != nullptr && wire->editable;
         auto* propertiesAction = menu.addAction(tr("Properties…"));
+        propertiesAction->setEnabled(editable);
         menu.addSeparator();
         auto* addSourceAction = menu.addAction(tr("Add Voltage Source Here"));
         auto* addLoadAction = menu.addAction(tr("Add Load Here"));
@@ -398,11 +403,19 @@ void Geometry3DView::paintEvent(QPaintEvent*)
         const model::Wire* wire{};
         CameraPoint start;
         CameraPoint end;
+        bool drawStart{};
+        bool drawEnd{};
+        bool drawLabel{};
     };
     std::vector<RenderWire> renderWires;
     renderWires.reserve(model_.wireCount());
     for (const auto& wire : model_.wires()) {
-        renderWires.push_back({&wire, project(wire.start), project(wire.end)});
+        const auto pointCount = model::wirePathPointCount(wire);
+        for (auto point = std::size_t{1}; point < pointCount; ++point) {
+            renderWires.push_back({&wire, project(model::wirePathPoint(wire, point - 1)),
+                project(model::wirePathPoint(wire, point)), point == 1,
+                point + 1 == pointCount, point == pointCount / 2});
+        }
     }
     std::ranges::sort(renderWires, {}, [](const RenderWire& wire) {
         return (wire.start.depth + wire.end.depth) / 2.0;
@@ -415,11 +428,17 @@ void Geometry3DView::paintEvent(QPaintEvent*)
         painter.drawLine(rendered.start.screen, rendered.end.screen);
         painter.setBrush(color);
         const auto endpointRadius = selected ? 5.0 : 3.5;
-        painter.drawEllipse(rendered.start.screen, endpointRadius, endpointRadius);
-        painter.drawEllipse(rendered.end.screen, endpointRadius, endpointRadius);
-        if (selected) {
+        if (rendered.drawStart)
+            painter.drawEllipse(rendered.start.screen, endpointRadius, endpointRadius);
+        if (rendered.drawEnd)
+            painter.drawEllipse(rendered.end.screen, endpointRadius, endpointRadius);
+        if (selected && rendered.drawLabel) {
             const auto midpoint = (rendered.start.screen + rendered.end.screen) / 2.0;
-            painter.drawText(midpoint + QPointF{8.0, -8.0}, QStringLiteral("GW %1").arg(rendered.wire->tag));
+            const auto mnemonic = rendered.wire->geometryKind == model::WireGeometryKind::Arc
+                ? QStringLiteral("GA") : rendered.wire->geometryKind == model::WireGeometryKind::Helix
+                ? QStringLiteral("GH") : QStringLiteral("GW");
+            painter.drawText(midpoint + QPointF{8.0, -8.0},
+                QStringLiteral("%1 %2").arg(mnemonic).arg(rendered.wire->tag));
         }
     }
 
@@ -499,10 +518,14 @@ auto Geometry3DView::wireAt(const QPointF& position) const -> std::optional<int>
     auto closestDistance = 9.0;
     std::optional<int> closestTag;
     for (const auto& wire : model_.wires()) {
-        const auto distance = distanceToSegment(position, project(wire.start).screen, project(wire.end).screen);
-        if (distance < closestDistance) {
-            closestDistance = distance;
-            closestTag = wire.tag;
+        for (auto point = std::size_t{1}; point < model::wirePathPointCount(wire); ++point) {
+            const auto distance = distanceToSegment(position,
+                project(model::wirePathPoint(wire, point - 1)).screen,
+                project(model::wirePathPoint(wire, point)).screen);
+            if (distance < closestDistance) {
+                closestDistance = distance;
+                closestTag = wire.tag;
+            }
         }
     }
     return closestTag;
@@ -548,6 +571,20 @@ auto Geometry3DView::segmentAt(int wireTag, const QPointF& position) const -> in
     if (wire == nullptr) {
         return 1;
     }
+    if (wire->path.size() == static_cast<std::size_t>(wire->segments + 1)) {
+        auto closestSegment = 1;
+        auto closestDistance = std::numeric_limits<double>::infinity();
+        for (auto segment = 1; segment <= wire->segments; ++segment) {
+            const auto endpoints = model::wireSegmentEndpoints(*wire, segment);
+            const auto distance = distanceToSegment(position, project(endpoints->first).screen,
+                project(endpoints->second).screen);
+            if (distance < closestDistance) {
+                closestDistance = distance;
+                closestSegment = segment;
+            }
+        }
+        return closestSegment;
+    }
     const auto start = project(wire->start).screen;
     const auto end = project(wire->end).screen;
     const auto delta = end - start;
@@ -575,7 +612,8 @@ void Geometry3DView::updateModelCenter()
     auto minimum = model_.wires().front().start;
     auto maximum = minimum;
     for (const auto& wire : model_.wires()) {
-        for (const auto& point : {wire.start, wire.end}) {
+        for (auto index = std::size_t{}; index < model::wirePathPointCount(wire); ++index) {
+            const auto& point = model::wirePathPoint(wire, index);
             minimum.x = std::min(minimum.x, point.x);
             minimum.y = std::min(minimum.y, point.y);
             minimum.z = std::min(minimum.z, point.z);

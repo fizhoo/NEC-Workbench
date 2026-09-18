@@ -1,7 +1,9 @@
 #include "nec/NecModelChecker.h"
 
+#include "nec/NecCardCatalog.h"
 #include "nec/NecModelConverter.h"
 #include "nec/NecSetupConverter.h"
+#include "model/WireGeometry.h"
 
 #include <algorithm>
 #include <charconv>
@@ -32,14 +34,6 @@ void addAdequacyWarning(ModelCheckResult& result, std::size_t lineNumber, std::s
 {
     result.diagnostics.push_back(
         {DiagnosticSeverity::Warning, lineNumber, std::move(message), "Model adequacy"});
-}
-
-auto wireLength(const model::Wire& wire) -> double
-{
-    const auto x = wire.end.x - wire.start.x;
-    const auto y = wire.end.y - wire.start.y;
-    const auto z = wire.end.z - wire.start.z;
-    return std::sqrt(x * x + y * y + z * z);
 }
 
 auto nearby(const model::Point3D& first, const model::Point3D& second) -> bool
@@ -77,9 +71,9 @@ void checkStaticAdequacy(const model::ModelSetup& setup, ModelCheckResult& resul
 
     for (const auto& wire : result.model.wires()) {
         if (wire.segments <= 0 || wire.radius <= 0.0) continue;
-        const auto segmentLength = wireLength(wire) / static_cast<double>(wire.segments);
+        const auto segmentLength = model::wireMinimumSegmentLength(wire);
         const auto wavelengthRatio = segmentLength / wavelengthMeters;
-        const auto diameterRatio = segmentLength / (2.0 * wire.radius);
+        const auto diameterRatio = segmentLength / (2.0 * model::wireMaximumRadius(wire));
         if (wavelengthRatio > 0.1) {
             addAdequacyWarning(result, wire.sourceLine,
                 "Wire tag " + std::to_string(wire.tag) + " segment length is "
@@ -339,6 +333,26 @@ void checkTransmissionLine(const NecCard& card, ModelCheckResult& result)
     if (impedance == 0.0) addError(result, card, "TL characteristic impedance must be nonzero");
 }
 
+void checkGenericKnownCard(const NecCard& card, ModelCheckResult& result)
+{
+    const auto* spec = findNecCardSpec(card.mnemonic);
+    if (spec == nullptr) return;
+    const auto maximumFields = spec->integerFieldCount + spec->numericFieldCount;
+    if (maximumFields > 0 && card.fields.size() > maximumFields) {
+        addError(result, card, card.mnemonic + " has more fields than the NEC-2 card format allows");
+        return;
+    }
+    for (std::size_t index = 0; index < card.fields.size(); ++index) {
+        const auto valid = index < spec->integerFieldCount
+            ? isNumber<int>(card.fields[index]) : isNumber<double>(card.fields[index]);
+        if (!valid) {
+            addError(result, card, card.mnemonic + " field " + std::to_string(index + 1)
+                + " has the wrong numeric type");
+            return;
+        }
+    }
+}
+
 void checkCardOrdering(const NecDocument& document, ModelCheckResult& result)
 {
     const NecCard* lastGeometry{};
@@ -346,9 +360,8 @@ void checkCardOrdering(const NecDocument& document, ModelCheckResult& result)
     auto reportedMissingEnd = false;
     auto controlSeen = false;
     for (const auto& card : document.cards()) {
-        if (card.kind == NecCardKind::GeometryWire
-            || card.kind == NecCardKind::GeometryScale) {
-            if (card.kind == NecCardKind::GeometryWire) lastGeometry = &card;
+        if (isGeometryCard(card.kind)) {
+            lastGeometry = &card;
             if (geometryEnded) {
                 addError(result, card, card.mnemonic + " geometry cards must appear before GE");
             }
@@ -365,22 +378,13 @@ void checkCardOrdering(const NecDocument& document, ModelCheckResult& result)
             geometryEnded = true;
             continue;
         }
-        const auto isControlCard = card.kind == NecCardKind::Excitation
-            || card.kind == NecCardKind::Load
-            || card.kind == NecCardKind::Ground
-            || card.kind == NecCardKind::Frequency
-            || card.kind == NecCardKind::RadiationPattern
-            || card.kind == NecCardKind::Execute
-            || card.kind == NecCardKind::TransmissionLine
-            || card.kind == NecCardKind::Network
-            || card.kind == NecCardKind::ReferenceImpedance
-            || card.kind == NecCardKind::End;
-        if (isControlCard && lastGeometry != nullptr && !geometryEnded && !reportedMissingEnd) {
+        const auto controlCard = isControlCard(card.kind);
+        if (controlCard && lastGeometry != nullptr && !geometryEnded && !reportedMissingEnd) {
             addError(result, card, card.mnemonic
                 + " appears before GE; terminate GW geometry with a GE card before control cards");
             reportedMissingEnd = true;
         }
-        controlSeen = controlSeen || isControlCard;
+        controlSeen = controlSeen || controlCard;
     }
     if (lastGeometry != nullptr && !geometryEnded && !reportedMissingEnd) {
         addError(result, *lastGeometry, "Geometry section requires a GE card after the final GW card");
@@ -440,6 +444,16 @@ auto NecModelChecker::check(const NecDocument& document) const -> ModelCheckResu
         case NecCardKind::ReferenceImpedance:
             checkReferenceImpedance(card, result);
             break;
+        case NecCardKind::GeometryOther:
+        case NecCardKind::ControlOther:
+        case NecCardKind::Network:
+            if (std::ranges::none_of(result.diagnostics, [&card](const auto& diagnostic) {
+                    return diagnostic.severity == DiagnosticSeverity::Error
+                        && diagnostic.lineNumber == card.lineNumber;
+                })) {
+                checkGenericKnownCard(card, result);
+            }
+            break;
         case NecCardKind::Unknown:
             result.diagnostics.push_back({DiagnosticSeverity::Warning, card.lineNumber,
                 "Unknown card " + card.mnemonic + "; the source line will be preserved",
@@ -452,7 +466,7 @@ auto NecModelChecker::check(const NecDocument& document) const -> ModelCheckResu
     const auto setup = NecSetupConverter{}.convert(document);
     if (result.model.empty()) {
         result.diagnostics.push_back({DiagnosticSeverity::Warning, 0,
-            "Incomplete model: no valid GW wire geometry", "Readiness"});
+            "Incomplete model: no valid wire geometry", "Readiness"});
     }
     if (!setup.frequency) {
         result.diagnostics.push_back({DiagnosticSeverity::Warning, 0,

@@ -1,6 +1,7 @@
 #include "ui/geometry/GeometryView.h"
 
 #include "ui/DisplayFormat.h"
+#include "model/WireGeometry.h"
 
 #include <QContextMenuEvent>
 #include <QMenu>
@@ -12,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace necwb::ui {
@@ -38,6 +40,13 @@ auto horizontalAxis(geometry::ProjectionPlane plane) -> QString
 auto verticalAxis(geometry::ProjectionPlane plane) -> QString
 {
     return plane == geometry::ProjectionPlane::XY ? QStringLiteral("Y") : QStringLiteral("Z");
+}
+
+auto wireLabel(const model::Wire& wire) -> QString
+{
+    const auto mnemonic = wire.geometryKind == model::WireGeometryKind::Arc ? "GA"
+        : wire.geometryKind == model::WireGeometryKind::Helix ? "GH" : "GW";
+    return QStringLiteral("%1 %2").arg(QString::fromLatin1(mnemonic)).arg(wire.tag);
 }
 
 }
@@ -253,8 +262,11 @@ void GeometryView::contextMenuEvent(QContextMenuEvent* event)
         selectedLoadLine_.reset();
         selectedTransmissionLine_.reset();
         emit wireSelected(*tag);
+        const auto* wire = model_.wireByTag(*tag);
+        const auto editable = wire != nullptr && wire->editable;
         const auto splitPoint = splitPointAt(*tag, event->pos());
         auto* propertiesAction = menu.addAction(tr("Properties…"));
+        propertiesAction->setEnabled(editable);
         menu.addSeparator();
         auto* addSourceAction = menu.addAction(tr("Add Voltage Source Here"));
         auto* addLoadAction = menu.addAction(tr("Add Load Here"));
@@ -263,8 +275,9 @@ void GeometryView::contextMenuEvent(QContextMenuEvent* event)
         auto* cancelLineAction = pendingTransmissionLineEndpoint_
             ? menu.addAction(tr("Cancel Transmission Line")) : nullptr;
         auto* splitAction = menu.addAction(tr("Split Wire Here"));
-        splitAction->setEnabled(splitPoint.has_value());
+        splitAction->setEnabled(editable && splitPoint.has_value());
         auto* deleteAction = menu.addAction(tr("Delete Wire"));
+        deleteAction->setEnabled(editable);
         const auto* selectedAction = menu.exec(event->globalPos());
         if (selectedAction == splitAction && splitPoint) {
             emit splitWireRequested(*tag, *splitPoint);
@@ -385,6 +398,12 @@ void GeometryView::mousePressEvent(QMouseEvent* event)
             return;
         }
         if (const auto tag = wireAt(event->position())) {
+            const auto* selected = model_.wireByTag(*tag);
+            if (selected == nullptr || !selected->editable) {
+                selectAt(event->position());
+                event->accept();
+                return;
+            }
             draggedWireTag_ = *tag;
             draggingWire_ = true;
             selectedWireTag_ = draggedWireTag_;
@@ -567,27 +586,27 @@ void GeometryView::drawWires(QPainter& painter) const
     const QColor selectedColor(230, 126, 34);
     auto index = 0;
     for (const auto& wire : model_.wires()) {
-        const auto start = mapToScreen(geometry::project(wire.start, plane_));
-        const auto end = mapToScreen(geometry::project(wire.end, plane_));
         const bool selected = selectedWireTag_ == wire.tag;
         const auto color = selected ? selectedColor : wireColor;
         painter.setPen(QPen(color, selected ? 4.0 : 2.5, Qt::SolidLine, Qt::RoundCap));
-
-        if (QLineF(start, end).length() < 1.0) {
-            const auto radius = selected ? 8.0 : 6.0;
-            painter.setBrush(palette().base());
-            painter.drawEllipse(start, radius, radius);
-            painter.drawLine(start + QPointF{-radius, 0.0}, start + QPointF{radius, 0.0});
-            painter.drawLine(start + QPointF{0.0, -radius}, start + QPointF{0.0, radius});
-        } else {
+        const auto pointCount = model::wirePathPointCount(wire);
+        for (auto point = std::size_t{1}; point < pointCount; ++point) {
+            const auto start = mapToScreen(geometry::project(
+                model::wirePathPoint(wire, point - 1), plane_));
+            const auto end = mapToScreen(geometry::project(model::wirePathPoint(wire, point), plane_));
             painter.drawLine(start, end);
-            painter.setBrush(color);
-            painter.drawEllipse(start, selected ? 4.5 : 3.5, selected ? 4.5 : 3.5);
-            painter.drawEllipse(end, selected ? 4.5 : 3.5, selected ? 4.5 : 3.5);
         }
+        const auto start = mapToScreen(geometry::project(model::wirePathPoint(wire, 0), plane_));
+        const auto end = mapToScreen(geometry::project(
+            model::wirePathPoint(wire, pointCount - 1), plane_));
+        painter.setBrush(color);
+        painter.drawEllipse(start, selected ? 4.5 : 3.5, selected ? 4.5 : 3.5);
+        painter.drawEllipse(end, selected ? 4.5 : 3.5, selected ? 4.5 : 3.5);
 
-        const auto midpoint = (start + end) / 2.0 + QPointF{8.0, -8.0 - (index % 3) * 14.0};
-        const auto label = QStringLiteral("GW %1").arg(wire.tag);
+        const auto middlePoint = model::wirePathPoint(wire, pointCount / 2);
+        const auto midpoint = mapToScreen(geometry::project(middlePoint, plane_))
+            + QPointF{8.0, -8.0 - (index % 3) * 14.0};
+        const auto label = wireLabel(wire);
         const auto labelBounds = painter.fontMetrics().boundingRect(label).adjusted(-3, -2, 3, 2);
         auto labelRectangle = QRectF(labelBounds);
         labelRectangle.moveTopLeft(midpoint);
@@ -707,6 +726,22 @@ auto GeometryView::segmentAt(int wireTag, const QPointF& position) const -> int
     if (wire == nullptr) {
         return 1;
     }
+    if (wire->path.size() == static_cast<std::size_t>(wire->segments + 1)) {
+        auto closestSegment = 1;
+        auto closestDistance = std::numeric_limits<double>::infinity();
+        const auto world = mapToWorld(position);
+        for (auto segment = 1; segment <= wire->segments; ++segment) {
+            const auto endpoints = model::wireSegmentEndpoints(*wire, segment);
+            const auto distance = geometry::distanceToSegment(world,
+                geometry::project(endpoints->first, plane_),
+                geometry::project(endpoints->second, plane_));
+            if (distance < closestDistance) {
+                closestDistance = distance;
+                closestSegment = segment;
+            }
+        }
+        return closestSegment;
+    }
     const auto parameter = geometry::closestSegmentParameter(mapToWorld(position),
         geometry::project(wire->start, plane_), geometry::project(wire->end, plane_));
     return std::clamp(static_cast<int>(parameter * wire->segments) + 1, 1, wire->segments);
@@ -755,10 +790,13 @@ void GeometryView::selectAt(const QPointF& position)
     const auto tolerance = 10.0 / pixelsPerMeter_;
     std::vector<int> candidates;
     for (const auto& wire : model_.wires()) {
-        const auto start = geometry::project(wire.start, plane_);
-        const auto end = geometry::project(wire.end, plane_);
-        if (geometry::distanceToSegment(world, start, end) <= tolerance) {
-            candidates.push_back(wire.tag);
+        for (auto point = std::size_t{1}; point < model::wirePathPointCount(wire); ++point) {
+            const auto start = geometry::project(model::wirePathPoint(wire, point - 1), plane_);
+            const auto end = geometry::project(model::wirePathPoint(wire, point), plane_);
+            if (geometry::distanceToSegment(world, start, end) <= tolerance) {
+                candidates.push_back(wire.tag);
+                break;
+            }
         }
     }
 
@@ -799,6 +837,7 @@ auto GeometryView::endpointAt(const QPointF& position) const
     auto closestDistance = tolerance;
 
     const auto considerWire = [&](const model::Wire& wire) {
+        if (!wire.editable) return;
         for (const auto endpoint : {model::WireEndpoint::Start, model::WireEndpoint::End}) {
             const auto& point = endpoint == model::WireEndpoint::Start ? wire.start : wire.end;
             const auto distance = QLineF(position, mapToScreen(geometry::project(point, plane_))).length();
@@ -826,23 +865,17 @@ auto GeometryView::wireAt(const QPointF& position) const -> std::optional<int>
 {
     const auto world = mapToWorld(position);
     const auto tolerance = 10.0 / pixelsPerMeter_;
-    if (selectedWireTag_) {
-        if (const auto* selected = model_.wireByTag(*selectedWireTag_)) {
-            if (geometry::distanceToSegment(world, geometry::project(selected->start, plane_),
-                    geometry::project(selected->end, plane_)) <= tolerance) {
-                return selected->tag;
-            }
-        }
-    }
-
     std::optional<int> closestTag;
     auto closestDistance = tolerance;
     for (const auto& wire : model_.wires()) {
-        const auto distance = geometry::distanceToSegment(world, geometry::project(wire.start, plane_),
-            geometry::project(wire.end, plane_));
-        if (distance <= closestDistance) {
-            closestDistance = distance;
-            closestTag = wire.tag;
+        for (auto point = std::size_t{1}; point < model::wirePathPointCount(wire); ++point) {
+            const auto distance = geometry::distanceToSegment(world,
+                geometry::project(model::wirePathPoint(wire, point - 1), plane_),
+                geometry::project(model::wirePathPoint(wire, point), plane_));
+            if (distance <= closestDistance) {
+                closestDistance = distance;
+                closestTag = wire.tag;
+            }
         }
     }
     return closestTag;
@@ -891,7 +924,7 @@ auto GeometryView::endpointSnapAdjustment(const geometry::Point2D& start,
 auto GeometryView::splitPointAt(int tag, const QPointF& position) const -> std::optional<model::Point3D>
 {
     const auto* wire = model_.wireByTag(tag);
-    if (wire == nullptr) {
+    if (wire == nullptr || !wire->editable) {
         return std::nullopt;
     }
     const auto start = geometry::project(wire->start, plane_);

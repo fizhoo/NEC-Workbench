@@ -18,6 +18,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
 
 namespace necwb::ui {
@@ -146,9 +147,13 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
     updating_ = true;
     const QSignalBlocker blocker(table_);
     model_ = model;
-    table_->setRowCount(static_cast<int>(model_.wireCount()));
+    const auto straightWireCount = std::ranges::count_if(model_.wires(), [](const auto& wire) {
+        return wire.geometryKind == model::WireGeometryKind::Straight;
+    });
+    table_->setRowCount(static_cast<int>(straightWireCount));
     auto row = 0;
     for (const auto& wire : model_.wires()) {
+        if (wire.geometryKind != model::WireGeometryKind::Straight) continue;
         const QStringList values{QString::number(wire.tag), QString::number(wire.segments),
             number(wire.start.x / scaleToMeters_),
             number(wire.start.y / scaleToMeters_),
@@ -160,6 +165,11 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
         for (auto column = 0; column <= Radius; ++column) {
             auto* item = new QTableWidgetItem(values[column]);
             item->setData(WireTagRole, wire.tag);
+            if (!wire.editable) {
+                item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+                item->setToolTip(tr(
+                    "This GW uses a following GC taper card. Edit the GW/GC cards in Other Supported Cards or Raw Source."));
+            }
             const auto symbolicLine = symbolicGeometryFields_.find(wire.sourceLine);
             if (symbolicLine != symbolicGeometryFields_.end()
                 && symbolicLine->second.contains(column)) {
@@ -188,6 +198,7 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
             gaugeControl->addItem(QString::fromStdString(model::awgLabel(gauge)), gauge);
         if (const auto gauge = model::matchingAwg(wire.radius); gauge && *gauge >= 10 && *gauge <= 30)
             gaugeControl->setCurrentIndex(gaugeControl->findData(*gauge));
+        if (!wire.editable) gaugeControl->setEnabled(false);
         const auto symbolicLine = symbolicGeometryFields_.find(wire.sourceLine);
         if (symbolicLine != symbolicGeometryFields_.end()
             && symbolicLine->second.contains(Radius)) {

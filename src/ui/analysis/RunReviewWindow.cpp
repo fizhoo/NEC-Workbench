@@ -52,7 +52,12 @@ auto runContext(const AnalysisRunRecord& record) -> QString
     const auto started = record.started.isValid()
         ? record.started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : record.id;
     const auto backend = record.backend.isEmpty() ? QObject::tr("Unknown backend") : record.backend;
-    return QObject::tr("Model: %1 · Run: %2 · Backend: %3").arg(modelName, started, backend);
+    const auto purpose = record.runType == QStringLiteral("quick-sweep")
+        ? record.summary.isEmpty() ? QObject::tr(" · Quick Sweep")
+                                   : QObject::tr(" · Quick Sweep: %1").arg(record.summary)
+        : QString{};
+    return QObject::tr("Model: %1 · Run: %2%3 · Backend: %4")
+        .arg(modelName, started, purpose, backend);
 }
 
 auto sameFrequency(double first, double second) -> bool
@@ -186,8 +191,13 @@ auto RunReviewWindow::showRun(const AnalysisRunRecord& record,
         ? tr("Archived model.nec") : QFileInfo(record.sourceFile).fileName();
     const auto started = record.started.isValid()
         ? record.started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : record.id;
-    identityLabel_->setText(tr("Historical Run — %1 — %2 — %3")
-        .arg(modelName, started, record.backend.isEmpty() ? tr("Unknown backend") : record.backend));
+    identityLabel_->setText(record.runType == QStringLiteral("quick-sweep")
+        ? tr("Historical Quick Sweep — %1 — %2 — %3")
+            .arg(modelName, started,
+                record.backend.isEmpty() ? tr("Unknown backend") : record.backend)
+        : tr("Historical Run — %1 — %2 — %3")
+            .arg(modelName, started,
+                record.backend.isEmpty() ? tr("Unknown backend") : record.backend));
     activeModelLabel_->setText(tr("Active Model: %1 · This archived review does not modify it.")
         .arg(activeModelName.isEmpty() ? tr("None") : activeModelName));
     openSnapshotButton_->setEnabled(QFileInfo::exists(

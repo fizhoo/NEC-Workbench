@@ -1,6 +1,7 @@
 #include "model/ModelSetup.h"
 
 #include "model/AntennaModel.h"
+#include "model/WireGeometry.h"
 
 #include <algorithm>
 #include <cmath>
@@ -56,14 +57,7 @@ auto wireSegmentPosition(const AntennaModel& model, int wireTag, int segment)
     -> std::optional<Point3D>
 {
     const auto* wire = model.wireByTag(wireTag);
-    if (wire == nullptr || segment < 1 || segment > wire->segments) {
-        return std::nullopt;
-    }
-    const auto parameter = (static_cast<double>(segment) - 0.5) / wire->segments;
-    return Point3D{
-        wire->start.x + (wire->end.x - wire->start.x) * parameter,
-        wire->start.y + (wire->end.y - wire->start.y) * parameter,
-        wire->start.z + (wire->end.z - wire->start.z) * parameter};
+    return wire == nullptr ? std::nullopt : wireSegmentCenter(*wire, segment);
 }
 
 auto loadPosition(const AntennaModel& model, const LoadDefinition& load)
@@ -74,12 +68,10 @@ auto loadPosition(const AntennaModel& model, const LoadDefinition& load)
     const auto first = load.firstSegment == 0 ? 1 : load.firstSegment;
     const auto last = load.lastSegment == 0 ? wire->segments : load.lastSegment;
     if (first < 1 || last < first || last > wire->segments) return std::nullopt;
-    const auto centerSegment = (static_cast<double>(first) + last) / 2.0;
-    const auto parameter = (centerSegment - 0.5) / wire->segments;
-    return Point3D{
-        wire->start.x + (wire->end.x - wire->start.x) * parameter,
-        wire->start.y + (wire->end.y - wire->start.y) * parameter,
-        wire->start.z + (wire->end.z - wire->start.z) * parameter};
+    const auto total = first + last;
+    if (total % 2 == 0) return wireSegmentCenter(*wire, total / 2);
+    const auto lower = wireSegmentEndpoints(*wire, total / 2);
+    return lower ? std::optional{lower->second} : std::nullopt;
 }
 
 }

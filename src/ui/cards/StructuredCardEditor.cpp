@@ -1,5 +1,6 @@
 #include "ui/cards/StructuredCardEditor.h"
 
+#include "nec/NecCardCatalog.h"
 #include "nec/NecCardFieldEditor.h"
 #include "ui/ParameterFieldStyle.h"
 
@@ -50,7 +51,27 @@ struct CardFamily {
 
 const auto& families()
 {
-    static const std::array<CardFamily, 9> values{{
+    static const std::array<CardFamily, 13> values{{
+        {QObject::tr("Geometry"), QObject::tr("GA — Wire Arcs"),
+            QObject::tr("Circular wire arcs in the XZ plane. Angles are measured in degrees; lengths use authored NEC deck units."),
+            {nec::NecCardKind::GeometryOther},
+            {QObject::tr("Tag"), QObject::tr("Segments"), QObject::tr("Arc Radius (deck length)"),
+                QObject::tr("Start Angle (°)"), QObject::tr("End Angle (°)"),
+                QObject::tr("Wire Radius (deck length)")}, QStringLiteral("GA"), false},
+        {QObject::tr("Geometry"), QObject::tr("GH — Helices and Spirals"),
+            QObject::tr("Helical or spiral wire geometry. Endpoint radii may differ to create tapered elliptical forms; lengths use authored NEC deck units."),
+            {nec::NecCardKind::GeometryOther},
+            {QObject::tr("Tag"), QObject::tr("Segments"), QObject::tr("Turn Spacing (deck length)"),
+                QObject::tr("Axial Length (deck length)"), QObject::tr("Start X Radius (deck length)"),
+                QObject::tr("Start Y Radius (deck length)"), QObject::tr("End X Radius (deck length)"),
+                QObject::tr("End Y Radius (deck length)"), QObject::tr("Wire Radius (deck length)")},
+            QStringLiteral("GH"), false},
+        {QObject::tr("Geometry"), QObject::tr("Other NEC-2 Geometry Cards"),
+            QObject::tr("Remaining recognized geometry generators, patches, and transformations using NEC fixed fields."),
+            {nec::NecCardKind::GeometryOther},
+            {QObject::tr("I1"), QObject::tr("I2"), QObject::tr("F1"), QObject::tr("F2"),
+                QObject::tr("F3"), QObject::tr("F4"), QObject::tr("F5"),
+                QObject::tr("F6"), QObject::tr("F7")}, {}, false},
         {QObject::tr("Geometry"), QObject::tr("GS — Scale"),
             QObject::tr("Convert geometry coordinates and wire radii to meters for NEC."),
             {nec::NecCardKind::GeometryScale},
@@ -81,6 +102,12 @@ const auto& families()
                 QObject::tr("Segment 2"), QObject::tr("Z0"), QObject::tr("Length"),
                 QObject::tr("Shunt R1"), QObject::tr("Shunt X1"), QObject::tr("Shunt R2"),
                 QObject::tr("Shunt X2")}, QStringLiteral("TL"), false},
+        {QObject::tr("Analysis & Requests"), QObject::tr("Other NEC-2 Control Cards"),
+            QObject::tr("Recognized NEC-2 option, network, field-request, and output-control cards using NEC fixed fields."),
+            {nec::NecCardKind::ControlOther, nec::NecCardKind::Network},
+            {QObject::tr("I1"), QObject::tr("I2"), QObject::tr("I3"), QObject::tr("I4"),
+                QObject::tr("F1"), QObject::tr("F2"), QObject::tr("F3"),
+                QObject::tr("F4"), QObject::tr("F5"), QObject::tr("F6")}, {}, false},
         {QObject::tr("Analysis & Requests"), QObject::tr("FR — Frequency"),
             QObject::tr("Single-frequency and sweep definitions."),
             {nec::NecCardKind::Frequency},
@@ -107,6 +134,11 @@ const auto& families()
 
 auto belongsTo(const nec::NecCard& card, const CardFamily& family) -> bool
 {
+    const auto dedicatedGeometry = family.mnemonic == QStringLiteral("GA")
+        || family.mnemonic == QStringLiteral("GH");
+    if (dedicatedGeometry) return QString::fromStdString(card.mnemonic) == family.mnemonic;
+    if (family.kinds.size() == 1 && family.kinds.front() == nec::NecCardKind::GeometryOther
+        && (card.mnemonic == "GA" || card.mnemonic == "GH")) return false;
     return std::ranges::find(family.kinds, card.kind) != family.kinds.end();
 }
 
@@ -119,6 +151,9 @@ struct FieldChoice {
 
 auto fieldType(const QString& mnemonic, int fieldIndex) -> FieldType
 {
+    if (const auto* spec = nec::findNecCardSpec(mnemonic.toStdString()))
+        return static_cast<std::size_t>(fieldIndex) < spec->integerFieldCount
+            ? FieldType::Integer : FieldType::Number;
     if (mnemonic == QStringLiteral("Z0") || mnemonic == QStringLiteral("ZO"))
         return FieldType::Number;
     if (mnemonic == QStringLiteral("GS"))
@@ -178,6 +213,8 @@ auto parsesAs(const QString& text) -> bool
 
 auto requiredFieldCount(const QString& mnemonic, const QStringList& fields) -> int
 {
+    if (mnemonic == QStringLiteral("GA")) return 6;
+    if (mnemonic == QStringLiteral("GH")) return 9;
     if (mnemonic == QStringLiteral("EX") || mnemonic == QStringLiteral("FR")) return 6;
     if (mnemonic == QStringLiteral("GS")) return 3;
     if (mnemonic == QStringLiteral("GE") || mnemonic == QStringLiteral("XQ")) return 1;
@@ -190,6 +227,56 @@ auto requiredFieldCount(const QString& mnemonic, const QStringList& fields) -> i
         return type == 0 || type == 2 ? 6 : 1;
     }
     return 0;
+}
+
+auto fieldHelp(const QString& mnemonic, int fieldIndex) -> QString
+{
+    if (mnemonic == QStringLiteral("GA")) {
+        static const std::array help{
+            QObject::tr("Structure tag used by EX, LD, TL, and result references."),
+            QObject::tr("Number of straight NEC segments used to approximate the arc."),
+            QObject::tr("Arc radius in the authored NEC deck length unit."),
+            QObject::tr("Arc starting angle in degrees in the XZ plane."),
+            QObject::tr("Arc ending angle in degrees in the XZ plane."),
+            QObject::tr("Physical wire radius in the authored NEC deck length unit.")};
+        if (fieldIndex >= 0 && fieldIndex < static_cast<int>(help.size())) return help[fieldIndex];
+    }
+    if (mnemonic == QStringLiteral("GH")) {
+        static const std::array help{
+            QObject::tr("Structure tag used by EX, LD, TL, and result references."),
+            QObject::tr("Number of NEC wire segments along the generated path."),
+            QObject::tr("Axial spacing per turn; its sign controls winding direction."),
+            QObject::tr("Total axial length. A zero value denotes NEC spiral form and is not yet rendered graphically."),
+            QObject::tr("X radius at the beginning of the helix or spiral."),
+            QObject::tr("Y radius at the beginning of the helix or spiral."),
+            QObject::tr("X radius at the end of the helix or spiral."),
+            QObject::tr("Y radius at the end of the helix or spiral."),
+            QObject::tr("Physical wire radius in the authored NEC deck length unit.")};
+        if (fieldIndex >= 0 && fieldIndex < static_cast<int>(help.size())) return help[fieldIndex];
+    }
+    return {};
+}
+
+auto semanticFieldError(const QString& mnemonic, const QStringList& fields, int fieldIndex) -> QString
+{
+    if (mnemonic == QStringLiteral("GA") && fields.size() >= 6) {
+        if (fieldIndex == 1 && fields[1].toInt() <= 0)
+            return QObject::tr("Segment count must be greater than zero.");
+        if ((fieldIndex == 2 || fieldIndex == 5) && fields[fieldIndex].toDouble() <= 0.0)
+            return QObject::tr("Radius must be greater than zero.");
+        if ((fieldIndex == 3 || fieldIndex == 4)
+            && fields[3].toDouble() == fields[4].toDouble())
+            return QObject::tr("Start and end angles must be different.");
+    }
+    if (mnemonic == QStringLiteral("GH") && fields.size() >= 9) {
+        if (fieldIndex == 1 && fields[1].toInt() <= 0)
+            return QObject::tr("Segment count must be greater than zero.");
+        if (fieldIndex == 2 && fields[2].toDouble() == 0.0)
+            return QObject::tr("Turn spacing must be nonzero.");
+        if (fieldIndex >= 4 && fieldIndex <= 8 && fields[fieldIndex].toDouble() <= 0.0)
+            return QObject::tr("Radius must be greater than zero.");
+    }
+    return {};
 }
 
 class CardFieldDelegate final : public QStyledItemDelegate {
@@ -387,6 +474,13 @@ void StructuredCardEditor::setDocument(const nec::NecDocument& document)
     refreshTable();
 }
 
+void StructuredCardEditor::setDeckUnitLabel(QString unitLabel)
+{
+    if (unitLabel.isEmpty() || unitLabel == deckUnitLabel_) return;
+    deckUnitLabel_ = std::move(unitLabel);
+    refreshTable();
+}
+
 void StructuredCardEditor::setParameterControlledFields(
     nec::NecParameterFieldMap sourceFields)
 {
@@ -458,8 +552,11 @@ void StructuredCardEditor::refreshTable()
         if (belongsTo(card, family))
             fieldCount = std::max(fieldCount, static_cast<qsizetype>(card.fields.size()));
     }
+    auto displayedFields = family.fields;
+    for (auto& field : displayedFields)
+        field.replace(QStringLiteral("(deck length)"), QStringLiteral("(%1)").arg(deckUnitLabel_));
     auto headers = QStringList{tr("Line"), tr("Card")};
-    headers.append(family.fields);
+    headers.append(displayedFields);
     while (headers.size() < fieldCount+2)
         headers.push_back(tr("Extra %1").arg(headers.size()-family.fields.size()-1));
     table_->clear();
@@ -518,6 +615,15 @@ void StructuredCardEditor::updateActions()
     QString disabledReason;
     if (familyIndex >= 0) {
         const auto& family = families()[static_cast<std::size_t>(familyIndex)];
+        if (family.mnemonic.isEmpty()) {
+            addButton_->setText(tr("Add Card in Raw Source"));
+            addEnabled = false;
+            disabledReason = tr("Add this card in Raw Source; existing cards can be edited here by fixed field.");
+            addButton_->setEnabled(addEnabled);
+            addButton_->setToolTip(disabledReason);
+            deleteButton_->setEnabled(table_->currentRow() >= 0 && !table_->selectedItems().empty());
+            return;
+        }
         addButton_->setText(tr("Add %1 Card").arg(family.mnemonic));
         const auto alreadyExists = std::ranges::any_of(document_.cards(), [&family](const auto& card) {
             return QString::fromStdString(card.mnemonic) == family.mnemonic;
@@ -588,9 +694,14 @@ auto StructuredCardEditor::validateRow(int row) -> bool
             if (!choices.empty()
                 && std::ranges::find(choices, fields[fieldIndex], &FieldChoice::value) == choices.end())
                 error = tr("Choose a supported value from the dropdown.");
+            if (error.isEmpty()) error = semanticFieldError(mnemonic, fields, fieldIndex);
         }
         cell->setBackground(error.isEmpty() ? QBrush{} : QBrush{QColor(255, 205, 205)});
-        cell->setToolTip(error.isEmpty() ? choiceLabel(mnemonic, fieldIndex, fields[fieldIndex]) : error);
+        const auto choices = choicesFor(mnemonic, fieldIndex);
+        cell->setToolTip(error.isEmpty()
+                ? (choices.empty() ? fieldHelp(mnemonic, fieldIndex)
+                                   : choiceLabel(mnemonic, fieldIndex, fields[fieldIndex]))
+                : error);
         valid = valid && error.isEmpty();
     }
     return valid;
@@ -619,6 +730,17 @@ auto StructuredCardEditor::defaultCard(int familyIndex) const -> QString
     if (familyIndex < 0 || familyIndex >= static_cast<int>(families().size())) return {};
     const auto& family = families()[static_cast<std::size_t>(familyIndex)];
     const auto wires = wireDefaults();
+    auto nextGeometryTag = 1;
+    for (const auto& card : document_.cards()) {
+        if (card.fields.empty() || (card.kind != nec::NecCardKind::GeometryWire
+                && card.mnemonic != "GA" && card.mnemonic != "GH")) continue;
+        const auto tag = QString::fromStdString(card.fields.front());
+        if (parsesAs<int>(tag)) nextGeometryTag = std::max(nextGeometryTag, tag.toInt()+1);
+    }
+    if (family.mnemonic == QStringLiteral("GA"))
+        return QStringLiteral("GA %1 21 1 0 180 0.001").arg(nextGeometryTag);
+    if (family.mnemonic == QStringLiteral("GH"))
+        return QStringLiteral("GH %1 40 0.05 0.5 0.1 0.1 0.1 0.1 0.001").arg(nextGeometryTag);
     if (family.mnemonic == QStringLiteral("GS")) return QStringLiteral("GS 0 0 0.3048");
     if (family.mnemonic == QStringLiteral("EX") && !wires.empty())
         return QStringLiteral("EX 0 %1 %2 0 1 0").arg(wires.front().first)

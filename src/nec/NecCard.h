@@ -12,6 +12,7 @@ enum class NecCardKind {
     Symbol,
     GeometryWire,
     GeometryScale,
+    GeometryOther,
     GeometryEnd,
     Excitation,
     Load,
@@ -21,6 +22,7 @@ enum class NecCardKind {
     Execute,
     TransmissionLine,
     Network,
+    ControlOther,
     ReferenceImpedance,
     End,
     Unknown

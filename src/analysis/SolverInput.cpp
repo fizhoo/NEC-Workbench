@@ -227,4 +227,44 @@ auto prepareExplicitFrequencyInput(std::string_view source,
     return output.str();
 }
 
+auto prepareFrequencySweepInput(std::string_view source,
+    const model::FrequencyDefinition& sweep, bool includeRadiationPatterns) -> std::string
+{
+    const auto document = nec::NecParser{}.parse(normalizeSolverDeck(source));
+    const auto retainRadiation = includeRadiationPatterns
+        && std::ranges::any_of(document.cards(), [](const auto& card) {
+            return card.kind == nec::NecCardKind::RadiationPattern;
+        });
+    const auto frequencyCard = nec::NecWriter{}.writeFrequencyCard(sweep);
+    std::vector<std::string> lines;
+    lines.reserve(document.cards().size() + 2);
+    auto insertedRequest = false;
+    for (const auto& card : document.cards()) {
+        if (card.kind == nec::NecCardKind::Frequency
+            || card.kind == nec::NecCardKind::Execute
+            || (!retainRadiation && card.kind == nec::NecCardKind::RadiationPattern)) {
+            continue;
+        }
+        if (!insertedRequest && (card.kind == nec::NecCardKind::RadiationPattern
+                || card.kind == nec::NecCardKind::End)) {
+            lines.push_back(frequencyCard);
+            if (!retainRadiation) lines.emplace_back("XQ 0");
+            insertedRequest = true;
+        }
+        lines.push_back(card.sourceText);
+    }
+    if (!insertedRequest) {
+        lines.push_back(frequencyCard);
+        if (!retainRadiation) lines.emplace_back("XQ 0");
+    }
+
+    std::ostringstream output;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        if (index != 0) output << document.lineEnding();
+        output << lines[index];
+    }
+    if (document.hasFinalLineEnding() && !lines.empty()) output << document.lineEnding();
+    return output.str();
+}
+
 }

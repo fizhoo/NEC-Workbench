@@ -54,6 +54,21 @@ Ideas recorded here are discussion items, not implementation commitments. Status
 
 ## Optimization
 
+### Radiation Objectives for Directional Antennas
+
+- **Status:** Near-Term Checkpoint
+- Add front-to-back ratio and forward gain as optimization criteria for Yagis and other directional antennas.
+- Require an explicit forward direction, polarization/component, pattern frequency, and suitable RP coverage.
+- Reuse the physical spherical-direction F/B calculation; never substitute minimum pattern gain for the true opposite direction.
+- Report the objective as unavailable when the generated pattern does not include both the forward and physically opposite directions.
+- Support weighting radiation goals alongside SWR, resistance, and reactance.
+- Make the added solver cost clear because each candidate must calculate radiation patterns, not only impedance.
+
+**Direction:** First add single-frequency forward gain and F/B objectives using a
+deliberately selected pattern request. Then support minimax or weighted evaluation
+across several frequencies. Consider a staged workflow that filters candidates by
+impedance before requesting expensive radiation calculations.
+
 ### Candidate Result Exploration
 
 - **Status:** Implemented Experiment / Revisit; Potential Revert
@@ -74,6 +89,18 @@ applying a candidate intentionally preserves its frequency table and SWR/R/X plo
 unrelated subsequent model edits still clear stale study data.
 
 ## Results Comparison
+
+### Numerical Table Export
+
+- **Status:** Parking Lot / Likely Near-Term
+- Export SWR, resistance, reactance, impedance, current, gain, and other numerical result tables.
+- Start with CSV export so results can be opened in spreadsheets and analysis tools.
+- Include frequency, units, source model, run identity, backend, and reference impedance in the exported data or metadata.
+- Export the currently selected result set without changing the active model or historical-run context.
+
+**Direction:** Add consistent **Export CSV…** actions beside each applicable results
+table. Reuse one shared exporter rather than implementing separate formatting logic
+for every results view.
 
 ### Multiple Run Graph Overlays
 

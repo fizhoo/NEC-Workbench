@@ -1,4 +1,5 @@
 #include "geometry/OrthographicProjection.h"
+#include "model/WireGeometry.h"
 
 #include <algorithm>
 #include <cmath>
@@ -63,7 +64,8 @@ auto projectedBounds(std::span<const model::Wire> wires, ProjectionPlane plane) 
     const auto first = project(wires.front().start, plane);
     Bounds2D bounds{first.horizontal, first.horizontal, first.vertical, first.vertical};
     for (const auto& wire : wires) {
-        for (const auto& point : {project(wire.start, plane), project(wire.end, plane)}) {
+        for (auto index = std::size_t{}; index < model::wirePathPointCount(wire); ++index) {
+            const auto point = project(model::wirePathPoint(wire, index), plane);
             bounds.minimumHorizontal = std::min(bounds.minimumHorizontal, point.horizontal);
             bounds.maximumHorizontal = std::max(bounds.maximumHorizontal, point.horizontal);
             bounds.minimumVertical = std::min(bounds.minimumVertical, point.vertical);

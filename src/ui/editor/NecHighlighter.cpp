@@ -1,7 +1,8 @@
 #include "ui/editor/NecHighlighter.h"
 
+#include "nec/NecCardCatalog.h"
+
 #include <QRegularExpression>
-#include <QSet>
 #include <QTextDocument>
 
 namespace necwb::ui {
@@ -22,12 +23,6 @@ void NecHighlighter::highlightBlock(const QString& text)
     static const QRegularExpression cardExpression(QStringLiteral("^\\s*([A-Za-z]{2})\\b"));
     static const QRegularExpression numberExpression(
         QStringLiteral("(?<![A-Za-z_])[+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?"));
-    static const QSet<QString> knownCards{
-        QStringLiteral("CM"), QStringLiteral("CE"), QStringLiteral("GW"), QStringLiteral("GE"),
-        QStringLiteral("EX"), QStringLiteral("LD"), QStringLiteral("GN"), QStringLiteral("FR"),
-        QStringLiteral("RP"), QStringLiteral("TL"), QStringLiteral("NT"), QStringLiteral("XQ"),
-        QStringLiteral("SY"), QStringLiteral("EN")};
-
     const auto cardMatch = cardExpression.match(text);
     if (!cardMatch.hasMatch()) {
         return;
@@ -39,8 +34,9 @@ void NecHighlighter::highlightBlock(const QString& text)
         return;
     }
 
+    const auto knownCard = nec::findNecCardSpec(mnemonic.toStdString()) != nullptr;
     setFormat(cardMatch.capturedStart(1), cardMatch.capturedLength(1),
-        knownCards.contains(mnemonic) ? cardFormat_ : unknownCardFormat_);
+        knownCard ? cardFormat_ : unknownCardFormat_);
 
     auto numberMatch = numberExpression.globalMatch(text, cardMatch.capturedEnd(1));
     while (numberMatch.hasNext()) {

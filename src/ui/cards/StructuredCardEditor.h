@@ -23,6 +23,7 @@ class StructuredCardEditor final : public QWidget {
 public:
     explicit StructuredCardEditor(QWidget* parent = nullptr);
     void setDocument(const nec::NecDocument& document);
+    void setDeckUnitLabel(QString unitLabel);
     void setParameterControlledFields(nec::NecParameterFieldMap sourceFields);
     auto selectCard(std::size_t sourceLine) -> bool;
 
@@ -54,6 +55,7 @@ private:
     QLabel* description_{};
     QPushButton* addButton_{};
     QPushButton* deleteButton_{};
+    QString deckUnitLabel_{QStringLiteral("m")};
     bool updating_{};
 };
 

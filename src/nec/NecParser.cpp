@@ -1,10 +1,11 @@
 #include "nec/NecParser.h"
 
+#include "nec/NecCardCatalog.h"
+
 #include <algorithm>
 #include <cctype>
 #include <sstream>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 namespace necwb::nec {
@@ -20,28 +21,8 @@ auto upper(std::string value) -> std::string
 
 auto classify(std::string_view mnemonic) -> NecCardKind
 {
-    static const std::unordered_map<std::string_view, NecCardKind> kinds{
-        {"CM", NecCardKind::Comment},
-        {"CE", NecCardKind::Comment},
-        {"SY", NecCardKind::Symbol},
-        {"GW", NecCardKind::GeometryWire},
-        {"GS", NecCardKind::GeometryScale},
-        {"GE", NecCardKind::GeometryEnd},
-        {"EX", NecCardKind::Excitation},
-        {"LD", NecCardKind::Load},
-        {"GN", NecCardKind::Ground},
-        {"FR", NecCardKind::Frequency},
-        {"RP", NecCardKind::RadiationPattern},
-        {"XQ", NecCardKind::Execute},
-        {"TL", NecCardKind::TransmissionLine},
-        {"NT", NecCardKind::Network},
-        {"Z0", NecCardKind::ReferenceImpedance},
-        {"ZO", NecCardKind::ReferenceImpedance},
-        {"EN", NecCardKind::End},
-    };
-
-    const auto found = kinds.find(mnemonic);
-    return found == kinds.end() ? NecCardKind::Unknown : found->second;
+    const auto* spec = findNecCardSpec(mnemonic);
+    return spec == nullptr ? NecCardKind::Unknown : spec->kind;
 }
 
 auto parseLine(std::string line, std::size_t lineNumber) -> NecCard

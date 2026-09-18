@@ -20,6 +20,12 @@ void AntennaModel::scale(double factor) noexcept
         wire.end.y *= factor;
         wire.end.z *= factor;
         wire.radius *= factor;
+        wire.endRadius *= factor;
+        for (auto& point : wire.path) {
+            point.x *= factor;
+            point.y *= factor;
+            point.z *= factor;
+        }
     }
 }
 

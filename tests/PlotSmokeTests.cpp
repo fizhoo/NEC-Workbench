@@ -1,6 +1,7 @@
 #include "analysis/AnalysisResult.h"
 #include "ui/DisplayFormat.h"
 #include "ui/DetachablePanel.h"
+#include "ui/editor/NecHighlighter.h"
 #include "ui/analysis/SweepPlotsView.h"
 #include "ui/analysis/AnalysisRunStore.h"
 #include "ui/analysis/ResultsSummaryView.h"
@@ -9,6 +10,7 @@
 #include "ui/analysis/AnalysisRequestEditor.h"
 #include "ui/analysis/ConvergenceWorkspace.h"
 #include "ui/analysis/FieldResultsViews.h"
+#include "ui/analysis/QuickSweepDialog.h"
 #include "ui/dashboard/DashboardPage.h"
 #include "ui/cards/StructuredCardEditor.h"
 #include "ui/cards/WireCardEditor.h"
@@ -45,6 +47,8 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QTextDocument>
+#include <QTextBlock>
+#include <QTextLayout>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTabBar>
@@ -63,7 +67,20 @@
 #include <cstdlib>
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <vector>
+
+namespace {
+
+auto smokeFailure(const char* checkpoint, int line) -> int
+{
+    std::cerr << "Plot smoke failure at line " << line << ": " << checkpoint << '\n';
+    return EXIT_FAILURE;
+}
+
+}
+
+#define NECWB_SMOKE_FAILURE(checkpoint) smokeFailure(checkpoint, __LINE__)
 
 auto main(int argc, char* argv[]) -> int
 {
@@ -84,7 +101,46 @@ auto main(int argc, char* argv[]) -> int
     QApplication application(argc, argv);
     if (necwb::ui::formatDecimal(1.2) != QStringLiteral("1.200")
         || necwb::ui::formatDecimal(0.0004) != QStringLiteral("4.000e-04")) {
-        return EXIT_FAILURE;
+        return NECWB_SMOKE_FAILURE("display formatting");
+    }
+    QTextDocument highlightedCards(QStringLiteral("GA 1 9 0.5 0 180 0.001\nZZ 0\n"));
+    necwb::ui::NecHighlighter cardHighlighter(&highlightedCards);
+    cardHighlighter.rehighlight();
+    const auto cardColor = [](const QTextBlock& block) {
+        const auto formats = block.layout()->formats();
+        const auto cardFormat = std::ranges::find_if(formats, [](const auto& range) {
+            return range.start == 0 && range.length == 2;
+        });
+        return cardFormat == formats.end() ? QColor{} : cardFormat->format.foreground().color();
+    };
+    if (cardColor(highlightedCards.firstBlock()) != QColor(31, 78, 121)
+        || cardColor(highlightedCards.firstBlock().next()) != QColor(178, 34, 34)) {
+        return NECWB_SMOKE_FAILURE("centralized NEC card highlighting");
+    }
+    const necwb::model::FrequencyDefinition initialSweep{0, 36, 14.0, 0.01, 0};
+    necwb::ui::QuickSweepDialog quickSweep(initialSweep);
+    auto* quickStart = quickSweep.findChild<QDoubleSpinBox*>(QStringLiteral("quickSweepStart"));
+    auto* quickStop = quickSweep.findChild<QDoubleSpinBox*>(QStringLiteral("quickSweepStop"));
+    auto* quickSpacing = quickSweep.findChild<QComboBox*>(QStringLiteral("quickSweepSpacing"));
+    auto* quickPoints = quickSweep.findChild<QSpinBox*>(QStringLiteral("quickSweepPoints"));
+    auto* quickRadiation = quickSweep.findChild<QCheckBox*>(QStringLiteral("quickSweepRadiation"));
+    auto* quickSummary = quickSweep.findChild<QLabel*>(QStringLiteral("quickSweepSummary"));
+    if (quickStart == nullptr || quickStop == nullptr || quickSpacing == nullptr
+        || quickPoints == nullptr || quickRadiation == nullptr || quickSummary == nullptr
+        || quickSweep.frequencyDefinition().count != 36
+        || std::abs(quickSweep.frequencyDefinition().step - 0.01) > 1.0e-12
+        || quickSweep.includeRadiationPatterns()) {
+        return NECWB_SMOKE_FAILURE("quick sweep defaults");
+    }
+    quickStop->setValue(28.0);
+    quickSpacing->setCurrentIndex(1);
+    quickPoints->setValue(5);
+    application.processEvents();
+    const auto logarithmicSweep = quickSweep.frequencyDefinition();
+    if (logarithmicSweep.steppingMode != 1 || logarithmicSweep.count != 5
+        || std::abs(logarithmicSweep.step - std::pow(2.0, 0.25)) > 1.0e-9
+        || !quickSummary->text().contains(QStringLiteral("logarithmic"))) {
+        return NECWB_SMOKE_FAILURE("quick logarithmic sweep");
     }
     necwb::analysis::AnalysisResult result;
     result.feedpoints = {
@@ -116,6 +172,7 @@ auto main(int argc, char* argv[]) -> int
     QSettings plotSettings;
     const auto previousSwrScale = plotSettings.value(QStringLiteral("results/swrScaleModeV2"));
     plotSettings.setValue(QStringLiteral("results/swrScaleModeV2"), 0);
+    plotSettings.sync();
     necwb::ui::SweepPlotsView view;
     view.resize(900, 700);
     view.setResults(result, QStringLiteral("test-run"));
@@ -148,7 +205,7 @@ auto main(int argc, char* argv[]) -> int
         && swrSweepPlot->property("leftAxisTickCount").toInt() >= 3;
     if (swrScaleControl == nullptr || swrScaleControl->count() != 4
         || swrScaleControl->currentText() != QStringLiteral("Logarithmic")) {
-        return EXIT_FAILURE;
+        return NECWB_SMOKE_FAILURE("SWR scale control initialization");
     }
     swrScaleControl->setCurrentIndex(2);
     QPainter alternateScalePainter(&image);
@@ -163,7 +220,8 @@ auto main(int argc, char* argv[]) -> int
     } else {
         plotSettings.remove(QStringLiteral("results/swrScaleModeV2"));
     }
-    if (!alternateScalesWork) return EXIT_FAILURE;
+    plotSettings.sync();
+    if (!alternateScalesWork) return NECWB_SMOKE_FAILURE("alternate SWR scales");
     necwb::ui::CandidatePlotsView candidatePlots;
     candidatePlots.resize(760, 360);
     const std::vector<necwb::ui::CandidatePlotPoint> candidatePoints{
@@ -240,7 +298,7 @@ auto main(int argc, char* argv[]) -> int
     if (averageGainTable == nullptr || averageGainTable->item(1, 1) == nullptr
         || averageGainTable->item(1, 1)->text() != QStringLiteral("0.980")
         || runAverageGainButton == nullptr || !averageGainTriggered) {
-        return EXIT_FAILURE;
+        return NECWB_SMOKE_FAILURE("average gain results");
     }
     QImage averageGainImage(averageGainResults.size(), QImage::Format_ARGB32_Premultiplied);
     averageGainImage.fill(Qt::transparent);
@@ -261,7 +319,8 @@ auto main(int argc, char* argv[]) -> int
         && runConvergence->text() == QStringLiteral("Run Convergence Study")
         && convergenceHistoricalBanner != nullptr && !convergenceHistoricalBanner->isVisible()
         && convergenceReturn != nullptr;
-    if (!convergenceHistoryControlsValid) return EXIT_FAILURE;
+    if (!convergenceHistoryControlsValid)
+        return NECWB_SMOKE_FAILURE("convergence history controls");
     QImage convergenceImage(convergence.size(), QImage::Format_ARGB32_Premultiplied);
     convergenceImage.fill(Qt::transparent);
     QPainter convergencePainter(&convergenceImage);
@@ -830,7 +889,7 @@ auto main(int argc, char* argv[]) -> int
         || optimizationVariables->item(0, 4)->text() != QStringLiteral("114.000")
         || optimizationVariableControl->count() != 3
         || optimizationVariableControl->findText(QStringLiteral("HALF")) < 0) {
-        return EXIT_FAILURE;
+        return NECWB_SMOKE_FAILURE("optimization workspace");
     }
     necwb::ui::CurrentDistributionView currents;
     necwb::ui::RadiationPatternView radiation2D;
@@ -854,7 +913,7 @@ auto main(int argc, char* argv[]) -> int
         || currentPaths.front()[2].wireTag != 1
         || currentPaths.front()[2].segment != 1
         || currentPaths.front().back().segment != 2) {
-        return EXIT_FAILURE;
+        return NECWB_SMOKE_FAILURE("current distribution paths");
     }
     currents.setModel(currentAntenna);
     currents.setResults(result, QStringLiteral("test-run"));
@@ -870,7 +929,7 @@ auto main(int argc, char* argv[]) -> int
         || !radiationPolarPlot->property("closedPattern").toBool()
         || !necwb::ui::radiationAnglesCoverCircle(fullCircle)
         || necwb::ui::radiationAnglesCoverCircle(partialCircle)) {
-        return EXIT_FAILURE;
+        return NECWB_SMOKE_FAILURE("radiation cut analysis");
     }
     necwb::model::AntennaModel antenna;
     antenna.addWire({1, {0.0, 0.0, -0.5}, {0.0, 0.0, 0.5}, 11, 0.001, 1});
@@ -879,6 +938,13 @@ auto main(int argc, char* argv[]) -> int
     elevatedAntenna.addWire({1, {-5.0, 0.0, 6.1}, {5.0, 0.0, 6.1}, 11, 0.001, 1});
     const auto resultOriginPreserved = std::abs(
         necwb::ui::resultModelExtentFromOrigin(elevatedAntenna) - 6.1) < 1.0e-12;
+    necwb::model::AntennaModel curvedAntenna;
+    auto curvedWire = necwb::model::Wire{2, {-1.0, 0.0, 0.0}, {1.0, 0.0, 0.0},
+        2, 0.001, 2};
+    curvedWire.path = {{-1.0, 0.0, 0.0}, {0.0, 0.0, 4.0}, {1.0, 0.0, 0.0}};
+    curvedAntenna.addWire(std::move(curvedWire));
+    const auto semanticResultExtent = std::abs(
+        necwb::ui::resultModelExtentFromOrigin(curvedAntenna) - 4.0) < 1.0e-12;
     radiation3D.setResults(result, QStringLiteral("test-run"));
     radiation2D.setSettingsChangedCallback([&radiation3D](const auto& settings) {
         radiation3D.setDisplaySettings(settings);
@@ -911,7 +977,8 @@ auto main(int argc, char* argv[]) -> int
         || radiation2DDataset == nullptr || radiation3DDataset == nullptr
         || radiation2DMaxGainCut == nullptr
         || radiation2DExportImage == nullptr || radiation2DExportData == nullptr
-        || radiation3DExportImage == nullptr || radiation3DExportData == nullptr) return EXIT_FAILURE;
+        || radiation3DExportImage == nullptr || radiation3DExportData == nullptr)
+        return NECWB_SMOKE_FAILURE("radiation result controls");
     radiation2DComponent->setCurrentIndex(1);
     radiation2D.setSelectedFrequency(14.2);
     radiation3D.setSelectedFrequency(14.2);
@@ -1095,7 +1162,7 @@ auto main(int argc, char* argv[]) -> int
         || dashboardQuickActions[1]->defaultAction() != &runAction
         || !quickActionsRightAligned || !quadrantHeadersMatch || !qualityStatesShareRow
         || !quickActionsMatchQualityButtons) {
-        return EXIT_FAILURE;
+        return NECWB_SMOKE_FAILURE("dashboard workspace");
     }
     QSettings{}.remove(QStringLiteral("resultWindows/smoke-test"));
     necwb::ui::DetachablePanel detachablePanel(
@@ -1106,7 +1173,7 @@ auto main(int argc, char* argv[]) -> int
     application.processEvents();
     auto* popOutButton = detachablePanel.findChild<QPushButton*>(
         QStringLiteral("smoke-testPopOutButton"));
-    if (popOutButton == nullptr) return EXIT_FAILURE;
+    if (popOutButton == nullptr) return NECWB_SMOKE_FAILURE("detachable panel button");
     popOutButton->click();
     application.processEvents();
     auto* resultWindow = detachablePanel.findChild<QDialog*>(
@@ -1134,7 +1201,8 @@ auto main(int argc, char* argv[]) -> int
     auto* recentList = welcome.findChild<QListWidget*>(QStringLiteral("recentModelsList"));
     auto* openRecent = welcome.findChild<QPushButton*>(QStringLiteral("openRecentModelButton"));
     auto* clearRecent = welcome.findChild<QPushButton*>(QStringLiteral("clearRecentModelsButton"));
-    if (recentList == nullptr || openRecent == nullptr || clearRecent == nullptr) return EXIT_FAILURE;
+    if (recentList == nullptr || openRecent == nullptr || clearRecent == nullptr)
+        return NECWB_SMOKE_FAILURE("welcome recent files controls");
     recentList->setCurrentRow(1); openRecent->click(); clearRecent->click();
     QImage welcomeImage(900, 650, QImage::Format_ARGB32_Premultiplied);
     welcomeImage.fill(Qt::transparent); QPainter welcomePainter(&welcomeImage);
@@ -1177,13 +1245,15 @@ auto main(int argc, char* argv[]) -> int
         return false;
     };
     if (structuredTable == nullptr || structuredFamilies == nullptr || structuredAdd == nullptr
-        || !selectStructuredFamily(structuredFamilies, QStringLiteral("EX"))) return EXIT_FAILURE;
+        || !selectStructuredFamily(structuredFamilies, QStringLiteral("EX")))
+        return NECWB_SMOKE_FAILURE("structured card controls");
     application.processEvents();
     const auto structuredHierarchyValid = structuredFamilies->topLevelItemCount() == 6
         && structuredFamilies->topLevelItem(0)->text(0) == QStringLiteral("Geometry")
         && structuredFamilies->topLevelItem(3)->text(0) == QStringLiteral("Loads & Networks")
-        && structuredFamilies->topLevelItem(4)->childCount() == 3;
-    if (structuredTable->rowCount() != 1 || !structuredAdd->isEnabled()) return EXIT_FAILURE;
+        && structuredFamilies->topLevelItem(4)->childCount() == 4;
+    if (structuredTable->rowCount() != 1 || !structuredAdd->isEnabled())
+        return NECWB_SMOKE_FAILURE("structured card family selection");
     const auto structuredSelectionWorks = structuredCards.selectCard(3)
         && structuredFamilies->currentItem()->text(0).startsWith(QStringLiteral("FR"))
         && structuredTable->currentRow() == 0;
@@ -1233,6 +1303,48 @@ auto main(int argc, char* argv[]) -> int
     application.processEvents();
     const auto trailingFieldsPreserved = extendedFrequency
         == QStringLiteral("FR 0 101 0 0 3.1 0.05 8.0 0 0 0");
+    necwb::ui::StructuredCardEditor generatedGeometryCards;
+    generatedGeometryCards.setDeckUnitLabel(QStringLiteral("m"));
+    generatedGeometryCards.setDocument(necwb::nec::NecParser{}.parse(
+        "GA 1 9 0.5 0 180 0.001\n"
+        "GH 2 80 0.03 0.30 0.02 0.02 0.02 0.02 0.001\nGE 0\n"));
+    auto* generatedGeometryFamilies = generatedGeometryCards.findChild<QTreeWidget*>(
+        QStringLiteral("structuredCardFamilies"));
+    auto* generatedGeometryTable = generatedGeometryCards.findChild<QTableWidget*>(
+        QStringLiteral("structuredCardTable"));
+    auto* generatedGeometryAdd = generatedGeometryCards.findChild<QPushButton*>(
+        QStringLiteral("structuredAddCardButton"));
+    QString editedArc;
+    QString addedGeneratedGeometry;
+    QObject::connect(&generatedGeometryCards, &necwb::ui::StructuredCardEditor::cardEdited,
+        [&editedArc](std::size_t, const QString& text) { editedArc = text; });
+    QObject::connect(&generatedGeometryCards, &necwb::ui::StructuredCardEditor::cardAddRequested,
+        [&addedGeneratedGeometry](const QString& text) { addedGeneratedGeometry = text; });
+    const auto arcFamilyFound = selectStructuredFamily(
+        generatedGeometryFamilies, QStringLiteral("GA"));
+    application.processEvents();
+    const auto arcFieldsLabeled = arcFamilyFound && generatedGeometryTable->rowCount() == 1
+        && generatedGeometryTable->columnCount() == 8
+        && generatedGeometryTable->horizontalHeaderItem(4)->text().contains(QStringLiteral("Arc Radius"))
+        && generatedGeometryTable->horizontalHeaderItem(5)->text().contains(QStringLiteral("Start Angle"))
+        && generatedGeometryTable->item(0, 4)->toolTip().contains(QStringLiteral("deck length"));
+    generatedGeometryTable->item(0, 6)->setText(QStringLiteral("170"));
+    application.processEvents();
+    const auto arcEditCommitted = editedArc == QStringLiteral("GA 1 9 0.5 0 170 0.001");
+    const auto helixFamilyFound = selectStructuredFamily(
+        generatedGeometryFamilies, QStringLiteral("GH"));
+    application.processEvents();
+    const auto helixFieldsLabeled = helixFamilyFound && generatedGeometryTable->rowCount() == 1
+        && generatedGeometryTable->columnCount() == 11
+        && generatedGeometryTable->horizontalHeaderItem(4)->text() == QStringLiteral("Turn Spacing (m)")
+        && generatedGeometryTable->horizontalHeaderItem(5)->text() == QStringLiteral("Axial Length (m)")
+        && generatedGeometryTable->item(0, 5)->toolTip().contains(QStringLiteral("spiral"));
+    generatedGeometryAdd->click();
+    application.processEvents();
+    const auto helixDefaultValid = addedGeneratedGeometry.startsWith(QStringLiteral("GH 3 "));
+    selectStructuredFamily(generatedGeometryFamilies, QStringLiteral("Other NEC-2 Geometry"));
+    application.processEvents();
+    const auto generatedCardsExcludedFromOther = generatedGeometryTable->rowCount() == 0;
     necwb::ui::WireCardEditor wireEditor;
     wireEditor.resize(900, 400);
     necwb::model::AntennaModel wireModel;
@@ -1250,9 +1362,10 @@ auto main(int argc, char* argv[]) -> int
             structuredGaugeRadius = updated.radius;
         });
     auto* wireTable = wireEditor.findChild<QTableWidget*>(QStringLiteral("wireCardTable"));
-    if (wireTable == nullptr || wireTable->rowCount() != 1) return EXIT_FAILURE;
+    if (wireTable == nullptr || wireTable->rowCount() != 1)
+        return NECWB_SMOKE_FAILURE("wire card rows");
     auto* structuredGauge = qobject_cast<QComboBox*>(wireTable->cellWidget(0, 9));
-    if (structuredGauge == nullptr) return EXIT_FAILURE;
+    if (structuredGauge == nullptr) return NECWB_SMOKE_FAILURE("wire gauge editor");
     auto structuredGaugeRangeValid = structuredGauge->count() == 22;
     for (auto index = 1; index < structuredGauge->count(); ++index)
         structuredGaugeRangeValid = structuredGaugeRangeValid
@@ -1318,7 +1431,8 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("applyReferenceImpedanceButton"));
     if (groundPreset == nullptr || groundPermittivity == nullptr
         || groundConductivity == nullptr || sourceReferenceImpedance == nullptr
-        || applyReferenceImpedance == nullptr) return EXIT_FAILURE;
+        || applyReferenceImpedance == nullptr)
+        return NECWB_SMOKE_FAILURE("model setup controls");
     auto referenceImpedanceSignalValid = false;
     QObject::connect(&setupEditor, &necwb::ui::SetupEditor::referenceImpedanceChanged,
         [&referenceImpedanceSignalValid](const auto& reference) {
@@ -1369,7 +1483,8 @@ auto main(int argc, char* argv[]) -> int
                 && name == QStringLiteral("HALF") && expression == QStringLiteral("LENGTH/2+1");
         });
     if (parameterTable == nullptr || applyParameter == nullptr
-        || revertParameter == nullptr) return EXIT_FAILURE;
+        || revertParameter == nullptr)
+        return NECWB_SMOKE_FAILURE("parameter editor controls");
     parameterTable->selectRow(1);
     application.processEvents();
     parameterTable->item(1, 1)->setText(QStringLiteral("LENGTH/2+1"));
@@ -1406,7 +1521,8 @@ auto main(int argc, char* argv[]) -> int
                 && name == QStringLiteral("LENGTH") && expression == QStringLiteral("10");
         });
     if (emptyParameterTable == nullptr || addParameter == nullptr
-        || applyNewParameter == nullptr || !addParameter->isEnabled()) return EXIT_FAILURE;
+        || applyNewParameter == nullptr || !addParameter->isEnabled())
+        return NECWB_SMOKE_FAILURE("new parameter controls");
     addParameter->click();
     emptyParameterTable->item(0, 0)->setText(QStringLiteral("LENGTH"));
     emptyParameterTable->item(0, 1)->setText(QStringLiteral("10"));
@@ -1473,7 +1589,7 @@ auto main(int argc, char* argv[]) -> int
         || addPatternBandCenters == nullptr || applyPatternFrequencies == nullptr
         || clearPatternFrequencies == nullptr
         || selectedPatternGroup == nullptr || thetaGroup == nullptr || phiGroup == nullptr)
-        return EXIT_FAILURE;
+        return NECWB_SMOKE_FAILURE("analysis request controls");
     const auto patternRequestLayoutValid = frequencyPolicyGroup->geometry().top()
             < requestTable->geometry().top()
         && thetaGroup->geometry().top() == phiGroup->geometry().top()
@@ -1576,7 +1692,7 @@ auto main(int argc, char* argv[]) -> int
     auto* shutdownFrequencyList = shutdownRequestEditor->findChild<QListWidget*>(
         QStringLiteral("radiationSelectedFrequencies"));
     if (shutdownFrequencyMode == nullptr || shutdownFrequencyList == nullptr)
-        return EXIT_FAILURE;
+        return NECWB_SMOKE_FAILURE("analysis request shutdown");
     shutdownFrequencyMode->setCurrentIndex(shutdownFrequencyMode->findData(2));
     shutdownFrequencyList->clear();
     delete shutdownRequestEditor;
@@ -1587,7 +1703,8 @@ auto main(int argc, char* argv[]) -> int
     necwb::ui::AutoSegmentationDialog segmentationDialog(attachmentModel, {}, 30.0);
     auto* applySegmentation = segmentationDialog.findChild<QPushButton*>(
         QStringLiteral("applySegmentationButton"));
-    if (applySegmentation == nullptr) return EXIT_FAILURE;
+    if (applySegmentation == nullptr)
+        return NECWB_SMOKE_FAILURE("automatic segmentation controls");
     applySegmentation->click();
     application.processEvents();
     const auto segmentationApplyAccepted = segmentationDialog.result() == QDialog::Accepted;
@@ -1623,19 +1740,23 @@ auto main(int argc, char* argv[]) -> int
     auto* loadType = loadNetwork.findChild<QComboBox*>(QStringLiteral("loadTypeCombo"));
     if (loadTable == nullptr || lineTable == nullptr || addLoad == nullptr || addLine == nullptr
         || applyLoad == nullptr || applyLine == nullptr
-        || loadValidation == nullptr || loadType == nullptr) return EXIT_FAILURE;
+        || loadValidation == nullptr || loadType == nullptr)
+        return NECWB_SMOKE_FAILURE("loads and lines controls");
     if (loadTable->item(0, 5)->text() != QStringLiteral("50.000")
         || lineTable->item(0, 4)->text() != QStringLiteral("50.000")
         || lineTable->item(0, 5)->text() != QStringLiteral("10.000")
-        || lineTable->horizontalHeaderItem(5)->text() != QStringLiteral("Length (ft)")) return EXIT_FAILURE;
+        || lineTable->horizontalHeaderItem(5)->text() != QStringLiteral("Length (ft)"))
+        return NECWB_SMOKE_FAILURE("transmission-line columns");
     loadTable->selectRow(0);
     if (loadType->count() != 6 || loadType->currentData().toInt() != 4
         || loadTable->horizontalHeaderItem(5)->text() != QStringLiteral("Resistance (Ω)")
         || loadTable->horizontalHeaderItem(6)->text() != QStringLiteral("Reactance (Ω)")
-        || loadTable->item(0, 7)->flags().testFlag(Qt::ItemIsEditable)) return EXIT_FAILURE;
+        || loadTable->item(0, 7)->flags().testFlag(Qt::ItemIsEditable))
+        return NECWB_SMOKE_FAILURE("load type 4 columns");
     loadType->setCurrentIndex(loadType->findData(5));
     if (loadTable->horizontalHeaderItem(5)->text() != QStringLiteral("Conductivity (MS/m)")
-        || loadTable->item(0, 6)->flags().testFlag(Qt::ItemIsEditable)) return EXIT_FAILURE;
+        || loadTable->item(0, 6)->flags().testFlag(Qt::ItemIsEditable))
+        return NECWB_SMOKE_FAILURE("load type 2 columns");
     loadType->setCurrentIndex(loadType->findData(4));
     auto validLoadEmitted = false;
     auto emittedLoadType = -1;
@@ -1674,7 +1795,8 @@ auto main(int argc, char* argv[]) -> int
     const auto draftDidNotEmit = emittedLoadType == 4 && loadTable->rowCount() == 2;
     auto* draftType = qobject_cast<QComboBox*>(loadTable->cellWidget(1, 0));
     auto* draftScope = qobject_cast<QComboBox*>(loadTable->cellWidget(1, 2));
-    if (draftType == nullptr || draftScope == nullptr) return EXIT_FAILURE;
+    if (draftType == nullptr || draftScope == nullptr)
+        return NECWB_SMOKE_FAILURE("draft load controls");
     draftType->setCurrentIndex(draftType->findData(2));
     draftScope->setCurrentIndex(draftScope->findData(true));
     loadTable->item(1, 6)->setText(QStringLiteral("4.700"));
@@ -1697,7 +1819,8 @@ auto main(int argc, char* argv[]) -> int
     auto* draftWire2 = qobject_cast<QComboBox*>(lineTable->cellWidget(1, 2));
     auto* draftSegment2 = qobject_cast<QComboBox*>(lineTable->cellWidget(1, 3));
     if (draftWire1 == nullptr || draftSegment1 == nullptr
-        || draftWire2 == nullptr || draftSegment2 == nullptr) return EXIT_FAILURE;
+        || draftWire2 == nullptr || draftSegment2 == nullptr)
+        return NECWB_SMOKE_FAILURE("draft transmission-line controls");
     applyLine->click();
     const auto lineDraftApplied = emittedLineSourceLine == 0
         && draftWire1->currentData().toInt() == 1
@@ -1715,7 +1838,7 @@ auto main(int argc, char* argv[]) -> int
     run.hasCurrents = true;
     run.hasRadiation = true;
     if (!store.save(run)) {
-        return EXIT_FAILURE;
+        return NECWB_SMOKE_FAILURE("analysis run storage");
     }
     const QByteArray reviewOutput =
         " FREQUENCY : 1.4100E+01 MHz\n"
@@ -1761,11 +1884,11 @@ auto main(int argc, char* argv[]) -> int
     session.status = QStringLiteral("Completed");
     session.summary = QStringLiteral("Best candidate: length = 10");
     session.candidateCount = 2;
-    if (!store.save(session)) return EXIT_FAILURE;
+    if (!store.save(session)) return NECWB_SMOKE_FAILURE("optimization session storage");
     auto candidate = store.create(QStringLiteral("nec2"), QStringLiteral("/tmp/test-dipole.nec"),
         QStringLiteral("optimization-candidate"), session.id);
     candidate.status = QStringLiteral("Completed");
-    if (!store.save(candidate)) return EXIT_FAILURE;
+    if (!store.save(candidate)) return NECWB_SMOKE_FAILURE("optimization candidate storage");
     const auto loaded = store.load();
     const auto loadedRun = std::ranges::find(loaded, run.id, &necwb::ui::AnalysisRunRecord::id);
     const auto loadedSession = std::ranges::find(loaded, session.id, &necwb::ui::AnalysisRunRecord::id);
@@ -1797,6 +1920,8 @@ auto main(int argc, char* argv[]) -> int
         && structuredSelectionWorks && structuredHierarchyValid
         && descriptiveDropdown
         && trailingFieldsPreserved
+        && arcFieldsLabeled && arcEditCommitted && helixFieldsLabeled
+        && helixDefaultValid && generatedCardsExcludedFromOther
         && editedCard == QStringLiteral("EX 0 1 7 0 1 0 2.5")
         && addedCard == QStringLiteral("LD 0 1 1 11 0 0 0") && deletedLine == 3
         && !wireImage.isNull() && wireEditCommitted && gaugeDropdownValid
@@ -1818,7 +1943,7 @@ auto main(int argc, char* argv[]) -> int
         && signedThetaCutStaysOpen
         && missingRadiationReported
         && missingRadiationDisablesDataExport
-        && resultOriginPreserved
+        && resultOriginPreserved && semanticResultExtent
         && !attachmentImage.isNull() && invalidLoadBlocked && invalidLoadRemainsPending
         && validLoadEmitted
         && draftDidNotEmit && selectedDraftTypeEmitted
@@ -1839,5 +1964,5 @@ auto main(int argc, char* argv[]) -> int
         << (candidateScorePlot == nullptr ? QVariant{} : candidateScorePlot->property("leftAxisMaximum"))
         << "result splitter" << (optimizationResultsSplitter == nullptr
             ? -1 : optimizationResultsSplitter->count());
-    return passed ? EXIT_SUCCESS : EXIT_FAILURE;
+    return passed ? EXIT_SUCCESS : NECWB_SMOKE_FAILURE("final integrated smoke state");
 }

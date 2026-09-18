@@ -1,5 +1,7 @@
 #include "model/AutoSegmentation.h"
 
+#include "model/WireGeometry.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -9,14 +11,6 @@ namespace necwb::model {
 namespace {
 
 constexpr auto SpeedOfLightMetersPerSecond = 299792458.0;
-
-auto wireLength(const Wire& wire) -> double
-{
-    return std::sqrt(
-        std::pow(wire.end.x - wire.start.x, 2)
-        + std::pow(wire.end.y - wire.start.y, 2)
-        + std::pow(wire.end.z - wire.start.z, 2));
-}
 
 auto remappedSegment(int oldSegment, int oldCount, int newCount) -> int
 {
@@ -37,6 +31,7 @@ auto proposeSegmentation(const AntennaModel& model, const std::vector<Excitation
     }
     const auto wavelength = SpeedOfLightMetersPerSecond / (maximumFrequencyMHz * 1.0e6);
     for (const auto& wire : model.wires()) {
+        if (!wire.editable) continue;
         const auto length = wireLength(wire);
         const auto exactCount = std::ceil(length / wavelength * settings.segmentsPerWavelength);
         auto newSegments = static_cast<int>(std::clamp(exactCount, 1.0,
