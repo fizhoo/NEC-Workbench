@@ -22,6 +22,7 @@ public:
     void lineNumberAreaPaintEvent(QPaintEvent* event);
     void goToLine(std::size_t lineNumber);
     void setDiagnostics(std::span<const nec::ModelDiagnostic> diagnostics);
+    void replaceTextAsSingleEdit(const QString& text);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;

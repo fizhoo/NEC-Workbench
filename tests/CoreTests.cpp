@@ -1,6 +1,7 @@
 #include "analysis/SolverCommand.h"
 #include "analysis/AdaptiveSearch.h"
 #include "analysis/AverageGainTest.h"
+#include "analysis/DifferentialEvolutionSearch.h"
 #include "analysis/FrequencyPlan.h"
 #include "analysis/NecOutputParser.h"
 #include "analysis/NelderMeadSearch.h"
@@ -427,6 +428,66 @@ void testGeneratedWireGeometryConversion()
         "GH 8 40 0.05 0 0.1 0.1 0.2 0.2 0.001\nGE 0\n"));
     expect(spiral.model.empty() && spiral.issues.empty(),
         "valid flat-spiral GH remains preserved without claiming graphical expansion");
+}
+
+void testGeometryTransformConversion()
+{
+    const auto moved = necwb::nec::NecModelConverter{}.convert(necwb::nec::NecParser{}.parse(
+        "GW 5 1 0 2 0 0 2 1 .001\n"
+        "GW 1 1 1 0 0 2 0 0 .001\n"
+        "GM 10 2 0 0 90 0 1 0 1\n"
+        "GE 0\n"));
+    expect(moved.issues.empty() && moved.model.wireCount() == 4,
+        "GM retains earlier tags and adds the requested successive copies");
+    expect(moved.model.wires()[0].tag == 5
+            && moved.model.wires()[1].tag == 1
+            && moved.model.wires()[2].tag == 11
+            && moved.model.wires()[3].tag == 21,
+        "GM starts at its selected tag and increments generated tags successively");
+    expect(std::abs(moved.model.wires()[2].start.x) < 1.0e-12
+            && std::abs(moved.model.wires()[2].start.y - 2.0) < 1.0e-12
+            && std::abs(moved.model.wires()[3].start.x + 2.0) < 1.0e-12
+            && std::abs(moved.model.wires()[3].start.y - 1.0) < 1.0e-12,
+        "GM applies rotation then translation to each preceding generated copy");
+    expect(!moved.model.wires()[2].editable
+            && moved.model.wires()[2].sourceLine == 3,
+        "GM-generated geometry remains read-only and maps to the transform card");
+
+    const auto reflected = necwb::nec::NecModelConverter{}.convert(
+        necwb::nec::NecParser{}.parse(
+            "GW 1 1 1 1 0 2 1 0 .001\nGX 10 110\nGE 0\n"));
+    expect(reflected.issues.empty() && reflected.model.wireCount() == 4,
+        "GX expands two selected reflection planes");
+    expect(reflected.model.wires()[0].tag == 1
+            && reflected.model.wires()[1].tag == 11
+            && reflected.model.wires()[2].tag == 21
+            && reflected.model.wires()[3].tag == 31,
+        "GX doubles the tag increment after each Z-Y-X reflection stage");
+    expect(reflected.model.wires()[1].start == necwb::model::Point3D{1.0, -1.0, 0.0}
+            && reflected.model.wires()[2].start == necwb::model::Point3D{-1.0, 1.0, 0.0}
+            && reflected.model.wires()[3].start == necwb::model::Point3D{-1.0, -1.0, 0.0},
+        "GX produces every requested coordinate-plane image");
+
+    const auto rotated = necwb::nec::NecModelConverter{}.convert(
+        necwb::nec::NecParser{}.parse(
+            "GA 1 2 .5 0 90 .001\nGR 10 4\nGE 0\n"));
+    expect(rotated.issues.empty() && rotated.model.wireCount() == 4,
+        "GR total copy count includes the original structure");
+    expect(rotated.model.wires()[1].tag == 11
+            && rotated.model.wires()[2].tag == 21
+            && rotated.model.wires()[3].tag == 31
+            && rotated.model.wires()[1].path.size() == 3,
+        "GR increments tags and preserves generated curved paths");
+    expect(std::abs(rotated.model.wires()[1].start.x) < 1.0e-12
+            && std::abs(rotated.model.wires()[1].start.y - 0.5) < 1.0e-12,
+        "GR rotates generated geometry uniformly around the Z axis");
+
+    const auto invalidReflection = necwb::nec::NecModelConverter{}.convert(
+        necwb::nec::NecParser{}.parse(
+            "GW 1 1 -1 0 0 1 0 0 .001\nGX 10 100\nGE 0\n"));
+    expect(invalidReflection.model.wireCount() == 1
+            && invalidReflection.issues.size() == 1,
+        "GX diagnoses geometry that crosses a selected symmetry plane");
 }
 
 void testValidModelCheck()
@@ -867,8 +928,10 @@ void testSolverCommand()
 {
     expect(necwb::analysis::isBackendRunnable("nec2"),
         "nec2 has a process adapter");
-    expect(!necwb::analysis::isBackendRunnable("opennec"),
-        "unimplemented backends are not reported as runnable");
+    expect(necwb::analysis::isBackendRunnable("opennec")
+            && necwb::analysis::isBackendRunnable("nec2dxs")
+            && !necwb::analysis::isBackendRunnable("unknown"),
+        "OpenNEC and NEC2dXS have explicit process adapters");
     const auto command = necwb::analysis::buildSolverCommand(
         "nec2", "/usr/bin/nec2c", "model.nec", "model.out");
     expect(command.executable == "/usr/bin/nec2c",
@@ -877,6 +940,30 @@ void testSolverCommand()
             && command.arguments[0] == "-imodel.nec"
             && command.arguments[1] == "-omodel.out",
         "nec2c command uses short working-directory-relative arguments");
+    expect(command.standardInput.empty(),
+        "nec2c does not require redirected filename input");
+
+    const auto openNec = necwb::analysis::buildSolverCommand(
+        "opennec", "onec.exe", "model.nec", "model.out");
+    expect(openNec.arguments == std::vector<std::string>(
+                {"-f", "original", "-o", "model.out", "model.nec"})
+            && openNec.standardInput.empty(),
+        "OpenNEC requests original-format output with positional input");
+
+    const auto nec2dXs = necwb::analysis::buildSolverCommand(
+        "nec2dxs", "Nec2dXS1k5.exe", "model.nec", "model.out");
+    expect(nec2dXs.arguments.empty()
+            && nec2dXs.standardInput == "model.nec\nmodel.out\n",
+        "NEC2dXS receives input and output filenames through standard input");
+    expect(necwb::analysis::solverSegmentCapacity(
+               "nec2dxs", "C:/4nec2/exe/Nec2dXS1k5.exe") == 1500
+            && necwb::analysis::solverSegmentCapacity(
+                   "nec2dxs", "C:/4nec2/exe/Nec2dXS11k.exe") == 11000
+            && !necwb::analysis::solverSegmentCapacity(
+                   "nec2dxs", "C:/custom/renamed-engine.exe")
+            && !necwb::analysis::solverSegmentCapacity(
+                   "opennec", "C:/4nec2/exe/Nec2dXS1k5.exe"),
+        "NEC2dXS capacity is inferred only from recognized backend executable names");
 }
 
 void testRadiationSweepSolverInput()
@@ -1041,10 +1128,15 @@ void testNecOutputParsing()
         "\n"
         " RADIATION PATTERNS\n"
         " 62 0 1.25 -999.99 1.25 0 0 LINEAR\n"
+        "\n"
+        " FREQUENCY= 1.4300E+01 MHZ\n"
+        " ANTENNA INPUT PARAMETERS\n"
+        " 1 6 1.0E+00 0.0E+00 1.1E-02 0.0E+00 4.89630E+01-2.04710E+01 0 0 5.5E-03\n"
+        "\n"
         " AVERAGE POWER GAIN: 9.97119E-01 - SOLID ANGLE USED IN AVERAGING: (+4.0000)*PI STERADIANS\n"
         "\n";
     const auto result = necwb::analysis::NecOutputParser{}.parse(output);
-    expect(result.feedpoints.size() == 2, "NEC output parser reads each frequency block");
+    expect(result.feedpoints.size() == 3, "NEC output parser reads each frequency block");
     expect(result.feedpoints[0].frequencyMHz == 14.0
             && result.feedpoints[0].wireTag == 1
             && result.feedpoints[0].segment == 6,
@@ -1054,6 +1146,9 @@ void testNecOutputParsing()
     expect(result.feedpoints[1].frequencyMHz == 14.1
             && result.feedpoints[1].impedance == std::complex<double>{50.0, 0.0},
         "parser accepts Fortran D exponent output");
+    expect(result.feedpoints[2].frequencyMHz == 14.3
+            && result.feedpoints[2].impedance == std::complex<double>{48.963, -20.471},
+        "parser accepts OpenNEC frequency and adjacent signed fields");
     expect(std::abs(necwb::analysis::standingWaveRatio({50.0, 0.0}) - 1.0) < 1.0e-12,
         "matched 50-ohm impedance has one-to-one SWR");
     expect(necwb::analysis::standingWaveRatio({0.0, 0.0})
@@ -1163,6 +1258,62 @@ void testOptimizationObjectives()
     expect(selected && selected->feedpoint && selected->feedpoint->frequencyMHz == 7.1
             && selected->score < maximum->score,
         "selected-frequency objective scores the nearest calculated frequency");
+    const auto average = necwb::analysis::evaluateOptimizationObjective(feedpoints,
+        {.kind = necwb::analysis::OptimizationObjectiveKind::AverageAcrossFrequencies,
+            .referenceImpedance = 50.0});
+    expect(average && average->feedpoint
+            && std::abs(average->score - 1.5) < 1.0e-12
+            && std::abs(average->swr - 1.5) < 1.0e-12
+            && std::abs(average->feedpoint->impedance.real() - 75.0) < 1.0e-12
+            && average->swrSummary
+            && std::abs(average->swrSummary->minimum - 1.0) < 1.0e-12
+            && std::abs(average->swrSummary->average - 1.5) < 1.0e-12
+            && std::abs(average->swrSummary->maximum - 2.0) < 1.0e-12,
+        "average objective scores the mean across frequencies and reports SWR statistics");
+
+    auto perCriterion = necwb::analysis::OptimizationObjectiveSpec{};
+    perCriterion.swrAggregation = necwb::analysis::OptimizationAggregation::Maximum;
+    const auto perCriterionMaximum = necwb::analysis::evaluateOptimizationObjective(
+        feedpoints, perCriterion);
+    expect(perCriterionMaximum && perCriterionMaximum->evaluatedFrequencyCount == 3
+            && perCriterionMaximum->evaluationFrequencyMHz == 0.0
+            && std::abs(perCriterionMaximum->score - 2.0) < 1.0e-12,
+        "per-criterion SWR defaults to minimizing the maximum across frequencies");
+    perCriterion.swrAggregation = necwb::analysis::OptimizationAggregation::Average;
+    const auto perCriterionAverage = necwb::analysis::evaluateOptimizationObjective(
+        feedpoints, perCriterion);
+    expect(perCriterionAverage && std::abs(perCriterionAverage->score - 1.5) < 1.0e-12,
+        "per-criterion SWR can minimize its average across frequencies");
+
+    auto resistanceTarget = necwb::analysis::OptimizationObjectiveSpec{};
+    resistanceTarget.swrWeight = 0.0;
+    resistanceTarget.resistanceWeight = 1.0;
+    resistanceTarget.resistanceTargetOhms = 60.0;
+    const auto resistanceTargetResult = necwb::analysis::evaluateOptimizationObjective(
+        feedpoints, resistanceTarget);
+    expect(resistanceTargetResult && resistanceTargetResult->feedpoint
+            && resistanceTargetResult->feedpoint->impedance.real() == 100.0
+            && std::abs(resistanceTargetResult->score - 0.8) < 1.0e-12,
+        "target criteria reduce the maximum absolute error across frequencies");
+
+    auto goodEnough = necwb::analysis::OptimizationObjectiveSpec{};
+    goodEnough.swrGoal = necwb::analysis::OptimizationGoal::GoodEnough;
+    goodEnough.swrTarget = 2.1;
+    const auto satisfiedThreshold = necwb::analysis::evaluateOptimizationObjective(
+        feedpoints, goodEnough);
+    expect(satisfiedThreshold && satisfiedThreshold->score == 0.0,
+        "good-enough at-most criteria add no penalty when every point meets the threshold");
+    goodEnough.swrTarget = 1.5;
+    const auto violatedThreshold = necwb::analysis::evaluateOptimizationObjective(
+        feedpoints, goodEnough);
+    expect(violatedThreshold && std::abs(violatedThreshold->score - 0.5) < 1.0e-12,
+        "good-enough at-most criteria score the maximum threshold violation");
+    goodEnough.swrGoodEnoughDirection = necwb::analysis::GoodEnoughDirection::AtLeast;
+    goodEnough.swrTarget = 1.8;
+    const auto unusualThreshold = necwb::analysis::evaluateOptimizationObjective(
+        feedpoints, goodEnough);
+    expect(unusualThreshold && std::abs(unusualThreshold->score - 0.8) < 1.0e-12,
+        "every criterion supports an explicit good-enough direction");
 
     const std::vector<necwb::analysis::FeedpointResult> weightedFeedpoint{
         {.frequencyMHz = 14.2, .impedance = {75.0, 25.0}},
@@ -1184,6 +1335,193 @@ void testOptimizationObjectives()
     const auto disabled = necwb::analysis::evaluateOptimizationObjective(weightedFeedpoint,
         {.swrWeight = 0.0, .resistanceWeight = 0.0, .reactanceWeight = 0.0});
     expect(!disabled, "optimization objective requires at least one positive weight");
+
+    necwb::analysis::AnalysisResult directional;
+    directional.radiation = {
+        {.frequencyMHz = 14.2, .thetaDegrees = 90.0, .phiDegrees = 0.0,
+            .verticalGainDb = 7.0, .horizontalGainDb = -10.0, .totalGainDb = 7.2},
+        {.frequencyMHz = 14.2, .thetaDegrees = 90.0, .phiDegrees = 180.0,
+            .verticalGainDb = -13.0, .horizontalGainDb = -20.0, .totalGainDb = -12.8},
+        {.frequencyMHz = 14.2, .thetaDegrees = 90.0, .phiDegrees = 90.0,
+            .verticalGainDb = -2.0, .horizontalGainDb = -20.0, .totalGainDb = -2.0},
+        {.frequencyMHz = 14.2, .thetaDegrees = 90.0, .phiDegrees = 270.0,
+            .verticalGainDb = -5.0, .horizontalGainDb = -20.0, .totalGainDb = -5.0},
+        {.frequencyMHz = 14.2, .thetaDegrees = 30.0, .phiDegrees = 45.0,
+            .verticalGainDb = -40.0, .horizontalGainDb = -40.0, .totalGainDb = -40.0},
+    };
+    const necwb::analysis::OptimizationObjectiveSpec directionalObjective{
+        .kind = necwb::analysis::OptimizationObjectiveKind::SwrAtFrequency,
+        .targetFrequencyMHz = 14.2,
+        .swrWeight = 0.0,
+        .forwardGainWeight = 1.0,
+        .frontToBackWeight = 1.0,
+        .forwardThetaDegrees = 90.0,
+        .forwardPhiDegrees = 0.0,
+        .radiationComponent = necwb::analysis::RadiationComponent::Total,
+    };
+    const auto directionalScore = necwb::analysis::evaluateOptimizationObjective(
+        directional, directionalObjective);
+    expect(directionalScore && directionalScore->forwardGainDb
+            && std::abs(*directionalScore->forwardGainDb - 7.2) < 1.0e-12
+            && directionalScore->frontToBackDb
+            && std::abs(*directionalScore->frontToBackDb - 20.0) < 1.0e-12
+            && std::abs(directionalScore->score + 1.36) < 1.0e-12,
+        "directional objective maximizes explicit forward gain and physical antipodal F/B");
+    auto frontToRearObjective = directionalObjective;
+    frontToRearObjective.forwardGainWeight = 0.0;
+    frontToRearObjective.frontToBackWeight = 0.0;
+    frontToRearObjective.frontToRearWeight = 1.0;
+    const auto frontToRearScore = necwb::analysis::evaluateOptimizationObjective(
+        directional, frontToRearObjective);
+    expect(frontToRearScore && frontToRearScore->rearGainDb
+            && std::abs(*frontToRearScore->rearGainDb - (-2.0)) < 1.0e-12
+            && frontToRearScore->frontToRearDb
+            && std::abs(*frontToRearScore->frontToRearDb - 9.2) < 1.0e-12,
+        "F/R objective uses the strongest response in the rear azimuth half");
+    directional.radiation.erase(directional.radiation.begin() + 1);
+    expect(!necwb::analysis::evaluateOptimizationObjective(
+            directional, directionalObjective),
+        "directional F/B is unavailable when the physical opposite sample is absent");
+    directional.radiation.front().frequencyMHz = 14.1;
+    auto forwardOnlyObjective = directionalObjective;
+    forwardOnlyObjective.frontToBackWeight = 0.0;
+    expect(!necwb::analysis::evaluateOptimizationObjective(
+            directional, forwardOnlyObjective),
+        "directional gain is unavailable when the requested frequency is absent");
+
+    const auto directionalDeck = necwb::analysis::prepareDirectionalOptimizationInput(
+        "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nFR 0 3 0 0 14 .1\n"
+        "RP 0 19 37 1000 0 0 5 10\nEN\n",
+        14.2, 90.0, 0.0, true);
+    expect(directionalDeck.find("FR 0 1 0 0 14.2 0") != std::string::npos
+            && directionalDeck.find("FR 0 1 0 0 14.2 0\nXQ 0\nRP")
+                != std::string::npos
+            && directionalDeck.find("RP 0 1 1 1000 90 0") != std::string::npos
+            && directionalDeck.find("RP 0 1 1 1000 90 180") != std::string::npos
+            && directionalDeck.find("RP 0 19 37") == std::string::npos,
+        "directional optimization deck replaces broad requests with exact front/back samples");
+    const auto frontToRearDeck = necwb::analysis::prepareDirectionalOptimizationInput(
+        "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nFR 0 1 0 0 14.2 0\nEN\n",
+        14.2, 90.0, 0.0, false, true);
+    expect(frontToRearDeck.find("RP 0 1 1 1000 90 0") != std::string::npos
+            && frontToRearDeck.find("RP 0 1 1 1000 90 90") != std::string::npos
+            && frontToRearDeck.find("RP 0 1 1 1000 90 180") != std::string::npos
+            && frontToRearDeck.find("RP 0 1 1 1000 90 270") != std::string::npos,
+        "F/R optimization deck samples the complete rear azimuth half");
+
+    necwb::analysis::AnalysisResult directionalSweep;
+    directionalSweep.feedpoints = {
+        {.frequencyMHz = 144.0, .impedance = {50.0, 0.0}},
+        {.frequencyMHz = 148.0, .impedance = {100.0, 0.0}},
+    };
+    directionalSweep.radiation = {
+        {.frequencyMHz = 144.0, .thetaDegrees = 90.0, .phiDegrees = 0.0,
+            .verticalGainDb = 8.0, .horizontalGainDb = -20.0, .totalGainDb = 8.0},
+        {.frequencyMHz = 144.0, .thetaDegrees = 90.0, .phiDegrees = 180.0,
+            .verticalGainDb = -12.0, .horizontalGainDb = -30.0, .totalGainDb = -12.0},
+        {.frequencyMHz = 148.0, .thetaDegrees = 90.0, .phiDegrees = 0.0,
+            .verticalGainDb = 5.0, .horizontalGainDb = -20.0, .totalGainDb = 5.0},
+        {.frequencyMHz = 148.0, .thetaDegrees = 90.0, .phiDegrees = 180.0,
+            .verticalGainDb = -5.0, .horizontalGainDb = -30.0, .totalGainDb = -5.0},
+        {.frequencyMHz = 144.0, .thetaDegrees = 90.0, .phiDegrees = 90.0,
+            .verticalGainDb = 0.0, .horizontalGainDb = -30.0, .totalGainDb = 0.0},
+        {.frequencyMHz = 148.0, .thetaDegrees = 90.0, .phiDegrees = 90.0,
+            .verticalGainDb = 1.0, .horizontalGainDb = -30.0, .totalGainDb = 1.0},
+    };
+    const auto directionalFrequencyMetrics = necwb::analysis::radiationFrequencyMetrics(
+        directionalSweep.radiation, necwb::analysis::RadiationComponent::Total, 90.0, 0.0);
+    expect(directionalFrequencyMetrics.size() == 2
+            && directionalFrequencyMetrics.front().frequencyMHz == 144.0
+            && directionalFrequencyMetrics.front().forwardGainDb
+            && *directionalFrequencyMetrics.front().forwardGainDb == 8.0
+            && directionalFrequencyMetrics.front().frontToBackDb
+            && *directionalFrequencyMetrics.front().frontToBackDb == 20.0
+            && directionalFrequencyMetrics.back().frontToRearDb
+            && *directionalFrequencyMetrics.back().frontToRearDb == 4.0,
+        "shared radiation frequency metrics retain gain, F/B, and F/R");
+    auto directionalMinimax = directionalObjective;
+    directionalMinimax.kind = necwb::analysis::OptimizationObjectiveKind::WorstPointAcrossFrequencies;
+    directionalMinimax.swrWeight = 1.0;
+    const auto sweepScore = necwb::analysis::evaluateOptimizationObjective(
+        directionalSweep, directionalMinimax);
+    expect(sweepScore && sweepScore->evaluationFrequencyMHz == 148.0
+            && sweepScore->feedpoint && sweepScore->feedpoint->frequencyMHz == 148.0
+            && sweepScore->forwardGainDb && *sweepScore->forwardGainDb == 5.0
+            && sweepScore->forwardGainFrequencyMHz
+            && *sweepScore->forwardGainFrequencyMHz == 148.0
+            && sweepScore->frontToBackDb && *sweepScore->frontToBackDb == 10.0
+            && sweepScore->frontToBackFrequencyMHz
+            && *sweepScore->frontToBackFrequencyMHz == 148.0
+            && sweepScore->frequencyMetrics.size() == 2
+            && sweepScore->frequencyMetrics.front().frequencyMHz == 144.0
+            && sweepScore->frequencyMetrics.front().forwardGainDb
+            && *sweepScore->frequencyMetrics.front().forwardGainDb == 8.0
+            && sweepScore->frequencyMetrics.front().frontToBackDb
+            && *sweepScore->frequencyMetrics.front().frontToBackDb == 20.0
+            && sweepScore->forwardGainSummary
+            && sweepScore->forwardGainSummary->minimumFrequencyMHz == 148.0
+            && sweepScore->forwardGainSummary->maximumFrequencyMHz == 144.0
+            && std::abs(sweepScore->score - 1.0 / 6.0) < 1.0e-12,
+        "directional minimax retains raw per-frequency metrics and extrema frequencies");
+    auto frontToRearMinimax = directionalMinimax;
+    frontToRearMinimax.swrWeight = 0.0;
+    frontToRearMinimax.forwardGainWeight = 0.0;
+    frontToRearMinimax.frontToBackWeight = 0.0;
+    frontToRearMinimax.frontToRearWeight = 1.0;
+    const auto frontToRearSweepScore = necwb::analysis::evaluateOptimizationObjective(
+        directionalSweep, frontToRearMinimax);
+    expect(frontToRearSweepScore && frontToRearSweepScore->frontToRearDb
+            && *frontToRearSweepScore->frontToRearDb == 4.0
+            && frontToRearSweepScore->frontToRearFrequencyMHz
+            && *frontToRearSweepScore->frontToRearFrequencyMHz == 148.0,
+        "directional minimax retains the lowest F/R across frequencies");
+    auto directionalAverage = frontToRearMinimax;
+    directionalAverage.kind =
+        necwb::analysis::OptimizationObjectiveKind::AverageAcrossFrequencies;
+    const auto averageDirectionalScore = necwb::analysis::evaluateOptimizationObjective(
+        directionalSweep, directionalAverage);
+    expect(averageDirectionalScore && averageDirectionalScore->frontToRearDb
+            && *averageDirectionalScore->frontToRearDb == 6.0
+            && std::abs(averageDirectionalScore->score - (-0.6)) < 1.0e-12
+            && averageDirectionalScore->frontToRearSummary
+            && averageDirectionalScore->frontToRearSummary->minimum == 4.0
+            && averageDirectionalScore->frontToRearSummary->average == 6.0
+            && averageDirectionalScore->frontToRearSummary->maximum == 8.0,
+        "directional average objective reports mean F/R and range statistics");
+
+    auto perCriterionGain = necwb::analysis::OptimizationObjectiveSpec{};
+    perCriterionGain.swrWeight = 0.0;
+    perCriterionGain.forwardGainWeight = 1.0;
+    perCriterionGain.forwardGainAggregation =
+        necwb::analysis::OptimizationAggregation::Minimum;
+    const auto minimumGainScore = necwb::analysis::evaluateOptimizationObjective(
+        directionalSweep, perCriterionGain);
+    expect(minimumGainScore && minimumGainScore->forwardGainDb
+            && *minimumGainScore->forwardGainDb == 5.0
+            && std::abs(minimumGainScore->score - (-0.5)) < 1.0e-12,
+        "per-criterion gain defaults to maximizing the minimum across frequencies");
+    perCriterionGain.forwardGainGoal = necwb::analysis::OptimizationGoal::Minimize;
+    perCriterionGain.forwardGainAggregation =
+        necwb::analysis::OptimizationAggregation::Maximum;
+    const auto unusualGainScore = necwb::analysis::evaluateOptimizationObjective(
+        directionalSweep, perCriterionGain);
+    expect(unusualGainScore && unusualGainScore->forwardGainDb
+            && *unusualGainScore->forwardGainDb == 8.0
+            && std::abs(unusualGainScore->score - 0.8) < 1.0e-12,
+        "gain can use non-default goals without a separate optimizer algorithm");
+
+    const std::array directionalFrequencies{144.0, 148.0};
+    const auto directionalSweepDeck = necwb::analysis::prepareDirectionalOptimizationInput(
+        "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nFR 0 1 0 0 146 0\nEN\n",
+        directionalFrequencies, 90.0, 0.0, true);
+    expect(directionalSweepDeck.find("FR 0 1 0 0 144 0") != std::string::npos
+            && directionalSweepDeck.find("FR 0 1 0 0 148 0") != std::string::npos
+            && directionalSweepDeck.find("FR 0 1 0 0 144 0\nXQ 0\nRP")
+                != std::string::npos
+            && directionalSweepDeck.find("FR 0 1 0 0 148 0\nXQ 0\nRP")
+                != std::string::npos
+            && std::count(directionalSweepDeck.begin(), directionalSweepDeck.end(), '\n') >= 9,
+        "directional optimization deck executes exact front/back requests at every study frequency");
 }
 
 void testAdaptiveSearch()
@@ -1206,6 +1544,8 @@ void testAdaptiveSearch()
     expect(search.nextCandidates().empty()
             && search.stopReason() == necwb::analysis::AdaptiveStopReason::ScoreTolerance,
         "adaptive search reports score-tolerance convergence after repeated stagnant rounds");
+    expect(search.scoreImprovements() == std::vector<double>({0.0, 0.0}),
+        "adaptive search retains the round improvements that triggered convergence");
 
     necwb::analysis::AdaptiveSearch limited({0.0, 10.0, 5, 0.1, 0.001});
     for (const auto value : limited.initialCandidates()) limited.record(value, value);
@@ -1245,6 +1585,26 @@ void testAdaptiveSearch()
                 return candidate.values.size() == 2;
             }),
         "multi-variable adaptive search proposes bounded coordinate refinements");
+
+    necwb::analysis::AdaptiveVectorSearch boundarySearch({
+        {{13.537, 20.305, 0.01}}, 21, 0.001});
+    const auto boundaryInitial = boundarySearch.initialCandidates();
+    boundarySearch.record(boundaryInitial[0].values, 25.0);
+    boundarySearch.record(boundaryInitial[1].values, 30.0);
+    boundarySearch.record(boundaryInitial[2].values, 18.983);
+    const auto boundaryRoundOne = boundarySearch.nextCandidates();
+    expect(boundaryRoundOne.size() == 1,
+        "adaptive boundary refinement tests the remaining interior direction");
+    boundarySearch.record(boundaryRoundOne.front().values, 20.155);
+    const auto boundaryRoundTwo = boundarySearch.nextCandidates();
+    expect(boundaryRoundTwo.size() == 1,
+        "adaptive boundary refinement requires two completed stagnant rounds");
+    boundarySearch.record(boundaryRoundTwo.front().values, 19.500);
+    expect(boundarySearch.nextCandidates().empty()
+            && boundarySearch.stopReason()
+                == necwb::analysis::AdaptiveStopReason::ScoreTolerance
+            && boundarySearch.scoreImprovements() == std::vector<double>({0.0, 0.0}),
+        "adaptive boundary convergence reports unchanged best-score improvements");
 }
 
 void testNelderMeadSearch()
@@ -1281,6 +1641,74 @@ void testNelderMeadSearch()
     expect(!failed.nextCandidate()
             && failed.stopReason() == necwb::analysis::NelderMeadStopReason::NoSuccessfulCandidate,
         "Nelder-Mead stops when its initial simplex has no successful candidates");
+}
+
+void testDifferentialEvolutionSearch()
+{
+    const necwb::analysis::DifferentialEvolutionSettings settings{
+        {{.initial = 4.0, .minimum = -5.0, .maximum = 5.0, .tolerance = 0.0001},
+            {.initial = 4.0, .minimum = -5.0, .maximum = 5.0, .tolerance = 0.0001}},
+        12,
+        40,
+        0.8,
+        0.9,
+        0.0,
+        100,
+        12345u,
+    };
+    necwb::analysis::DifferentialEvolutionSearch first(settings);
+    necwb::analysis::DifferentialEvolutionSearch second(settings);
+    const auto objective = [](const std::vector<double>& values) {
+        return std::pow(values[0] - 1.5, 2.0) + std::pow(values[1] + 2.0, 2.0);
+    };
+    auto bestScore = std::numeric_limits<double>::infinity();
+    const auto recordPair = [&](const auto& firstProposal, const auto& secondProposal) {
+        expect(firstProposal.values == secondProposal.values,
+            "Differential evolution reproduces candidate proposals for a fixed seed");
+        for (auto index = std::size_t{}; index < firstProposal.values.size(); ++index) {
+            expect(firstProposal.values[index] >= settings.variables[index].minimum
+                    && firstProposal.values[index] <= settings.variables[index].maximum,
+                "Differential evolution keeps every proposal within variable bounds");
+        }
+        const auto score = objective(firstProposal.values);
+        bestScore = std::min(bestScore, score);
+        first.record(firstProposal.values, score);
+        second.record(secondProposal.values, score);
+    };
+    const auto firstInitial = first.initialCandidates();
+    const auto secondInitial = second.initialCandidates();
+    expect(firstInitial.size() == 12 && secondInitial.size() == firstInitial.size()
+            && firstInitial.front().values == std::vector<double>({4.0, 4.0}),
+        "Differential evolution creates a bounded seeded population including the current model");
+    for (auto index = std::size_t{}; index < firstInitial.size(); ++index)
+        recordPair(firstInitial[index], secondInitial[index]);
+    while (const auto firstProposal = first.nextCandidate()) {
+        const auto secondProposal = second.nextCandidate();
+        expect(secondProposal.has_value(),
+            "Differential evolution seeded runs have matching lengths");
+        if (!secondProposal) break;
+        recordPair(*firstProposal, *secondProposal);
+    }
+    expect(!second.nextCandidate(),
+        "Differential evolution seeded runs stop together");
+    expect(bestScore < 0.1,
+        "Differential evolution approaches a bounded two-variable objective minimum");
+    expect(first.evaluationCount() <= settings.populationSize
+            * (settings.maximumGenerations + 1)
+            && first.generation() > 0,
+        "Differential evolution tracks generations and obeys its evaluation budget");
+    expect(first.stopReason() != necwb::analysis::DifferentialEvolutionStopReason::None,
+        "Differential evolution reports an explicit stopping reason");
+
+    necwb::analysis::DifferentialEvolutionSearch failed({
+        {{.initial = 0.5, .minimum = 0.0, .maximum = 1.0, .tolerance = 0.01}},
+        4, 5, 0.8, 0.9, 0.001, 3, 7u});
+    for (const auto& proposal : failed.initialCandidates())
+        failed.record(proposal.values, std::nullopt);
+    expect(!failed.nextCandidate()
+            && failed.stopReason()
+                == necwb::analysis::DifferentialEvolutionStopReason::NoSuccessfulCandidate,
+        "Differential evolution stops when its initial population has no successful candidates");
 }
 
 void testFrequencyPlans()
@@ -1350,6 +1778,31 @@ void testAverageGainTestPreparation()
             && std::abs(assessment.normalizedGain - 0.98) < 1.0e-12
             && assessment.gainAdjustmentDb > 0.0,
         "AGT assessment normalizes perfect-ground results and reports correction direction");
+
+    std::vector<necwb::analysis::RadiationSample> freeSpaceSamples;
+    for (const auto theta : {0.0, 90.0, 180.0}) {
+        for (const auto phi : {0.0, 180.0, 360.0})
+            freeSpaceSamples.push_back({7.1, theta, phi, 0.0, 0.0, 0.0});
+    }
+    const auto freeSpaceAverage = necwb::analysis::integrateAverageGain(
+        freeSpaceSamples, necwb::analysis::AverageGainEnvironment::FreeSpace);
+    expect(freeSpaceAverage
+            && std::abs(freeSpaceAverage->averagePowerGain - 1.0) < 1.0e-12
+            && std::abs(freeSpaceAverage->solidAnglePi - 4.0) < 1.0e-12,
+        "AGT integration recovers isotropic full-sphere average gain");
+
+    std::vector<necwb::analysis::RadiationSample> groundSamples;
+    for (const auto theta : {0.0, 45.0, 90.0}) {
+        for (const auto phi : {0.0, 180.0, 360.0})
+            groundSamples.push_back({7.1, theta, phi, 3.010299956639812, 0.0,
+                3.010299956639812});
+    }
+    const auto groundAverage = necwb::analysis::integrateAverageGain(
+        groundSamples, necwb::analysis::AverageGainEnvironment::PerfectGround);
+    expect(groundAverage
+            && std::abs(groundAverage->averagePowerGain - 2.0) < 1.0e-12
+            && std::abs(groundAverage->solidAnglePi - 2.0) < 1.0e-12,
+        "AGT integration recovers perfect-ground hemisphere average gain");
 }
 
 void testSegmentationConvergencePreparation()
@@ -1419,6 +1872,7 @@ auto main() -> int
     testInvalidWireIsDiagnosed();
     testGeometryScaleConversion();
     testGeneratedWireGeometryConversion();
+    testGeometryTransformConversion();
     testValidModelCheck();
     testStaticModelAdequacyChecks();
     testCardValidation();
@@ -1441,6 +1895,7 @@ auto main() -> int
     testOptimizationObjectives();
     testAdaptiveSearch();
     testNelderMeadSearch();
+    testDifferentialEvolutionSearch();
     testFrequencyPlans();
     testAverageGainTestPreparation();
     testSegmentationConvergencePreparation();

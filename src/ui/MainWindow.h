@@ -14,6 +14,7 @@
 
 #include <QMainWindow>
 #include <QElapsedTimer>
+#include <QHash>
 #include <QString>
 #include <QStringList>
 
@@ -37,7 +38,6 @@ class QTabWidget;
 class QStackedWidget;
 class QTreeWidget;
 class QTreeWidgetItem;
-class QUndoStack;
 class QTimer;
 class QVBoxLayout;
 class QWidget;
@@ -58,6 +58,7 @@ class SweepPlotsView;
 class CurrentDistributionView;
 class RadiationPatternView;
 class Radiation3DView;
+class RadiationPerformanceView;
 class SetupEditor;
 class LoadNetworkEditor;
 class WireCardEditor;
@@ -96,6 +97,14 @@ private:
         Environment
     };
 
+    struct SourceHistoryEntry {
+        QString description;
+        EditorDestination destination{EditorDestination::RawSource};
+        int geometryTab{};
+        int analysisTab{};
+        int sourceTab{};
+    };
+
     void createActions();
     void createWorkspace();
     void createResultsWorkspace();
@@ -103,6 +112,7 @@ private:
     void createDocks();
     void createMenusAndToolbar();
     void resetWorkspaceLayout();
+    void updateWorkspaceDockVisibility(int moduleIndex);
     void setWorkspaceDensity(WorkspaceDensity density);
     void applyWorkspaceDensity();
     void showGettingStarted();
@@ -149,11 +159,9 @@ private:
     void previewEndpointMove(int tag, model::WireEndpoint endpoint, const model::Point3D& position);
     void commitEndpointMove(int tag, model::WireEndpoint endpoint,
         const model::Point3D& original, const model::Point3D& updated);
-    void applyEndpointMove(int tag, model::WireEndpoint endpoint, const model::Point3D& position);
     void previewWireMove(int tag, const model::Point3D& start, const model::Point3D& end);
     void commitWireMove(int tag, const model::Point3D& originalStart, const model::Point3D& originalEnd,
         const model::Point3D& updatedStart, const model::Point3D& updatedEnd);
-    void applyWireMove(int tag, const model::Point3D& start, const model::Point3D& end);
     void addWire(const model::Point3D& start, const model::Point3D& end);
     void splitWire(int tag, const model::Point3D& position);
     void deleteWire(int tag);
@@ -205,6 +213,7 @@ private:
     void startSolverProcess(const analysis::SolverCommand& command, const QString& activity);
     void cancelAnalysis();
     void appendSolverOutput(const QString& text);
+    void showRunMonitor(bool manuallyRequested);
     void updateSolverActivity();
     void completeSolverActivity(const QString& status);
     void finishAnalysis(SolverProcessResult result);
@@ -227,16 +236,18 @@ private:
     void findInRawOutput();
     void clearDisplayedResults();
     void pushGeometrySourceEdit(const QString& description, QString updatedSource);
-    void applyGeometrySource(const QString& source, EditorDestination destination,
-        int geometryTab, int analysisTab);
+    void applyGeometrySource(const QString& description, const QString& source,
+        EditorDestination destination, int geometryTab, int analysisTab, int sourceTab);
     [[nodiscard]] auto nextWireTag() const -> int;
-    void replaceWireSourceLine(const model::Wire& wire);
     [[nodiscard]] auto wireHasSymbolicGeometry(std::size_t sourceLine) const -> bool;
     void showSymbolicGeometryEditBlocked();
     void refreshGeometryViews();
     void updateWireCardEditor();
     void performUndo();
     void performRedo();
+    void recordSourceUndoCommand();
+    void resetSourceUndoHistory();
+    void navigateToSourceHistoryEntry(const SourceHistoryEntry& entry);
     void updateUndoActions();
     void updateProjectTree(const model::AntennaModel& model, const nec::NecDocument& document);
     void synchronizeProjectItemSelection(QTreeWidgetItem* item);
@@ -272,13 +283,14 @@ private:
     QAction* optimizeModuleAction_{};
     QAction* detachResultsAction_{};
     QAction* resetLayoutAction_{};
+    QAction* modelCheckWindowAction_{};
+    QAction* runMonitorWindowAction_{};
     QAction* compactDensityAction_{};
     QAction* standardDensityAction_{};
     QAction* spaciousDensityAction_{};
     QAction* gettingStartedAction_{};
     QAction* userGuideAction_{};
     QAction* aboutAction_{};
-    QUndoStack* undoStack_{};
     QComboBox* lengthUnitControl_{};
     QComboBox* deckUnitControl_{};
     QLabel* deckScaleLabel_{};
@@ -318,6 +330,7 @@ private:
     CurrentDistributionView* currentResultsView_{};
     RadiationPatternView* radiationPatternView_{};
     Radiation3DView* radiation3DView_{};
+    RadiationPerformanceView* radiationPerformanceView_{};
     OptimizationWorkspace* optimizationWorkspace_{};
     ParameterEditor* parameterEditor_{};
     QTabWidget* analysisWorkspace_{};
@@ -338,10 +351,14 @@ private:
     QTreeWidget* diagnostics_{};
     QPlainTextEdit* solverOutput_{};
     QDockWidget* projectDock_{};
-    QDockWidget* diagnosticsDock_{};
-    QDockWidget* solverOutputDock_{};
+    QDialog* modelCheckWindow_{};
+    QDialog* runMonitorWindow_{};
     QLabel* validationSummary_{};
     QLabel* validationScope_{};
+    QLabel* runMonitorContextLabel_{};
+    QLabel* runMonitorStatusLabel_{};
+    QProgressBar* runMonitorProgress_{};
+    QPushButton* runMonitorStopButton_{};
     QLabel* checkStatus_{};
     QWidget* solverActivityWidget_{};
     QLabel* solverActivityLabel_{};
@@ -364,12 +381,15 @@ private:
     QString currentFile_;
     QString solverBackendId_{QStringLiteral("nec2")};
     QString solverExecutablePath_;
+    QHash<QString, QString> solverExecutablePaths_;
     int solverTimeoutSeconds_{120};
     SolverProcessRunner* solverRunner_{};
     QTimer* solverActivityTimer_{};
+    QTimer* runMonitorAutoHideTimer_{};
     QElapsedTimer solverElapsed_;
     QString solverActivityName_;
     QString solverActivityPhase_;
+    QString currentSolverCommand_;
     QString currentRunDirectory_;
     QString currentRunOutputPath_;
     QString displayedRunDirectory_;
@@ -403,13 +423,19 @@ private:
     int resultsModuleIndex_{};
     int optimizeModuleIndex_{};
     int lastNonResultsModuleIndex_{-1};
-    bool updatingSourceFromGeometry_{};
     std::size_t modelErrorCount_{};
     std::size_t modelWarningCount_{};
     bool modelChecked_{};
     bool hasNecModel_{};
     bool resultsAvailable_{};
     bool resultsDetached_{};
+    bool runMonitorPinnedOpen_{};
+    bool suppressSourceHistoryRecording_{};
+    std::optional<SourceHistoryEntry> pendingSourceHistoryEntry_;
+    std::vector<SourceHistoryEntry> sourceUndoHistory_;
+    std::vector<SourceHistoryEntry> sourceRedoHistory_;
+    bool projectDockVisibleBeforeFocusedWorkspace_{};
+    bool focusedWorkspaceDockStateActive_{};
     std::optional<std::pair<int, int>> pendingTransmissionLineEndpoint_;
 };
 

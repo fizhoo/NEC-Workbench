@@ -123,13 +123,22 @@ RunReviewWindow::RunReviewWindow(QWidget* parent)
     radiation3DView_ = new Radiation3DView(radiationPage_);
     radiationPage_->addTab(radiationPatternView_, tr("2D Pattern"));
     radiationPage_->addTab(radiation3DView_, tr("3D Pattern"));
+    radiationPerformanceView_ = new RadiationPerformanceView(radiationPage_);
+    radiationPage_->addTab(radiationPerformanceView_, tr("Performance vs Frequency"));
     radiationPatternView_->setSettingsChangedCallback(
         [this](const analysis::RadiationDisplaySettings& settings) {
             radiation3DView_->setDisplaySettings(settings);
+            radiationPerformanceView_->setComponent(settings.component);
         });
     radiation3DView_->setSettingsChangedCallback(
         [this](const analysis::RadiationDisplaySettings& settings) {
             radiationPatternView_->setDisplaySettings(settings);
+            radiationPerformanceView_->setComponent(settings.component);
+        });
+    radiationPerformanceView_->setComponentChangedCallback(
+        [this](analysis::RadiationComponent component) {
+            radiationPatternView_->setComponent(component);
+            radiation3DView_->setComponent(component);
         });
     rawOutput_ = new QPlainTextEdit(tabs_);
     rawOutput_->setObjectName(QStringLiteral("runReviewRawOutput"));
@@ -246,6 +255,7 @@ auto RunReviewWindow::showAnalysisRun(const AnalysisRunRecord& record,
     radiationPatternView_->setResults(result, context);
     radiation3DView_->setModel(archivedModel);
     radiation3DView_->setResults(result, context);
+    radiationPerformanceView_->setResults(result, context);
     tabs_->addTab(summaryView_, tr("Summary"));
     if (!result.feedpoints.empty()) tabs_->addTab(impedancePage_, tr("Impedance"));
     if (!result.currents.empty()) tabs_->addTab(currentsView_, tr("Currents"));
@@ -372,6 +382,7 @@ void RunReviewWindow::refreshFrequency()
     currentsView_->setSelectedFrequency(frequency);
     radiationPatternView_->setSelectedFrequency(frequency);
     radiation3DView_->setSelectedFrequency(frequency);
+    radiationPerformanceView_->setSelectedFrequency(frequency);
 }
 
 void RunReviewWindow::present()

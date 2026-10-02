@@ -73,6 +73,13 @@ struct RadiationMetrics {
     std::optional<double> frontToBackDb;
 };
 
+struct RadiationFrequencyMetric {
+    double frequencyMHz{};
+    std::optional<double> forwardGainDb;
+    std::optional<double> frontToBackDb;
+    std::optional<double> frontToRearDb;
+};
+
 struct RadiationCutPoint {
     double angleDegrees{};
     double thetaDegrees{};
@@ -114,6 +121,9 @@ struct AnalysisResult {
     RadiationComponent component) -> double;
 [[nodiscard]] auto radiationMetrics(std::span<const RadiationSample> samples,
     RadiationComponent component) -> RadiationMetrics;
+[[nodiscard]] auto radiationFrequencyMetrics(std::span<const RadiationSample> samples,
+    RadiationComponent component, double forwardThetaDegrees,
+    double forwardPhiDegrees) -> std::vector<RadiationFrequencyMetric>;
 [[nodiscard]] auto radiationCutMetrics(std::span<const RadiationCutPoint> samples,
     bool wraps) -> RadiationCutMetrics;
 

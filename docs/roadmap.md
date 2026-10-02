@@ -7,19 +7,27 @@ configured by the user and are not bundled.
 ## Current Foundation
 
 - Raw and structured NEC source editing with validation and source mapping
+- One canonical, context-labeled source-backed Undo/Redo history across raw,
+  structured, geometry, setup, and analysis-request edits
 - Synchronized 2D and 3D wire geometry inspection and editing
 - Frequency, ground, source, load, transmission-line, and request setup
-- External `nec2c` execution with durable run artifacts and history
+- External `nec2c`, OpenNEC, and 4nec2 NEC2dXS execution with durable run artifacts and history
 - Impedance, SWR, current-distribution, and 2D/3D radiation results
 - Historical run snapshots that restore the exact archived input deck
+- Reusable detached Results and optimization-candidate windows with foreground restoration
 - Categorized Project tree with synchronized selection and editor navigation
 - Solver-independent `SY` expressions with numeric NEC run-deck generation
 - Ordered `GS` geometry scaling with separate display and deck-unit controls
 - One-variable bounded sweeps with model-sweep or explicit-frequency SWR objectives
 - Shared candidate evaluator for parameter sweeps and future optimizer algorithms
-- Candidate objective plots with exact weighted SWR, resistance, and reactance contributions
+- Candidate objective plots with exact weighted SWR, resistance, reactance, gain, F/B, and F/R contributions
+- Forward-gain, physical front-to-back, and rear-cut front-to-rear objectives using focused RP samples
+- Per-criterion Minimize, Maximize, Target, and Good Enough goals for SWR/R/X/Gain/F/B/F/R
+- Independent Minimum, Average, and Maximum frequency reduction per objective criterion
+- Candidate min/average/max performance summaries with archived objective reconstruction
 - Multi-variable adaptive coordinate refinement with per-parameter bounds and tolerances
 - Bounded multi-variable Nelder–Mead search using the shared candidate evaluator
+- Seeded bounded multi-variable Differential Evolution with reproducible populations
 - Explicit, undoable application of the best candidate values to their active `SY` definitions
 - Model-level `Z0` feed reference shared by SWR results and optimizer defaults
 - Shared frequency plans for optimization and model, single, explicit-list, or continuous RP requests
@@ -31,15 +39,17 @@ configured by the user and are not bundled.
 - Complete NEC-2 card recognition with centralized categories, fixed-field validation,
   safe source preservation, and a published support matrix
 - Read-only semantic 2D/3D geometry for `GA`, helical `GH`, and tapered `GW`/`GC`,
-  with ordered `GS` scaling and segment-aware attachments
+  with ordered `GS`, `GM`, `GX`, and `GR` operations and segment-aware attachments
 
 ## Next: Geometry Card Semantics
 
-1. Apply `GM`, `GX`, and `GR` transformations in authored NEC order.
-2. Represent `SP`, `SM`, and `SC` surface patches without forcing them into wire models.
-3. Add flat-spiral `GH` semantics and dedicated editors only where card-specific labels
+`GM`, `GX`, and `GR` wire transformations now expand in authored order while the
+original cards remain unchanged. The remaining sequence is:
+
+1. Represent `SP`, `SM`, and `SC` surface patches without forcing them into wire models.
+2. Add flat-spiral `GH` semantics and dedicated editors only where card-specific labels
    and constraints add value.
-4. Verify generated decks with `nec2c` examples for every newly expanded card.
+3. Verify generated decks with `nec2c` examples for every newly expanded card.
 
 Card support distinguishes **Preserved**, **Understood**, and **Structured Editable**
 instead of claiming that every recognized card already has complete graphical semantics.
@@ -78,7 +88,7 @@ particular solver's extensions.
 ## Later: Optimization Analysis
 
 1. Add finalist sensitivity/tolerance analysis for parameter perturbations.
-2. Add gain and pattern objectives, weights, and constraints.
+2. Add optional frequency/band weights and pass/fail constraints.
 3. Add two-variable grid sweeps and objective heat maps.
 4. Add explicit Compare Runs and baseline-versus-candidate overlays.
 
@@ -86,12 +96,17 @@ Explicit frequency sets and editable amateur-band presets provide the initial
 multi-band foundation. Per-frequency weights and pass/fail constraints remain
 future refinements rather than complicating the first workflow.
 
-Parameter Sweep, Adaptive Optimize, and Nelder–Mead now share the same variables,
+Parameter Sweep, Adaptive Optimize, Nelder–Mead, and Differential Evolution now share the same variables,
 frequency plans, objectives, candidate artifacts, and Apply actions. Further methods
 should be added only when they offer a clear advantage over these reproducible baselines.
+Candidate review now includes per-frequency impedance and directional metrics,
+gain/F/B/F/R plots, extrema frequencies, and goal-aware scoring guidance.
+Normal and historical Radiation results now provide the same compact forward
+gain/F/B/F/R versus-frequency inspection without entering Optimize.
 
 ## Modeling and Analysis Improvements
 
+- Add optional filled 3D radiation surfaces while retaining the auditable sample mesh
 - Normalize attachment positions for safe `LD`, `TL`, `NT`, and additional EX remapping
 - Add more geometry-card editors and semantic geometry primitives
 - Add radiation polarization and additional field-component views
@@ -102,7 +117,7 @@ should be added only when they offer a clear advantage over these reproducible b
 ## Solver Backends
 
 - Keep `nec2c` as the reference external backend
-- Add an OpenNEC adapter after the main modeling and optimization interfaces stabilize
+- Validate OpenNEC and NEC2dXS original-format output against a broader real-deck corpus
 - Support user-provided NEC-4/NEC-5-compatible executables where their command and output formats can be adapted safely
 - Keep backend invocation and output parsing separate from model editing
 

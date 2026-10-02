@@ -4,10 +4,13 @@
 #include "nec/NecWriter.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cmath>
 #include <iomanip>
+#include <numbers>
 #include <sstream>
+#include <utility>
 #include <vector>
 
 namespace necwb::analysis {
@@ -42,6 +45,21 @@ auto joinLines(const std::vector<std::string>& lines) -> std::string
         output << lines[index];
     }
     return output.str();
+}
+
+auto oppositeDirection(double thetaDegrees, double phiDegrees) -> std::pair<double, double>
+{
+    constexpr auto radiansPerDegree = std::numbers::pi / 180.0;
+    constexpr auto degreesPerRadian = 180.0 / std::numbers::pi;
+    const auto theta = thetaDegrees * radiansPerDegree;
+    const auto phi = phiDegrees * radiansPerDegree;
+    const auto x = -std::sin(theta) * std::cos(phi);
+    const auto y = -std::sin(theta) * std::sin(phi);
+    const auto z = -std::cos(theta);
+    const auto oppositeTheta = std::acos(std::clamp(z, -1.0, 1.0)) * degreesPerRadian;
+    auto oppositePhi = std::atan2(y, x) * degreesPerRadian;
+    if (oppositePhi < 0.0) oppositePhi += 360.0;
+    return {oppositeTheta, oppositePhi};
 }
 
 }
@@ -225,6 +243,84 @@ auto prepareExplicitFrequencyInput(std::string_view source,
     }
     if (document.hasFinalLineEnding() && !lines.empty()) output << document.lineEnding();
     return output.str();
+}
+
+auto prepareDirectionalOptimizationInput(std::string_view source,
+    double frequencyMHz, double thetaDegrees, double phiDegrees,
+    bool includeOppositeDirection, bool includeRearRegion) -> std::string
+{
+    const std::array frequencies{frequencyMHz};
+    return prepareDirectionalOptimizationInput(source, frequencies,
+        thetaDegrees, phiDegrees, includeOppositeDirection, includeRearRegion);
+}
+
+auto prepareDirectionalOptimizationInput(std::string_view source,
+    std::span<const double> frequenciesMHz, double thetaDegrees, double phiDegrees,
+    bool includeOppositeDirection, bool includeRearRegion) -> std::string
+{
+    if (!std::isfinite(thetaDegrees) || !std::isfinite(phiDegrees))
+        return prepareImpedanceInput(source);
+
+    std::vector<double> frequencies;
+    frequencies.reserve(frequenciesMHz.size());
+    for (const auto frequencyMHz : frequenciesMHz) {
+        if (std::isfinite(frequencyMHz) && frequencyMHz > 0.0)
+            frequencies.push_back(frequencyMHz);
+    }
+    std::ranges::sort(frequencies);
+    const auto duplicates = std::ranges::unique(frequencies);
+    frequencies.erase(duplicates.begin(), duplicates.end());
+    if (frequencies.empty()) return prepareImpedanceInput(source);
+
+    const auto document = nec::NecParser{}.parse(normalizeSolverDeck(source));
+    const nec::NecWriter writer;
+    model::RadiationPatternRequest front;
+    front.thetaCount = 1;
+    front.phiCount = 1;
+    front.thetaStart = thetaDegrees;
+    front.phiStart = phiDegrees;
+    const auto [backTheta, backPhi] = oppositeDirection(thetaDegrees, phiDegrees);
+    auto back = front;
+    back.thetaStart = backTheta;
+    back.phiStart = backPhi;
+    std::vector<std::string> requests;
+    constexpr auto rearStepDegrees = 5.0;
+    constexpr auto rearPointCount = 37U;
+    const auto requestCount = 3U + (includeRearRegion
+        ? rearPointCount : includeOppositeDirection ? 1U : 0U);
+    requests.reserve(frequencies.size() * requestCount);
+    for (const auto frequencyMHz : frequencies) {
+        model::FrequencyDefinition frequency;
+        frequency.startMHz = frequencyMHz;
+        requests.push_back(writer.writeFrequencyCard(frequency));
+        requests.emplace_back("XQ 0");
+        requests.push_back(writer.writeRadiationPatternCard(front));
+        if (includeRearRegion) {
+            for (auto index = 0U; index < rearPointCount; ++index) {
+                auto rear = front;
+                rear.phiStart = phiDegrees + 90.0 + index * rearStepDegrees;
+                requests.push_back(writer.writeRadiationPatternCard(rear));
+            }
+        } else if (includeOppositeDirection) {
+            requests.push_back(writer.writeRadiationPatternCard(back));
+        }
+    }
+
+    std::vector<std::string> lines;
+    lines.reserve(document.cards().size() + requests.size());
+    auto insertedRequests = false;
+    for (const auto& card : document.cards()) {
+        if (card.kind == nec::NecCardKind::Frequency
+            || card.kind == nec::NecCardKind::RadiationPattern
+            || card.kind == nec::NecCardKind::Execute) continue;
+        if (!insertedRequests && card.kind == nec::NecCardKind::End) {
+            lines.insert(lines.end(), requests.begin(), requests.end());
+            insertedRequests = true;
+        }
+        lines.push_back(card.sourceText);
+    }
+    if (!insertedRequests) lines.insert(lines.end(), requests.begin(), requests.end());
+    return joinLines(lines);
 }
 
 auto prepareFrequencySweepInput(std::string_view source,

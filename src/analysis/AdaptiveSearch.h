@@ -49,6 +49,7 @@ public:
     [[nodiscard]] auto nextCandidates() -> std::vector<double>;
     [[nodiscard]] auto stopReason() const noexcept -> AdaptiveStopReason;
     [[nodiscard]] auto refinementRound() const noexcept -> int;
+    [[nodiscard]] auto scoreImprovements() const noexcept -> const std::vector<double>&;
 
 private:
     struct Observation {
@@ -61,6 +62,7 @@ private:
     double previousBestScore_{};
     int stagnantRounds_{};
     int refinementRound_{};
+    std::vector<double> scoreImprovements_;
     AdaptiveStopReason stopReason_{AdaptiveStopReason::None};
 };
 
@@ -73,6 +75,7 @@ public:
     [[nodiscard]] auto nextCandidates() -> std::vector<AdaptiveVectorProposal>;
     [[nodiscard]] auto stopReason() const noexcept -> AdaptiveStopReason;
     [[nodiscard]] auto refinementRound() const noexcept -> int;
+    [[nodiscard]] auto scoreImprovements() const noexcept -> const std::vector<double>&;
 
 private:
     struct Observation {
@@ -88,6 +91,7 @@ private:
     double previousBestScore_{};
     int stagnantRounds_{};
     int refinementRound_{};
+    std::vector<double> scoreImprovements_;
     AdaptiveStopReason stopReason_{AdaptiveStopReason::None};
 };
 

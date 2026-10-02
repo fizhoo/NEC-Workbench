@@ -62,6 +62,7 @@ struct PlotSeries {
     QColor color;
     AxisSide axis{AxisSide::Left};
     std::vector<QPointF> points;
+    Qt::PenStyle lineStyle{Qt::SolidLine};
 };
 
 struct AxisTick {
@@ -273,6 +274,13 @@ public:
     {
         selectedFrequencyMHz_ = frequencyMHz;
         selectedCaption_ = tr("Selected %1 MHz").arg(formatDecimal(frequencyMHz));
+        setProperty("selectedFrequencyMHz", frequencyMHz);
+        update();
+    }
+
+    void setEmptyMessage(QString message)
+    {
+        emptyMessage_ = std::move(message);
         update();
     }
 
@@ -293,6 +301,10 @@ public:
         setProperty("pointCount", series_.empty()
             ? 0 : static_cast<int>(series_.front().points.size()));
         setProperty("seriesCount", static_cast<int>(series_.size()));
+        QStringList seriesStyles;
+        for (const auto& item : series_)
+            seriesStyles.append(QString::number(static_cast<int>(item.lineStyle)));
+        setProperty("seriesStyles", seriesStyles);
         setProperty("xAxisLabel", xAxisLabel_);
         setProperty("xValuesAscending", series_.empty()
             || std::ranges::is_sorted(series_.front().points, {}, &QPointF::x));
@@ -334,8 +346,7 @@ protected:
         setPlotProperties();
         if (!boundsValid_) {
             painter.setPen(palette().color(QPalette::Mid));
-            painter.drawText(plotRect_, Qt::AlignCenter,
-                tr("Run a frequency analysis to populate this plot."));
+            painter.drawText(plotRect_, Qt::AlignCenter, emptyMessage_);
             return;
         }
 
@@ -476,7 +487,7 @@ private:
         auto legendX = plotRect_.left();
         const auto legendY = 48.0;
         for (const auto& series : series_) {
-            painter.setPen(QPen(series.color, 2));
+            painter.setPen(QPen(series.color, 2, series.lineStyle));
             painter.drawLine(QPointF(legendX, legendY), QPointF(legendX + 18, legendY));
             painter.setPen(palette().color(QPalette::Text));
             const auto textWidth = painter.fontMetrics().horizontalAdvance(series.name) + 30;
@@ -550,7 +561,7 @@ private:
             const auto& axis = series.axis == AxisSide::Left ? leftAxis_ : rightAxis_;
             QPainterPath path;
             bool started{};
-            painter.setPen(QPen(series.color, 2));
+            painter.setPen(QPen(series.color, 2, series.lineStyle));
             painter.setBrush(series.color);
             for (auto pointIndex = 0; pointIndex < static_cast<int>(series.points.size()); ++pointIndex) {
                 const auto screenPoint = mapPoint(series.points[pointIndex], axis);
@@ -622,6 +633,7 @@ private:
     QString xAxisLabel_{tr("Frequency (MHz)")};
     QString leftAxisLabel_;
     QString selectedCaption_;
+    QString emptyMessage_{tr("Run a frequency analysis to populate this plot.")};
     std::vector<PlotSeries> series_;
     PlotAxis leftAxis_;
     PlotAxis rightAxis_;
@@ -669,11 +681,17 @@ void CandidatePlotsView::setCandidates(QString variableName, QString valueSuffix
     const auto swrColor = palette().color(QPalette::Link);
     const auto resistanceColor = palette().color(QPalette::Mid);
     const auto reactanceColor = palette().color(QPalette::Text);
+    const auto gainColor = QColor(35, 150, 85);
+    const auto frontToBackColor = QColor(185, 95, 25);
+    const auto frontToRearColor = QColor(135, 75, 180);
     std::vector<PlotSeries> series{
         {tr("Objective"), {}, scoreColor, AxisSide::Left, {}},
         {tr("SWR contribution"), {}, swrColor, AxisSide::Left, {}},
         {tr("R contribution"), {}, resistanceColor, AxisSide::Left, {}},
         {tr("X contribution"), {}, reactanceColor, AxisSide::Left, {}},
+        {tr("Gain contribution"), {}, gainColor, AxisSide::Left, {}},
+        {tr("F/B contribution"), {}, frontToBackColor, AxisSide::Left, {}},
+        {tr("F/R contribution"), {}, frontToRearColor, AxisSide::Left, {}},
     };
     std::optional<double> bestValue;
     for (const auto& candidate : candidates_) {
@@ -681,6 +699,9 @@ void CandidatePlotsView::setCandidates(QString variableName, QString valueSuffix
         series[1].points.emplace_back(candidate.value, candidate.evaluation.swrComponent);
         series[2].points.emplace_back(candidate.value, candidate.evaluation.resistanceComponent);
         series[3].points.emplace_back(candidate.value, candidate.evaluation.reactanceComponent);
+        series[4].points.emplace_back(candidate.value, candidate.evaluation.forwardGainComponent);
+        series[5].points.emplace_back(candidate.value, candidate.evaluation.frontToBackComponent);
+        series[6].points.emplace_back(candidate.value, candidate.evaluation.frontToRearComponent);
         if (candidate.row == bestRow) bestValue = candidate.value;
     }
     series.erase(std::remove_if(series.begin() + 1, series.end(), [](const auto& item) {
@@ -805,6 +826,96 @@ void SweepPlotsView::setSelectedFrequency(double frequencyMHz)
 {
     impedancePlot_->setSelectedFrequency(frequencyMHz);
     swrPlot_->setSelectedFrequency(frequencyMHz);
+}
+
+DirectionalMetricsView::DirectionalMetricsView(QWidget* parent)
+    : QWidget(parent)
+{
+    setObjectName(QStringLiteral("optimizationCandidateDirectionalPlots"));
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(12, 12, 12, 12);
+    summary_ = new QLabel(tr("No directional objective data are available."), this);
+    summary_->setWordWrap(true);
+    plot_ = new SweepPlotWidget(this);
+    plot_->setObjectName(QStringLiteral("directionalMetricsPlot"));
+    plot_->setEmptyMessage(tr(
+        "No directional frequency metrics are available for this selection."));
+    layout->addWidget(summary_);
+    layout->addWidget(plot_, 1);
+    setResults({});
+}
+
+void DirectionalMetricsView::setResults(
+    const analysis::OptimizationObjectiveResult& result)
+{
+    std::vector<DirectionalPlotPoint> metrics;
+    metrics.reserve(result.frequencyMetrics.size());
+    for (const auto& value : result.frequencyMetrics) {
+        metrics.push_back({value.frequencyMHz, value.forwardGainDb,
+            value.frontToBackDb, value.frontToRearDb});
+    }
+    setMetrics(metrics);
+}
+
+void DirectionalMetricsView::setMetrics(
+    const std::vector<DirectionalPlotPoint>& metrics)
+{
+    std::vector<PlotSeries> series;
+    const auto appendSeries = [&series, &metrics](QString name, QString unit, QColor color,
+                                  Qt::PenStyle lineStyle, auto member) {
+        PlotSeries item{std::move(name), std::move(unit), std::move(color),
+            AxisSide::Left, {}, lineStyle};
+        for (const auto& point : metrics) {
+            const auto& value = point.*member;
+            if (value) item.points.emplace_back(point.frequencyMHz, *value);
+        }
+        if (!item.points.empty()) series.push_back(std::move(item));
+    };
+    appendSeries(tr("Forward Gain"), tr("dBi"), QColor(35, 150, 85), Qt::SolidLine,
+        &DirectionalPlotPoint::forwardGainDb);
+    appendSeries(tr("F/B"), tr("dB"), QColor(220, 50, 45), Qt::SolidLine,
+        &DirectionalPlotPoint::frontToBackDb);
+    appendSeries(tr("F/R"), tr("dB"), QColor(135, 75, 180), Qt::DashLine,
+        &DirectionalPlotPoint::frontToRearDb);
+    plot_->setLinearPlot(tr("Directional Performance"), tr("Frequency (MHz)"),
+        tr("Gain / Ratio (dB)"), std::move(series));
+
+    QStringList summaries;
+    const auto appendSummary = [&summaries, &metrics](const QString& name,
+                                   const QString& unit, auto member) {
+        std::vector<std::pair<double, double>> values;
+        for (const auto& point : metrics) {
+            const auto& value = point.*member;
+            if (value) values.emplace_back(point.frequencyMHz, *value);
+        }
+        if (values.empty()) return;
+        const auto minimum = std::ranges::min_element(
+            values, {}, &std::pair<double, double>::second);
+        const auto maximum = std::ranges::max_element(
+            values, {}, &std::pair<double, double>::second);
+        auto total = 0.0;
+        for (const auto& entry : values) total += entry.second;
+        summaries.append(QObject::tr(
+            "%1: min %2 %3 at %4 MHz · average %5 %3 · max %6 %3 at %7 MHz")
+            .arg(name, formatDecimal(minimum->second), unit,
+                formatDecimal(minimum->first),
+                formatDecimal(total / static_cast<double>(values.size())),
+                formatDecimal(maximum->second), formatDecimal(maximum->first)));
+    };
+    appendSummary(tr("Gain"), tr("dBi"),
+        &DirectionalPlotPoint::forwardGainDb);
+    appendSummary(tr("F/B"), tr("dB"),
+        &DirectionalPlotPoint::frontToBackDb);
+    appendSummary(tr("F/R"), tr("dB"),
+        &DirectionalPlotPoint::frontToRearDb);
+    summary_->setText(summaries.isEmpty()
+        ? tr("No directional objective data are available for this candidate.")
+        : summaries.join(QStringLiteral("\n")));
+}
+
+void DirectionalMetricsView::setSelectedFrequency(double frequencyMHz)
+{
+    plot_->setSelectedFrequency(frequencyMHz);
 }
 
 }

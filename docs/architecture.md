@@ -41,8 +41,18 @@ owns frequency, solver, and result-request controls. Results owns
 summary, grouped run history, impedance tables and plots, currents, nested 2D/3D
 radiation, and immutable raw solver output. Optimize provides bounded
 single-variable SWR sweeps.
-Project remains a global dock. Bottom-tabbed Validation and Solver Output docks
-preserve diagnostics and process logs across every workspace.
+Project remains a global dock and is automatically hidden while Results or Optimize
+owns the central workspace, then restored to its prior visibility. Reusable non-modal
+Model Check Report and Run Monitor windows preserve diagnostics and live process logs
+without reserving permanent space in the main window. Successful automatically opened
+run monitors hide after completion; explicit user opening pins the monitor, while
+failure states remain visible.
+
+The authoritative `QTextDocument` owns one chronological model-edit history. A thin
+metadata layer records human-readable operation names and originating workspaces for
+structured transactions while direct typing is labeled as a raw-source edit. Undo and
+Redo therefore retain native text semantics while providing contextual action labels,
+status feedback, and navigation across model workspaces.
 
 Quick Frequency Sweep uses the same archived-run and result pipeline as a normal
 analysis. The Qt dialog produces a `FrequencyDefinition`; the Qt-free SolverInput
@@ -77,8 +87,8 @@ table plus a category tree leading to schema-specific tables for `EX`, `FR`,
 `GN/GE`, `LD`, `TL`, `RP`, and `XQ`, plus explicit `GS` scale and `Z0`/`ZO`
 reference-impedance editing. Each row retains its original source-line mapping. Selecting a structured
 row positions the raw editor cursor on that card; editing a field rewrites only
-that mapped line through the existing source command, undo, parse, validation,
-and synchronization path. Supported families provide safe default Add actions
+that mapped line through the canonical source-document transaction, parse,
+validation, and synchronization path. Supported families provide safe default Add actions
 and selection-aware Delete actions; both are undoable source edits, and new
 control cards are inserted before `XQ`/`EN` as appropriate. The Qt-free
 `NecCardCatalog` is the source of truth for standard NEC-2 mnemonics, fixed-field
@@ -91,6 +101,14 @@ cards are categorized and type-checked, but the geometry converter continues to 
 only semantics it implements. This boundary prevents the UI from inventing geometry
 while allowing card coverage to grow independently from source preservation.
 
+The semantic wire converter applies `GM`, `GX`, `GR`, and `GS` in authored order.
+`GM` supports move-in-place, first-tag selection, successive copies, and tag increments;
+`GX` expands requested Z, Y, then X plane reflections using NEC tag-increment rules; and
+`GR` treats its count as the total number of azimuthal sectors around Z. Transformed
+straight, tapered, arc, and helix paths remain source-mapped to their generating card
+and read-only. The authored transform cards, rather than flattened wires, continue to
+be sent to the external solver.
+
 Model validation also enforces NEC section ordering: all recognized geometry cards
 must precede a terminating `GE`, and `GN`, `EX`, `FR`, loads, requests, and other
 control cards must follow that boundary. Wire insertion creates a missing `GE`
@@ -100,8 +118,8 @@ validation cannot detect.
 
 The first structured-card section is an editable `GW` wire table. It validates
 tags, segment counts, coordinates, and radii before replacing the mapped source
-line. Add, duplicate, delete, and cell edits use the same source-level undo stack
-as geometry operations. Raw source remains authoritative and unsupported cards
+line. Add, duplicate, delete, and cell edits use the same source-document history
+as geometry operations and direct text edits. Raw source remains authoritative and unsupported cards
 remain untouched.
 
 Semantic geometry always uses meters internally, while authored NEC geometry
@@ -131,12 +149,12 @@ overlays report live cursor coordinates for the two axes represented by each
 orthographic plane; model extents remain available internally for Fit Geometry.
 endpoints and whole wires can be dragged in any orthographic plane while
 preserving hidden coordinates. Grid and nearby-endpoint snapping can be toggled
-independently. Accepted moves update the corresponding `GW` source card and
-participate in geometry undo/redo. Context menus create, split, and delete wires
-through atomic source-deck commands. Wire Properties edits tags, segments,
+independently. Accepted moves update the corresponding `GW` source card as one
+atomic source-document transaction. Context menus create, split, and delete wires
+through the same transaction path. Wire Properties edits tags, segments,
 endpoints, and radius in the active display unit, with optional nominal bare-wire
-sizes from 4/0 through 40 AWG. These edits use the same source command path, so
-the card table, raw source, plane views, project tree, and undo stack remain
+sizes from 4/0 through 40 AWG. These edits use the same source transaction path, so
+the card table, raw source, plane views, project tree, and undo history remain
 synchronized. The modal dialog includes both precise radius and AWG controls.
 The structured GW table also provides a focused 10–30 AWG convenience selector;
 it converts the selected nominal gauge to the canonical radius and delegates to
@@ -188,11 +206,19 @@ ground, finite ground using the reflection approximation, and finite ground usin
 Sommerfeld/Norton, with custom material values or an average-ground preset.
 
 Analysis Solver stores the executable path separately from the NEC model deck.
-The visible backend targets NEC-2/nec2c-compatible executables; no solver is
-bundled. Future backend choices will be exposed only after their command and
-output adapters are usable.
+Each backend ID owns an independent executable path in `QSettings`, so changing
+the selected protocol restores that backend's prior executable without affecting
+the deck or another backend's configuration. The previous single-path setting is
+migrated to the backend that was selected when it was saved.
+The backend ID selects a process protocol rather than inferring behavior from an
+executable filename. `nec2c` uses attached `-i`/`-o` arguments, OpenNEC uses a
+positional input with `-f original -o`, and 4nec2 NEC2dXS receives two filenames
+through process standard input. All three feed the same backend-neutral result
+model and durable run store; no solver is bundled.
 When NEC-2 is selected with no saved path, the application discovers `nec2c`
-from `PATH`.
+from `PATH`; OpenNEC similarly discovers `onec`. NEC2dXS capacity is inferred
+from standard executable names only for readiness warnings. A manually selected
+larger-capacity executable remains valid and does not change deck segmentation.
 
 Analysis Requests manages a canonical `XQ` current/impedance request and every
 supported normal-mode `RP` card through a row-based theta/phi editor. Pattern
@@ -222,12 +248,15 @@ warnings. This keeps partial models editable without reporting the misleading
 at the highest requested frequency, thin-wire segment/diameter ratios,
 center-source segmentation, adjoining segment consistency, and large junctions.
 These findings are non-blocking because NEC modeling limits require engineering
-judgment. The Model Adequacy dock categorizes the findings and keeps source-line
+judgment. The Model Check Report categorizes the findings and keeps source-line
 navigation. Solver-backed Average Gain Test is a separate `average-gain-test`
 run type rather than an inference from static geometry. It archives the authored
 source, resolves symbols, generates a one-frequency lossless deck with the
 appropriate whole-sphere or perfect-ground hemisphere `RP` request, parses the
-solver's average power gain, and stores test metadata in `agt.json`. Historical
+solver's average power gain, and stores test metadata in `agt.json`. If the
+backend omits that summary but returns the complete requested grid, the Qt-free
+analysis layer integrates linear total gain over spherical cells and derives the
+average and solid angle. Historical
 AGT rows reopen Results Validation without loading the transformed test deck as
 the editable model. Segmentation convergence uses a `convergence-session` parent
 with hidden `convergence-step` children. Each child archives a progressively
@@ -245,7 +274,7 @@ comment block so strict NEC-2 implementations do not interpret later comments
 as geometry cards.
 The Results workspace's Run History tab records status, duration, backend, and artifact location. Standard
 output, standard error, and the completed NEC output file are mirrored to the
-Results Raw NEC Output tab and Solver Output dock; `model.nec`, `model.out`, and
+Results Raw NEC Output tab and Run Monitor; `model.nec`, `model.out`, and
 `run.log` remain in the run directory. Runs support a configurable timeout and
 manual cancellation. Each directory includes versioned JSON metadata; records
 are discovered on startup, incomplete records are marked Interrupted, and
@@ -284,7 +313,7 @@ opposing phi planes, so older single-plane runs must be rerun with the updated
 Elevation Cut preset. Polar plots use a logarithmic relative-dB radial scale,
 label 30-degree spokes and 10 dB rings, and report the nearest sampled angle,
 absolute dBi, and relative dB under the pointer. Radiation 3D renders the available theta/phi samples as
-an orbitable, mouse-wheel-zoomable normalized wireframe mesh and
+an orbitable, mouse-wheel-zoomable gain-colored wireframe mesh and
 overlays the antenna geometry from the exact run deck at its center. The mesh
 connects both constant-theta and constant-phi sample directions and closes the
 azimuth rings when full coverage exists. Analysis Requests provides explicit 2D
@@ -292,7 +321,10 @@ Elevation Cut and Full 3D Pattern presets; the latter requests theta 0–180° a
 phi 0–350°. Older or custom runs containing fewer than three phi planes remain
 partial and display a coverage warning rather than inventing symmetry. Gain
 values more than 40 dB below the pattern peak are clipped for readable geometry;
-the parsed dB values remain unchanged.
+the parsed dB values remain unchanged. A labeled color scale follows the selected
+normalized or absolute display mode. Pointer probing projects the existing NEC
+sample nodes through the same camera transform, highlights the nearest projected
+node, and reports theta, phi, absolute dBi, and relative dB without interpolation.
 
 The shared 3D Results renderer layers the exact run antenna, segment-current
 magnitude, and radiation surface in one projection. Each layer can be hidden
@@ -301,6 +333,14 @@ wire, segment, amperes, and phase under the pointer. If radiation is hidden or
 unavailable, the antenna automatically expands to use the viewport. Keeping
 these as renderer layers rather than separate widgets allows later workspace
 layout changes without duplicating data or rendering code.
+
+`radiationFrequencyMetrics()` is the shared non-widget path for directional
+performance across frequency. It finds exact spherical forward and antipodal
+samples and the strongest sampled rear-half response using the same definitions
+consumed by optimization. Results → Radiation adds one compact Performance vs
+Frequency sub-view that converts these domain metrics into the reusable
+directional plot widget. Active and historical results therefore share the same
+gain/F/B/F/R calculations, extrema summaries, and unavailable-data behavior.
 
 The status bar identifies the currently open NEC file in every workspace. Each
 run record also stores its originating file path. Historical result summaries
@@ -373,8 +413,8 @@ symbol merely because its name appears in a geometry field.
 
 The Model Parameters editor performs source-level add, update, and delete operations
 without introducing a second parameter store. It preserves other assignments when
-several definitions share one `SY` line, then runs the normal source check and shared
-Undo/Redo path. The Optimize workspace can inspect definitions and override one value
+several definitions share one `SY` line, then runs the normal source check and canonical
+source-document Undo/Redo path. The Optimize workspace can inspect definitions and override one value
 across a bounded linear sweep without modifying the authored source. Every successfully
 resolved SY definition is selectable, including calculated expressions; a candidate
 override replaces that definition's resolved value before subsequent definitions and
@@ -384,38 +424,76 @@ Optimization candidates use the same external solver adapter and durable run
 store as ordinary analysis. A reusable, non-widget `CandidateEvaluator` owns SY
 overrides, numeric deck generation, validation, artifact writing, solver process
 lifecycle, timeout/cancel handling, output parsing, and objective evaluation.
+The equations and algorithm constants implemented by these Qt-free components
+are documented in [Optimization Mathematics](optimization-math.md).
 Parameter Sweep sequences single-variable candidate requests and renders returned
 results; Adaptive Optimize uses the same path while a Qt-free
 `AdaptiveVectorSearch` planner chooses bounded coordinate refinements around the
 current best parameter vector. A second Qt-free `NelderMeadSearch` planner performs
 bounded derivative-free simplex reflection, expansion, contraction, and shrink
-steps for one or more variables. Both planners own their evaluation-budget,
+steps for one or more variables. A Qt-free `DifferentialEvolutionSearch` planner
+provides seeded, bounded DE/rand/1/bin population evolution for broader global
+exploration. The optimizer planners own their evaluation-budget or generation-limit,
 per-parameter-tolerance, and score-tolerance stopping rules and report an explicit
 reason to the workspace and archived session metadata. Future optimizer algorithms
 can use the evaluator without duplicating solver logic. A Qt-free `FrequencyPlan` normalizes model sweeps, individual
 points, and one or more ranges into sorted, duplicate-free evaluation points.
-The impedance objective builder combines weighted SWR, resistance-target error,
-and reactance-target error. Ohmic errors are normalized by reference impedance
-and the combined score by total weight. Evaluation selects either the worst
-weighted point across returned frequencies or one explicitly selected frequency.
+The shared objective builder combines weighted SWR, resistance, reactance,
+explicit-direction forward gain, physical front-to-back, and azimuth-cut
+front-to-rear. Each criterion independently stores a goal (Minimize, Maximize,
+Target, or directional Good Enough threshold) and a Minimum, Average, or Maximum
+frequency reducer. Target criteria reduce absolute error; Good Enough criteria
+reduce only threshold violation. This permits robust defaults such as minimizing
+maximum SWR and maximizing minimum gain without a global evaluation-mode switch.
+One-frequency evaluation is expressed by the shared Frequency Plan rather than a
+second objective mode.
+
+Ohmic errors are normalized by reference impedance, directional quantities by
+10 dB, and the combined score by total enabled weight. Maximize terms negate the
+scaled measurement so the common score remains lower-is-better. The result retains
+the raw per-frequency SWR, R, X, forward gain, F/B, and F/R metrics plus minimum,
+average, and maximum summaries and extrema frequencies. Candidate tables and
+directional plots consume this evaluator-owned data rather than repeating
+spherical-direction or objective calculations in the UI. Legacy archived
+Minimax, Average, and selected-frequency metadata remains readable and is mapped
+onto the corresponding criterion reducers during review. F/B looks up the
+sample at the antipodal spherical direction and returns unavailable when that sample
+does not exist; minimum pattern gain is never treated as back gain.
+F/R subtracts the strongest sample in the rear 180° half of the azimuth cut at
+the configured forward theta. The rear region is sampled every 5°, including
+both ±90° boundaries; it is intentionally a 2D cut definition rather than a full
+rear-hemisphere search.
 The evaluator returns the total score and each normalized weighted contribution;
 the candidate plot consumes those same values so presentation cannot drift from
-ranking behavior. Candidate input removes
-`RP` requests and ensures an `XQ` request, avoiding unnecessary far-field
-calculations. Optimization can retain the model's `FR` sweep or replace it with
+ranking behavior. Impedance-only candidate input removes `RP` requests and ensures
+an `XQ` request, avoiding unnecessary far-field calculations. A directional
+candidate replaces broad model requests with one exact one-point `RP` at the
+requested forward direction and, for F/B, one exact one-point `RP` at its physical
+opposite for every study frequency. F/R instead adds 37 one-point rear-cut samples
+per frequency. This avoids a full angular grid for every
+candidate while supporting directional objectives across a frequency plan. Optimization can retain the model's `FR` sweep or replace it with
 an explicit, sorted frequency set generated from individual points, ranges, or
 both. Explicit sets are emitted as repeated
 single-frequency `FR`/`XQ` blocks, which permits disconnected bands in one
-candidate process. Parsed feedpoint rows remain attached to each candidate so
-the workspace can show its full frequency-by-frequency SWR and impedance detail.
+candidate process. Parsed feedpoint and directional rows remain attached to each
+candidate so the workspace can show full frequency-by-frequency impedance and
+directional performance detail.
 Applying the best or a selected candidate delegates all selected numeric `SY`
 replacements back to `MainWindow` as one source edit so validation and Undo/Redo
 remain the only model-mutation mechanism. **Apply This Candidate and Run** uses the
 same edit path, rechecks the resulting active model, and then enters the ordinary
 analysis runner; it does not promote or mutate the archived candidate artifacts.
-An `optimization.json` artifact records the variables, values, evaluation mode,
-frequency mode and points, selected objective frequency, reference impedance,
-criterion weights, and impedance targets used for each generated numeric deck.
+An `optimization.json` artifact records the variables, values, frequency mode and
+points, reference impedance, criterion weights, per-criterion goals, targets,
+Good Enough directions, frequency reducers, forward direction, and polarization component
+used for each generated numeric deck. Archived output reconstructs measured gain,
+F/B, and F/R columns when a historical optimization session is reopened.
+
+Structured Cards and Model Parameters are two views over one source-backed
+parameterization implementation. Structured Cards owns the field-level context menu
+that creates or links `SY` expressions; Model Parameters edits the resulting symbol
+definitions and explains how to return to the controlling NEC field. No GUI-local
+parameter mapping is maintained.
 
 Run metadata distinguishes ordinary analyses, AGT runs, convergence sessions
 and steps, and parameter-sweep sessions and candidates. The Results run browser
@@ -425,9 +503,9 @@ table from durable child artifacts. Deleting the session removes the group.
 
 ## Near-Term Milestones
 
-1. Add candidate plots and apply-best workflow.
-2. Add gain and pattern objectives, constraints, and bounded variables.
-3. Add normalized attachments and optional solver adapters, including OpenNEC.
+1. Add finalist sensitivity and construction-tolerance analysis.
+2. Extend directional objectives across frequency with weights and constraints.
+3. Add normalized attachments and broaden solver-adapter verification.
 
 See [Development Roadmap](roadmap.md) for the broader sequence and parking lot.
 

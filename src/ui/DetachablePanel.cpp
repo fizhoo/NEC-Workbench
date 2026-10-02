@@ -113,7 +113,8 @@ void DetachablePanel::attach()
 void DetachablePanel::showDetached()
 {
     if (dialog_ == nullptr) return;
-    if (!dialog_->isVisible()) dialog_->show();
+    if (dialog_->isMinimized()) dialog_->showNormal();
+    else dialog_->show();
     dialog_->raise();
     dialog_->activateWindow();
 }

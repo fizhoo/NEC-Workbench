@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QWidget>
 
 class QComboBox;
@@ -15,10 +16,12 @@ class AnalysisSetupEditor final : public QWidget {
 public:
     explicit AnalysisSetupEditor(QWidget* parent = nullptr);
 
-    void setSettings(const QString& backendId, const QString& executablePath, int timeoutSeconds);
+    void setSettings(const QString& backendId,
+        const QHash<QString, QString>& executablePaths, int timeoutSeconds);
 
 signals:
     void settingsChanged(QString backendId, QString executablePath, int timeoutSeconds);
+    void executablePathChanged(QString backendId, QString executablePath);
 
 private:
     void updateDescription();
@@ -29,6 +32,8 @@ private:
     QSpinBox* timeoutControl_{};
     QLabel* description_{};
     QLabel* status_{};
+    QHash<QString, QString> executablePaths_;
+    QString selectedBackendId_;
     bool updating_{};
 };
 

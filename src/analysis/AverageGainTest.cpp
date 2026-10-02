@@ -9,7 +9,9 @@
 #include <cmath>
 #include <iomanip>
 #include <iterator>
+#include <map>
 #include <sstream>
+#include <utility>
 #include <vector>
 
 namespace necwb::analysis {
@@ -129,6 +131,71 @@ auto assessAverageGain(double averagePowerGain, double expectedGain) -> AverageG
     else
         assessment.classification = AverageGainClassification::Questionable;
     return assessment;
+}
+
+auto integrateAverageGain(std::span<const RadiationSample> samples,
+    AverageGainEnvironment environment) -> std::optional<IntegratedAverageGain>
+{
+    if (samples.empty()) return std::nullopt;
+    constexpr auto Pi = 3.14159265358979323846;
+    constexpr auto DegreesToRadians = Pi / 180.0;
+    constexpr auto AngleTolerance = 1.0e-6;
+    const auto frequencyMHz = samples.front().frequencyMHz;
+    const auto patternIndex = samples.front().patternIndex;
+    std::map<double, std::vector<std::pair<double, double>>> rows;
+    for (const auto& sample : samples) {
+        if (std::abs(sample.frequencyMHz - frequencyMHz) > 1.0e-9
+            || sample.patternIndex != patternIndex
+            || !std::isfinite(sample.thetaDegrees)
+            || !std::isfinite(sample.phiDegrees)
+            || !std::isfinite(sample.totalGainDb)) {
+            continue;
+        }
+        rows[sample.thetaDegrees].emplace_back(
+            sample.phiDegrees, std::pow(10.0, sample.totalGainDb / 10.0));
+    }
+    if (rows.size() < 2) return std::nullopt;
+    for (auto& [theta, row] : rows) {
+        std::ranges::sort(row, {}, &std::pair<double, double>::first);
+    }
+    const auto expectedMaximumTheta = environment == AverageGainEnvironment::PerfectGround
+        ? 90.0 : 180.0;
+    if (std::abs(rows.begin()->first) > AngleTolerance
+        || std::abs(rows.rbegin()->first - expectedMaximumTheta) > AngleTolerance) {
+        return std::nullopt;
+    }
+
+    auto integratedGain = 0.0;
+    auto solidAngle = 0.0;
+    for (auto upper = rows.begin(), lower = std::next(upper); lower != rows.end(); ++upper, ++lower) {
+        const auto& upperRow = upper->second;
+        const auto& lowerRow = lower->second;
+        if (upperRow.size() < 2 || upperRow.size() != lowerRow.size()
+            || std::abs(upperRow.front().first) > AngleTolerance
+            || std::abs(upperRow.back().first - 360.0) > AngleTolerance) {
+            return std::nullopt;
+        }
+        const auto thetaWeight = std::cos(upper->first * DegreesToRadians)
+            - std::cos(lower->first * DegreesToRadians);
+        if (thetaWeight <= 0.0) return std::nullopt;
+        for (auto index = std::size_t{}; index + 1 < upperRow.size(); ++index) {
+            if (std::abs(upperRow[index].first - lowerRow[index].first) > AngleTolerance
+                || std::abs(upperRow[index + 1].first - lowerRow[index + 1].first)
+                    > AngleTolerance) {
+                return std::nullopt;
+            }
+            const auto phiWidth = (upperRow[index + 1].first - upperRow[index].first)
+                * DegreesToRadians;
+            if (phiWidth <= 0.0) return std::nullopt;
+            const auto cellSolidAngle = phiWidth * thetaWeight;
+            const auto cellGain = (upperRow[index].second + upperRow[index + 1].second
+                + lowerRow[index].second + lowerRow[index + 1].second) / 4.0;
+            integratedGain += cellGain * cellSolidAngle;
+            solidAngle += cellSolidAngle;
+        }
+    }
+    if (solidAngle <= 0.0) return std::nullopt;
+    return IntegratedAverageGain{integratedGain / solidAngle, solidAngle / Pi};
 }
 
 }

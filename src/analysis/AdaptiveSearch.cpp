@@ -53,6 +53,7 @@ auto AdaptiveSearch::nextCandidates() -> std::vector<double>
     const auto bestScore = *(*best)->score;
     if (std::isfinite(previousBestScore_)) {
         const auto improvement = previousBestScore_ - bestScore;
+        scoreImprovements_.push_back(improvement);
         stagnantRounds_ = improvement <= settings_.scoreTolerance ? stagnantRounds_ + 1 : 0;
         if (stagnantRounds_ >= 2) {
             stopReason_ = AdaptiveStopReason::ScoreTolerance;
@@ -93,6 +94,11 @@ auto AdaptiveSearch::stopReason() const noexcept -> AdaptiveStopReason
 auto AdaptiveSearch::refinementRound() const noexcept -> int
 {
     return refinementRound_;
+}
+
+auto AdaptiveSearch::scoreImprovements() const noexcept -> const std::vector<double>&
+{
+    return scoreImprovements_;
 }
 
 AdaptiveVectorSearch::AdaptiveVectorSearch(AdaptiveVectorSearchSettings settings)
@@ -167,6 +173,7 @@ auto AdaptiveVectorSearch::nextCandidates() -> std::vector<AdaptiveVectorProposa
     const auto bestScore = *best->score;
     if (std::isfinite(previousBestScore_)) {
         const auto improvement = previousBestScore_ - bestScore;
+        scoreImprovements_.push_back(improvement);
         stagnantRounds_ = improvement <= settings_.scoreTolerance ? stagnantRounds_ + 1 : 0;
         if (stagnantRounds_ >= 2) {
             stopReason_ = AdaptiveStopReason::ScoreTolerance;
@@ -212,6 +219,11 @@ auto AdaptiveVectorSearch::stopReason() const noexcept -> AdaptiveStopReason
 auto AdaptiveVectorSearch::refinementRound() const noexcept -> int
 {
     return refinementRound_;
+}
+
+auto AdaptiveVectorSearch::scoreImprovements() const noexcept -> const std::vector<double>&
+{
+    return scoreImprovements_;
 }
 
 }

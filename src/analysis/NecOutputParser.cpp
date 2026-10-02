@@ -19,11 +19,15 @@ auto sameFrequency(double first, double second) -> bool
 
 auto parseFrequency(const std::string& line, double& frequencyMHz) -> bool
 {
-    const auto marker = line.find("FREQUENCY :");
+    const auto marker = line.find("FREQUENCY");
     if (marker == std::string::npos) {
         return false;
     }
-    auto valueText = line.substr(marker + 11);
+    const auto delimiter = line.find_first_of(":=", marker + 9);
+    if (delimiter == std::string::npos) {
+        return false;
+    }
+    auto valueText = line.substr(delimiter + 1);
     std::ranges::replace(valueText, 'D', 'E');
     std::ranges::replace(valueText, 'd', 'e');
     std::istringstream values(valueText);

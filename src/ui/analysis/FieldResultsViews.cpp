@@ -2,14 +2,18 @@
 
 #include "model/WireGeometry.h"
 #include "ui/DisplayFormat.h"
+#include "ui/analysis/SweepPlotsView.h"
 
 #include <QComboBox>
 #include <QCheckBox>
+#include <QDoubleSpinBox>
 #include <QFile>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QHeaderView>
+#include <QHBoxLayout>
 #include <QLabel>
+#include <QLinearGradient>
 #include <QLineF>
 #include <QMouseEvent>
 #include <QPainter>
@@ -29,6 +33,7 @@
 #include <limits>
 #include <map>
 #include <numbers>
+#include <optional>
 #include <ranges>
 #include <vector>
 
@@ -86,13 +91,18 @@ void populateFrequencies(QComboBox* control, const std::vector<double>& values)
     }
 }
 
-void populateRadiationControls(QComboBox* component, QComboBox* scale, QComboBox* floor)
+void populateRadiationComponents(QComboBox* component)
 {
     component->addItem(QObject::tr("Total gain"), static_cast<int>(analysis::RadiationComponent::Total));
     component->addItem(QObject::tr("Vertical polarization"), static_cast<int>(analysis::RadiationComponent::Vertical));
     component->addItem(QObject::tr("Horizontal polarization"), static_cast<int>(analysis::RadiationComponent::Horizontal));
     component->addItem(QObject::tr("RHCP"), static_cast<int>(analysis::RadiationComponent::RightHandCircular));
     component->addItem(QObject::tr("LHCP"), static_cast<int>(analysis::RadiationComponent::LeftHandCircular));
+}
+
+void populateRadiationControls(QComboBox* component, QComboBox* scale, QComboBox* floor)
+{
+    populateRadiationComponents(component);
     scale->addItem(QObject::tr("Normalized dB"), static_cast<int>(analysis::RadiationScale::Normalized));
     scale->addItem(QObject::tr("Absolute dBi"), static_cast<int>(analysis::RadiationScale::Absolute));
     for (const auto value : {-20.0, -30.0, -40.0, -50.0, -60.0})
@@ -411,17 +421,24 @@ private:
 
 class RadiationPolarWidget final : public QWidget {
 public:
+    using HoverTextCallback = std::function<void(const QString&)>;
+
     explicit RadiationPolarWidget(QWidget* parent = nullptr) : QWidget(parent)
     {
         setObjectName(QStringLiteral("radiationPolarPlot"));
         setMinimumSize(360, 360);
         setMouseTracking(true);
+        setProperty("labelColorRole", static_cast<int>(QPalette::Text));
+        setProperty("ringLabelBackground", true);
+        setProperty("hoverSampleMode", QStringLiteral("nearest-nec-sample"));
     }
     void setSamples(std::vector<QPointF> samples)
     {
         samples_ = std::move(samples);
         setProperty("closedPattern", radiationAnglesCoverCircle(samples_));
         tracking_ = false;
+        setProperty("hoverReadout", QString{});
+        if (hoverTextCallback_) hoverTextCallback_({});
         update();
     }
     void setDisplaySettings(const analysis::RadiationDisplaySettings& settings)
@@ -429,16 +446,25 @@ public:
         settings_ = settings;
         update();
     }
+    void setHoverTextCallback(HoverTextCallback callback)
+    {
+        hoverTextCallback_ = std::move(callback);
+    }
 protected:
     void mouseMoveEvent(QMouseEvent* event) override
     {
         cursor_ = event->position();
         tracking_ = true;
+        const auto text = nearestSampleText(cursor_);
+        setProperty("hoverReadout", text);
+        if (hoverTextCallback_) hoverTextCallback_(text);
         update();
     }
     void leaveEvent(QEvent*) override
     {
         tracking_ = false;
+        setProperty("hoverReadout", QString{});
+        if (hoverTextCallback_) hoverTextCallback_({});
         update();
     }
     void paintEvent(QPaintEvent*) override
@@ -456,19 +482,31 @@ protected:
         const auto outerDb = settings_.scale == analysis::RadiationScale::Normalized
             ? 0.0 : std::ceil(maxGain / 5.0) * 5.0;
         const auto innerDb = outerDb + settings_.floorDb;
-        painter.setPen(palette().color(QPalette::Mid));
+        const auto gridColor = palette().color(QPalette::Mid);
+        const auto labelColor = palette().color(QPalette::Text);
+        const auto drawRingLabel = [&](const QPointF& position, const QString& text) {
+            QRectF labelBounds(painter.fontMetrics().boundingRect(text));
+            labelBounds.moveBottomLeft(position);
+            const auto background = labelBounds.adjusted(-3.0, -1.0, 3.0, 1.0);
+            painter.fillRect(background, palette().brush(QPalette::Base));
+            painter.setPen(labelColor);
+            painter.drawText(labelBounds, Qt::AlignLeft | Qt::AlignVCenter, text);
+        };
         for (auto ring = 1; ring <= 4; ++ring) {
             const auto ringRadius = radius * ring / 4;
+            painter.setPen(gridColor);
             painter.drawEllipse(center, ringRadius, ringRadius);
             const auto ringDb = innerDb + (outerDb - innerDb) * ring / 4.0;
-            painter.drawText(QPointF(center.x() + 5, center.y() - ringRadius - 2),
+            drawRingLabel(QPointF(center.x() + 5, center.y() - ringRadius - 2),
                 tr("%1 dB").arg(formatDecimal(ringDb)));
         }
         for (auto angle = 0; angle < 360; angle += 30) {
             const auto radians = angle * std::numbers::pi / 180.0;
+            painter.setPen(gridColor);
             painter.drawLine(center, center + QPointF(std::sin(radians), -std::cos(radians)) * radius);
             const auto labelPoint = center
                 + QPointF(std::sin(radians), -std::cos(radians)) * (radius + 18.0);
+            painter.setPen(labelColor);
             painter.drawText(QRectF(labelPoint.x() - 22, labelPoint.y() - 9, 44, 18),
                 Qt::AlignCenter, angle == 0 ? tr("0°/360°") : tr("%1°").arg(angle));
         }
@@ -494,7 +532,7 @@ protected:
         painter.setPen(QPen(QColor(215, 70, 65), 2));
         painter.drawPath(path);
         painter.setPen(palette().color(QPalette::Text));
-        painter.drawText(8, 20, tr("Angle: degrees · Radial: %1 · Peak %2 dBi")
+        painter.drawText(8, 20, tr("Angle: degrees · Radial scale: %1 · Absolute peak: %2 dBi")
             .arg(settings_.scale == analysis::RadiationScale::Normalized
                     ? tr("relative gain (dB)") : tr("absolute gain (dBi)"))
             .arg(formatDecimal(maxGain)));
@@ -516,29 +554,57 @@ protected:
             painter.setPen(QPen(QColor(35, 115, 220), 1));
             painter.setBrush(QColor(35, 115, 220));
             painter.drawEllipse(marker, 4, 4);
-            const QRectF readout(8, height() - 31, width() - 16, 23);
-            painter.fillRect(readout, palette().brush(QPalette::AlternateBase));
-            painter.setPen(palette().color(QPalette::Mid));
-            painter.drawRect(readout);
-            painter.setPen(palette().color(QPalette::Text));
-            painter.drawText(readout.adjusted(7, 0, -7, 0), Qt::AlignVCenter | Qt::AlignLeft,
-                tr("Angle %1° · Gain %2 dBi · Relative %3 dB")
-                    .arg(formatDecimal(nearest->x()), formatDecimal(nearest->y()),
-                        formatDecimal(nearest->y() - maxGain)));
         }
     }
 private:
+    [[nodiscard]] auto nearestSampleText(const QPointF& position) const -> QString
+    {
+        if (samples_.empty()) return {};
+        const QPointF center(width() / 2.0, height() / 2.0 + 8.0);
+        auto cursorAngle = std::atan2(position.x() - center.x(),
+                               center.y() - position.y())
+            * 180.0 / std::numbers::pi;
+        if (cursorAngle < 0.0) cursorAngle += 360.0;
+        const auto nearest = std::ranges::min_element(samples_, {},
+            [cursorAngle](const QPointF& sample) {
+                const auto difference = std::abs(sample.x() - cursorAngle);
+                return std::min(difference, 360.0 - difference);
+            });
+        const auto maxGain = std::ranges::max(samples_, {},
+            [](const QPointF& point) { return point.y(); }).y();
+        return tr("Nearest NEC sample · Angle %1° · Gain %2 dBi · Relative %3 dB")
+            .arg(formatDecimal(nearest->x()), formatDecimal(nearest->y()),
+                formatDecimal(nearest->y() - maxGain));
+    }
+
     std::vector<QPointF> samples_;
     analysis::RadiationDisplaySettings settings_;
     QPointF cursor_;
+    HoverTextCallback hoverTextCallback_;
     bool tracking_{};
 };
 
 class RadiationSurfaceWidget final : public QWidget {
 public:
+    using HoverTextCallback = std::function<void(const QString&)>;
+
     explicit RadiationSurfaceWidget(QWidget* parent = nullptr) : QWidget(parent)
-    { setMinimumSize(420, 320); setMouseTracking(true); }
-    void setSamples(std::vector<analysis::RadiationSample> samples) { samples_ = std::move(samples); update(); }
+    {
+        setObjectName(QStringLiteral("radiation3DSurface"));
+        setMinimumSize(420, 320);
+        setMouseTracking(true);
+        setProperty("probeMode", QStringLiteral("nearest-nec-sample"));
+        setProperty("gainColorScale", true);
+        setProperty("viewPitch", pitch_);
+    }
+    void setSamples(std::vector<analysis::RadiationSample> samples)
+    {
+        samples_ = std::move(samples);
+        tracking_ = false;
+        setProperty("hoverReadout", QString{});
+        if (hoverTextCallback_) hoverTextCallback_({});
+        update();
+    }
     void setDisplaySettings(const analysis::RadiationDisplaySettings& settings)
     { settings_ = settings; update(); }
     void setCurrents(std::vector<analysis::SegmentCurrentResult> currents) { currents_ = std::move(currents); update(); }
@@ -546,12 +612,15 @@ public:
     void setLayerVisibility(bool antenna, bool currents, bool radiation)
     { showAntenna_ = antenna; showCurrents_ = currents; showRadiation_ = radiation; update(); }
     void setOverlayVisible(bool visible) { showOverlay_ = visible; update(); }
+    void setHoverTextCallback(HoverTextCallback callback)
+    { hoverTextCallback_ = std::move(callback); }
     void resetView()
     {
         yaw_ = -0.7;
         pitch_ = 0.45;
         zoom_ = 1.0;
         pan_ = {};
+        setProperty("viewPitch", pitch_);
         update();
     }
 protected:
@@ -571,12 +640,22 @@ protected:
             if (panning_) pan_ += delta;
             else {
                 yaw_ += delta.x() * 0.01;
-                pitch_ = std::clamp(pitch_ + delta.y() * 0.01, -1.4, 1.4);
+                pitch_ = std::clamp(pitch_ - delta.y() * 0.01, -1.4, 1.4);
+                setProperty("viewPitch", pitch_);
             }
         }
+        const auto text = nearestSampleText(cursor_);
+        setProperty("hoverReadout", text);
+        if (hoverTextCallback_) hoverTextCallback_(text);
         update();
     }
-    void leaveEvent(QEvent*) override { tracking_ = false; update(); }
+    void leaveEvent(QEvent*) override
+    {
+        tracking_ = false;
+        setProperty("hoverReadout", QString{});
+        if (hoverTextCallback_) hoverTextCallback_({});
+        update();
+    }
     void wheelEvent(QWheelEvent* event) override
     {
         zoom_ = std::clamp(zoom_ * std::pow(1.0015, event->angleDelta().y()), 0.35, 3.5);
@@ -588,21 +667,27 @@ protected:
         QPainter painter(this); painter.setRenderHint(QPainter::Antialiasing);
         painter.fillRect(rect(), palette().brush(QPalette::Base));
         const auto scale = std::min(width(), height()) * 0.38 * zoom_;
-        auto maxGain = -std::numeric_limits<double>::infinity();
-        if (showRadiation_ && !samples_.empty()) {
-            for (const auto& sample : samples_) {
-                const auto gain = analysis::radiationGainDb(sample, settings_.component);
-                if (std::isfinite(gain) && gain > -900.0) maxGain = std::max(maxGain, gain);
-            }
-        }
-        const auto hasRadiation = std::isfinite(maxGain);
+        const auto maximum = showRadiation_ ? maximumGain() : std::nullopt;
+        const auto hasRadiation = maximum.has_value();
+        const auto maxGain = maximum.value_or(0.0);
+        const auto maximumCurrent = showCurrents_ ? currentMaximum() : std::nullopt;
         if (hasRadiation) drawRadiation(painter, scale, maxGain);
         const auto modelExtent = resultModelExtentFromOrigin(model_);
         const auto antennaScale = hasRadiation ? scale * 0.32 : scale * 1.7;
         drawAxes(painter, scale * 0.34);
         if (showAntenna_) drawAntenna(painter, antennaScale, modelExtent);
-        if (showCurrents_ && !currents_.empty())
-            drawCurrents(painter, antennaScale, modelExtent);
+        if (maximumCurrent)
+            drawCurrents(painter, antennaScale, modelExtent, *maximumCurrent);
+        if (hasRadiation && tracking_) {
+            if (const auto nearest = nearestProjectedSample(
+                    cursor_, scale, gainReference(maxGain))) {
+                painter.save();
+                painter.setPen(QPen(QColor(25, 25, 25), 1));
+                painter.setBrush(QColor(245, 245, 245));
+                painter.drawEllipse(nearest->screen, 5, 5);
+                painter.restore();
+            }
+        }
         painter.setPen(palette().color(QPalette::Text));
         if (showOverlay_) {
             auto status = tr("Drag to orbit · wheel to zoom · zoom %1×").arg(formatDecimal(zoom_));
@@ -611,23 +696,137 @@ protected:
             painter.drawText(10, 22, status + tr(" · Shift/middle-drag to pan"));
         }
         if (hasRadiation && showOverlay_) {
-            const QRectF legend(10, 42, 255, 24);
-            painter.fillRect(legend, palette().brush(QPalette::AlternateBase));
-            painter.setPen(QPen(QColor(80, 185, 105), 3));
-            painter.drawLine(QPointF(legend.left() + 8, legend.center().y()),
-                QPointF(legend.left() + 30, legend.center().y()));
-            painter.setPen(palette().color(QPalette::Text));
-            painter.drawText(legend.adjusted(38, 0, -5, 0), Qt::AlignVCenter | Qt::AlignLeft,
-                tr("%1 · %2 · floor %3 dB")
-                    .arg(componentName(settings_.component),
-                        settings_.scale == analysis::RadiationScale::Normalized
-                            ? tr("normalized") : tr("absolute"))
-                    .arg(formatDecimal(settings_.floorDb)));
+            const auto reference = gainReference(maxGain);
+            const auto minimum = reference + settings_.floorDb;
+            setProperty("colorScaleMinimum", minimum);
+            setProperty("colorScaleMaximum", reference);
+            drawColorLegend(painter, 42.0,
+                settings_.scale == analysis::RadiationScale::Normalized
+                    ? tr("Radiation: relative gain") : tr("Radiation: absolute gain"),
+                settings_.scale == analysis::RadiationScale::Normalized
+                    ? settings_.floorDb : minimum,
+                settings_.scale == analysis::RadiationScale::Normalized ? 0.0 : reference,
+                settings_.scale == analysis::RadiationScale::Normalized ? tr("dB") : tr("dBi"));
+        }
+        setProperty("currentColorScale", maximumCurrent.has_value());
+        if (maximumCurrent && showOverlay_) {
+            setProperty("currentColorScaleMinimum", 0.0);
+            setProperty("currentColorScaleMaximum", *maximumCurrent);
+            const auto legendTop = hasRadiation ? 100.0 : 42.0;
+            setProperty("currentColorScaleTop", legendTop);
+            drawColorLegend(painter, legendTop, tr("Current magnitude"), 0.0,
+                *maximumCurrent, tr("A"));
         }
         if ((!showRadiation_ || samples_.empty()) && (!showCurrents_ || currents_.empty()) && model_.empty())
             painter.drawText(rect(), Qt::AlignCenter, tr("No 3D result data"));
     }
 private:
+    struct ProjectedRadiationSample {
+        const analysis::RadiationSample* sample{};
+        QPointF screen;
+        double gain{};
+    };
+
+    [[nodiscard]] auto maximumGain() const -> std::optional<double>
+    {
+        auto maximum = -std::numeric_limits<double>::infinity();
+        for (const auto& sample : samples_) {
+            const auto gain = analysis::radiationGainDb(sample, settings_.component);
+            if (std::isfinite(gain) && gain > -900.0) maximum = std::max(maximum, gain);
+        }
+        return std::isfinite(maximum) ? std::optional<double>{maximum} : std::nullopt;
+    }
+    [[nodiscard]] auto currentMaximum() const -> std::optional<double>
+    {
+        auto maximum = -std::numeric_limits<double>::infinity();
+        for (const auto& current : currents_)
+            if (std::isfinite(current.magnitude)) maximum = std::max(maximum, current.magnitude);
+        return std::isfinite(maximum) ? std::optional<double>{maximum} : std::nullopt;
+    }
+    [[nodiscard]] auto gainReference(double maxGain) const -> double
+    {
+        return settings_.scale == analysis::RadiationScale::Normalized
+            ? maxGain : std::ceil(maxGain / 5.0) * 5.0;
+    }
+    [[nodiscard]] auto gainRatio(double gain, double reference) const -> double
+    {
+        return std::clamp((gain - (reference + settings_.floorDb))
+                / -settings_.floorDb,
+            0.0, 1.0);
+    }
+    [[nodiscard]] static auto gainColor(double ratio) -> QColor
+    {
+        return QColor::fromHsvF((1.0 - std::clamp(ratio, 0.0, 1.0)) * 0.67,
+            0.9, 0.95);
+    }
+    void drawColorLegend(QPainter& painter, double top, const QString& title,
+        double minimum, double maximum, const QString& unit)
+    {
+        painter.save();
+        const QRectF legend(10, top, 285, 50);
+        painter.fillRect(legend, palette().brush(QPalette::AlternateBase));
+        const QRectF colorBar(legend.left() + 8, legend.top() + 19, 185, 10);
+        QLinearGradient gradient(colorBar.topLeft(), colorBar.topRight());
+        for (auto index = 0; index <= 4; ++index) {
+            const auto ratio = index / 4.0;
+            gradient.setColorAt(ratio, gainColor(ratio));
+        }
+        painter.fillRect(colorBar, gradient);
+        painter.setPen(palette().color(QPalette::Mid));
+        painter.drawRect(colorBar);
+        painter.setPen(palette().color(QPalette::Text));
+        painter.drawText(QRectF(legend.left() + 8, legend.top(), legend.width() - 16, 18),
+            Qt::AlignLeft | Qt::AlignVCenter, title);
+        painter.drawText(QRectF(colorBar.left(), colorBar.bottom() + 2, 90, 17),
+            Qt::AlignLeft | Qt::AlignVCenter,
+            tr("%1 %2").arg(formatDecimal(minimum), unit));
+        painter.drawText(QRectF(colorBar.right() - 90, colorBar.bottom() + 2, 90, 17),
+            Qt::AlignRight | Qt::AlignVCenter,
+            tr("%1 %2").arg(formatDecimal(maximum), unit));
+        painter.restore();
+    }
+    [[nodiscard]] auto samplePoint(const analysis::RadiationSample& sample,
+        double gain, double reference) const -> model::Point3D
+    {
+        const auto theta = sample.thetaDegrees * std::numbers::pi / 180.0;
+        const auto phi = sample.phiDegrees * std::numbers::pi / 180.0;
+        const auto radial = std::pow(10.0,
+            (std::max(gain, reference + settings_.floorDb) - reference) / 20.0);
+        return {radial * std::sin(theta) * std::cos(phi),
+            radial * std::sin(theta) * std::sin(phi), radial * std::cos(theta)};
+    }
+    [[nodiscard]] auto nearestSampleText(const QPointF& position) const -> QString
+    {
+        if (!showRadiation_ || samples_.empty()) return {};
+        const auto maxGain = maximumGain();
+        if (!maxGain) return {};
+        const auto reference = gainReference(*maxGain);
+        const auto scale = std::min(width(), height()) * 0.38 * zoom_;
+        const auto nearest = nearestProjectedSample(position, scale, reference);
+        if (!nearest) return {};
+        return tr("Nearest NEC sample · θ %1° · φ %2° · Gain %3 dBi · Relative %4 dB")
+            .arg(formatDecimal(nearest->sample->thetaDegrees),
+                formatDecimal(nearest->sample->phiDegrees), formatDecimal(nearest->gain),
+                formatDecimal(nearest->gain - *maxGain));
+    }
+    [[nodiscard]] auto nearestProjectedSample(const QPointF& position, double scale,
+        double reference) const -> std::optional<ProjectedRadiationSample>
+    {
+        ProjectedRadiationSample nearest;
+        auto nearestDistance = std::numeric_limits<double>::infinity();
+        for (const auto& sample : samples_) {
+            const auto gain = analysis::radiationGainDb(sample, settings_.component);
+            if (!std::isfinite(gain) || gain <= -900.0) continue;
+            const auto screen = project(samplePoint(sample, gain, reference), scale);
+            const auto distance = QLineF(position, screen).length();
+            if (distance < nearestDistance) {
+                nearest = {&sample, screen, gain};
+                nearestDistance = distance;
+            }
+        }
+        return nearest.sample != nullptr
+            ? std::optional<ProjectedRadiationSample>{nearest} : std::nullopt;
+    }
     [[nodiscard]] auto project(const model::Point3D& point, double scale) const -> QPointF
     {
         const auto cy = std::cos(yaw_), sy = std::sin(yaw_), cp = std::cos(pitch_), sp = std::sin(pitch_);
@@ -656,40 +855,44 @@ private:
     }
     void drawRadiation(QPainter& painter, double scale, double maxGain)
     {
-        std::map<double, std::vector<std::pair<double, QPointF>>> phiPaths;
-        std::map<double, std::vector<std::pair<double, QPointF>>> thetaPaths;
+        struct Vertex {
+            double order{};
+            QPointF screen;
+            double colorRatio{};
+        };
+        std::map<double, std::vector<Vertex>> phiPaths;
+        std::map<double, std::vector<Vertex>> thetaPaths;
+        const auto reference = gainReference(maxGain);
         for (const auto& sample : samples_) {
             const auto gain = analysis::radiationGainDb(sample, settings_.component);
             if (!std::isfinite(gain) || gain <= -900.0) continue;
-            const auto theta = sample.thetaDegrees * std::numbers::pi / 180.0;
-            const auto phi = sample.phiDegrees * std::numbers::pi / 180.0;
-            const auto reference = settings_.scale == analysis::RadiationScale::Normalized
-                ? maxGain : std::ceil(maxGain / 5.0) * 5.0;
-            const auto radial = std::pow(10.0,
-                (std::max(gain, reference + settings_.floorDb) - reference) / 20.0);
-            const model::Point3D point{radial * std::sin(theta) * std::cos(phi),
-                radial * std::sin(theta) * std::sin(phi), radial * std::cos(theta)};
-            const auto screen = project(point, scale);
-            phiPaths[sample.phiDegrees].push_back({sample.thetaDegrees, screen});
-            thetaPaths[sample.thetaDegrees].push_back({sample.phiDegrees, screen});
+            const auto screen = project(samplePoint(sample, gain, reference), scale);
+            const auto ratio = gainRatio(gain, reference);
+            phiPaths[sample.phiDegrees].push_back({sample.thetaDegrees, screen, ratio});
+            thetaPaths[sample.thetaDegrees].push_back({sample.phiDegrees, screen, ratio});
         }
-        painter.setPen(QPen(QColor(80, 185, 105), 2));
-        for (auto& [phi, points] : phiPaths) {
-            Q_UNUSED(phi); std::ranges::sort(points, {}, &std::pair<double, QPointF>::first); QPainterPath path;
-            for (auto index = 0; index < static_cast<int>(points.size()); ++index)
-                index == 0 ? path.moveTo(points[index].second) : path.lineTo(points[index].second);
-            painter.drawPath(path);
-        }
-        painter.setPen(QPen(QColor(55, 135, 85), 1));
+        const auto drawPaths = [&painter](auto& paths, double width, bool close) {
+            for (auto& [key, points] : paths) {
+                Q_UNUSED(key);
+                std::ranges::sort(points, {}, &Vertex::order);
+                for (auto index = std::size_t{1}; index < points.size(); ++index) {
+                    const auto ratio = (points[index - 1].colorRatio
+                        + points[index].colorRatio) / 2.0;
+                    painter.setPen(QPen(gainColor(ratio), width));
+                    painter.drawLine(points[index - 1].screen, points[index].screen);
+                }
+                if (close && points.size() > 2) {
+                    const auto ratio = (points.front().colorRatio
+                        + points.back().colorRatio) / 2.0;
+                    painter.setPen(QPen(gainColor(ratio), width));
+                    painter.drawLine(points.back().screen, points.front().screen);
+                }
+            }
+        };
+        drawPaths(phiPaths, 2.0, false);
         const auto closeAzimuth = phiPaths.size() >= 3
             && (phiPaths.rbegin()->first - phiPaths.begin()->first) >= 270.0;
-        for (auto& [theta, points] : thetaPaths) {
-            Q_UNUSED(theta); std::ranges::sort(points, {}, &std::pair<double, QPointF>::first); QPainterPath path;
-            for (auto index = 0; index < static_cast<int>(points.size()); ++index)
-                index == 0 ? path.moveTo(points[index].second) : path.lineTo(points[index].second);
-            if (closeAzimuth && !points.empty()) path.lineTo(points.front().second);
-            painter.drawPath(path);
-        }
+        drawPaths(thetaPaths, 1.0, closeAzimuth);
     }
     void drawAntenna(QPainter& painter, double scale, double extent)
     {
@@ -703,9 +906,9 @@ private:
             }
         }
     }
-    void drawCurrents(QPainter& painter, double scale, double extent)
+    void drawCurrents(QPainter& painter, double scale, double extent, double maximum)
     {
-        const auto maximum = std::ranges::max(currents_, {}, &analysis::SegmentCurrentResult::magnitude).magnitude;
+        painter.save();
         const analysis::SegmentCurrentResult* hovered{};
         QPointF hoveredStart;
         QPointF hoveredEnd;
@@ -725,16 +928,6 @@ private:
                 hoverDistance = distance; hovered = &current; hoveredStart = start; hoveredEnd = end;
             }
         }
-        const QRectF legend(10, 35, 150, 12);
-        for (auto offset = 0; offset < static_cast<int>(legend.width()); ++offset) {
-            const auto ratio = offset / legend.width();
-            painter.setPen(QColor::fromHsvF((1.0-ratio)*0.67, 0.9, 0.95));
-            painter.drawLine(QPointF(legend.left()+offset, legend.top()), QPointF(legend.left()+offset, legend.bottom()));
-        }
-        painter.setPen(palette().color(QPalette::Text));
-        painter.drawText(QPointF(legend.left(), legend.bottom()+15), tr("0 A"));
-        painter.drawText(QRectF(legend.right()-70, legend.bottom()+2, 70, 20), Qt::AlignRight,
-            tr("%1 A").arg(formatDecimal(maximum)));
         if (hovered != nullptr) {
             painter.setPen(QPen(Qt::white, 2)); painter.drawLine(hoveredStart, hoveredEnd);
             const QRectF readout(8, height()-31, width()-16, 23);
@@ -746,6 +939,7 @@ private:
                     .arg(hovered->wireTag).arg(hovered->segment)
                     .arg(formatDecimal(hovered->magnitude), formatDecimal(hovered->phaseDegrees)));
         }
+        painter.restore();
     }
     model::AntennaModel model_;
     std::vector<analysis::RadiationSample> samples_;
@@ -754,6 +948,7 @@ private:
     QPointF last_;
     QPointF cursor_;
     QPointF pan_;
+    HoverTextCallback hoverTextCallback_;
     double yaw_{-0.7};
     double pitch_{0.45};
     double zoom_{1.0};
@@ -835,8 +1030,20 @@ RadiationPatternView::RadiationPatternView(QWidget* parent) : QWidget(parent)
     navigation->addStretch(); navigation->addWidget(exportImageButton_); navigation->addWidget(exportDataButton_);
     summary_ = new QLabel(tr("Run an RP analysis to populate radiation patterns."), this);
     summary_->setObjectName(QStringLiteral("radiation2DSummary"));
-    summary_->setWordWrap(true); plot_ = new RadiationPolarWidget(this);
-    layout->addLayout(form); layout->addLayout(navigation); layout->addWidget(summary_); layout->addWidget(plot_, 1);
+    summary_->setWordWrap(true);
+    hoverReadout_ = new QLabel(
+        tr("Move the pointer over the pattern to inspect calculated NEC samples."), this);
+    hoverReadout_->setObjectName(QStringLiteral("radiation2DHoverReadout"));
+    hoverReadout_->setMinimumHeight(24);
+    hoverReadout_->setAutoFillBackground(true);
+    plot_ = new RadiationPolarWidget(this);
+    plot_->setHoverTextCallback([this](const QString& text) {
+        hoverReadout_->setText(text.isEmpty()
+            ? tr("Move the pointer over the pattern to inspect calculated NEC samples.")
+            : text);
+    });
+    layout->addLayout(form); layout->addLayout(navigation); layout->addWidget(summary_);
+    layout->addWidget(hoverReadout_); layout->addWidget(plot_, 1);
     connect(frequency_, &QComboBox::currentIndexChanged, this, [this] { refreshDatasets(); settingsChanged(); });
     connect(dataset_, &QComboBox::currentIndexChanged, this, [this] { refreshCutControls(); });
     connect(component_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
@@ -880,6 +1087,13 @@ void RadiationPatternView::setDisplaySettings(const analysis::RadiationDisplaySe
     applyDisplaySettings(settings, frequency_, component_, scale_, floor_);
     updatingSettings_ = false;
     refreshDatasets();
+}
+void RadiationPatternView::setComponent(analysis::RadiationComponent component)
+{
+    const QSignalBlocker blocker(component_);
+    const auto index = component_->findData(static_cast<int>(component));
+    if (index >= 0) component_->setCurrentIndex(index);
+    refresh();
 }
 void RadiationPatternView::setSettingsChangedCallback(SettingsChangedCallback callback)
 { settingsChangedCallback_ = std::move(callback); }
@@ -1175,11 +1389,22 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
     layers->addStretch(); layers->addWidget(resetView); layers->addWidget(exportImageButton_); layers->addWidget(exportDataButton_);
     summary_ = new QLabel(tr("Run a multi-phi RP analysis to populate the 3D pattern."), this);
     summary_->setObjectName(QStringLiteral("radiation3DSummary")); summary_->setWordWrap(true);
+    hoverReadout_ = new QLabel(
+        tr("Move the pointer over the surface to inspect calculated NEC samples."), this);
+    hoverReadout_->setObjectName(QStringLiteral("radiation3DHoverReadout"));
+    hoverReadout_->setMinimumHeight(24);
+    hoverReadout_->setAutoFillBackground(true);
     surface_ = new RadiationSurfaceWidget(this);
+    surface_->setHoverTextCallback([this](const QString& text) {
+        hoverReadout_->setText(text.isEmpty()
+            ? tr("Move the pointer over the surface to inspect calculated NEC samples.")
+            : text);
+    });
     controlsLayout->addLayout(form);
     controlsLayout->addLayout(layers);
     layout->addWidget(controls_);
     layout->addWidget(summary_);
+    layout->addWidget(hoverReadout_);
     layout->addWidget(surface_, 1);
     connect(frequency_, &QComboBox::currentIndexChanged, this, [this] { refreshDatasets(); settingsChanged(); });
     connect(dataset_, &QComboBox::currentIndexChanged, this, [this] { refresh(); });
@@ -1221,12 +1446,20 @@ void Radiation3DView::setDisplaySettings(const analysis::RadiationDisplaySetting
     updatingSettings_ = false;
     refreshDatasets();
 }
+void Radiation3DView::setComponent(analysis::RadiationComponent component)
+{
+    const QSignalBlocker blocker(component_);
+    const auto index = component_->findData(static_cast<int>(component));
+    if (index >= 0) component_->setCurrentIndex(index);
+    refresh();
+}
 void Radiation3DView::setSettingsChangedCallback(SettingsChangedCallback callback)
 { settingsChangedCallback_ = std::move(callback); }
 void Radiation3DView::setOverviewMode(bool enabled)
 {
     controls_->setVisible(!enabled);
     summary_->setVisible(!enabled);
+    hoverReadout_->setVisible(!enabled);
     surface_->setOverlayVisible(!enabled);
     layout()->setContentsMargins(enabled ? 0 : 11, enabled ? 0 : 11,
         enabled ? 0 : 11, enabled ? 0 : 11);
@@ -1309,6 +1542,120 @@ void Radiation3DView::exportData()
     }
     QFile file(path);
     if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) file.write(output.toUtf8());
+}
+
+RadiationPerformanceView::RadiationPerformanceView(QWidget* parent)
+    : QWidget(parent)
+{
+    setObjectName(QStringLiteral("radiationPerformanceView"));
+    auto* layout = new QVBoxLayout(this);
+    auto* controls = new QHBoxLayout;
+    component_ = new QComboBox(this);
+    component_->setObjectName(QStringLiteral("radiationPerformanceComponent"));
+    populateRadiationComponents(component_);
+    forwardTheta_ = new QDoubleSpinBox(this);
+    forwardTheta_->setObjectName(QStringLiteral("radiationPerformanceTheta"));
+    forwardTheta_->setRange(-360.0, 360.0);
+    forwardTheta_->setDecimals(DisplayDecimalPlaces);
+    forwardTheta_->setValue(90.0);
+    forwardTheta_->setSuffix(QStringLiteral("°"));
+    forwardPhi_ = new QDoubleSpinBox(this);
+    forwardPhi_->setObjectName(QStringLiteral("radiationPerformancePhi"));
+    forwardPhi_->setRange(-360.0, 720.0);
+    forwardPhi_->setDecimals(DisplayDecimalPlaces);
+    forwardPhi_->setSuffix(QStringLiteral("°"));
+    const auto directionTip = tr(
+        "Physical forward direction used for gain, F/B, and F/R. Exact NEC samples "
+        "must exist at the requested direction; values are not interpolated.");
+    forwardTheta_->setToolTip(directionTip);
+    forwardPhi_->setToolTip(directionTip);
+    controls->addWidget(new QLabel(tr("Component"), this));
+    controls->addWidget(component_);
+    controls->addSpacing(12);
+    controls->addWidget(new QLabel(tr("Forward θ"), this));
+    controls->addWidget(forwardTheta_);
+    controls->addWidget(new QLabel(tr("Forward φ"), this));
+    controls->addWidget(forwardPhi_);
+    controls->addStretch();
+    summary_ = new QLabel(tr(
+        "Load radiation results to inspect directional performance across frequency."), this);
+    summary_->setObjectName(QStringLiteral("radiationPerformanceSummary"));
+    summary_->setWordWrap(true);
+    plot_ = new DirectionalMetricsView(this);
+    plot_->setObjectName(QStringLiteral("radiationPerformancePlot"));
+    layout->addLayout(controls);
+    layout->addWidget(summary_);
+    layout->addWidget(plot_, 1);
+    connect(component_, &QComboBox::currentIndexChanged, this, [this] {
+        refresh();
+        if (componentChangedCallback_) {
+            componentChangedCallback_(static_cast<analysis::RadiationComponent>(
+                component_->currentData().toInt()));
+        }
+    });
+    connect(forwardTheta_, &QDoubleSpinBox::valueChanged, this, [this] { refresh(); });
+    connect(forwardPhi_, &QDoubleSpinBox::valueChanged, this, [this] { refresh(); });
+}
+
+void RadiationPerformanceView::setResults(
+    const analysis::AnalysisResult& result, const QString& runDirectory)
+{
+    result_ = result;
+    runContext_ = runDirectory;
+    refresh();
+}
+
+void RadiationPerformanceView::setSelectedFrequency(double frequencyMHz)
+{
+    selectedFrequencyMHz_ = frequencyMHz;
+    plot_->setSelectedFrequency(frequencyMHz);
+}
+
+void RadiationPerformanceView::setComponent(analysis::RadiationComponent component)
+{
+    const QSignalBlocker blocker(component_);
+    const auto index = component_->findData(static_cast<int>(component));
+    if (index >= 0) component_->setCurrentIndex(index);
+    refresh();
+}
+
+void RadiationPerformanceView::setComponentChangedCallback(
+    ComponentChangedCallback callback)
+{
+    componentChangedCallback_ = std::move(callback);
+}
+
+void RadiationPerformanceView::refresh()
+{
+    const auto component = static_cast<analysis::RadiationComponent>(
+        component_->currentData().toInt());
+    const auto metrics = analysis::radiationFrequencyMetrics(result_.radiation, component,
+        forwardTheta_->value(), forwardPhi_->value());
+    std::vector<DirectionalPlotPoint> points;
+    points.reserve(metrics.size());
+    auto gainCount = std::size_t{};
+    auto frontToBackCount = std::size_t{};
+    auto frontToRearCount = std::size_t{};
+    for (const auto& metric : metrics) {
+        points.push_back({metric.frequencyMHz, metric.forwardGainDb,
+            metric.frontToBackDb, metric.frontToRearDb});
+        gainCount += metric.forwardGainDb.has_value();
+        frontToBackCount += metric.frontToBackDb.has_value();
+        frontToRearCount += metric.frontToRearDb.has_value();
+    }
+    plot_->setMetrics(points);
+    if (selectedFrequencyMHz_) plot_->setSelectedFrequency(*selectedFrequencyMHz_);
+    if (metrics.empty()) {
+        summary_->setText(tr("No radiation samples are available · %1").arg(runContext_));
+        return;
+    }
+    summary_->setText(tr(
+        "Forward θ %1°, φ %2° · %3 · Available frequencies: Gain %4/%7, "
+        "F/B %5/%7, F/R %6/%7 · Missing exact directions remain unavailable · %8")
+        .arg(formatDecimal(forwardTheta_->value()), formatDecimal(forwardPhi_->value()),
+            componentName(component))
+        .arg(gainCount).arg(frontToBackCount).arg(frontToRearCount).arg(metrics.size())
+        .arg(runContext_));
 }
 
 }

@@ -2,6 +2,7 @@
 
 #include "analysis/AnalysisResult.h"
 #include "analysis/AdaptiveSearch.h"
+#include "analysis/DifferentialEvolutionSearch.h"
 #include "analysis/NelderMeadSearch.h"
 #include "analysis/OptimizationObjective.h"
 #include "model/ModelSetup.h"
@@ -12,6 +13,7 @@
 #include <QString>
 #include <QWidget>
 
+#include <array>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -33,6 +35,7 @@ class QTabWidget;
 namespace necwb::ui {
 
 class CandidatePlotsView;
+class DirectionalMetricsView;
 class SweepPlotsView;
 
 class OptimizationWorkspace final : public QWidget {
@@ -53,6 +56,7 @@ public:
     auto loadSession(const QString& sessionId) -> bool;
     void leaveHistoricalSession();
     [[nodiscard]] auto isRunning() const noexcept -> bool;
+    void restoreCandidateDetailsWindow();
     void cancel();
     void cancelAndWait();
 
@@ -66,7 +70,8 @@ private:
     enum class SearchMethod {
         ParameterSweep,
         Adaptive,
-        NelderMead
+        NelderMead,
+        DifferentialEvolution
     };
 
     struct FrequencySelectionState {
@@ -93,6 +98,11 @@ private:
         int candidateLimit{};
         double parameterTolerance{};
         double scoreTolerance{};
+        int populationSize{};
+        int maximumGenerations{};
+        double mutationFactor{};
+        double crossoverRate{};
+        int randomSeed{};
         std::vector<VariableRange> variables;
         FrequencySelectionState frequencySelection;
         std::vector<double> frequenciesMHz;
@@ -105,6 +115,7 @@ private:
         int row{};
         AnalysisRunRecord record;
         std::vector<analysis::FeedpointResult> feedpoints;
+        std::vector<analysis::RadiationSample> radiation;
         std::optional<analysis::OptimizationObjectiveResult> evaluation;
         int refinementRound{};
         QString trialRole;
@@ -167,6 +178,7 @@ private:
     [[nodiscard]] static auto searchMethodId(SearchMethod method) -> QString;
     [[nodiscard]] auto currentSearchIteration() const noexcept -> int;
     [[nodiscard]] auto currentStopReasonId() const -> QString;
+    [[nodiscard]] auto bestBoundaryDescription() const -> QString;
 
     QTableWidget* variablesTable_{};
     QWidget* parameterSettings_{};
@@ -182,6 +194,16 @@ private:
     QDoubleSpinBox* resistanceTargetControl_{};
     QDoubleSpinBox* reactanceWeightControl_{};
     QDoubleSpinBox* reactanceTargetControl_{};
+    QDoubleSpinBox* forwardGainWeightControl_{};
+    QDoubleSpinBox* frontToBackWeightControl_{};
+    QDoubleSpinBox* frontToRearWeightControl_{};
+    std::array<QComboBox*, 6> objectiveGoalControls_{};
+    std::array<QDoubleSpinBox*, 6> objectiveValueControls_{};
+    std::array<QComboBox*, 6> objectiveAggregationControls_{};
+    QPushButton* resetObjectiveDefaultsButton_{};
+    QDoubleSpinBox* forwardThetaControl_{};
+    QDoubleSpinBox* forwardPhiControl_{};
+    QComboBox* radiationComponentControl_{};
     QComboBox* frequencyModeControl_{};
     QWidget* explicitFrequencyPanel_{};
     QWidget* continuousFrequencyPanel_{};
@@ -209,9 +231,19 @@ private:
     QSpinBox* adaptiveMaximumEvaluationsControl_{};
     QDoubleSpinBox* adaptiveParameterToleranceControl_{};
     QDoubleSpinBox* adaptiveScoreToleranceControl_{};
+    QWidget* differentialEvolutionSettings_{};
+    QSpinBox* differentialEvolutionPopulationControl_{};
+    QSpinBox* differentialEvolutionGenerationControl_{};
+    QDoubleSpinBox* differentialEvolutionMutationControl_{};
+    QDoubleSpinBox* differentialEvolutionCrossoverControl_{};
+    QDoubleSpinBox* differentialEvolutionScoreToleranceControl_{};
+    QSpinBox* differentialEvolutionSeedControl_{};
     QDoubleSpinBox* referenceImpedanceControl_{};
     QLabel* studySummaryLabel_{};
     QLabel* objectiveSummaryLabel_{};
+    QLabel* objectiveExplanationLabel_{};
+    QLabel* targetFrequencyLabel_{};
+    QLabel* directionalFrequencyNote_{};
     QPushButton* editObjectiveButton_{};
     QDialog* objectiveDialog_{};
     QPushButton* runButton_{};
@@ -225,7 +257,9 @@ private:
     QDialog* candidateDetailsWindow_{};
     QLabel* candidateDetailLabel_{};
     QTableWidget* candidateDetailsTable_{};
+    QTabWidget* candidateDetailViews_{};
     SweepPlotsView* candidateDetailPlots_{};
+    DirectionalMetricsView* candidateDirectionalPlots_{};
     QPushButton* applyCandidateButton_{};
     QPushButton* applyCandidateAndRunButton_{};
     QWidget* historicalBanner_{};
@@ -259,6 +293,7 @@ private:
     QString searchStopReason_;
     std::optional<analysis::AdaptiveVectorSearch> adaptiveVectorSearch_;
     std::optional<analysis::NelderMeadSearch> nelderMeadSearch_;
+    std::optional<analysis::DifferentialEvolutionSearch> differentialEvolutionSearch_;
     int bestRow_{-1};
     int detailCandidateRow_{-1};
     bool modelValid_{};

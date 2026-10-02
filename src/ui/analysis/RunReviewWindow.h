@@ -23,6 +23,7 @@ class ImpedanceResultsView;
 class OptimizationWorkspace;
 class Radiation3DView;
 class RadiationPatternView;
+class RadiationPerformanceView;
 class ResultsSummaryView;
 class SweepPlotsView;
 
@@ -62,6 +63,7 @@ private:
     QTabWidget* radiationPage_{};
     RadiationPatternView* radiationPatternView_{};
     Radiation3DView* radiation3DView_{};
+    RadiationPerformanceView* radiationPerformanceView_{};
     QPlainTextEdit* rawOutput_{};
     QWidget* inputPage_{};
     QComboBox* inputSource_{};

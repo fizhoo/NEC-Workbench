@@ -9,10 +9,17 @@ Ideas recorded here are discussion items, not implementation commitments. Status
 - **Status:** Parking Lot
 - Add a Smith chart for impedance, admittance, SWR circles, and frequency traces.
 - Consider transmission-line calculators for line transformation, loss, electrical length, and SWR.
+- Add open/shorted stub calculators, single-stub matching, and basic impedance-matching workflows.
+- Add phasing-line calculations for stacked arrays and multi-element feed systems, including
+  electrical length, velocity factor, phase shift, and transformed impedance.
 - Integrate these tools with NEC results so a calculated feedpoint impedance can become the chart or calculator input without manual re-entry.
 - Keep standalone calculator use available even when no NEC model is open.
 
-**Direction:** Build this in layers: first a read-only Smith chart for NEC frequency results, then interactive markers and reference-impedance controls, followed by standalone transmission-line calculations. This avoids tying the initial chart implementation to a large calculator subsystem.
+**Direction:** Build this in layers: first a read-only Smith chart for NEC frequency results,
+then interactive markers and reference-impedance controls, followed by a shared
+transmission-line calculation core used by line transformation, stub matching, and phasing
+tools. Keep calculators independently usable, but allow explicit transfer of NEC feedpoint
+results into them and calculated line/stub values back into model setup where appropriate.
 
 ## 3D Visualization
 
@@ -54,20 +61,43 @@ Ideas recorded here are discussion items, not implementation commitments. Status
 
 ## Optimization
 
+### Per-Criterion Objective Builder
+
+- **Status:** Implemented
+- Each SWR, R, X, gain, F/B, and F/R row selects its own Minimize, Maximize,
+  Target, or Good Enough goal and Minimum, Average, or Maximum frequency reduction.
+- The Frequency section is the sole source of evaluated frequencies; a one-point
+  plan replaces the former global Selected Frequency objective mode.
+- Keep the compact summary on the main Optimize page and the full matrix in the
+  Objective dialog so added power does not crowd the workspace.
+
 ### Radiation Objectives for Directional Antennas
 
-- **Status:** Near-Term Checkpoint
+- **Status:** Implemented Phase 3
 - Add front-to-back ratio and forward gain as optimization criteria for Yagis and other directional antennas.
 - Require an explicit forward direction, polarization/component, pattern frequency, and suitable RP coverage.
 - Reuse the physical spherical-direction F/B calculation; never substitute minimum pattern gain for the true opposite direction.
 - Report the objective as unavailable when the generated pattern does not include both the forward and physically opposite directions.
 - Support weighting radiation goals alongside SWR, resistance, and reactance.
 - Make the added solver cost clear because each candidate must calculate radiation patterns, not only impedance.
+- Improve parameterization discoverability during this checkpoint without adding a second
+  parameter system:
+  - Structured Cards should visibly explain **Double-click to edit** and
+    **Right-click a numeric cell to parameterize**.
+  - The Parameters page should explain that parameters are managed there, while NEC fields
+    are linked by right-clicking the corresponding Structured Cards cell.
+  - Existing parameter-controlled cells should retain their accent, `ƒx` marker, and link tooltip.
 
 **Direction:** First add single-frequency forward gain and F/B objectives using a
 deliberately selected pattern request. Then support minimax or weighted evaluation
 across several frequencies. Consider a staged workflow that filters candidates by
 impedance before requesting expensive radiation calculations.
+
+Phase 1 added one exact forward `RP` sample and, for F/B, one exact antipodal sample.
+Phase 2 applies those requests at every shared study frequency and supports directional
+Minimax. Phase 3 adds front-to-rear using the strongest response in the rear 180°
+half of the configured azimuth cut, sampled every 5°. Frequency weights,
+constraints, full-hemisphere rear searches, and staged filtering remain parking-lot work.
 
 ### Candidate Result Exploration
 

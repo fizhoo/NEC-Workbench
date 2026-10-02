@@ -7,10 +7,12 @@
 #include <QWidget>
 
 #include <functional>
+#include <optional>
 #include <vector>
 
 class QComboBox;
 class QCheckBox;
+class QDoubleSpinBox;
 class QLabel;
 class QTableWidget;
 class QPushButton;
@@ -20,6 +22,7 @@ namespace necwb::ui {
 class CurrentPlotWidget;
 class RadiationPolarWidget;
 class RadiationSurfaceWidget;
+class DirectionalMetricsView;
 
 [[nodiscard]] auto resultModelExtentFromOrigin(const model::AntennaModel& model) -> double;
 [[nodiscard]] auto radiationAnglesCoverCircle(const std::vector<QPointF>& samples) -> bool;
@@ -53,6 +56,7 @@ public:
     void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
     void setSelectedFrequency(double frequencyMHz);
     void setDisplaySettings(const analysis::RadiationDisplaySettings& settings);
+    void setComponent(analysis::RadiationComponent component);
     void setSettingsChangedCallback(SettingsChangedCallback callback);
 
 private:
@@ -77,6 +81,7 @@ private:
     QComboBox* floor_{};
     QLabel* cutLabel_{};
     QLabel* summary_{};
+    QLabel* hoverReadout_{};
     QPushButton* orientationButton_{};
     QPushButton* maxGainCutButton_{};
     QPushButton* exportImageButton_{};
@@ -96,6 +101,7 @@ public:
     void setModel(const model::AntennaModel& model);
     void setSelectedFrequency(double frequencyMHz);
     void setDisplaySettings(const analysis::RadiationDisplaySettings& settings);
+    void setComponent(analysis::RadiationComponent component);
     void setSettingsChangedCallback(SettingsChangedCallback callback);
     void setOverviewMode(bool enabled);
 
@@ -114,6 +120,7 @@ private:
     QComboBox* floor_{};
     QWidget* controls_{};
     QLabel* summary_{};
+    QLabel* hoverReadout_{};
     QCheckBox* antennaControl_{};
     QCheckBox* currentControl_{};
     QCheckBox* radiationControl_{};
@@ -123,6 +130,28 @@ private:
     QString runContext_;
     SettingsChangedCallback settingsChangedCallback_;
     bool updatingSettings_{};
+};
+
+class RadiationPerformanceView final : public QWidget {
+public:
+    using ComponentChangedCallback = std::function<void(analysis::RadiationComponent)>;
+    explicit RadiationPerformanceView(QWidget* parent = nullptr);
+    void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
+    void setSelectedFrequency(double frequencyMHz);
+    void setComponent(analysis::RadiationComponent component);
+    void setComponentChangedCallback(ComponentChangedCallback callback);
+
+private:
+    void refresh();
+    analysis::AnalysisResult result_;
+    QComboBox* component_{};
+    QDoubleSpinBox* forwardTheta_{};
+    QDoubleSpinBox* forwardPhi_{};
+    QLabel* summary_{};
+    DirectionalMetricsView* plot_{};
+    QString runContext_;
+    std::optional<double> selectedFrequencyMHz_;
+    ComponentChangedCallback componentChangedCallback_;
 };
 
 }

@@ -14,6 +14,8 @@ add_library(necwb_core
     src/analysis/AdaptiveSearch.h
     src/analysis/AnalysisResult.cpp
     src/analysis/AverageGainTest.cpp
+    src/analysis/DifferentialEvolutionSearch.cpp
+    src/analysis/DifferentialEvolutionSearch.h
     src/analysis/FrequencyPlan.cpp
     src/analysis/NecOutputParser.cpp
     src/analysis/NelderMeadSearch.cpp
@@ -66,6 +68,8 @@ if(NECWB_BUILD_GUI)
         src/ui/DetachablePanel.h
         src/ui/ParameterFieldStyle.cpp
         src/ui/ParameterFieldStyle.h
+        src/ui/WorkspaceNavigator.cpp
+        src/ui/WorkspaceNavigator.h
         src/ui/analysis/AnalysisSetupEditor.cpp
         src/ui/analysis/AnalysisSetupEditor.h
         src/ui/analysis/AnalysisRequestEditor.cpp
@@ -94,12 +98,6 @@ if(NECWB_BUILD_GUI)
         src/ui/cards/WireCardEditor.h
         src/ui/cards/StructuredCardEditor.cpp
         src/ui/cards/StructuredCardEditor.h
-        src/ui/commands/GeometrySourceCommand.cpp
-        src/ui/commands/GeometrySourceCommand.h
-        src/ui/commands/MoveEndpointCommand.cpp
-        src/ui/commands/MoveEndpointCommand.h
-        src/ui/commands/MoveWireCommand.cpp
-        src/ui/commands/MoveWireCommand.h
         src/ui/dashboard/DashboardPage.cpp
         src/ui/dashboard/DashboardPage.h
         src/ui/editor/NecEditor.cpp

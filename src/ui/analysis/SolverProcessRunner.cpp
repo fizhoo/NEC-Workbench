@@ -36,7 +36,12 @@ void SolverProcessRunner::start(const analysis::SolverCommand& command,
     process_->setArguments(arguments);
     process_->setProcessChannelMode(QProcess::MergedChannels);
 
-    connect(process_, &QProcess::started, this, &SolverProcessRunner::started);
+    const auto standardInput = QByteArray::fromStdString(command.standardInput);
+    connect(process_, &QProcess::started, this, [this, standardInput] {
+        emit started();
+        if (!standardInput.isEmpty()) process_->write(standardInput);
+        process_->closeWriteChannel();
+    });
     connect(process_, &QProcess::readyRead, this, [this] { drainOutput(); });
     connect(process_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
         if (error == QProcess::FailedToStart && isRunning())
@@ -118,4 +123,3 @@ void SolverProcessRunner::complete(SolverProcessStatus status, int exitCode, QSt
 }
 
 }
-

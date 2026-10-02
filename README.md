@@ -31,14 +31,14 @@ The current foundation provides:
 - Selectable EX markers with contextual properties, deletion, and nearest-segment source creation from 2D/3D wires
 - Dedicated EX Properties dialog plus source and feed-reference management under Model → Sources
 - Structured GN/GE ground environments: free space, perfect, real/fast, real/Sommerfeld, and average-ground preset
-- Persistent Analysis backend selection for NEC-2, OpenNEC, NEC-4-compatible, or custom executables
+- Persistent Analysis backend selection with an independent executable path for nec2c, OpenNEC, and 4nec2 NEC2dXS
 - Managed XQ/RP result requests with far-field angular grids and live analysis-readiness validation
 - Asynchronous `nec2c` execution with timeout/cancel controls, run history, live output, and preserved artifacts
 - Persistent selectable run history that reloads historical raw output, tables, and plots
 - Persistent open-model indicator plus model filenames, timestamps, and backends across history and results
 - Structured feedpoint results with frequency, complex impedance, phase, power, and model-referenced SWR tables
 - Engineering-style sweep plots with logarithmic SWR, logarithmic resistance, independent linear reactance, and raw-value hover readouts
-- Exhaustive one-variable sweeps plus bounded multi-variable adaptive and Nelder–Mead optimization with weighted objectives and undoable Apply Best
+- Exhaustive one-variable sweeps plus bounded multi-variable adaptive, Nelder–Mead, and seeded Differential Evolution optimization with weighted impedance, forward-gain, and physical front-to-back objectives and undoable Apply Best
 - Parsed per-segment currents with selectable-frequency distribution plots and tables
 - Fully labeled, hover-tracked 2D gain cuts and layered 3D antenna, segment-current, and radiation results
 - Previewable wavelength-based automatic segmentation with undo and safe EX source remapping
@@ -53,6 +53,7 @@ The current foundation provides:
 ## Documentation
 
 - [User Guide](docs/user-guide.md) — workspace paths, editing, analysis, results, and interaction controls
+- [Optimization Mathematics](docs/optimization-math.md) — objective equations and implemented search algorithms
 - [Architecture](docs/architecture.md) — internal boundaries and current development milestones
 - [Roadmap](docs/roadmap.md) — parameterization, optimization, and planned improvements
 - [NEC Card Support](docs/nec-card-support.md) — complete NEC-2 coverage matrix and support levels

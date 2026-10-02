@@ -23,18 +23,18 @@ preserved exactly and remain editable in Raw Source.
 | `SP` | Surface patch | Understood | Not yet |
 | `SM` | Multiple-patch surface | Understood | Not yet |
 | `SC` | Patch continuation | Understood | Not yet |
-| `GM` | Move or replicate structure | Understood | Not yet |
-| `GX` | Reflect structure | Understood | Not yet |
-| `GR` | Generate cylindrical structure | Understood | Not yet |
+| `GM` | Move or replicate structure | Understood | Yes, in authored order |
+| `GX` | Reflect structure | Understood | Yes, including combined reflection planes |
+| `GR` | Generate cylindrical structure | Understood | Yes, around the Z axis |
 | `GS` | Scale structure | Structured Editable | Applied in source order to `GW`, `GC`, `GA`, and `GH` geometry |
 | `GF` | Read Numerical Green's Function | Understood | No; backend-dependent |
 | `GE` | End geometry | Structured Editable | Boundary understood |
 
 The solver receives authored geometry cards unchanged. Workbench expands `GA`, helical
-`GH`, and `GW`/`GC` taper combinations into semantic paths for selection, fitting,
-attachment markers, and 2D/3D display. These generated paths are initially read-only so
-graphical editing cannot silently replace the original cards. Surface patches and
-transformed or replicated structures do not yet appear graphically.
+`GH`, `GW`/`GC` taper combinations, and ordered `GM`/`GX`/`GR` transformations into
+semantic paths for selection, fitting, attachment markers, and 2D/3D display. Generated
+or transformed paths are read-only so graphical editing cannot silently replace their
+source operations. Surface patches do not yet appear graphically.
 
 ## Program Control Cards
 

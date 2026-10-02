@@ -76,10 +76,20 @@ void CandidateEvaluator::start(CandidateEvaluationRequest request)
             {request_.objective.targetFrequencyMHz}, {}};
     }
     const auto frequenciesMHz = analysis::frequencyPlanPoints(frequencyPlan);
-    const auto solverDeck = frequencyPlan.mode == analysis::FrequencyPlanMode::Explicit
-        ? analysis::prepareExplicitFrequencyInput(
-              resolution.generatedDeck, frequenciesMHz)
-        : analysis::prepareImpedanceInput(resolution.generatedDeck);
+    const auto directionalObjective = request_.objective.forwardGainWeight > 0.0
+        || request_.objective.frontToBackWeight > 0.0
+        || request_.objective.frontToRearWeight > 0.0;
+    const auto solverDeck = directionalObjective
+        ? analysis::prepareDirectionalOptimizationInput(resolution.generatedDeck,
+              frequenciesMHz,
+              request_.objective.forwardThetaDegrees,
+              request_.objective.forwardPhiDegrees,
+              request_.objective.frontToBackWeight > 0.0,
+              request_.objective.frontToRearWeight > 0.0)
+        : frequencyPlan.mode == analysis::FrequencyPlanMode::Explicit
+            ? analysis::prepareExplicitFrequencyInput(
+                  resolution.generatedDeck, frequenciesMHz)
+            : analysis::prepareImpedanceInput(resolution.generatedDeck);
     if (!writeFile(directory.filePath(QStringLiteral("model.nec")),
             QByteArray::fromStdString(solverDeck))) {
         finishLater(CandidateEvaluationStatus::FileError,
@@ -154,8 +164,8 @@ void CandidateEvaluator::finish(CandidateEvaluationStatus status, QString detail
             frequencies.insert(feedpoint.frequencyMHz);
         result.frequencyCount = static_cast<int>(frequencies.size());
         result.objective = analysis::evaluateOptimizationObjective(
-            result.analysis.feedpoints, request_.objective);
-        if (!result.objective || !result.objective->feedpoint)
+            result.analysis, request_.objective);
+        if (!result.objective)
             result.status = CandidateEvaluationStatus::NoImpedance;
     }
 

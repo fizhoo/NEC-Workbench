@@ -107,6 +107,16 @@ void NecEditor::setDiagnostics(std::span<const nec::ModelDiagnostic> diagnostics
     updateExtraSelections();
 }
 
+void NecEditor::replaceTextAsSingleEdit(const QString& text)
+{
+    if (toPlainText() == text) return;
+    auto cursor = QTextCursor(document());
+    cursor.beginEditBlock();
+    cursor.select(QTextCursor::Document);
+    cursor.insertText(text);
+    cursor.endEditBlock();
+}
+
 void NecEditor::resizeEvent(QResizeEvent* event)
 {
     QPlainTextEdit::resizeEvent(event);

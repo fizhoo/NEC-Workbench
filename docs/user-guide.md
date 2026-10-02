@@ -2,18 +2,21 @@
 
 NEC Workbench organizes antenna modeling into five workspaces across the top of
 the main window: **Home**, **Model**, **Analysis**, **Results**, and **Optimize**.
-The Model workspace contains **Geometry**, **Parameters**, **Sources**, **Loads &
-Transmission Lines**, **Environment**, and **NEC Deck**. These are work areas
-rather than a required step-by-step wizard. You can move between them whenever a
-model is open.
+The Model workspace's compact left navigator contains **Geometry**, **Parameters**,
+**Sources**, **Loads & Transmission Lines**, **Environment**, and **NEC Deck**.
+Analysis and Results use the same navigation pattern. These are work areas rather
+than a required step-by-step wizard. Use the arrow above a workspace navigator to
+collapse it to icons when screen space is limited; the choice is remembered.
 
 The desktop menus provide the complete command inventory:
 
 - **File** contains New, Open, Save, Save As, and Exit.
 - **Edit** contains Undo, Redo, and focus-aware Cut, Copy, and Paste commands.
-- **View** controls the Project, Model Adequacy, and Solver Output docks, detached
+- **View** controls the Project dock, Model Check Report, Run Monitor, detached
   Results, and **Reset Layout**. Reset Layout reattaches Results and restores the
-  default dock arrangement without changing the model.
+  default dock arrangement without changing the model. Project is automatically
+  hidden in the space-intensive Results and Optimize workspaces unless it is floating;
+  its prior visibility returns when you leave those workspaces.
 - **Model** contains Check Model, Automatic Segmentation, Average Gain Test,
   Segmentation Convergence, and Geometry Settings.
 - **Run** contains Run Analysis, Quick Frequency Sweep, and a global Stop command
@@ -41,7 +44,7 @@ Analysis, Results, and—after successful validation—Optimize.
 Path: **Model → Check Model**, the toolbar **Check Model** button, or `F7`
 
 Check Model parses the authoritative NEC source, updates every graphical and
-structured view, and reports errors and warnings in the Model Adequacy dock.
+structured view, and reports errors and warnings in the reusable Model Check Report.
 Analysis is disabled when blocking model errors are present. Adequacy warnings
 do not block a run; they identify numerical-modeling conditions that should be
 reviewed before trusting or optimizing the results.
@@ -80,8 +83,9 @@ most recent results.
 Home does not own a separate copy of the model. Its source preview and summary
 reflect the same document used by every other workspace.
 
-Workspace tabs are the primary navigation. Home therefore avoids duplicate
-Model, Analysis, and Results destination buttons. Its heading
+The top workspace bar and each workspace's compact left navigator provide the
+primary navigation. Home therefore avoids duplicate Model, Analysis, and Results
+destination buttons. Its heading
 keeps project identity uncluttered; **Check Model** and **Run Analysis** share
 the NEC Source panel's title row at the upper-right. AGT and convergence appear side by
 side beneath Model Summary so the summary retains more vertical space. Automatic
@@ -108,6 +112,9 @@ The result appears under **Results → Validation** and in Runs as type **AGT**.
 Free-space results are normalized to an expected average power gain of `1.0`;
 perfect-ground results are normalized to `2.0`. The displayed gain adjustment is
 diagnostic guidance, not a substitute for correcting a questionable model.
+When a backend such as OpenNEC returns the requested dense radiation grid but
+does not print an `AVERAGE POWER GAIN` summary, Workbench integrates the grid
+over its full sphere or hemisphere and records that derived AGT value.
 
 ### Segmentation Convergence
 
@@ -143,10 +150,11 @@ Geometry provides synchronized graphical views of the checked antenna model.
 Changes made here rewrite the corresponding NEC source cards and participate in
 Undo/Redo.
 
-Workbench also displays wire arcs (`GA`), helical `GH` geometry, and tapered
-`GW`/`GC` wires. These generated paths retain their authored NEC cards and are
-read-only in the graphical editor; selection and segment-based source, load, and
-transmission-line placement still work. Flat-spiral `GH` geometry is not yet expanded.
+Workbench also displays wire arcs (`GA`), helical `GH` geometry, tapered `GW`/`GC`
+wires, and wire structures transformed by `GM`, `GX`, or `GR`. These generated
+paths retain their authored NEC cards and are read-only in the graphical editor;
+selection and segment-based source, load, and transmission-line placement still
+work. Flat-spiral `GH` geometry is not yet expanded.
 
 Path: **Model → Geometry**
 
@@ -189,8 +197,9 @@ Path: **Model → Geometry → 3D Geometry**
 - Click wires and attached markers to synchronize selection across views and editors.
 - Right-click wires and markers for the same source/load actions available in 2D.
 
-Generated `GA`, `GH`, and `GC` paths can be inspected and selected in 3D, but their
-shape must currently be edited in Raw Source or Other NEC-2 Geometry Cards.
+Generated `GA`, `GH`, `GC`, `GM`, `GX`, and `GR` paths can be inspected and selected
+in 3D, but their shape or transformation must be edited in Raw Source or Other
+NEC-2 Geometry Cards.
 
 The 3D geometry view currently supports selection and contextual editing; direct
 3D endpoint dragging is not yet implemented.
@@ -348,10 +357,11 @@ tooltips describe the NEC meaning, and adding either card places it before `GE`.
 Helical GH cards update the graphical model; valid flat-spiral GH cards remain
 source-editable but are not yet expanded graphically.
 
-Workbench recognizes the complete standard NEC-2 card vocabulary. Remaining geometry
-generators/transformations and additional control cards appear in generic fixed-field
-tables under **Other NEC-2 Geometry Cards** and **Other NEC-2 Control Cards**. These
-tables safely edit numeric fields but do not claim card-specific graphical behavior.
+Workbench recognizes the complete standard NEC-2 card vocabulary. `GM`, `GX`, and
+`GR` remain in the generic geometry-card table while their effects are applied to
+the graphical wire model in authored order. Remaining generators and additional
+control cards appear under **Other NEC-2 Geometry Cards** and **Other NEC-2 Control
+Cards**. These tables safely edit numeric fields without claiming dedicated editors.
 Unknown extensions remain preserved in Raw Source. See
 [NEC Card Support](nec-card-support.md) for the support level of each mnemonic.
 
@@ -417,8 +427,22 @@ frequency itself is derived rather than written directly on the card.
 Path: **Analysis → Solver**
 
 Select the backend family, executable, and timeout. `nec2c` is the first fully
-supported process adapter. Solver executables are external and are not bundled
-with NEC Workbench. Other backend choices remain visible for future adapters.
+supported reference adapter. **OpenNEC** invokes `onec` with positional input,
+requests original NEC-2 report output, and writes the named output file.
+**4nec2 NEC2dXS** starts the selected executable without arguments and supplies
+the input and output filenames through standard input. The executable browser can
+select any NEC2dXS capacity build; selecting a larger build does not alter model
+segmentation, although it may use more memory. When a standard NEC2dXS filename is
+recognized, Workbench reports its compiled segment limit and blocks a clearly
+oversized active model. Solver executables are external and are not bundled with
+NEC Workbench.
+
+Workbench remembers a separate executable path for each backend. Switching from
+nec2c to OpenNEC or NEC2dXS restores the last path selected for that engine; use
+the existing **Backend** list and **Browse…** button to change it. These are user
+preferences, not NEC-model data. Qt stores them in the current user's native
+settings location: the user configuration area on Linux and the current-user
+application settings in the Windows registry.
 
 ### Requests
 
@@ -486,8 +510,12 @@ the selected solver asynchronously, and preserves `model.nec`, `model.out`,
 `run.log`, and JSON metadata in a unique run directory. Active runs can be
 canceled and are subject to the configured timeout. While a run is active, the
 status bar shows an indeterminate activity indicator, the current phase, elapsed
-time, growing output-file size, and a Cancel button. The Solver Output dock
-continues to show process messages as they become available.
+time, growing output-file size, and a Cancel button. The non-modal Run Monitor
+opens automatically and shows the exact command, run folder, live process messages,
+and Stop, Copy Command, Open Run Folder, and Hide controls. Hiding it does not stop
+the solver; **View → Run Monitor** reopens and pins the same window. An automatically
+opened monitor hides shortly after a successful run, while failed, timed-out, or
+canceled runs remain visible for diagnosis. A monitor opened manually stays open.
 Canceled, timed-out, and failed runs retain their partial artifacts and output
 size in Run History, but Workbench does not load or parse the partial `model.out`
 on the GUI thread. This keeps stopping a large radiation sweep responsive.
@@ -530,7 +558,8 @@ Use **Detach Results** in the Results banner or **View → Detach Results Window
 to move the complete Results workspace into one reusable top-level window. The
 main window returns to the previous modeling workspace, so Model → Geometry or NEC Deck
 can remain visible while plots update. Selecting Results while detached raises
-that window instead of replacing the main workspace.
+that window instead of replacing the main workspace. If it was hidden or minimized,
+the same window is restored to the foreground without reattaching it.
 
 The detached window can be resized, minimized, maximized, or tiled normally and
 remembers its last geometry. Completing or opening another run updates that same
@@ -650,8 +679,12 @@ Impedance, Currents, and Raw Output. A newly loaded run retains the last viewed
 pattern frequency when available; otherwise it selects an available RP frequency.
 
 The **2D Pattern** page provides polarization component, scale, cut orientation,
-and cut angle controls. Move the pointer over the plot for live angle, absolute
-dBi, and relative dB.
+and cut angle controls. Ring and angle labels use the active Qt theme's primary
+text color while the grid remains subdued, preserving contrast across Windows
+and Linux light and dark palettes. Move the pointer over the plot to highlight
+the nearest actual NEC sample and display its angle, absolute dBi, and relative
+dB in the dedicated readout directly above the graph. This readout does not
+interpolate between solver samples.
 
 - Left/Right changes the available cut angle.
 - Space switches horizontal and vertical cut orientation.
@@ -659,7 +692,26 @@ dBi, and relative dB.
 
 The **3D Pattern** page can layer the archived antenna, current distribution,
 and radiation surface. Orbit, pan, and zoom use the same controls as 3D Geometry.
-Layers can be hidden independently.
+Layers can be hidden independently. The radiation mesh is colored from the
+selected dynamic-range floor through the displayed peak, with a labeled scale
+that distinguishes relative dB from absolute dBi. Move the pointer over the
+surface to highlight the nearest calculated NEC sample and display theta, phi,
+absolute gain, and gain relative to the pattern peak. The probe reports solver
+samples rather than interpolated surface values.
+
+The compact **Performance vs Frequency** page plots forward gain, F/B, and F/R
+together for a configured physical theta/phi direction. Its summary reports the
+minimum, average, and maximum of every available trace and identifies the
+frequencies producing each extreme. Hover the plot for exact points. The current
+Results frequency is marked without filtering the traces. Component selection is
+synchronized with the 2D and 3D pages.
+
+Performance calculations use all available RP samples in the run. Gain requires
+an exact sample at the configured forward direction; F/B additionally requires
+the physical antipode; F/R requires rear-half samples at the configured theta.
+Missing directions remain unavailable rather than being interpolated or replaced
+with a pattern minimum. This means older runs may show only the traces supported
+by their original RP requests.
 
 ### Raw Output
 
@@ -669,7 +721,7 @@ Displays the complete, unchanged solver `model.out` for auditing or diagnosing
 output that is not yet parsed into a structured result view. Changing Result
 Frequency does not rewrite this authoritative artifact. Use **Jump to Selected
 Frequency** to position the editor at the matching solver section, or **Find
-Next** for free-text search. Process messages remain in the Solver Output dock.
+Next** for free-text search. Process messages remain in the Run Monitor.
 
 ## Optimize
 
@@ -677,9 +729,12 @@ Next** for free-text search. Process messages remain in the Solver Output dock.
 
 Path: **Optimize** on the top workspace bar
 
-Optimize provides three bounded workflows that share the same `SY` definitions,
+Optimize provides four bounded workflows that share the same `SY` definitions,
 frequency plan, reference impedance, weighted objectives, candidate table,
 history, and **Apply Best to Model** action:
+
+See [Optimization Mathematics](optimization-math.md) for the implemented score
+equations, candidate-generation formulas, constants, and stopping rules.
 
 - **Parameter Sweep** exhaustively evaluates evenly spaced values between the
   bounds using **Sweep points**.
@@ -692,6 +747,9 @@ history, and **Apply Best to Model** action:
   It reflects the least useful point, expands promising moves, contracts weak moves,
   and shrinks the simplex when necessary. It is usually the stronger general-purpose
   choice for interacting continuous parameters.
+- **Differential Evolution** changes every checked parameter using a seeded
+  population. Mutation and crossover explore separated regions of the bounded
+  search space, making it useful when several local minima may exist.
 
 An adaptive refinement round can evaluate a lower and upper coordinate trial for
 each selected parameter while holding the other parameters at the current best
@@ -699,7 +757,11 @@ values. The score tolerance compares the best result after the complete round,
 not each candidate separately.
 The search stops after two consecutive completed rounds fail to improve the best
 score by more than the configured tolerance. Candidate status labels identify the
-initial samples and each round's left and right trials.
+initial samples and each round's left and right trials. At completion, Workbench
+reports the final two best-score improvements, selects and centers the winning
+candidate, and warns when a winning value reaches a search bound because a wider
+range may contain a better solution. Parameter tolerance controls candidate spacing;
+score tolerance controls objective convergence, so the two values are not comparable.
 
 Adaptive Optimize is a transparent derivative-free coarse-to-fine search. It is
 more efficient than a dense sweep when the useful region is localized, but a
@@ -709,18 +771,28 @@ together instead of considering only one coordinate direction at a time. Bounds
 are enforced on every proposed candidate. It stops at the evaluation budget, when
 the simplex fits within every parameter tolerance, or when a contracted simplex's
 scores remain within the score tolerance.
+Differential Evolution first evaluates the current model and a random bounded
+population, then evolves one trial for each population member per generation.
+Population controls search breadth, Generations controls the evaluation budget,
+Mutation factor controls exploratory step size, and Crossover rate controls how
+many parameter values enter each trial. Reusing the same random seed and settings
+reproduces the same proposed candidates. It stops at the generation limit, when
+the population fits within every parameter tolerance, or after three generations
+whose best-score improvement is no greater than the score tolerance.
 The latest candidate table remains visible when moving to another workspace and
 returning to Optimize. It resets only after the active model source changes or a
 new sweep begins.
 
 The Optimize workspace keeps one compact setup pane on the left and gives the
-expanding right side to results. Choose **Parameter Sweep** or **Adaptive
-Optimize**, or **Nelder-Mead** from the mode selector above the workspace. The same row shows the
+expanding right side to results. Choose **Parameter Sweep**, **Adaptive
+Optimize**, **Nelder-Mead**, or **Differential Evolution** from the mode selector
+above the workspace. The same row shows the
 active variable, range, frequency count, objective, and Run/Stop controls.
 
 The left pane keeps **Variable**, **Frequencies**, and **Objective** visible as
 sections of one study rather than separate setup pages. Parameter Sweep shows a
-single variable and range. Adaptive Optimize and Nelder–Mead show a compact table where each
+single variable and range. Adaptive Optimize, Nelder–Mead, and Differential
+Evolution show a compact table where each
 checked parameter has its own Minimum, Maximum, and Tolerance; double-click those
 cells to edit them. Frequencies and Objective show the
 active source, range, criteria, targets, and reference impedance as compact
@@ -734,7 +806,7 @@ The right pane shows the candidate table and objective plot together, separated
 by an adjustable vertical divider. The plot shows total objective score against
 the swept parameter for a single-variable study, or evaluation number for a
 multivariable study, together with the enabled weighted SWR, resistance, and
-reactance contributions. Lower values are better, and the best candidate is
+reactance, forward-gain, front-to-back, and front-to-rear contributions. Lower values are better, and the best candidate is
 marked. Hover for exact values; double-click a marker to open the same
 candidate-detail window used by the candidate table. That window offers both a
 frequency table and SWR/impedance plots generated from the candidate's retained
@@ -742,14 +814,15 @@ feedpoint results. Inspecting these plots does not create a normal analysis run
 or replace the active model. Decimal values are displayed and entered to three
 places throughout the optimizer; archived raw solver output remains unchanged.
 
-**Reset Search Defaults** restores Candidate count to 7 for Parameter Sweep, or
-Maximum evaluations to 21 and Score tolerance to 0.001 for Adaptive Optimize.
+**Reset Search Defaults** restores Candidate count to 7 for Parameter Sweep,
+Maximum evaluations to 21 and Score tolerance to 0.001 for Adaptive Optimize and
+Nelder–Mead, or the default population, generations, mutation, crossover,
+score-tolerance, and seed values for Differential Evolution.
 It does not change selected parameters, their ranges and tolerances, the frequency
 plan, or objective. Optimizer numeric fields respond to the mouse wheel only
 while focused, preventing accidental changes while scrolling the setup area.
 
-For **Minimax**, **Frequency Source** controls the
-frequencies calculated for every candidate:
+**Frequency Source** controls the frequencies calculated for every candidate:
 
 - **Use Model FR Sweep** keeps the model's existing `FR` definition.
 - **Use Selected Frequencies** evaluates only the explicit MHz values in the
@@ -800,48 +873,117 @@ Parameter-controlled cells use a subtle accent, italic text, and an `ƒx` icon; 
 one to see its source expression. Other arithmetic expressions remain read-only without
 the parameter accent.
 
+Structured Cards displays the canonical workflow directly above its card tabs:
+double-click to edit, or right-click a numeric cell to parameterize it or link an
+existing `SY`. **Model → Parameters** manages symbol names and expressions and
+points back to this same field-linking workflow. There is only one underlying
+parameterization system; these are contextual entry points into the authoritative
+NEC source, not separate parameter stores.
+
 For Parameter Sweep, “Complete” means every requested candidate was attempted;
-it is not convergence. Adaptive Optimize and Nelder–Mead report their stopping
+it is not convergence. Adaptive Optimize, Nelder–Mead, and Differential Evolution report their stopping
 reasons separately.
 Future tolerance analysis will perturb a finalist to measure construction and
 component sensitivity.
 
-**Minimax** minimizes each candidate's worst-performing weighted objective point
-across the selected frequencies. **Selected Frequency** calculates and
-scores only the requested frequency, regardless of the model's authored `FR`
-sweep.
-Hover over either evaluation choice for a concise description of its frequency
-and scoring behavior.
+The **Objective** editor uses one row for each criterion: SWR, resistance,
+reactance, forward gain, F/B, and F/R. A weight of zero disables the row. Every
+enabled row independently defines:
 
-The **Weighted Objectives** grid combines three impedance criteria. A weight of
-zero disables that criterion. SWR is minimized directly; resistance and
-reactance minimize their distance from the entered targets. Resistance and
-reactance errors are divided by the reference impedance before weighting, then
-the combined score is divided by total weight. This keeps values in ohms from
-dominating SWR merely because their raw numbers are larger. The default weights
-preserve the original SWR-only behavior. The results table shows the normalized
-objective score separately from actual SWR, resistance, and reactance. The
-candidate plot uses these exact evaluator contributions rather than recalculating
-or approximating the score in the GUI.
+- **Goal** — Minimize, Maximize, Target, Good Enough ≤, or Good Enough ≥.
+- **Value** — the target or acceptable threshold; it is disabled when the selected
+  goal does not need one.
+- **Band Evaluation** — Worst Point, Average, or Best Point over the Frequency
+  Source plan. Target and Good Enough goals use the clearer Worst/Average/Best
+  Error or Violation wording.
 
-Radiation requests are omitted from these initial impedance-only candidates to
-keep the sweep fast. Each candidate remains available in Results → Run History
+This replaces the old global Minimax/Average/Selected Frequency switch. To evaluate
+one frequency, choose a one-point frequency plan. To protect the weakest point over
+a band, use **Maximum** for a minimized error such as SWR or **Minimum** for a
+maximized measurement such as gain. **Target** scores absolute error from the entered
+value. **Good Enough** scores only the amount by which the selected threshold is
+violated, so a satisfied criterion contributes zero.
+
+**Restore Objective Defaults** returns to the practical starting configuration:
+SWR minimizes its maximum, resistance targets 50 Ω using maximum error, reactance
+targets 0 Ω using maximum error, and gain/F/B/F/R maximize their minimum. Only SWR
+has a nonzero default weight.
+
+An **Objective Summary** below the grid translates every enabled row into a bullet,
+such as “Minimize the highest SWR across the selected frequencies” or “Maximize
+the lowest forward gain.” It also shows the relative weight, so the complete study
+can be reviewed without mentally decoding the table.
+
+Resistance and reactance errors are divided by the reference impedance before
+weighting. Gain, F/B, and F/R are scaled in 10 dB units. The combined score is
+divided by total enabled weight, keeping one unit from dominating merely because
+its raw values are larger. Lower total scores are always better. The results table
+shows that normalized score separately from measured values, and the candidate plot
+uses the evaluator's exact contributions rather than recalculating them in the GUI.
+
+**Forward gain**, **Front-to-back**, and **Front-to-rear** are directional criteria. Enter the physical
+forward `theta` and `phi` direction and choose Total, Vertical, Horizontal, RHCP,
+or LHCP. They use the same frequency plan and per-row Goal and Band Evaluation
+settings as impedance criteria. Different criteria may therefore be reduced from
+different frequencies in the same candidate.
+Forward gain uses the gain at that exact spherical direction. Front-to-back uses
+that gain minus the gain exactly 180° opposite; it never substitutes the pattern
+minimum, an endpoint, or the nearest unrelated angle. If the required directional
+sample is absent from solver output, that candidate is unavailable rather than
+receiving a misleading score.
+
+Front-to-rear uses the forward gain minus the strongest gain in the rear 180°
+half of the azimuth cut at the configured theta. Workbench samples that rear
+region every 5°, including its ±90° boundaries. This phase-one definition is a
+documented 2D azimuth-cut measurement, not a search over the full rear hemisphere.
+
+Directional criteria default to Maximize, but may also be minimized, targeted, or
+given a Good Enough threshold. A maximize contribution is `-measured / 10` before
+weight normalization, so a higher value improves the lower-is-better total score.
+Workbench adds one exact one-point `RP` request at each study frequency for forward
+gain and a second request at each frequency for the physical opposite direction when
+F/B is enabled. F/R adds 37 rear-region samples per frequency, so the workload
+summary makes its greater cost visible before the study begins. The candidate table
+shows measured **Gain (dBi)**, **F/B (dB)**, and **F/R (dB)** columns, using an em dash when that
+directional result was not requested. Historical optimization sessions reconstruct
+the same values and limiting frequency from their archived solver output. The Objective editor
+states this cost before the study starts.
+
+Candidate details report each enabled criterion's Goal, frequency reduction,
+reduced value, weighted contribution, and available minimum/average/maximum
+statistics. Minimum and maximum summaries identify the frequency that produced
+each extreme; an average is explicitly band-wide and has no single associated
+frequency. The frequency table includes SWR, R, X, forward gain, F/B, and F/R,
+with an em dash where a metric was not requested. A dedicated Directional Plots
+view graphs gain, F/B, and F/R against frequency and repeats their extrema above
+the plot. A multi-frequency candidate leaves the main Frequency column blank
+because no single frequency necessarily determines its score. A one-frequency
+study displays and bolds that evaluated frequency.
+
+Hover **Goal** and **Band Evaluation** choices for exact scoring semantics. The
+tooltips distinguish measured values, target error, and threshold violation, and
+explain which frequency is treated as the worst or best for the selected goal.
+
+Broad model radiation requests are omitted from optimization candidates to keep
+the sweep fast. Impedance-only objectives emit no `RP`; directional objectives
+emit only the directional samples described above. Each candidate remains available in Results → Run History
 and contains `model.source.nec`, the generated numeric `model.nec`, solver output,
-and `optimization.json` metadata. The results table identifies the frequency and
-feedpoint impedance that produced each score. Hover over a candidate for guidance,
+and `optimization.json` metadata. Hover over a candidate for guidance,
 then double-click it to open one reusable, non-modal frequency-results window.
 That window shows SWR, resistance, and reactance at every calculated frequency;
-the frequency that determines the objective is bold. Double-clicking another row
+the row is bold only when the study contains one frequency. Double-clicking another row
 updates the same window instead of opening another copy. The window is explicitly
 labeled as optimization-candidate data rather than official active-model results.
+Returning to Optimize restores an already-open candidate window if it was hidden
+or minimized; it is never duplicated or reattached automatically.
 After a successful study, **Apply Best to Model** replaces every optimized `SY`
 expression with the winning candidate's numeric values in one explicit, undoable
 source edit. The candidate window also provides **Apply This Candidate to Model**
 for a manually selected row and **Apply This Candidate and Run**. The latter applies
 that candidate and starts a normal analysis with the active model's current Analysis
 requests, creating an ordinary run and complete Results entry. Applying alone does
-not run the solver. The completed study, candidate frequency table, and SWR/R/X
-plots remain visible after either apply action so the applied candidate can still
+not run the solver. The completed study, candidate frequency table, SWR/R/X plots,
+and directional plots remain visible after either apply action so the applied candidate can still
 be reviewed. A later unrelated model edit clears the now-stale optimization study.
 Archived candidate runs remain unchanged.
 
@@ -894,24 +1036,38 @@ Shows the active model and categorized NEC cards. Single-click synchronizes
 supported model-object selections; double-click navigates to the most appropriate
 editor. Wire radius and AWG remain available through the wire Properties dialog.
 
-### Model Adequacy
+### Model Check Report
 
 Shows source/card errors, readiness warnings, compatibility notices, and static
 model-adequacy findings in separate categories. Click a finding to jump to its
 source line. A clean static report does not replace **Results → Validation →
-Average Gain Test** or segmentation convergence testing.
+Average Gain Test** or segmentation convergence testing. A clean check uses the
+status bar only; the report opens automatically when findings require attention.
+The same non-modal window is reused and remains available from **View**.
 
-### Solver Output
+### Run Monitor
 
 Shows the command, process messages, standard output, and standard error from
-the active or selected run.
+the active run. It opens automatically when a normal analysis, Quick Sweep, or
+Average Gain Test starts. Normal run progress also remains visible in the status
+bar. It hides shortly after success unless opened manually, and remains visible
+when a run needs attention. Optimization candidates continue to use the Optimize
+workspace progress UI.
 
 ### Undo and Redo
 
 Path: **Edit → Undo/Redo** or the platform's standard Undo/Redo shortcuts
 
-Geometry and structured edits share source-level Undo/Redo. Direct edits in the
-raw source editor use the text editor's Undo/Redo history.
+All committed model changes share one source-backed Undo/Redo history. This
+includes direct Raw Source typing, Structured Cards, geometry edits, parameters,
+sources, loads, networks, environment, and analysis-request changes. Undo and
+Redo work from any workspace and refresh the parsed model and synchronized views.
+The menu and toolbar identify the next operation, such as **Undo Change frequency
+to 14.200 MHz**. Afterward, the status bar reports what was undone or redone and
+Workbench returns to the affected editor when practical. Direct typing is labeled
+**Raw Source Edit**.
+Pending form edits are not added to history until **Apply** is selected; use the
+form's Revert or Cancel action to discard unapplied values.
 
 ## Typical Workflow
 

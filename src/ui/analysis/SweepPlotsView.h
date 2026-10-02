@@ -6,6 +6,7 @@
 #include <QWidget>
 
 #include <functional>
+#include <optional>
 #include <vector>
 
 class QLabel;
@@ -19,6 +20,13 @@ struct CandidatePlotPoint {
     int row{};
     double value{};
     analysis::OptimizationObjectiveResult evaluation;
+};
+
+struct DirectionalPlotPoint {
+    double frequencyMHz{};
+    std::optional<double> forwardGainDb;
+    std::optional<double> frontToBackDb;
+    std::optional<double> frontToRearDb;
 };
 
 class CandidatePlotsView final : public QWidget {
@@ -48,6 +56,19 @@ private:
     QComboBox* swrScaleControl_{};
     SweepPlotWidget* impedancePlot_{};
     SweepPlotWidget* swrPlot_{};
+};
+
+class DirectionalMetricsView final : public QWidget {
+public:
+    explicit DirectionalMetricsView(QWidget* parent = nullptr);
+
+    void setResults(const analysis::OptimizationObjectiveResult& result);
+    void setMetrics(const std::vector<DirectionalPlotPoint>& metrics);
+    void setSelectedFrequency(double frequencyMHz);
+
+private:
+    QLabel* summary_{};
+    SweepPlotWidget* plot_{};
 };
 
 }

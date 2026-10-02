@@ -1,5 +1,7 @@
 #include "ui/analysis/AnalysisSetupEditor.h"
 
+#include "analysis/SolverCommand.h"
+
 #include <QComboBox>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -32,11 +34,15 @@ AnalysisSetupEditor::AnalysisSetupEditor(QWidget* parent)
     auto* backendLayout = new QFormLayout(backendGroup);
     backendLayout->setRowWrapPolicy(QFormLayout::WrapLongRows);
     backendControl_ = new QComboBox(backendGroup);
-    backendControl_->addItem(tr("NEC-2 / nec2c-compatible"), QStringLiteral("nec2"));
+    backendControl_->setObjectName(QStringLiteral("analysisBackendControl"));
+    backendControl_->addItem(tr("NEC-2 / nec2c"), QStringLiteral("nec2"));
+    backendControl_->addItem(tr("OpenNEC"), QStringLiteral("opennec"));
+    backendControl_->addItem(tr("4nec2 NEC2dXS"), QStringLiteral("nec2dxs"));
     auto* executableRow = new QWidget(backendGroup);
     auto* executableLayout = new QHBoxLayout(executableRow);
     executableLayout->setContentsMargins(0, 0, 0, 0);
     executableControl_ = new QLineEdit(executableRow);
+    executableControl_->setObjectName(QStringLiteral("analysisExecutableControl"));
     executableControl_->setPlaceholderText(tr("Select the solver executable"));
     auto* browseButton = new QPushButton(tr("Browse…"), executableRow);
     executableLayout->addWidget(executableControl_, 1);
@@ -52,7 +58,7 @@ AnalysisSetupEditor::AnalysisSetupEditor(QWidget* parent)
     backendLayout->addRow(tr("Run timeout"), timeoutControl_);
     backendLayout->addRow(tr("Status"), status_);
 
-    auto* note = new QLabel(tr("NEC Workbench currently supports nec2c-compatible executables. Additional backend adapters will appear only when they are usable. Run decks and output files are preserved for inspection."), this);
+    auto* note = new QLabel(tr("The backend selects the executable's input/output protocol. The executable remains external and is never bundled with NEC Workbench. Run decks and output files are preserved for inspection."), this);
     note->setWordWrap(true);
     note->setStyleSheet(QStringLiteral("color: palette(mid);"));
     layout->addWidget(heading);
@@ -62,10 +68,20 @@ AnalysisSetupEditor::AnalysisSetupEditor(QWidget* parent)
     layout->addStretch();
 
     connect(backendControl_, &QComboBox::currentIndexChanged, this, [this] {
+        if (!updating_) {
+            if (!selectedBackendId_.isEmpty()) {
+                executablePaths_.insert(selectedBackendId_, executableControl_->text());
+                emit executablePathChanged(selectedBackendId_, executableControl_->text());
+            }
+            selectedBackendId_ = backendControl_->currentData().toString();
+            executableControl_->setText(executablePaths_.value(selectedBackendId_));
+        }
         updateDescription();
         emitSettings();
     });
     connect(executableControl_, &QLineEdit::editingFinished, this, [this] {
+        executablePaths_.insert(selectedBackendId_, executableControl_->text());
+        emit executablePathChanged(selectedBackendId_, executableControl_->text());
         updateDescription();
         emitSettings();
     });
@@ -75,6 +91,8 @@ AnalysisSetupEditor::AnalysisSetupEditor(QWidget* parent)
             executableControl_->text());
         if (!path.isEmpty()) {
             executableControl_->setText(path);
+            executablePaths_.insert(selectedBackendId_, path);
+            emit executablePathChanged(selectedBackendId_, path);
             updateDescription();
             emitSettings();
         }
@@ -82,13 +100,15 @@ AnalysisSetupEditor::AnalysisSetupEditor(QWidget* parent)
     updateDescription();
 }
 
-void AnalysisSetupEditor::setSettings(const QString& backendId, const QString& executablePath,
-    int timeoutSeconds)
+void AnalysisSetupEditor::setSettings(const QString& backendId,
+    const QHash<QString, QString>& executablePaths, int timeoutSeconds)
 {
     updating_ = true;
+    executablePaths_ = executablePaths;
     const auto index = backendControl_->findData(backendId);
     backendControl_->setCurrentIndex(index >= 0 ? index : 0);
-    executableControl_->setText(executablePath);
+    selectedBackendId_ = backendControl_->currentData().toString();
+    executableControl_->setText(executablePaths_.value(selectedBackendId_));
     timeoutControl_->setValue(timeoutSeconds);
     updating_ = false;
     updateDescription();
@@ -96,7 +116,17 @@ void AnalysisSetupEditor::setSettings(const QString& backendId, const QString& e
 
 void AnalysisSetupEditor::updateDescription()
 {
-    description_->setText(tr("Use a traditional NEC-2 or nec2c-compatible command-line solver."));
+    const auto backend = backendControl_->currentData().toString();
+    if (backend == QStringLiteral("opennec")) {
+        description_->setText(tr(
+            "OpenNEC receives the input deck as a positional argument and writes original NEC-2 report output."));
+    } else if (backend == QStringLiteral("nec2dxs")) {
+        description_->setText(tr(
+            "4nec2 NEC2dXS receives the input and output filenames through standard input. Browse to any desired NEC2dXS capacity executable."));
+    } else {
+        description_->setText(tr(
+            "nec2c receives working-directory-relative input and output paths through -i and -o arguments."));
+    }
     const QFileInfo executable(executableControl_->text());
     if (executableControl_->text().isEmpty()) {
         status_->setText(tr("No executable selected."));
@@ -106,6 +136,10 @@ void AnalysisSetupEditor::updateDescription()
         status_->setText(tr("The selected file is not executable."));
     } else {
         status_->setText(tr("Executable found. This backend is ready to run."));
+        if (const auto capacity = analysis::solverSegmentCapacity(
+                backend.toStdString(), executable.absoluteFilePath().toStdString())) {
+            status_->setText(tr("Executable found · maximum %1 segments.").arg(*capacity));
+        }
     }
 }
 

@@ -67,6 +67,9 @@ enum ResultColumn {
     FrequencyColumn,
     ResistanceColumn,
     ReactanceColumn,
+    GainColumn,
+    FrontToBackColumn,
+    FrontToRearColumn,
     StatusColumn,
     RunColumn,
     ResultColumnCount
@@ -107,6 +110,226 @@ auto numericItem(double value) -> QTableWidgetItem*
     auto* item = new QTableWidgetItem(formatDecimal(value));
     item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
     return item;
+}
+
+auto optionalNumericItem(const std::optional<double>& value) -> QTableWidgetItem*
+{
+    if (value) return numericItem(*value);
+    auto* item = new QTableWidgetItem(QString::fromUtf8("—"));
+    item->setTextAlignment(Qt::AlignCenter);
+    return item;
+}
+
+auto objectiveId(analysis::OptimizationObjectiveKind kind) -> QString
+{
+    switch (kind) {
+    case analysis::OptimizationObjectiveKind::PerCriterion:
+        return QStringLiteral("per-criterion");
+    case analysis::OptimizationObjectiveKind::WorstPointAcrossFrequencies:
+        return QStringLiteral("worst-point-across-frequencies");
+    case analysis::OptimizationObjectiveKind::AverageAcrossFrequencies:
+        return QStringLiteral("average-across-frequencies");
+    case analysis::OptimizationObjectiveKind::SwrAtFrequency:
+        return QStringLiteral("minimize-swr-at-frequency");
+    }
+    return QStringLiteral("worst-point-across-frequencies");
+}
+
+auto objectiveKind(const QString& id) -> analysis::OptimizationObjectiveKind
+{
+    if (id == QStringLiteral("minimize-swr-at-frequency"))
+        return analysis::OptimizationObjectiveKind::SwrAtFrequency;
+    if (id == QStringLiteral("average-across-frequencies"))
+        return analysis::OptimizationObjectiveKind::AverageAcrossFrequencies;
+    if (id == QStringLiteral("per-criterion"))
+        return analysis::OptimizationObjectiveKind::PerCriterion;
+    return analysis::OptimizationObjectiveKind::WorstPointAcrossFrequencies;
+}
+
+auto selectedGoal(const QComboBox* control) -> analysis::OptimizationGoal
+{
+    switch (control->currentIndex()) {
+    case 0: return analysis::OptimizationGoal::Minimize;
+    case 1: return analysis::OptimizationGoal::Maximize;
+    case 2: return analysis::OptimizationGoal::Target;
+    default: return analysis::OptimizationGoal::GoodEnough;
+    }
+}
+
+auto selectedGoodEnoughDirection(const QComboBox* control)
+    -> analysis::GoodEnoughDirection
+{
+    return control->currentIndex() == 4 ? analysis::GoodEnoughDirection::AtLeast
+                                        : analysis::GoodEnoughDirection::AtMost;
+}
+
+auto goalIndex(analysis::OptimizationGoal goal,
+    analysis::GoodEnoughDirection direction) -> int
+{
+    if (goal == analysis::OptimizationGoal::GoodEnough)
+        return direction == analysis::GoodEnoughDirection::AtLeast ? 4 : 3;
+    return static_cast<int>(goal);
+}
+
+auto selectedAggregation(const QComboBox* control) -> analysis::OptimizationAggregation
+{
+    return static_cast<analysis::OptimizationAggregation>(control->currentData().toInt());
+}
+
+void configureAggregationControl(QComboBox* control, analysis::OptimizationGoal goal,
+    std::optional<analysis::OptimizationAggregation> aggregation = std::nullopt)
+{
+    auto semanticIndex = std::max(0, control->currentIndex());
+    if (aggregation) {
+        if (*aggregation == analysis::OptimizationAggregation::Average) {
+            semanticIndex = 1;
+        } else {
+            const auto worstAggregation = goal == analysis::OptimizationGoal::Maximize
+                ? analysis::OptimizationAggregation::Minimum
+                : analysis::OptimizationAggregation::Maximum;
+            semanticIndex = *aggregation == worstAggregation ? 0 : 2;
+        }
+    }
+
+    const auto worstAggregation = goal == analysis::OptimizationGoal::Maximize
+        ? analysis::OptimizationAggregation::Minimum
+        : analysis::OptimizationAggregation::Maximum;
+    const auto bestAggregation = worstAggregation == analysis::OptimizationAggregation::Minimum
+        ? analysis::OptimizationAggregation::Maximum
+        : analysis::OptimizationAggregation::Minimum;
+    const auto target = goal == analysis::OptimizationGoal::Target;
+    const auto threshold = goal == analysis::OptimizationGoal::GoodEnough;
+    const QSignalBlocker blocker(control);
+    control->clear();
+    control->addItem(target ? QObject::tr("Worst Error")
+            : threshold ? QObject::tr("Worst Violation") : QObject::tr("Worst Point"),
+        static_cast<int>(worstAggregation));
+    control->addItem(target ? QObject::tr("Average Error")
+            : threshold ? QObject::tr("Average Violation") : QObject::tr("Average"),
+        static_cast<int>(analysis::OptimizationAggregation::Average));
+    control->addItem(target ? QObject::tr("Best Error")
+            : threshold ? QObject::tr("Best Violation") : QObject::tr("Best Point"),
+        static_cast<int>(bestAggregation));
+    QString worstToolTip;
+    QString averageToolTip;
+    QString bestToolTip;
+    switch (goal) {
+    case analysis::OptimizationGoal::Minimize:
+        worstToolTip = QObject::tr(
+            "Scores the highest measured value across the selected frequencies.");
+        averageToolTip = QObject::tr(
+            "Scores the arithmetic average measured value across the selected frequencies.");
+        bestToolTip = QObject::tr(
+            "Scores the lowest measured value across the selected frequencies.");
+        break;
+    case analysis::OptimizationGoal::Maximize:
+        worstToolTip = QObject::tr(
+            "Scores the lowest measured value across the selected frequencies.");
+        averageToolTip = QObject::tr(
+            "Scores the arithmetic average measured value across the selected frequencies.");
+        bestToolTip = QObject::tr(
+            "Scores the highest measured value across the selected frequencies.");
+        break;
+    case analysis::OptimizationGoal::Target:
+        worstToolTip = QObject::tr(
+            "Scores the largest absolute error from Value across the selected frequencies.");
+        averageToolTip = QObject::tr(
+            "Scores the average absolute error from Value across the selected frequencies.");
+        bestToolTip = QObject::tr(
+            "Scores the smallest absolute error from Value across the selected frequencies.");
+        break;
+    case analysis::OptimizationGoal::GoodEnough:
+        worstToolTip = QObject::tr(
+            "Scores the largest threshold violation across the selected frequencies.");
+        averageToolTip = QObject::tr(
+            "Scores the average threshold violation across the selected frequencies; compliant points contribute zero.");
+        bestToolTip = QObject::tr(
+            "Scores the smallest threshold violation across the selected frequencies.");
+        break;
+    }
+    control->setItemData(0, worstToolTip, Qt::ToolTipRole);
+    control->setItemData(1, averageToolTip, Qt::ToolTipRole);
+    control->setItemData(2, bestToolTip, Qt::ToolTipRole);
+    control->setCurrentIndex(std::clamp(semanticIndex, 0, 2));
+    control->setToolTip(control->currentData(Qt::ToolTipRole).toString());
+}
+
+auto goalName(analysis::OptimizationGoal goal,
+    analysis::GoodEnoughDirection direction) -> QString
+{
+    switch (goal) {
+    case analysis::OptimizationGoal::Minimize: return QObject::tr("Minimize");
+    case analysis::OptimizationGoal::Maximize: return QObject::tr("Maximize");
+    case analysis::OptimizationGoal::Target: return QObject::tr("Target");
+    case analysis::OptimizationGoal::GoodEnough:
+        return direction == analysis::GoodEnoughDirection::AtLeast
+            ? QObject::tr("Good Enough ≥") : QObject::tr("Good Enough ≤");
+    }
+    return {};
+}
+
+auto aggregationName(analysis::OptimizationAggregation aggregation,
+    analysis::OptimizationGoal goal) -> QString
+{
+    const auto suffix = goal == analysis::OptimizationGoal::Target
+            || goal == analysis::OptimizationGoal::GoodEnough
+        ? QObject::tr(" error") : QString{};
+    switch (aggregation) {
+    case analysis::OptimizationAggregation::Minimum:
+        return QObject::tr("Minimum") + suffix;
+    case analysis::OptimizationAggregation::Average:
+        return QObject::tr("Average") + suffix;
+    case analysis::OptimizationAggregation::Maximum:
+        return QObject::tr("Maximum") + suffix;
+    }
+    return {};
+}
+
+auto objectiveSentence(const QString& name, const QString& unit,
+    analysis::OptimizationGoal goal, analysis::GoodEnoughDirection direction,
+    analysis::OptimizationAggregation aggregation, double target, double weight) -> QString
+{
+    const auto measurementWord = aggregation == analysis::OptimizationAggregation::Minimum
+        ? QObject::tr("lowest")
+        : aggregation == analysis::OptimizationAggregation::Average
+            ? QObject::tr("average") : QObject::tr("highest");
+    const auto errorWord = aggregation == analysis::OptimizationAggregation::Minimum
+        ? QObject::tr("smallest")
+        : aggregation == analysis::OptimizationAggregation::Average
+            ? QObject::tr("average") : QObject::tr("largest");
+    QString sentence;
+    switch (goal) {
+    case analysis::OptimizationGoal::Minimize:
+        sentence = QObject::tr("Minimize the %1 %2 across the selected frequencies.")
+            .arg(measurementWord, name);
+        break;
+    case analysis::OptimizationGoal::Maximize:
+        sentence = QObject::tr("Maximize the %1 %2 across the selected frequencies.")
+            .arg(measurementWord, name);
+        break;
+    case analysis::OptimizationGoal::Target:
+        sentence = QObject::tr(
+            "Keep %1 near %2%3 by minimizing the %4 error across the selected frequencies.")
+            .arg(name, formatDecimal(target), unit, errorWord);
+        break;
+    case analysis::OptimizationGoal::GoodEnough:
+        if (aggregation == analysis::OptimizationAggregation::Maximum) {
+            sentence = direction == analysis::GoodEnoughDirection::AtMost
+                ? QObject::tr("Keep %1 at or below %2%3 across all selected frequencies.")
+                    .arg(name, formatDecimal(target), unit)
+                : QObject::tr("Keep %1 at or above %2%3 across all selected frequencies.")
+                    .arg(name, formatDecimal(target), unit);
+        } else {
+            const auto relation = direction == analysis::GoodEnoughDirection::AtMost
+                ? QObject::tr("exceeds") : QObject::tr("falls below");
+            sentence = QObject::tr(
+                "Minimize the %1 amount by which %2 %3 %4%5 across the selected frequencies.")
+                .arg(errorWord, name, relation, formatDecimal(target), unit);
+        }
+        break;
+    }
+    return QObject::tr("• %1 Relative weight: %2.")
+        .arg(sentence, formatDecimal(weight));
 }
 
 auto writeFile(const QString& path, const QByteArray& data) -> bool
@@ -174,16 +397,8 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     variableControl_->setObjectName(QStringLiteral("optimizationVariableControl"));
     objectiveControl_ = new QComboBox(this);
     objectiveControl_->setObjectName(QStringLiteral("optimizationObjectiveControl"));
-    objectiveControl_->addItem(tr("Minimax"),
-        static_cast<int>(analysis::OptimizationObjectiveKind::WorstPointAcrossFrequencies));
-    objectiveControl_->addItem(tr("Selected Frequency"),
-        static_cast<int>(analysis::OptimizationObjectiveKind::SwrAtFrequency));
-    objectiveControl_->setItemData(0, tr(
-        "Minimax: Minimizes the worst-performing point across the band/pattern, rather than the average."),
-        Qt::ToolTipRole);
-    objectiveControl_->setItemData(1, tr(
-        "Calculates and scores each candidate at only the selected frequency, ignoring the model FR sweep."),
-        Qt::ToolTipRole);
+    objectiveControl_->addItem(tr("Per-Criterion"),
+        static_cast<int>(analysis::OptimizationObjectiveKind::PerCriterion));
     targetFrequencyControl_ = new FocusWheelDoubleSpinBox(this);
     targetFrequencyControl_->setObjectName(QStringLiteral("optimizationTargetFrequency"));
     targetFrequencyControl_->setRange(0.000001, 1.0e9);
@@ -221,27 +436,32 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     referenceImpedanceControl_->setValue(50.0);
     referenceImpedanceControl_->setSuffix(QStringLiteral(" Ω"));
 
-    objectiveCriteriaTable_ = new QTableWidget(3, 3, this);
+    objectiveCriteriaTable_ = new QTableWidget(6, 5, this);
     objectiveCriteriaTable_->setObjectName(QStringLiteral("optimizationObjectiveCriteria"));
     objectiveCriteriaTable_->setHorizontalHeaderLabels(
-        {tr("Criterion"), tr("Weight"), tr("Target")});
+        {tr("Criterion"), tr("Weight"), tr("Goal"), tr("Value"), tr("Band Evaluation")});
     objectiveCriteriaTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     objectiveCriteriaTable_->setSelectionMode(QAbstractItemView::NoSelection);
     objectiveCriteriaTable_->verticalHeader()->hide();
-    objectiveCriteriaTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    objectiveCriteriaTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    objectiveCriteriaTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    objectiveCriteriaTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     objectiveCriteriaTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    objectiveCriteriaTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
+    objectiveCriteriaTable_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
     const auto criterionItem = [this](int row, const QString& text, const QString& toolTip) {
         auto* item = new QTableWidgetItem(text);
         item->setFlags(Qt::ItemIsEnabled);
         item->setToolTip(toolTip);
         objectiveCriteriaTable_->setItem(row, 0, item);
     };
-    criterionItem(0, tr("SWR"), tr("Minimize SWR. Set weight to zero to ignore it."));
-    criterionItem(1, tr("Resistance (Ω)"),
-        tr("Minimize distance from the resistance target."));
-    criterionItem(2, tr("Reactance (Ω)"),
-        tr("Minimize distance from the reactance target."));
+    criterionItem(0, tr("SWR"), tr("Standing-wave ratio at each calculated frequency."));
+    criterionItem(1, tr("Resistance (Ω)"), tr("Feedpoint resistance."));
+    criterionItem(2, tr("Reactance (Ω)"), tr("Feedpoint reactance."));
+    criterionItem(3, tr("Forward Gain (dBi)"), tr("Gain in the configured physical direction."));
+    criterionItem(4, tr("F/B (dB)"),
+        tr("Forward gain minus gain exactly 180 degrees opposite."));
+    criterionItem(5, tr("F/R (dB)"),
+        tr("Forward gain minus the strongest response in the rear azimuth half."));
     const auto weightControl = [this](const QString& name, double value) {
         auto* control = new FocusWheelDoubleSpinBox(objectiveCriteriaTable_);
         control->setObjectName(name);
@@ -256,25 +476,88 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         QStringLiteral("optimizationResistanceWeight"), 0.0);
     reactanceWeightControl_ = weightControl(
         QStringLiteral("optimizationReactanceWeight"), 0.0);
-    resistanceTargetControl_ = new FocusWheelDoubleSpinBox(objectiveCriteriaTable_);
-    resistanceTargetControl_->setObjectName(QStringLiteral("optimizationResistanceTarget"));
-    reactanceTargetControl_ = new FocusWheelDoubleSpinBox(objectiveCriteriaTable_);
-    reactanceTargetControl_->setObjectName(QStringLiteral("optimizationReactanceTarget"));
-    for (auto* control : {resistanceTargetControl_, reactanceTargetControl_}) {
-        control->setRange(-1.0e9, 1.0e9);
-        control->setDecimals(DisplayDecimalPlaces);
-        control->setSuffix(QStringLiteral(" Ω"));
+    forwardGainWeightControl_ = weightControl(
+        QStringLiteral("optimizationForwardGainWeight"), 0.0);
+    frontToBackWeightControl_ = weightControl(
+        QStringLiteral("optimizationFrontToBackWeight"), 0.0);
+    frontToRearWeightControl_ = weightControl(
+        QStringLiteral("optimizationFrontToRearWeight"), 0.0);
+    const std::array weights{swrWeightControl_, resistanceWeightControl_, reactanceWeightControl_,
+        forwardGainWeightControl_, frontToBackWeightControl_, frontToRearWeightControl_};
+    const std::array defaultGoals{analysis::OptimizationGoal::Minimize,
+        analysis::OptimizationGoal::Target, analysis::OptimizationGoal::Target,
+        analysis::OptimizationGoal::Maximize, analysis::OptimizationGoal::Maximize,
+        analysis::OptimizationGoal::Maximize};
+    const std::array defaultValues{2.0, 50.0, 0.0, 0.0, 20.0, 15.0};
+    const std::array defaultAggregations{analysis::OptimizationAggregation::Maximum,
+        analysis::OptimizationAggregation::Maximum, analysis::OptimizationAggregation::Maximum,
+        analysis::OptimizationAggregation::Minimum, analysis::OptimizationAggregation::Minimum,
+        analysis::OptimizationAggregation::Minimum};
+    for (auto row = 0; row < 6; ++row) {
+        auto* goal = new QComboBox(objectiveCriteriaTable_);
+        goal->addItem(tr("Minimize"), 0);
+        goal->addItem(tr("Maximize"), 1);
+        goal->addItem(tr("Target"), 2);
+        goal->addItem(tr("Good Enough ≤"), 3);
+        goal->addItem(tr("Good Enough ≥"), 4);
+        goal->setItemData(0, tr("Lower measured values improve the objective score."),
+            Qt::ToolTipRole);
+        goal->setItemData(1, tr("Higher measured values improve the objective score."),
+            Qt::ToolTipRole);
+        goal->setItemData(2, tr("Minimizes absolute error from Value."),
+            Qt::ToolTipRole);
+        goal->setItemData(3, tr("Only the amount above Value is penalized."),
+            Qt::ToolTipRole);
+        goal->setItemData(4, tr("Only the amount below Value is penalized."),
+            Qt::ToolTipRole);
+        goal->setCurrentIndex(static_cast<int>(defaultGoals[row]));
+        goal->setToolTip(goal->currentData(Qt::ToolTipRole).toString());
+        goal->setObjectName(QStringLiteral("optimizationGoal%1").arg(row));
+        objectiveGoalControls_[row] = goal;
+
+        auto* value = new FocusWheelDoubleSpinBox(objectiveCriteriaTable_);
+        value->setRange(-1.0e9, 1.0e9);
+        value->setDecimals(DisplayDecimalPlaces);
+        value->setValue(defaultValues[row]);
+        value->setObjectName(QStringLiteral("optimizationObjectiveValue%1").arg(row));
+        if (row == 1 || row == 2) value->setSuffix(QStringLiteral(" Ω"));
+        else if (row == 3) value->setSuffix(tr(" dBi"));
+        else if (row >= 4) value->setSuffix(tr(" dB"));
+        objectiveValueControls_[row] = value;
+
+        auto* aggregation = new QComboBox(objectiveCriteriaTable_);
+        aggregation->setObjectName(QStringLiteral("optimizationAggregation%1").arg(row));
+        configureAggregationControl(aggregation, defaultGoals[row], defaultAggregations[row]);
+        objectiveAggregationControls_[row] = aggregation;
+
+        objectiveCriteriaTable_->setCellWidget(row, 1, weights[row]);
+        objectiveCriteriaTable_->setCellWidget(row, 2, goal);
+        objectiveCriteriaTable_->setCellWidget(row, 3, value);
+        objectiveCriteriaTable_->setCellWidget(row, 4, aggregation);
     }
-    resistanceTargetControl_->setValue(50.0);
-    reactanceTargetControl_->setValue(0.0);
-    objectiveCriteriaTable_->setCellWidget(0, 1, swrWeightControl_);
-    objectiveCriteriaTable_->setCellWidget(1, 1, resistanceWeightControl_);
-    objectiveCriteriaTable_->setCellWidget(2, 1, reactanceWeightControl_);
-    auto* swrTarget = new QTableWidgetItem(tr("1:1 (ideal)"));
-    swrTarget->setFlags(Qt::ItemIsEnabled);
-    objectiveCriteriaTable_->setItem(0, 2, swrTarget);
-    objectiveCriteriaTable_->setCellWidget(1, 2, resistanceTargetControl_);
-    objectiveCriteriaTable_->setCellWidget(2, 2, reactanceTargetControl_);
+    resistanceTargetControl_ = objectiveValueControls_[1];
+    reactanceTargetControl_ = objectiveValueControls_[2];
+    resistanceTargetControl_->setObjectName(QStringLiteral("optimizationResistanceTarget"));
+    reactanceTargetControl_->setObjectName(QStringLiteral("optimizationReactanceTarget"));
+
+    forwardThetaControl_ = new FocusWheelDoubleSpinBox(this);
+    forwardThetaControl_->setObjectName(QStringLiteral("optimizationForwardTheta"));
+    forwardThetaControl_->setRange(-360.0, 360.0);
+    forwardThetaControl_->setDecimals(DisplayDecimalPlaces);
+    forwardThetaControl_->setValue(90.0);
+    forwardThetaControl_->setSuffix(QStringLiteral("°"));
+    forwardPhiControl_ = new FocusWheelDoubleSpinBox(this);
+    forwardPhiControl_->setObjectName(QStringLiteral("optimizationForwardPhi"));
+    forwardPhiControl_->setRange(-360.0, 720.0);
+    forwardPhiControl_->setDecimals(DisplayDecimalPlaces);
+    forwardPhiControl_->setSuffix(QStringLiteral("°"));
+    radiationComponentControl_ = new QComboBox(this);
+    radiationComponentControl_->setObjectName(QStringLiteral("optimizationRadiationComponent"));
+    radiationComponentControl_->addItem(tr("Total"), static_cast<int>(analysis::RadiationComponent::Total));
+    radiationComponentControl_->addItem(tr("Vertical"), static_cast<int>(analysis::RadiationComponent::Vertical));
+    radiationComponentControl_->addItem(tr("Horizontal"), static_cast<int>(analysis::RadiationComponent::Horizontal));
+    radiationComponentControl_->addItem(tr("RHCP"), static_cast<int>(analysis::RadiationComponent::RightHandCircular));
+    radiationComponentControl_->addItem(tr("LHCP"), static_cast<int>(analysis::RadiationComponent::LeftHandCircular));
     objectiveCriteriaTable_->resizeRowsToContents();
     auto criteriaHeight = objectiveCriteriaTable_->horizontalHeader()->sizeHint().height()
         + 2 * objectiveCriteriaTable_->frameWidth();
@@ -287,12 +570,15 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     searchMethodTabs_->addTab(tr("Parameter Sweep"));
     searchMethodTabs_->addTab(tr("Adaptive Optimize"));
     searchMethodTabs_->addTab(tr("Nelder-Mead"));
+    searchMethodTabs_->addTab(tr("Differential Evolution"));
     searchMethodTabs_->setTabToolTip(0, tr(
         "Exhaustively test evenly spaced values for one parameter."));
     searchMethodTabs_->setTabToolTip(1, tr(
         "Refine one or more parameters with transparent coordinate trials around the current best."));
     searchMethodTabs_->setTabToolTip(2, tr(
         "Optimize one or more continuous parameters with a bounded derivative-free simplex search."));
+    searchMethodTabs_->setTabToolTip(3, tr(
+        "Explore one or more continuous parameters with a seeded population-based global search."));
 
     adaptiveMaximumEvaluationsControl_ = new FocusWheelSpinBox(this);
     adaptiveMaximumEvaluationsControl_->setObjectName(
@@ -320,6 +606,53 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         "Minimum required improvement in the best objective score between completed refinement rounds. "
         "A round normally tests both a left and right midpoint; the search stops after two consecutive "
         "rounds improve the best score by no more than this amount."));
+    differentialEvolutionPopulationControl_ = new FocusWheelSpinBox(this);
+    differentialEvolutionPopulationControl_->setObjectName(
+        QStringLiteral("optimizationDifferentialEvolutionPopulation"));
+    differentialEvolutionPopulationControl_->setRange(4, 50);
+    differentialEvolutionPopulationControl_->setValue(12);
+    differentialEvolutionPopulationControl_->setToolTip(tr(
+        "Number of candidate vectors retained in each generation. At least four are required."));
+    differentialEvolutionGenerationControl_ = new FocusWheelSpinBox(this);
+    differentialEvolutionGenerationControl_->setObjectName(
+        QStringLiteral("optimizationDifferentialEvolutionGenerations"));
+    differentialEvolutionGenerationControl_->setRange(1, 200);
+    differentialEvolutionGenerationControl_->setValue(20);
+    differentialEvolutionGenerationControl_->setToolTip(tr(
+        "Maximum evolved generations after the initial population is evaluated."));
+    differentialEvolutionMutationControl_ = new FocusWheelDoubleSpinBox(this);
+    differentialEvolutionMutationControl_->setObjectName(
+        QStringLiteral("optimizationDifferentialEvolutionMutation"));
+    differentialEvolutionMutationControl_->setRange(0.1, 2.0);
+    differentialEvolutionMutationControl_->setSingleStep(0.1);
+    differentialEvolutionMutationControl_->setDecimals(DisplayDecimalPlaces);
+    differentialEvolutionMutationControl_->setValue(0.8);
+    differentialEvolutionMutationControl_->setToolTip(tr(
+        "Differential mutation factor F. Larger values explore more aggressively."));
+    differentialEvolutionCrossoverControl_ = new FocusWheelDoubleSpinBox(this);
+    differentialEvolutionCrossoverControl_->setObjectName(
+        QStringLiteral("optimizationDifferentialEvolutionCrossover"));
+    differentialEvolutionCrossoverControl_->setRange(0.0, 1.0);
+    differentialEvolutionCrossoverControl_->setSingleStep(0.05);
+    differentialEvolutionCrossoverControl_->setDecimals(DisplayDecimalPlaces);
+    differentialEvolutionCrossoverControl_->setValue(0.9);
+    differentialEvolutionCrossoverControl_->setToolTip(tr(
+        "Binomial crossover probability CR applied independently to each parameter."));
+    differentialEvolutionScoreToleranceControl_ = new FocusWheelDoubleSpinBox(this);
+    differentialEvolutionScoreToleranceControl_->setObjectName(
+        QStringLiteral("optimizationDifferentialEvolutionScoreTolerance"));
+    differentialEvolutionScoreToleranceControl_->setRange(0.0, 1.0e9);
+    differentialEvolutionScoreToleranceControl_->setDecimals(DisplayDecimalPlaces);
+    differentialEvolutionScoreToleranceControl_->setValue(0.001);
+    differentialEvolutionScoreToleranceControl_->setToolTip(tr(
+        "Stop after three generations whose best-score improvement is no greater than this value."));
+    differentialEvolutionSeedControl_ = new FocusWheelSpinBox(this);
+    differentialEvolutionSeedControl_->setObjectName(
+        QStringLiteral("optimizationDifferentialEvolutionSeed"));
+    differentialEvolutionSeedControl_->setRange(0, std::numeric_limits<int>::max());
+    differentialEvolutionSeedControl_->setValue(5489);
+    differentialEvolutionSeedControl_->setToolTip(tr(
+        "Random seed. Reusing the same seed and settings reproduces the same candidate proposals."));
     explicitFrequencyPanel_ = new QWidget(this);
     explicitFrequencyPanel_->setObjectName(QStringLiteral("optimizationExplicitFrequencyPanel"));
     auto* frequencyLayout = new QVBoxLayout(explicitFrequencyPanel_);
@@ -465,16 +798,53 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     parameterGrid->addWidget(adaptiveScoreToleranceLabel_, 5, 0);
     parameterGrid->addWidget(adaptiveScoreToleranceControl_, 5, 1);
 
+    differentialEvolutionSettings_ = new QWidget(parameterSettings_);
+    differentialEvolutionSettings_->setObjectName(
+        QStringLiteral("optimizationDifferentialEvolutionSettings"));
+    auto* differentialEvolutionGrid = new QGridLayout(differentialEvolutionSettings_);
+    differentialEvolutionGrid->setContentsMargins(0, 0, 0, 0);
+    differentialEvolutionGrid->setHorizontalSpacing(6);
+    differentialEvolutionGrid->setVerticalSpacing(4);
+    const auto addDifferentialEvolutionControl = [&](int row, const QString& text,
+                                                     QWidget* control) {
+        auto* label = new QLabel(text, differentialEvolutionSettings_);
+        label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        control->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        differentialEvolutionGrid->addWidget(label, row, 0);
+        differentialEvolutionGrid->addWidget(control, row, 1);
+    };
+    addDifferentialEvolutionControl(0, tr("Population"),
+        differentialEvolutionPopulationControl_);
+    addDifferentialEvolutionControl(1, tr("Generations"),
+        differentialEvolutionGenerationControl_);
+    addDifferentialEvolutionControl(2, tr("Mutation factor"),
+        differentialEvolutionMutationControl_);
+    addDifferentialEvolutionControl(3, tr("Crossover rate"),
+        differentialEvolutionCrossoverControl_);
+    addDifferentialEvolutionControl(4, tr("Score tolerance"),
+        differentialEvolutionScoreToleranceControl_);
+    addDifferentialEvolutionControl(5, tr("Random seed"),
+        differentialEvolutionSeedControl_);
+    differentialEvolutionGrid->setColumnStretch(1, 1);
+    parameterGrid->addWidget(differentialEvolutionSettings_, 3, 0, 3, 2);
+
     auto* resetSearchDefaultsButton = new QPushButton(tr("Reset Search Defaults"), parameterSettings_);
     resetSearchDefaultsButton->setObjectName(
         QStringLiteral("optimizationResetSearchDefaults"));
     resetSearchDefaultsButton->setToolTip(tr(
-        "Restore the default candidate count or adaptive search limits without changing the variable, range, frequencies, or objective."));
+        "Restore the default sweep count or optimizer search settings without changing the variables, ranges, frequencies, or objective."));
     parameterGrid->addWidget(resetSearchDefaultsButton, 6, 0, 1, 2, Qt::AlignRight);
     parameterGrid->setColumnStretch(1, 1);
 
     connect(resetSearchDefaultsButton, &QPushButton::clicked, this, [this] {
-        if (isMultivariable(selectedSearchMethod())) {
+        if (selectedSearchMethod() == SearchMethod::DifferentialEvolution) {
+            differentialEvolutionPopulationControl_->setValue(12);
+            differentialEvolutionGenerationControl_->setValue(20);
+            differentialEvolutionMutationControl_->setValue(0.8);
+            differentialEvolutionCrossoverControl_->setValue(0.9);
+            differentialEvolutionScoreToleranceControl_->setValue(0.001);
+            differentialEvolutionSeedControl_->setValue(5489);
+        } else if (isMultivariable(selectedSearchMethod())) {
             adaptiveMaximumEvaluationsControl_->setValue(21);
             adaptiveParameterToleranceControl_->setValue(0.010);
             adaptiveScoreToleranceControl_->setValue(0.001);
@@ -542,18 +912,43 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     objectiveDialog_->setObjectName(QStringLiteral("optimizationObjectiveDialog"));
     objectiveDialog_->setWindowTitle(tr("Optimization Objective"));
     objectiveDialog_->setModal(true);
-    objectiveDialog_->resize(680, 340);
+    objectiveDialog_->resize(920, 460);
     auto* objectiveDialogLayout = new QVBoxLayout(objectiveDialog_);
     auto* objectiveSettings = new QWidget(objectiveDialog_);
     objectiveSettings->setObjectName(QStringLiteral("optimizationObjectiveSettings"));
     auto* objectiveForm = new QFormLayout(objectiveSettings);
     objectiveForm->setContentsMargins(0, 0, 0, 0);
-    objectiveForm->addRow(tr("Evaluation"), objectiveControl_);
-    objectiveForm->addRow(tr("Selected frequency"), targetFrequencyControl_);
+    targetFrequencyLabel_ = new QLabel(tr("Selected frequency"), objectiveSettings);
+    targetFrequencyLabel_->setObjectName(
+        QStringLiteral("optimizationTargetFrequencyLabel"));
+    objectiveControl_->hide();
+    targetFrequencyLabel_->hide();
+    targetFrequencyControl_->hide();
     objectiveForm->addRow(tr("Reference impedance"), referenceImpedanceControl_);
+    objectiveForm->addRow(tr("Forward theta"), forwardThetaControl_);
+    objectiveForm->addRow(tr("Forward phi"), forwardPhiControl_);
+    objectiveForm->addRow(tr("Radiation component"), radiationComponentControl_);
+    directionalFrequencyNote_ = new QLabel(objectiveSettings);
+    directionalFrequencyNote_->setObjectName(
+        QStringLiteral("optimizationDirectionalFrequencyNote"));
+    directionalFrequencyNote_->setWordWrap(true);
+    objectiveForm->addRow(directionalFrequencyNote_);
     objectiveForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     objectiveDialogLayout->addWidget(objectiveSettings);
     objectiveDialogLayout->addWidget(objectiveCriteriaTable_);
+    auto* objectiveExplanationHeading = new QLabel(tr("Objective Summary"), objectiveDialog_);
+    auto explanationHeadingFont = objectiveExplanationHeading->font();
+    explanationHeadingFont.setBold(true);
+    objectiveExplanationHeading->setFont(explanationHeadingFont);
+    objectiveDialogLayout->addWidget(objectiveExplanationHeading);
+    objectiveExplanationLabel_ = new QLabel(objectiveDialog_);
+    objectiveExplanationLabel_->setObjectName(
+        QStringLiteral("optimizationObjectiveExplanation"));
+    objectiveExplanationLabel_->setWordWrap(true);
+    objectiveDialogLayout->addWidget(objectiveExplanationLabel_);
+    resetObjectiveDefaultsButton_ = new QPushButton(tr("Restore Objective Defaults"), objectiveDialog_);
+    resetObjectiveDefaultsButton_->setObjectName(QStringLiteral("optimizationResetObjectiveDefaults"));
+    objectiveDialogLayout->addWidget(resetObjectiveDefaultsButton_, 0, Qt::AlignRight);
     auto* objectiveDialogButtons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, objectiveDialog_);
     objectiveDialogLayout->addWidget(objectiveDialogButtons);
@@ -613,7 +1008,13 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     resultsTable_->setObjectName(QStringLiteral("optimizationResultsTable"));
     resultsTable_->setColumnCount(ResultColumnCount);
     resultsTable_->setHorizontalHeaderLabels({tr("Value"), tr("Objective Score"), tr("SWR"), tr("Frequency"),
-        tr("R (Ω)"), tr("X (Ω)"), tr("Status"), tr("Run")});
+        tr("R (Ω)"), tr("X (Ω)"), tr("Gain (dBi)"), tr("F/B (dB)"), tr("F/R (dB)"), tr("Status"), tr("Run")});
+    resultsTable_->horizontalHeaderItem(GainColumn)->setToolTip(tr(
+        "Forward gain at the configured theta, phi, frequency, and radiation component."));
+    resultsTable_->horizontalHeaderItem(FrontToBackColumn)->setToolTip(tr(
+        "Gain in the configured forward direction minus gain at the physical opposite direction."));
+    resultsTable_->horizontalHeaderItem(FrontToRearColumn)->setToolTip(tr(
+        "Gain in the configured forward direction minus the strongest response in the rear 180° half of the configured azimuth cut."));
     resultsTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     resultsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     resultsTable_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -633,16 +1034,17 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         QStringLiteral("optimizationCandidateDetailsWindow"));
     candidateDetailsWindow_->setWindowTitle(tr("Candidate Frequency Results"));
     candidateDetailsWindow_->setModal(false);
-    candidateDetailsWindow_->resize(820, 600);
+    candidateDetailsWindow_->resize(900, 650);
     auto* detailLayout = new QVBoxLayout(candidateDetailsWindow_);
     candidateDetailLabel_ = new QLabel(candidateDetailsWindow_);
     candidateDetailLabel_->setObjectName(QStringLiteral("optimizationCandidateDetailLabel"));
     candidateDetailLabel_->setWordWrap(true);
     candidateDetailsTable_ = new QTableWidget(candidateDetailsWindow_);
     candidateDetailsTable_->setObjectName(QStringLiteral("optimizationCandidateDetails"));
-    candidateDetailsTable_->setColumnCount(4);
+    candidateDetailsTable_->setColumnCount(7);
     candidateDetailsTable_->setHorizontalHeaderLabels(
-        {tr("Frequency (MHz)"), tr("SWR"), tr("R (Ω)"), tr("X (Ω)")});
+        {tr("Frequency (MHz)"), tr("SWR"), tr("R (Ω)"), tr("X (Ω)"),
+            tr("Gain (dBi)"), tr("F/B (dB)"), tr("F/R (dB)")});
     candidateDetailsTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     candidateDetailsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     candidateDetailsTable_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -651,12 +1053,18 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     candidateDetailPlots_ = new SweepPlotsView(candidateDetailsWindow_);
     candidateDetailPlots_->setObjectName(
         QStringLiteral("optimizationCandidateDetailPlots"));
-    auto* candidateDetailViews = new QTabWidget(candidateDetailsWindow_);
-    candidateDetailViews->setObjectName(
+    candidateDirectionalPlots_ = new DirectionalMetricsView(candidateDetailsWindow_);
+    candidateDetailViews_ = new QTabWidget(candidateDetailsWindow_);
+    candidateDetailViews_->setObjectName(
         QStringLiteral("optimizationCandidateDetailViews"));
-    candidateDetailViews->setDocumentMode(true);
-    candidateDetailViews->addTab(candidateDetailsTable_, tr("Frequency Table"));
-    candidateDetailViews->addTab(candidateDetailPlots_, tr("SWR & Impedance Plots"));
+    candidateDetailViews_->setDocumentMode(true);
+    candidateDetailViews_->addTab(candidateDetailsTable_, tr("Frequency Table"));
+    candidateDetailViews_->addTab(candidateDetailPlots_, tr("SWR & Impedance Plots"));
+    const auto directionalTab = candidateDetailViews_->addTab(
+        candidateDirectionalPlots_, tr("Directional Plots"));
+    candidateDetailViews_->setTabEnabled(directionalTab, false);
+    candidateDetailViews_->setTabToolTip(directionalTab, tr(
+        "Available after a completed candidate evaluates a Gain, F/B, or F/R objective."));
     applyCandidateButton_ = new QPushButton(tr("Apply This Candidate to Model"),
         candidateDetailsWindow_);
     applyCandidateButton_->setObjectName(QStringLiteral("optimizationApplyCandidate"));
@@ -673,7 +1081,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     candidateActionRow->addWidget(applyCandidateButton_);
     candidateActionRow->addWidget(applyCandidateAndRunButton_);
     detailLayout->addWidget(candidateDetailLabel_);
-    detailLayout->addWidget(candidateDetailViews, 1);
+    detailLayout->addWidget(candidateDetailViews_, 1);
     detailLayout->addLayout(candidateActionRow);
     resetCandidateDetails();
 
@@ -712,19 +1120,45 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     layout->addWidget(workspaceSplitter, 1);
 
     connect(variableControl_, &QComboBox::currentIndexChanged, this, [this] { updateBounds(); });
-    connect(objectiveControl_, &QComboBox::currentIndexChanged,
-        this, [this] { updateObjectiveControls(); });
-    connect(targetFrequencyControl_, &QDoubleSpinBox::valueChanged, this, [this] {
-        updateWorkload();
-        updateReadiness();
-    });
-    for (auto* control : {swrWeightControl_, resistanceWeightControl_, resistanceTargetControl_,
-             reactanceWeightControl_, reactanceTargetControl_}) {
+    for (auto* control : {swrWeightControl_, resistanceWeightControl_,
+             reactanceWeightControl_, forwardGainWeightControl_,
+             frontToBackWeightControl_,
+             frontToRearWeightControl_,
+             forwardThetaControl_, forwardPhiControl_}) {
         connect(control, &QDoubleSpinBox::valueChanged, this, [this] {
             updateWorkload();
             updateReadiness();
         });
     }
+    for (auto row = 0; row < 6; ++row) {
+        connect(objectiveValueControls_[row], &QDoubleSpinBox::valueChanged,
+            this, [this] { updateObjectiveControls(); });
+        connect(objectiveGoalControls_[row], &QComboBox::currentIndexChanged,
+            this, [this, row] {
+                objectiveGoalControls_[row]->setToolTip(
+                    objectiveGoalControls_[row]->currentData(Qt::ToolTipRole).toString());
+                configureAggregationControl(objectiveAggregationControls_[row],
+                    selectedGoal(objectiveGoalControls_[row]));
+                updateObjectiveControls();
+            });
+        connect(objectiveAggregationControls_[row], &QComboBox::currentIndexChanged,
+            this, [this, row] {
+                objectiveAggregationControls_[row]->setToolTip(
+                    objectiveAggregationControls_[row]
+                        ->currentData(Qt::ToolTipRole).toString());
+                updateObjectiveControls();
+            });
+    }
+    connect(resetObjectiveDefaultsButton_, &QPushButton::clicked, this, [this] {
+        auto defaults = analysis::OptimizationObjectiveSpec{};
+        defaults.referenceImpedance = referenceImpedanceControl_->value();
+        restoreObjectiveSetup(defaults);
+        updateObjectiveControls();
+    });
+    connect(radiationComponentControl_, &QComboBox::currentIndexChanged, this, [this] {
+        updateWorkload();
+        updateReadiness();
+    });
     connect(frequencyModeControl_, &QComboBox::currentIndexChanged,
         this, [this] { updateFrequencyControls(); });
     connect(pointsControl_, &QSpinBox::valueChanged, this, [this] { updateWorkload(); });
@@ -735,6 +1169,21 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         this, [this] { updateSearchMethodControls(); });
     connect(adaptiveMaximumEvaluationsControl_, &QSpinBox::valueChanged,
         this, [this] { updateWorkload(); });
+    for (auto* control : {differentialEvolutionPopulationControl_,
+             differentialEvolutionGenerationControl_, differentialEvolutionSeedControl_}) {
+        connect(control, &QSpinBox::valueChanged, this, [this] {
+            updateWorkload();
+            updateReadiness();
+        });
+    }
+    for (auto* control : {differentialEvolutionMutationControl_,
+             differentialEvolutionCrossoverControl_,
+             differentialEvolutionScoreToleranceControl_}) {
+        connect(control, &QDoubleSpinBox::valueChanged, this, [this] {
+            updateWorkload();
+            updateReadiness();
+        });
+    }
     connect(frequencyTable_, &QListWidget::itemChanged, this, [this] {
         updateWorkload();
         updateReadiness();
@@ -919,10 +1368,12 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         ? QJsonDocument::fromJson(sessionMetadataFile.readAll()).object() : QJsonObject{};
     const auto storedSearchMethod = sessionMetadata.value(
         QStringLiteral("searchMethod")).toString();
-    const auto restoredSearchMethod = storedSearchMethod == QStringLiteral("nelder-mead")
-        ? SearchMethod::NelderMead
-        : storedSearchMethod == QStringLiteral("adaptive")
-            ? SearchMethod::Adaptive : SearchMethod::ParameterSweep;
+    const auto restoredSearchMethod = storedSearchMethod == QStringLiteral("differential-evolution")
+        ? SearchMethod::DifferentialEvolution
+        : storedSearchMethod == QStringLiteral("nelder-mead")
+            ? SearchMethod::NelderMead
+            : storedSearchMethod == QStringLiteral("adaptive")
+                ? SearchMethod::Adaptive : SearchMethod::ParameterSweep;
     searchStopReason_ = sessionMetadata.value(
         QStringLiteral("stopDescription")).toString();
     searchMethodTabs_->setCurrentIndex(static_cast<int>(restoredSearchMethod));
@@ -933,6 +1384,18 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         QStringLiteral("parameterTolerance")).toDouble(0.010));
     adaptiveScoreToleranceControl_->setValue(sessionMetadata.value(
         QStringLiteral("scoreTolerance")).toDouble(0.001));
+    differentialEvolutionPopulationControl_->setValue(sessionMetadata.value(
+        QStringLiteral("populationSize")).toInt(12));
+    differentialEvolutionGenerationControl_->setValue(sessionMetadata.value(
+        QStringLiteral("maximumGenerations")).toInt(20));
+    differentialEvolutionMutationControl_->setValue(sessionMetadata.value(
+        QStringLiteral("mutationFactor")).toDouble(0.8));
+    differentialEvolutionCrossoverControl_->setValue(sessionMetadata.value(
+        QStringLiteral("crossoverRate")).toDouble(0.9));
+    differentialEvolutionScoreToleranceControl_->setValue(sessionMetadata.value(
+        QStringLiteral("scoreTolerance")).toDouble(0.001));
+    differentialEvolutionSeedControl_->setValue(sessionMetadata.value(
+        QStringLiteral("randomSeed")).toInt(5489));
     selectedSymbol_ = sessionMetadata.value(QStringLiteral("variable")).toString();
     activeVariables_.clear();
     for (const auto value : sessionMetadata.value(QStringLiteral("variables")).toArray()) {
@@ -983,6 +1446,12 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
     auto restoredObjective = analysis::OptimizationObjectiveSpec{};
     for (std::size_t index = 0; index < candidateRecords.size(); ++index) {
         const auto row = static_cast<int>(index);
+        resultsTable_->setItem(row, GainColumn,
+            new QTableWidgetItem(QStringLiteral("—")));
+        resultsTable_->setItem(row, FrontToBackColumn,
+            new QTableWidgetItem(QStringLiteral("—")));
+        resultsTable_->setItem(row, FrontToRearColumn,
+            new QTableWidgetItem(QStringLiteral("—")));
         QFile metadataFile(QDir(candidateRecords[index].directory).filePath(
             QStringLiteral("optimization.json")));
         const auto metadata = metadataFile.open(QIODevice::ReadOnly)
@@ -1000,36 +1469,114 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         if (outputFile.open(QIODevice::ReadOnly))
             result = analysis::NecOutputParser{}.parse(outputFile.readAll().toStdString());
         const auto objectiveId = metadata.value(QStringLiteral("objective")).toString();
-        restoredObjective = {
-            .kind = objectiveId == QStringLiteral("minimize-swr-at-frequency")
-                ? analysis::OptimizationObjectiveKind::SwrAtFrequency
-                : analysis::OptimizationObjectiveKind::WorstPointAcrossFrequencies,
-            .referenceImpedance = metadata.value(
-                QStringLiteral("referenceImpedance")).toDouble(50.0),
-            .targetFrequencyMHz = metadata.value(
-                QStringLiteral("targetFrequencyMHz")).toDouble(),
-            .swrWeight = metadata.value(QStringLiteral("swrWeight")).toDouble(1.0),
-            .resistanceWeight = metadata.value(
-                QStringLiteral("resistanceWeight")).toDouble(),
-            .resistanceTargetOhms = metadata.value(
-                QStringLiteral("resistanceTargetOhms")).toDouble(
-                    metadata.value(QStringLiteral("referenceImpedance")).toDouble(50.0)),
-            .reactanceWeight = metadata.value(
-                QStringLiteral("reactanceWeight")).toDouble(),
-            .reactanceTargetOhms = metadata.value(
-                QStringLiteral("reactanceTargetOhms")).toDouble(),
-        };
+        restoredObjective = {};
+        restoredObjective.kind = objectiveKind(objectiveId);
+        restoredObjective.referenceImpedance = metadata.value(
+            QStringLiteral("referenceImpedance")).toDouble(50.0);
+        restoredObjective.targetFrequencyMHz = metadata.value(
+            QStringLiteral("targetFrequencyMHz")).toDouble();
+        restoredObjective.swrWeight = metadata.value(
+            QStringLiteral("swrWeight")).toDouble(1.0);
+        restoredObjective.resistanceWeight = metadata.value(
+            QStringLiteral("resistanceWeight")).toDouble();
+        restoredObjective.resistanceTargetOhms = metadata.value(
+            QStringLiteral("resistanceTargetOhms")).toDouble(
+                restoredObjective.referenceImpedance);
+        restoredObjective.reactanceWeight = metadata.value(
+            QStringLiteral("reactanceWeight")).toDouble();
+        restoredObjective.reactanceTargetOhms = metadata.value(
+            QStringLiteral("reactanceTargetOhms")).toDouble();
+        restoredObjective.forwardGainWeight = metadata.value(
+            QStringLiteral("forwardGainWeight")).toDouble();
+        restoredObjective.frontToBackWeight = metadata.value(
+            QStringLiteral("frontToBackWeight")).toDouble();
+        restoredObjective.frontToRearWeight = metadata.value(
+            QStringLiteral("frontToRearWeight")).toDouble();
+        restoredObjective.forwardThetaDegrees = metadata.value(
+            QStringLiteral("forwardThetaDegrees")).toDouble(90.0);
+        restoredObjective.forwardPhiDegrees = metadata.value(
+            QStringLiteral("forwardPhiDegrees")).toDouble();
+        restoredObjective.radiationComponent = static_cast<analysis::RadiationComponent>(
+            metadata.value(QStringLiteral("radiationComponent")).toInt(
+                static_cast<int>(analysis::RadiationComponent::Total)));
+        if (metadata.contains(QStringLiteral("swrGoal"))) {
+            restoredObjective.swrGoal = static_cast<analysis::OptimizationGoal>(
+                metadata.value(QStringLiteral("swrGoal")).toInt());
+            restoredObjective.resistanceGoal = static_cast<analysis::OptimizationGoal>(
+                metadata.value(QStringLiteral("resistanceGoal")).toInt());
+            restoredObjective.reactanceGoal = static_cast<analysis::OptimizationGoal>(
+                metadata.value(QStringLiteral("reactanceGoal")).toInt());
+            restoredObjective.forwardGainGoal = static_cast<analysis::OptimizationGoal>(
+                metadata.value(QStringLiteral("forwardGainGoal")).toInt());
+            restoredObjective.frontToBackGoal = static_cast<analysis::OptimizationGoal>(
+                metadata.value(QStringLiteral("frontToBackGoal")).toInt());
+            restoredObjective.frontToRearGoal = static_cast<analysis::OptimizationGoal>(
+                metadata.value(QStringLiteral("frontToRearGoal")).toInt());
+            restoredObjective.swrTarget = metadata.value(
+                QStringLiteral("swrTarget")).toDouble(2.0);
+            restoredObjective.forwardGainTarget = metadata.value(
+                QStringLiteral("forwardGainTarget")).toDouble();
+            restoredObjective.frontToBackTarget = metadata.value(
+                QStringLiteral("frontToBackTarget")).toDouble(20.0);
+            restoredObjective.frontToRearTarget = metadata.value(
+                QStringLiteral("frontToRearTarget")).toDouble(15.0);
+            restoredObjective.swrGoodEnoughDirection = static_cast<analysis::GoodEnoughDirection>(
+                metadata.value(QStringLiteral("swrGoodEnoughDirection")).toInt());
+            restoredObjective.resistanceGoodEnoughDirection = static_cast<analysis::GoodEnoughDirection>(
+                metadata.value(QStringLiteral("resistanceGoodEnoughDirection")).toInt());
+            restoredObjective.reactanceGoodEnoughDirection = static_cast<analysis::GoodEnoughDirection>(
+                metadata.value(QStringLiteral("reactanceGoodEnoughDirection")).toInt());
+            restoredObjective.forwardGainGoodEnoughDirection = static_cast<analysis::GoodEnoughDirection>(
+                metadata.value(QStringLiteral("forwardGainGoodEnoughDirection")).toInt(1));
+            restoredObjective.frontToBackGoodEnoughDirection = static_cast<analysis::GoodEnoughDirection>(
+                metadata.value(QStringLiteral("frontToBackGoodEnoughDirection")).toInt(1));
+            restoredObjective.frontToRearGoodEnoughDirection = static_cast<analysis::GoodEnoughDirection>(
+                metadata.value(QStringLiteral("frontToRearGoodEnoughDirection")).toInt(1));
+            restoredObjective.swrAggregation = static_cast<analysis::OptimizationAggregation>(
+                metadata.value(QStringLiteral("swrAggregation")).toInt(2));
+            restoredObjective.resistanceAggregation = static_cast<analysis::OptimizationAggregation>(
+                metadata.value(QStringLiteral("resistanceAggregation")).toInt(2));
+            restoredObjective.reactanceAggregation = static_cast<analysis::OptimizationAggregation>(
+                metadata.value(QStringLiteral("reactanceAggregation")).toInt(2));
+            restoredObjective.forwardGainAggregation = static_cast<analysis::OptimizationAggregation>(
+                metadata.value(QStringLiteral("forwardGainAggregation")).toInt());
+            restoredObjective.frontToBackAggregation = static_cast<analysis::OptimizationAggregation>(
+                metadata.value(QStringLiteral("frontToBackAggregation")).toInt());
+            restoredObjective.frontToRearAggregation = static_cast<analysis::OptimizationAggregation>(
+                metadata.value(QStringLiteral("frontToRearAggregation")).toInt());
+        } else if (restoredObjective.kind
+            == analysis::OptimizationObjectiveKind::AverageAcrossFrequencies) {
+            restoredObjective.swrAggregation = analysis::OptimizationAggregation::Average;
+            restoredObjective.resistanceAggregation = analysis::OptimizationAggregation::Average;
+            restoredObjective.reactanceAggregation = analysis::OptimizationAggregation::Average;
+            restoredObjective.forwardGainAggregation = analysis::OptimizationAggregation::Average;
+            restoredObjective.frontToBackAggregation = analysis::OptimizationAggregation::Average;
+            restoredObjective.frontToRearAggregation = analysis::OptimizationAggregation::Average;
+        }
         const auto evaluation = analysis::evaluateOptimizationObjective(
-            result.feedpoints, restoredObjective);
-        if (evaluation && evaluation->feedpoint) {
+            result, restoredObjective);
+        if (evaluation) {
             resultsTable_->setItem(row, ScoreColumn, numericItem(evaluation->score));
-            resultsTable_->setItem(row, SwrColumn, numericItem(evaluation->swr));
             resultsTable_->setItem(row, FrequencyColumn,
-                numericItem(evaluation->feedpoint->frequencyMHz));
-            resultsTable_->setItem(row, ResistanceColumn,
-                numericItem(evaluation->feedpoint->impedance.real()));
-            resultsTable_->setItem(row, ReactanceColumn,
-                numericItem(evaluation->feedpoint->impedance.imag()));
+                evaluation->evaluatedFrequencyCount == 1
+                    ? numericItem(evaluation->evaluationFrequencyMHz)
+                    : new QTableWidgetItem(QStringLiteral("—")));
+            if (evaluation->feedpoint) {
+                resultsTable_->setItem(row, SwrColumn, numericItem(evaluation->swr));
+                resultsTable_->setItem(row, ResistanceColumn,
+                    numericItem(evaluation->feedpoint->impedance.real()));
+                resultsTable_->setItem(row, ReactanceColumn,
+                    numericItem(evaluation->feedpoint->impedance.imag()));
+            }
+            resultsTable_->setItem(row, GainColumn, evaluation->forwardGainDb
+                ? numericItem(*evaluation->forwardGainDb)
+                : new QTableWidgetItem(QStringLiteral("—")));
+            resultsTable_->setItem(row, FrontToBackColumn, evaluation->frontToBackDb
+                ? numericItem(*evaluation->frontToBackDb)
+                : new QTableWidgetItem(QStringLiteral("—")));
+            resultsTable_->setItem(row, FrontToRearColumn, evaluation->frontToRearDb
+                ? numericItem(*evaluation->frontToRearDb)
+                : new QTableWidgetItem(QStringLiteral("—")));
             if (evaluation->score < bestScore_) {
                 bestScore_ = evaluation->score;
                 bestRow_ = row;
@@ -1041,6 +1588,7 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         candidate.row = row;
         candidate.record = candidateRecords[index];
         candidate.feedpoints = std::move(result.feedpoints);
+        candidate.radiation = std::move(result.radiation);
         candidate.evaluation = evaluation;
         candidate.refinementRound = metadata.value(QStringLiteral("refinementRound")).toInt();
         candidate.trialRole = metadata.value(QStringLiteral("trialRole")).toString();
@@ -1225,26 +1773,36 @@ void OptimizationWorkspace::updateBounds()
 void OptimizationWorkspace::updateObjectiveControls()
 {
     const auto objective = selectedObjective();
-    const auto singleFrequency = objective.kind
-        == analysis::OptimizationObjectiveKind::SwrAtFrequency;
-    targetFrequencyControl_->setEnabled(
-        !isRunning() && !historicalSession_ && singleFrequency);
-    objectiveControl_->setToolTip(objectiveControl_->currentData(Qt::ToolTipRole).toString());
-    frequencyModeControl_->setToolTip(singleFrequency
-        ? tr("The selected-frequency objective runs only the objective frequency.")
-        : tr("Choose which frequencies are calculated for every candidate."));
+    const auto directional = objective.forwardGainWeight > 0.0
+        || objective.frontToBackWeight > 0.0
+        || objective.frontToRearWeight > 0.0;
+    directionalFrequencyNote_->setText(tr(
+        "Each criterion independently applies its Goal to the selected Minimum, Average, "
+        "or Maximum across the frequency plan. Weight zero disables that row."));
+    frequencyModeControl_->setToolTip(tr("Choose which frequencies are calculated for every candidate."));
+    const auto editable = !isRunning() && !historicalSession_;
+    for (auto row = 0; row < 6; ++row) {
+        const auto goal = selectedGoal(objectiveGoalControls_[row]);
+        objectiveGoalControls_[row]->setToolTip(
+            objectiveGoalControls_[row]->currentData(Qt::ToolTipRole).toString());
+        objectiveAggregationControls_[row]->setToolTip(
+            objectiveAggregationControls_[row]
+                ->currentData(Qt::ToolTipRole).toString());
+        objectiveValueControls_[row]->setEnabled(editable
+            && (goal == analysis::OptimizationGoal::Target
+                || goal == analysis::OptimizationGoal::GoodEnough));
+    }
     resultsTable_->horizontalHeaderItem(ScoreColumn)->setText(tr("Objective Score"));
+    forwardThetaControl_->setEnabled(directional && !isRunning() && !historicalSession_);
+    forwardPhiControl_->setEnabled(directional && !isRunning() && !historicalSession_);
+    radiationComponentControl_->setEnabled(directional && !isRunning() && !historicalSession_);
     updateFrequencyControls();
 }
 
 void OptimizationWorkspace::updateFrequencyControls()
 {
-    const auto singleFrequency = selectedObjective().kind
-        == analysis::OptimizationObjectiveKind::SwrAtFrequency;
-    const auto explicitMode = !singleFrequency
-        && selectedFrequencyMode() == FrequencyMode::Explicit;
-    const auto continuousMode = !singleFrequency
-        && selectedFrequencyMode() == FrequencyMode::Continuous;
+    const auto explicitMode = selectedFrequencyMode() == FrequencyMode::Explicit;
+    const auto continuousMode = selectedFrequencyMode() == FrequencyMode::Continuous;
     explicitFrequencyPanel_->setVisible(explicitMode);
     continuousFrequencyPanel_->setVisible(continuousMode);
     updateWorkload();
@@ -1255,6 +1813,7 @@ void OptimizationWorkspace::updateSearchMethodControls()
 {
     const auto method = selectedSearchMethod();
     const auto multivariable = isMultivariable(method);
+    const auto differentialEvolution = method == SearchMethod::DifferentialEvolution;
     resultsTable_->horizontalHeaderItem(ValueColumn)->setText(
         multivariable ? tr("Parameters") : tr("Value"));
     variablesTable_->setVisible(multivariable);
@@ -1265,19 +1824,23 @@ void OptimizationWorkspace::updateSearchMethodControls()
     maximumLabel_->setVisible(!multivariable);
     maximumControl_->setVisible(!multivariable);
     searchBudgetLabel_->setText(multivariable ? tr("Maximum evaluations") : tr("Candidate count"));
+    searchBudgetLabel_->setVisible(!differentialEvolution);
     pointsControl_->setVisible(!multivariable);
-    adaptiveMaximumEvaluationsControl_->setVisible(multivariable);
+    adaptiveMaximumEvaluationsControl_->setVisible(multivariable && !differentialEvolution);
     adaptiveParameterToleranceLabel_->setVisible(false);
     adaptiveParameterToleranceControl_->setVisible(false);
-    adaptiveScoreToleranceLabel_->setVisible(multivariable);
-    adaptiveScoreToleranceControl_->setVisible(multivariable);
+    adaptiveScoreToleranceLabel_->setVisible(multivariable && !differentialEvolution);
+    adaptiveScoreToleranceControl_->setVisible(multivariable && !differentialEvolution);
+    differentialEvolutionSettings_->setVisible(differentialEvolution);
     pointsControl_->setEnabled(!multivariable && !isRunning() && !historicalSession_);
-    adaptiveMaximumEvaluationsControl_->setEnabled(multivariable && !isRunning()
+    adaptiveMaximumEvaluationsControl_->setEnabled(multivariable && !differentialEvolution && !isRunning()
         && !historicalSession_);
     adaptiveParameterToleranceControl_->setEnabled(multivariable && !isRunning()
         && !historicalSession_);
-    adaptiveScoreToleranceControl_->setEnabled(multivariable && !isRunning()
+    adaptiveScoreToleranceControl_->setEnabled(multivariable && !differentialEvolution && !isRunning()
         && !historicalSession_);
+    differentialEvolutionSettings_->setEnabled(
+        differentialEvolution && !isRunning() && !historicalSession_);
     if (!historicalSession_)
         runButton_->setText(method == SearchMethod::ParameterSweep
             ? tr("Run Parameter Sweep") : tr("Run %1").arg(searchMethodName(method)));
@@ -1290,14 +1853,10 @@ void OptimizationWorkspace::updateSetupSummaries()
     const auto setup = currentStudySetup();
     const auto& frequencies = setup.frequenciesMHz;
     QString frequencySource;
-    if (setup.objective.kind == analysis::OptimizationObjectiveKind::SwrAtFrequency) {
-        frequencySource = tr("Selected objective frequency");
-    } else {
-        switch (setup.frequencySelection.mode) {
-        case FrequencyMode::ModelSweep: frequencySource = tr("Model FR sweep"); break;
-        case FrequencyMode::Explicit: frequencySource = tr("Selected frequencies"); break;
-        case FrequencyMode::Continuous: frequencySource = tr("Custom continuous sweep"); break;
-        }
+    switch (setup.frequencySelection.mode) {
+    case FrequencyMode::ModelSweep: frequencySource = tr("Model FR sweep"); break;
+    case FrequencyMode::Explicit: frequencySource = tr("Selected frequencies"); break;
+    case FrequencyMode::Continuous: frequencySource = tr("Custom continuous sweep"); break;
     }
     const auto frequencyDetail = frequencies.empty()
         ? tr("No valid frequencies")
@@ -1310,20 +1869,40 @@ void OptimizationWorkspace::updateSetupSummaries()
     frequencySummaryLabel_->setText(frequencySource + QLatin1Char('\n') + frequencyDetail);
 
     QStringList criteria;
-    if (setup.objective.swrWeight > 0.0)
-        criteria.append(tr("SWR %1").arg(formatDecimal(setup.objective.swrWeight)));
-    if (setup.objective.resistanceWeight > 0.0)
-        criteria.append(tr("R %1 → %2 Ω")
-            .arg(formatDecimal(setup.objective.resistanceWeight))
-            .arg(formatDecimal(setup.objective.resistanceTargetOhms)));
-    if (setup.objective.reactanceWeight > 0.0)
-        criteria.append(tr("X %1 → %2 Ω")
-            .arg(formatDecimal(setup.objective.reactanceWeight))
-            .arg(formatDecimal(setup.objective.reactanceTargetOhms)));
-    objectiveSummaryLabel_->setText(tr("%1 · Reference Z %2 Ω\n%3")
-        .arg(objectiveControl_->currentText())
+    const std::array weights{setup.objective.swrWeight, setup.objective.resistanceWeight,
+        setup.objective.reactanceWeight, setup.objective.forwardGainWeight,
+        setup.objective.frontToBackWeight, setup.objective.frontToRearWeight};
+    const std::array names{tr("SWR"), tr("resistance"), tr("reactance"),
+        tr("forward gain"), tr("F/B"), tr("F/R")};
+    const std::array units{QString{}, tr(" Ω"), tr(" Ω"), tr(" dBi"), tr(" dB"), tr(" dB")};
+    const std::array goals{setup.objective.swrGoal, setup.objective.resistanceGoal,
+        setup.objective.reactanceGoal, setup.objective.forwardGainGoal,
+        setup.objective.frontToBackGoal, setup.objective.frontToRearGoal};
+    const std::array directions{setup.objective.swrGoodEnoughDirection,
+        setup.objective.resistanceGoodEnoughDirection,
+        setup.objective.reactanceGoodEnoughDirection,
+        setup.objective.forwardGainGoodEnoughDirection,
+        setup.objective.frontToBackGoodEnoughDirection,
+        setup.objective.frontToRearGoodEnoughDirection};
+    const std::array aggregations{setup.objective.swrAggregation,
+        setup.objective.resistanceAggregation, setup.objective.reactanceAggregation,
+        setup.objective.forwardGainAggregation, setup.objective.frontToBackAggregation,
+        setup.objective.frontToRearAggregation};
+    const std::array targets{setup.objective.swrTarget,
+        setup.objective.resistanceTargetOhms, setup.objective.reactanceTargetOhms,
+        setup.objective.forwardGainTarget, setup.objective.frontToBackTarget,
+        setup.objective.frontToRearTarget};
+    for (auto row = 0; row < 6; ++row) {
+        if (weights[row] <= 0.0) continue;
+        criteria.append(objectiveSentence(names[row], units[row], goals[row],
+            directions[row], aggregations[row], targets[row], weights[row]));
+    }
+    objectiveSummaryLabel_->setText(tr("Reference Z %1 Ω\n%2")
         .arg(formatDecimal(setup.objective.referenceImpedance))
-        .arg(criteria.isEmpty() ? tr("No enabled criteria") : criteria.join(tr(" · "))));
+        .arg(criteria.isEmpty() ? tr("No enabled criteria") : criteria.join(QLatin1Char('\n'))));
+    objectiveExplanationLabel_->setText(criteria.isEmpty()
+        ? tr("No criteria are enabled. Set at least one weight above zero.")
+        : criteria.join(QLatin1Char('\n')));
 }
 
 void OptimizationWorkspace::updateWorkload()
@@ -1332,7 +1911,7 @@ void OptimizationWorkspace::updateWorkload()
     const auto frequencyCount = setup.frequenciesMHz.size();
     const auto multivariable = isMultivariable(setup.searchMethod);
     const auto candidateCount = setup.candidateLimit;
-    workloadLabel_->setText(multivariable
+    auto workload = multivariable
         ? tr("Up to %1 candidates × %2 %3 = up to %4 calculated points")
             .arg(candidateCount).arg(frequencyCount)
             .arg(frequencyCount == 1 ? tr("frequency") : tr("frequencies"))
@@ -1340,7 +1919,18 @@ void OptimizationWorkspace::updateWorkload()
         : tr("%1 candidates × %2 %3 = %4 calculated points")
             .arg(candidateCount).arg(frequencyCount)
             .arg(frequencyCount == 1 ? tr("frequency") : tr("frequencies"))
-            .arg(static_cast<qulonglong>(candidateCount * frequencyCount)));
+            .arg(static_cast<qulonglong>(candidateCount * frequencyCount));
+    const auto directionalSamplesPerFrequency = setup.objective.frontToRearWeight > 0.0
+        ? 38U
+        : (setup.objective.forwardGainWeight > 0.0
+            || setup.objective.frontToBackWeight > 0.0 ? 1U : 0U)
+            + (setup.objective.frontToBackWeight > 0.0 ? 1U : 0U);
+    if (directionalSamplesPerFrequency > 0) {
+        workload += tr(" · %1 directional RP samples")
+            .arg(static_cast<qulonglong>(candidateCount * frequencyCount
+                * static_cast<std::size_t>(directionalSamplesPerFrequency)));
+    }
+    workloadLabel_->setText(workload);
     QStringList variableNames;
     for (const auto& variable : setup.variables) variableNames.append(variable.name);
     const auto variableSummary = isMultivariable(setup.searchMethod)
@@ -1353,7 +1943,7 @@ void OptimizationWorkspace::updateWorkload()
         .arg(variableSummary)
         .arg(rangeSummary)
         .arg(frequencyCount)
-        .arg(objectiveControl_->currentText()));
+        .arg(tr("Per-criterion")));
     updateSetupSummaries();
 }
 
@@ -1568,25 +2158,65 @@ void OptimizationWorkspace::restoreObjectiveSetup(
     resistanceTargetControl_->setValue(objective.resistanceTargetOhms);
     reactanceWeightControl_->setValue(objective.reactanceWeight);
     reactanceTargetControl_->setValue(objective.reactanceTargetOhms);
+    forwardGainWeightControl_->setValue(objective.forwardGainWeight);
+    frontToBackWeightControl_->setValue(objective.frontToBackWeight);
+    frontToRearWeightControl_->setValue(objective.frontToRearWeight);
+    const std::array goals{objective.swrGoal, objective.resistanceGoal,
+        objective.reactanceGoal, objective.forwardGainGoal,
+        objective.frontToBackGoal, objective.frontToRearGoal};
+    const std::array directions{objective.swrGoodEnoughDirection,
+        objective.resistanceGoodEnoughDirection, objective.reactanceGoodEnoughDirection,
+        objective.forwardGainGoodEnoughDirection, objective.frontToBackGoodEnoughDirection,
+        objective.frontToRearGoodEnoughDirection};
+    const std::array values{objective.swrTarget, objective.resistanceTargetOhms,
+        objective.reactanceTargetOhms, objective.forwardGainTarget,
+        objective.frontToBackTarget, objective.frontToRearTarget};
+    const std::array aggregations{objective.swrAggregation, objective.resistanceAggregation,
+        objective.reactanceAggregation, objective.forwardGainAggregation,
+        objective.frontToBackAggregation, objective.frontToRearAggregation};
+    for (auto row = 0; row < 6; ++row) {
+        objectiveGoalControls_[row]->setCurrentIndex(goalIndex(goals[row], directions[row]));
+        objectiveValueControls_[row]->setValue(values[row]);
+        configureAggregationControl(objectiveAggregationControls_[row], goals[row],
+            aggregations[row]);
+    }
+    forwardThetaControl_->setValue(objective.forwardThetaDegrees);
+    forwardPhiControl_->setValue(objective.forwardPhiDegrees);
+    const auto componentIndex = radiationComponentControl_->findData(
+        static_cast<int>(objective.radiationComponent));
+    if (componentIndex >= 0) radiationComponentControl_->setCurrentIndex(componentIndex);
 }
 
 void OptimizationWorkspace::showCandidateDetails(int row)
 {
     detailCandidateRow_ = row;
     updateCandidateDetails(row);
-    candidateDetailsWindow_->show();
+    restoreCandidateDetailsWindow();
+}
+
+void OptimizationWorkspace::restoreCandidateDetailsWindow()
+{
+    if (candidateDetailsWindow_ == nullptr || detailCandidateRow_ < 0) return;
+    if (candidateDetailsWindow_->isMinimized()) candidateDetailsWindow_->showNormal();
+    else candidateDetailsWindow_->show();
     candidateDetailsWindow_->raise();
     candidateDetailsWindow_->activateWindow();
 }
 
 void OptimizationWorkspace::updateCandidateDetails(int row)
 {
+    constexpr auto directionalTab = 2;
     candidateDetailsTable_->setRowCount(0);
-    if (row < 0 || static_cast<std::size_t>(row) >= candidates_.size()
-        || candidates_[static_cast<std::size_t>(row)].feedpoints.empty()) {
+    if (row < 0 || static_cast<std::size_t>(row) >= candidates_.size()) {
         candidateDetailLabel_->setText(
-            tr("Frequency details are unavailable because this candidate did not complete with impedance results."));
+            tr("Candidate details are unavailable."));
         candidateDetailPlots_->setResults({}, tr("this candidate"));
+        candidateDirectionalPlots_->setResults({});
+        candidateDetailViews_->setTabEnabled(directionalTab, false);
+        candidateDetailViews_->setTabToolTip(directionalTab, tr(
+            "Double-click a completed candidate that evaluated Gain, F/B, or F/R."));
+        if (candidateDetailViews_->currentIndex() == directionalTab)
+            candidateDetailViews_->setCurrentIndex(0);
         updateCandidateActionState();
         return;
     }
@@ -1594,18 +2224,39 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
     const auto& candidate = candidates_[static_cast<std::size_t>(row)];
     auto feedpoints = candidate.feedpoints;
     std::ranges::sort(feedpoints, {}, &analysis::FeedpointResult::frequencyMHz);
-    const auto evaluation = analysis::evaluateOptimizationObjective(feedpoints, activeObjective_);
-    candidateDetailsTable_->setRowCount(static_cast<int>(feedpoints.size()));
-    for (std::size_t index = 0; index < feedpoints.size(); ++index) {
-        const auto& feedpoint = feedpoints[index];
+    analysis::AnalysisResult candidateAnalysis;
+    candidateAnalysis.feedpoints = feedpoints;
+    candidateAnalysis.radiation = candidate.radiation;
+    const auto evaluation = analysis::evaluateOptimizationObjective(
+        candidateAnalysis, activeObjective_);
+    const auto detailRows = evaluation ? evaluation->frequencyMetrics.size() : feedpoints.size();
+    candidateDetailsTable_->setRowCount(static_cast<int>(detailRows));
+    for (std::size_t index = 0; index < detailRows; ++index) {
         const auto detailRow = static_cast<int>(index);
-        candidateDetailsTable_->setItem(detailRow, 0, numericItem(feedpoint.frequencyMHz));
-        candidateDetailsTable_->setItem(detailRow, 1, numericItem(
-            analysis::standingWaveRatio(feedpoint.impedance, activeObjective_.referenceImpedance)));
-        candidateDetailsTable_->setItem(detailRow, 2, numericItem(feedpoint.impedance.real()));
-        candidateDetailsTable_->setItem(detailRow, 3, numericItem(feedpoint.impedance.imag()));
-        if (evaluation && evaluation->feedpoint
-            && std::abs(evaluation->feedpoint->frequencyMHz - feedpoint.frequencyMHz) < 1.0e-9) {
+        analysis::OptimizationFrequencyMetrics metrics;
+        if (evaluation) {
+            metrics = evaluation->frequencyMetrics[index];
+        } else {
+            metrics.frequencyMHz = feedpoints[index].frequencyMHz;
+            metrics.swr = analysis::standingWaveRatio(feedpoints[index].impedance,
+                activeObjective_.referenceImpedance);
+            metrics.resistanceOhms = feedpoints[index].impedance.real();
+            metrics.reactanceOhms = feedpoints[index].impedance.imag();
+        }
+        candidateDetailsTable_->setItem(detailRow, 0, numericItem(metrics.frequencyMHz));
+        candidateDetailsTable_->setItem(detailRow, 1, optionalNumericItem(metrics.swr));
+        candidateDetailsTable_->setItem(detailRow, 2,
+            optionalNumericItem(metrics.resistanceOhms));
+        candidateDetailsTable_->setItem(detailRow, 3,
+            optionalNumericItem(metrics.reactanceOhms));
+        candidateDetailsTable_->setItem(detailRow, 4,
+            optionalNumericItem(metrics.forwardGainDb));
+        candidateDetailsTable_->setItem(detailRow, 5,
+            optionalNumericItem(metrics.frontToBackDb));
+        candidateDetailsTable_->setItem(detailRow, 6,
+            optionalNumericItem(metrics.frontToRearDb));
+        if (evaluation && evaluation->evaluatedFrequencyCount == 1
+            && std::abs(evaluation->evaluationFrequencyMHz - metrics.frequencyMHz) < 1.0e-9) {
             for (auto column = 0; column < candidateDetailsTable_->columnCount(); ++column) {
                 auto* item = candidateDetailsTable_->item(detailRow, column);
                 auto font = item->font();
@@ -1614,29 +2265,138 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
             }
         }
     }
+    QStringList breakdown;
+    if (evaluation) {
+        breakdown.append(evaluation->evaluatedFrequencyCount == 1
+            ? tr("Score %1 at %2 MHz")
+                .arg(formatDecimal(evaluation->score))
+                .arg(formatDecimal(evaluation->evaluationFrequencyMHz))
+            : tr("Score %1 across %2 frequencies")
+                .arg(formatDecimal(evaluation->score))
+                .arg(evaluation->evaluatedFrequencyCount));
+        const auto addCriterion = [this, &breakdown](const QString& name,
+                                      double weight, analysis::OptimizationGoal goal,
+                                      analysis::GoodEnoughDirection direction,
+                                      analysis::OptimizationAggregation aggregation,
+                                      double target, double metric, double component,
+                                      const QString& unit) {
+            if (weight <= 0.0) return;
+            auto description = tr("%1 · %2 · %3 · value %4%5 · component %6")
+                .arg(name, goalName(goal, direction), aggregationName(aggregation, goal),
+                    formatDecimal(metric), unit, formatDecimal(component));
+            if (goal == analysis::OptimizationGoal::Target
+                || goal == analysis::OptimizationGoal::GoodEnough) {
+                description += tr(" · setting %1%2").arg(formatDecimal(target), unit);
+            }
+            breakdown.append(description);
+        };
+        addCriterion(tr("SWR"), activeObjective_.swrWeight,
+            activeObjective_.swrGoal, activeObjective_.swrGoodEnoughDirection,
+            activeObjective_.swrAggregation, activeObjective_.swrTarget,
+            evaluation->swr, evaluation->swrComponent, {});
+        if (evaluation->feedpoint) {
+            addCriterion(tr("Resistance"), activeObjective_.resistanceWeight,
+                activeObjective_.resistanceGoal,
+                activeObjective_.resistanceGoodEnoughDirection,
+                activeObjective_.resistanceAggregation,
+                activeObjective_.resistanceTargetOhms,
+                evaluation->feedpoint->impedance.real(),
+                evaluation->resistanceComponent, tr(" Ω"));
+            addCriterion(tr("Reactance"), activeObjective_.reactanceWeight,
+                activeObjective_.reactanceGoal,
+                activeObjective_.reactanceGoodEnoughDirection,
+                activeObjective_.reactanceAggregation,
+                activeObjective_.reactanceTargetOhms,
+                evaluation->feedpoint->impedance.imag(),
+                evaluation->reactanceComponent, tr(" Ω"));
+        }
+        if (evaluation->forwardGainDb) {
+            addCriterion(tr("Forward gain"), activeObjective_.forwardGainWeight,
+                activeObjective_.forwardGainGoal,
+                activeObjective_.forwardGainGoodEnoughDirection,
+                activeObjective_.forwardGainAggregation,
+                activeObjective_.forwardGainTarget, *evaluation->forwardGainDb,
+                evaluation->forwardGainComponent, tr(" dBi"));
+        }
+        if (evaluation->frontToBackDb) {
+            addCriterion(tr("F/B"), activeObjective_.frontToBackWeight,
+                activeObjective_.frontToBackGoal,
+                activeObjective_.frontToBackGoodEnoughDirection,
+                activeObjective_.frontToBackAggregation,
+                activeObjective_.frontToBackTarget, *evaluation->frontToBackDb,
+                evaluation->frontToBackComponent, tr(" dB"));
+        }
+        if (evaluation->frontToRearDb) {
+            addCriterion(tr("F/R"), activeObjective_.frontToRearWeight,
+                activeObjective_.frontToRearGoal,
+                activeObjective_.frontToRearGoodEnoughDirection,
+                activeObjective_.frontToRearAggregation,
+                activeObjective_.frontToRearTarget, *evaluation->frontToRearDb,
+                evaluation->frontToRearComponent, tr(" dB"));
+        }
+        const auto addSummary = [this, &breakdown](const QString& name, const QString& unit,
+                                    const std::optional<analysis::OptimizationMetricSummary>& summary) {
+            if (!summary) return;
+            breakdown.append(tr(
+                "%1 min %2 %3 at %4 MHz / avg %5 %3 / max %6 %3 at %7 MHz")
+                .arg(name, formatDecimal(summary->minimum), unit,
+                    formatDecimal(summary->minimumFrequencyMHz),
+                    formatDecimal(summary->average), formatDecimal(summary->maximum),
+                    formatDecimal(summary->maximumFrequencyMHz)));
+        };
+        addSummary(tr("SWR"), {}, evaluation->swrSummary);
+        addSummary(tr("Gain"), tr("dBi"), evaluation->forwardGainSummary);
+        addSummary(tr("F/B"), tr("dB"), evaluation->frontToBackSummary);
+        addSummary(tr("F/R"), tr("dB"), evaluation->frontToRearSummary);
+    }
     candidateDetailLabel_->setText(tr(
-        "Optimization Candidate — %1 · %2 frequencies · objective point bold\n"
+        "Optimization Candidate — %1 · %2 frequencies · %3\n%4\n"
         "This is candidate data and does not represent the active model's official results.")
         .arg(candidateDescription(candidate))
-        .arg(feedpoints.size()));
-    analysis::AnalysisResult detailResult;
-    detailResult.feedpoints = feedpoints;
+        .arg(feedpoints.size())
+        .arg(evaluation && evaluation->evaluatedFrequencyCount == 1
+                ? tr("evaluated frequency bold") : tr("per-criterion frequency reductions"))
+        .arg(breakdown.isEmpty() ? tr("Objective breakdown unavailable")
+                                 : breakdown.join(tr(" · "))));
+    analysis::AnalysisResult detailResult = std::move(candidateAnalysis);
     detailResult.referenceImpedanceOhms = activeObjective_.referenceImpedance;
     candidateDetailPlots_->setResults(detailResult,
         tr("candidate %1").arg(candidateDescription(candidate)));
-    if (evaluation && evaluation->feedpoint)
+    candidateDirectionalPlots_->setResults(evaluation.value_or(
+        analysis::OptimizationObjectiveResult{}));
+    const auto hasDirectionalMetrics = evaluation
+        && std::ranges::any_of(evaluation->frequencyMetrics, [](const auto& metrics) {
+            return metrics.forwardGainDb || metrics.frontToBackDb || metrics.frontToRearDb;
+        });
+    candidateDetailViews_->setTabEnabled(directionalTab, hasDirectionalMetrics);
+    candidateDetailViews_->setTabToolTip(directionalTab, hasDirectionalMetrics
+        ? tr("Forward Gain, F/B, and F/R across this candidate's evaluated frequencies.")
+        : tr("Unavailable because this candidate did not evaluate a Gain, F/B, or F/R objective."));
+    if (!hasDirectionalMetrics && candidateDetailViews_->currentIndex() == directionalTab)
+        candidateDetailViews_->setCurrentIndex(0);
+    if (evaluation && evaluation->evaluatedFrequencyCount == 1) {
         candidateDetailPlots_->setSelectedFrequency(
-            evaluation->feedpoint->frequencyMHz);
+            evaluation->evaluationFrequencyMHz);
+        candidateDirectionalPlots_->setSelectedFrequency(
+            evaluation->evaluationFrequencyMHz);
+    }
     updateCandidateActionState();
 }
 
 void OptimizationWorkspace::resetCandidateDetails()
 {
+    constexpr auto directionalTab = 2;
     detailCandidateRow_ = -1;
     candidateDetailsTable_->setRowCount(0);
     candidateDetailLabel_->setText(
         tr("Double-click a completed candidate to view its frequency table and plots."));
     candidateDetailPlots_->setResults({}, tr("a selected candidate"));
+    candidateDirectionalPlots_->setResults({});
+    candidateDetailViews_->setTabEnabled(directionalTab, false);
+    candidateDetailViews_->setTabToolTip(directionalTab, tr(
+        "Double-click a completed candidate that evaluated Gain, F/B, or F/R."));
+    if (candidateDetailViews_->currentIndex() == directionalTab)
+        candidateDetailViews_->setCurrentIndex(0);
     updateCandidateActionState();
 }
 
@@ -1690,15 +2450,32 @@ void OptimizationWorkspace::applyCandidate(int row, bool runAfterApply)
 void OptimizationWorkspace::updateCandidateRowToolTip(int row)
 {
     if (row < 0 || static_cast<std::size_t>(row) >= candidates_.size()) return;
-    const auto hasDetails = !candidates_[static_cast<std::size_t>(row)].feedpoints.empty();
+    const auto& candidate = candidates_[static_cast<std::size_t>(row)];
+    const auto hasDetails = !candidate.feedpoints.empty();
     const auto* statusItem = resultsTable_->item(row, StatusColumn);
     const auto inProgress = statusItem != nullptr
         && (statusItem->text() == tr("Pending") || statusItem->text() == tr("Running"));
-    const auto toolTip = hasDetails
+    auto toolTip = hasDetails
         ? tr("Double-click to view the frequency table, SWR, and impedance plots for this candidate.")
         : inProgress
             ? tr("Frequency details will be available after this candidate completes.")
             : tr("Frequency details are unavailable because this candidate did not complete with impedance results.");
+    if (candidate.evaluation) {
+        toolTip += candidate.evaluation->evaluatedFrequencyCount == 1
+            ? tr("\nObjective evaluated at %1 MHz.")
+                .arg(formatDecimal(candidate.evaluation->evaluationFrequencyMHz))
+            : tr("\nEach enabled criterion uses its configured frequency reduction across %1 frequencies.")
+                .arg(candidate.evaluation->evaluatedFrequencyCount);
+        if (candidate.evaluation->forwardGainDb)
+            toolTip += tr(" Reduced forward gain: %1 dBi.")
+                .arg(formatDecimal(*candidate.evaluation->forwardGainDb));
+        if (candidate.evaluation->frontToBackDb)
+            toolTip += tr(" Reduced F/B: %1 dB.")
+                .arg(formatDecimal(*candidate.evaluation->frontToBackDb));
+        if (candidate.evaluation->frontToRearDb)
+            toolTip += tr(" Reduced F/R: %1 dB.")
+                .arg(formatDecimal(*candidate.evaluation->frontToRearDb));
+    }
     for (auto column = 0; column < resultsTable_->columnCount(); ++column) {
         if (auto* item = resultsTable_->item(row, column)) item->setToolTip(toolTip);
     }
@@ -1725,15 +2502,21 @@ void OptimizationWorkspace::updateReadiness()
     const auto executable = QFileInfo(executable_);
     const auto hasFrequencies = !setup.frequenciesMHz.empty();
     const auto hasObjective = setup.objective.swrWeight + setup.objective.resistanceWeight
-        + setup.objective.reactanceWeight > 0.0;
+        + setup.objective.reactanceWeight + setup.objective.forwardGainWeight
+        + setup.objective.frontToBackWeight + setup.objective.frontToRearWeight > 0.0;
+    const auto directional = setup.objective.forwardGainWeight > 0.0
+        || setup.objective.frontToBackWeight > 0.0
+        || setup.objective.frontToRearWeight > 0.0;
     const auto hasVariables = !setup.variables.empty()
         && std::ranges::all_of(setup.variables, [](const auto& variable) {
             return std::isfinite(variable.minimum) && std::isfinite(variable.maximum)
                 && std::isfinite(variable.tolerance) && variable.minimum < variable.maximum
                 && variable.tolerance > 0.0;
         });
-    const auto hasSearchBudget = !isMultivariable(setup.searchMethod)
-        || setup.candidateLimit >= static_cast<int>(setup.variables.size()) + 1;
+    const auto hasSearchBudget = setup.searchMethod == SearchMethod::DifferentialEvolution
+        ? setup.populationSize >= 4 && setup.maximumGenerations >= 1
+        : !isMultivariable(setup.searchMethod)
+            || setup.candidateLimit >= static_cast<int>(setup.variables.size()) + 1;
     const auto ready = !historicalSession_ && modelValid_ && hasVariables
         && !externalRunActive_
         && hasFrequencies && hasObjective && hasSearchBudget
@@ -1743,8 +2526,11 @@ void OptimizationWorkspace::updateReadiness()
     runButton_->setToolTip(!hasVariables
         ? tr("Select at least one parameter and enter valid bounds and tolerance.")
         : !hasSearchBudget
-            ? tr("Increase Maximum evaluations to at least the selected parameter count plus one.")
-        : hasObjective ? QString{} : tr("Set at least one objective weight above zero."));
+            ? setup.searchMethod == SearchMethod::DifferentialEvolution
+                ? tr("Use a population of at least four and at least one generation.")
+                : tr("Increase Maximum evaluations to at least the selected parameter count plus one.")
+        : !hasObjective ? tr("Set at least one objective weight above zero.")
+        : QString{});
     cancelButton_->setEnabled(isRunning());
     applyBestButton_->setEnabled(!historicalSession_ && modelValid_ && !isRunning()
         && bestRow_ >= 0 && static_cast<std::size_t>(bestRow_) < candidates_.size()
@@ -1755,25 +2541,37 @@ void OptimizationWorkspace::updateReadiness()
     editObjectiveButton_->setEnabled(editable);
     variablesTable_->setEnabled(editable);
     variableControl_->setEnabled(editable);
-    objectiveControl_->setEnabled(editable);
-    const auto singleFrequency = selectedObjective().kind
-        == analysis::OptimizationObjectiveKind::SwrAtFrequency;
-    frequencyModeControl_->setEnabled(editable && !singleFrequency);
+    frequencyModeControl_->setEnabled(editable);
     minimumControl_->setEnabled(editable);
     maximumControl_->setEnabled(editable);
     const auto multivariable = isMultivariable(selectedSearchMethod());
     searchMethodTabs_->setEnabled(editable);
     pointsControl_->setEnabled(editable && !multivariable);
-    adaptiveMaximumEvaluationsControl_->setEnabled(editable && multivariable);
+    const auto differentialEvolution = selectedSearchMethod()
+        == SearchMethod::DifferentialEvolution;
+    adaptiveMaximumEvaluationsControl_->setEnabled(
+        editable && multivariable && !differentialEvolution);
     adaptiveParameterToleranceControl_->setEnabled(editable && multivariable);
-    adaptiveScoreToleranceControl_->setEnabled(editable && multivariable);
+    adaptiveScoreToleranceControl_->setEnabled(
+        editable && multivariable && !differentialEvolution);
+    differentialEvolutionSettings_->setEnabled(editable && differentialEvolution);
     referenceImpedanceControl_->setEnabled(editable);
-    for (auto* control : {swrWeightControl_, resistanceWeightControl_, resistanceTargetControl_,
-             reactanceWeightControl_, reactanceTargetControl_}) control->setEnabled(editable);
-    targetFrequencyControl_->setEnabled(editable
-        && selectedObjective().kind == analysis::OptimizationObjectiveKind::SwrAtFrequency);
-    const auto explicitMode = !singleFrequency
-        && selectedFrequencyMode() == FrequencyMode::Explicit;
+    for (auto* control : {swrWeightControl_, resistanceWeightControl_,
+             reactanceWeightControl_, forwardGainWeightControl_,
+             frontToBackWeightControl_, frontToRearWeightControl_})
+        control->setEnabled(editable);
+    for (auto row = 0; row < 6; ++row) {
+        objectiveGoalControls_[row]->setEnabled(editable);
+        objectiveAggregationControls_[row]->setEnabled(editable);
+        const auto goal = selectedGoal(objectiveGoalControls_[row]);
+        objectiveValueControls_[row]->setEnabled(editable
+            && (goal == analysis::OptimizationGoal::Target
+                || goal == analysis::OptimizationGoal::GoodEnough));
+    }
+    forwardThetaControl_->setEnabled(editable && directional);
+    forwardPhiControl_->setEnabled(editable && directional);
+    radiationComponentControl_->setEnabled(editable && directional);
+    const auto explicitMode = selectedFrequencyMode() == FrequencyMode::Explicit;
     frequencyTable_->setEnabled(editable && explicitMode);
     frequencyEntryControl_->setEnabled(editable && explicitMode);
     addFrequencyButton_->setEnabled(editable && explicitMode);
@@ -1782,8 +2580,7 @@ void OptimizationWorkspace::updateReadiness()
     clearFrequencyButton_->setEnabled(
         editable && explicitMode && frequencyTable_->count() > 0);
     addAmateurBandButton_->setEnabled(editable && explicitMode);
-    const auto continuousMode = !singleFrequency
-        && selectedFrequencyMode() == FrequencyMode::Continuous;
+    const auto continuousMode = selectedFrequencyMode() == FrequencyMode::Continuous;
     continuousStartControl_->setEnabled(editable && continuousMode);
     continuousStopControl_->setEnabled(editable && continuousMode);
     continuousStepControl_->setEnabled(editable && continuousMode);
@@ -1834,7 +2631,7 @@ void OptimizationWorkspace::startSweep()
         });
     }
     const auto sessionMetadata = QJsonObject{
-        {QStringLiteral("version"), 6},
+        {QStringLiteral("version"), 11},
         {QStringLiteral("variable"), selectedSymbol_},
         {QStringLiteral("minimum"), setup.minimum},
         {QStringLiteral("maximum"), setup.maximum},
@@ -1843,10 +2640,12 @@ void OptimizationWorkspace::startSweep()
         {QStringLiteral("searchMethod"), searchMethodId(activeSearchMethod_)},
         {QStringLiteral("parameterTolerance"), setup.parameterTolerance},
         {QStringLiteral("scoreTolerance"), setup.scoreTolerance},
-        {QStringLiteral("objective"), activeObjective_.kind
-            == analysis::OptimizationObjectiveKind::WorstPointAcrossFrequencies
-                ? QStringLiteral("worst-point-across-frequencies")
-                : QStringLiteral("minimize-swr-at-frequency")},
+        {QStringLiteral("populationSize"), setup.populationSize},
+        {QStringLiteral("maximumGenerations"), setup.maximumGenerations},
+        {QStringLiteral("mutationFactor"), setup.mutationFactor},
+        {QStringLiteral("crossoverRate"), setup.crossoverRate},
+        {QStringLiteral("randomSeed"), setup.randomSeed},
+        {QStringLiteral("objective"), objectiveId(activeObjective_.kind)},
         {QStringLiteral("referenceImpedance"), activeObjective_.referenceImpedance},
         {QStringLiteral("targetFrequencyMHz"), activeObjective_.targetFrequencyMHz},
         {QStringLiteral("swrWeight"), activeObjective_.swrWeight},
@@ -1854,6 +2653,46 @@ void OptimizationWorkspace::startSweep()
         {QStringLiteral("resistanceTargetOhms"), activeObjective_.resistanceTargetOhms},
         {QStringLiteral("reactanceWeight"), activeObjective_.reactanceWeight},
         {QStringLiteral("reactanceTargetOhms"), activeObjective_.reactanceTargetOhms},
+        {QStringLiteral("forwardGainWeight"), activeObjective_.forwardGainWeight},
+        {QStringLiteral("frontToBackWeight"), activeObjective_.frontToBackWeight},
+        {QStringLiteral("frontToRearWeight"), activeObjective_.frontToRearWeight},
+        {QStringLiteral("swrGoal"), static_cast<int>(activeObjective_.swrGoal)},
+        {QStringLiteral("resistanceGoal"), static_cast<int>(activeObjective_.resistanceGoal)},
+        {QStringLiteral("reactanceGoal"), static_cast<int>(activeObjective_.reactanceGoal)},
+        {QStringLiteral("forwardGainGoal"), static_cast<int>(activeObjective_.forwardGainGoal)},
+        {QStringLiteral("frontToBackGoal"), static_cast<int>(activeObjective_.frontToBackGoal)},
+        {QStringLiteral("frontToRearGoal"), static_cast<int>(activeObjective_.frontToRearGoal)},
+        {QStringLiteral("swrTarget"), activeObjective_.swrTarget},
+        {QStringLiteral("forwardGainTarget"), activeObjective_.forwardGainTarget},
+        {QStringLiteral("frontToBackTarget"), activeObjective_.frontToBackTarget},
+        {QStringLiteral("frontToRearTarget"), activeObjective_.frontToRearTarget},
+        {QStringLiteral("swrGoodEnoughDirection"),
+            static_cast<int>(activeObjective_.swrGoodEnoughDirection)},
+        {QStringLiteral("resistanceGoodEnoughDirection"),
+            static_cast<int>(activeObjective_.resistanceGoodEnoughDirection)},
+        {QStringLiteral("reactanceGoodEnoughDirection"),
+            static_cast<int>(activeObjective_.reactanceGoodEnoughDirection)},
+        {QStringLiteral("forwardGainGoodEnoughDirection"),
+            static_cast<int>(activeObjective_.forwardGainGoodEnoughDirection)},
+        {QStringLiteral("frontToBackGoodEnoughDirection"),
+            static_cast<int>(activeObjective_.frontToBackGoodEnoughDirection)},
+        {QStringLiteral("frontToRearGoodEnoughDirection"),
+            static_cast<int>(activeObjective_.frontToRearGoodEnoughDirection)},
+        {QStringLiteral("swrAggregation"), static_cast<int>(activeObjective_.swrAggregation)},
+        {QStringLiteral("resistanceAggregation"),
+            static_cast<int>(activeObjective_.resistanceAggregation)},
+        {QStringLiteral("reactanceAggregation"),
+            static_cast<int>(activeObjective_.reactanceAggregation)},
+        {QStringLiteral("forwardGainAggregation"),
+            static_cast<int>(activeObjective_.forwardGainAggregation)},
+        {QStringLiteral("frontToBackAggregation"),
+            static_cast<int>(activeObjective_.frontToBackAggregation)},
+        {QStringLiteral("frontToRearAggregation"),
+            static_cast<int>(activeObjective_.frontToRearAggregation)},
+        {QStringLiteral("forwardThetaDegrees"), activeObjective_.forwardThetaDegrees},
+        {QStringLiteral("forwardPhiDegrees"), activeObjective_.forwardPhiDegrees},
+        {QStringLiteral("radiationComponent"),
+            static_cast<int>(activeObjective_.radiationComponent)},
         {QStringLiteral("frequencyMode"), activeObjective_.kind
                 == analysis::OptimizationObjectiveKind::SwrAtFrequency
             ? QStringLiteral("objective-frequency")
@@ -1877,6 +2716,7 @@ void OptimizationWorkspace::startSweep()
     const auto maximum = setup.maximum;
     adaptiveVectorSearch_.reset();
     nelderMeadSearch_.reset();
+    differentialEvolutionSearch_.reset();
     if (activeSearchMethod_ == SearchMethod::Adaptive) {
         std::vector<analysis::AdaptiveVectorVariable> variables;
         variables.reserve(activeVariables_.size());
@@ -1904,6 +2744,24 @@ void OptimizationWorkspace::startSweep()
         for (const auto& proposal : nelderMeadSearch_->initialCandidates()) {
             appendCandidate(proposal.values, proposal.iteration,
                 QString::fromLatin1(proposal.role.data(), static_cast<qsizetype>(proposal.role.size())));
+        }
+    } else if (activeSearchMethod_ == SearchMethod::DifferentialEvolution) {
+        std::vector<analysis::DifferentialEvolutionVariable> variables;
+        variables.reserve(activeVariables_.size());
+        for (const auto& variable : activeVariables_) {
+            variables.push_back({variable.resolvedValue, variable.minimum,
+                variable.maximum, variable.tolerance});
+        }
+        differentialEvolutionSearch_.emplace(
+            analysis::DifferentialEvolutionSettings{
+                std::move(variables), setup.populationSize, setup.maximumGenerations,
+                setup.mutationFactor, setup.crossoverRate, setup.scoreTolerance, 3,
+                static_cast<std::uint32_t>(setup.randomSeed)});
+        for (const auto& proposal : differentialEvolutionSearch_->initialCandidates()) {
+            appendCandidate(proposal.values, proposal.generation,
+                proposal.targetIndex == 0 ? tr("initial model")
+                                          : tr("initial population %1")
+                                                .arg(proposal.targetIndex + 1));
         }
     } else {
         for (auto index = 0; index < candidateLimit; ++index) {
@@ -1964,6 +2822,11 @@ void OptimizationWorkspace::appendCandidate(std::vector<double> values,
     auto* valueItem = new QTableWidgetItem(candidateDescription(candidates_.back()));
     valueItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
     resultsTable_->setItem(row, ValueColumn, valueItem);
+    resultsTable_->setItem(row, GainColumn, new QTableWidgetItem(QStringLiteral("—")));
+    resultsTable_->setItem(row, FrontToBackColumn,
+        new QTableWidgetItem(QStringLiteral("—")));
+    resultsTable_->setItem(row, FrontToRearColumn,
+        new QTableWidgetItem(QStringLiteral("—")));
     setCandidateStatus(row, tr("Pending"));
 }
 
@@ -1982,6 +2845,36 @@ auto OptimizationWorkspace::candidateDescription(const Candidate& candidate) con
 
 auto OptimizationWorkspace::prepareNextSearchCandidates() -> bool
 {
+    if (activeSearchMethod_ == SearchMethod::DifferentialEvolution
+        && differentialEvolutionSearch_) {
+        if (const auto proposal = differentialEvolutionSearch_->nextCandidate()) {
+            appendCandidate(proposal->values, proposal->generation,
+                tr("population target %1").arg(proposal->targetIndex + 1));
+            return true;
+        }
+        switch (differentialEvolutionSearch_->stopReason()) {
+        case analysis::DifferentialEvolutionStopReason::MaximumGenerations:
+            searchStopReason_ = tr("the maximum generation limit was reached");
+            break;
+        case analysis::DifferentialEvolutionStopReason::ParameterTolerance:
+            searchStopReason_ = tr(
+                "the population contracted within every parameter tolerance");
+            break;
+        case analysis::DifferentialEvolutionStopReason::ScoreTolerance:
+            searchStopReason_ = tr(
+                "the best score improved by no more than %1 for three consecutive generations")
+                .arg(differentialEvolutionScoreToleranceControl_->value(), 0, 'f',
+                    DisplayDecimalPlaces);
+            break;
+        case analysis::DifferentialEvolutionStopReason::NoSuccessfulCandidate:
+            searchStopReason_ = tr("the initial population produced no successful candidate");
+            break;
+        case analysis::DifferentialEvolutionStopReason::None:
+            searchStopReason_ = tr("search completed");
+            break;
+        }
+        return false;
+    }
     if (activeSearchMethod_ == SearchMethod::NelderMead && nelderMeadSearch_) {
         if (const auto proposal = nelderMeadSearch_->nextCandidate()) {
             appendCandidate(proposal->values, proposal->iteration,
@@ -2030,9 +2923,20 @@ auto OptimizationWorkspace::prepareNextSearchCandidates() -> bool
             "no new coordinate trial could satisfy its parameter tolerance");
         break;
     case analysis::AdaptiveStopReason::ScoreTolerance:
-        searchStopReason_ = tr(
-            "two consecutive refinement rounds improved the best objective score by no more than %1")
-            .arg(adaptiveScoreToleranceControl_->value(), 0, 'f', DisplayDecimalPlaces);
+        if (const auto& improvements = adaptiveVectorSearch_->scoreImprovements();
+            improvements.size() >= 2) {
+            searchStopReason_ = tr(
+                "no meaningful best-score improvement in two consecutive refinement rounds "
+                "(%1 and %2; score tolerance %3)")
+                .arg(improvements[improvements.size() - 2], 0, 'f', DisplayDecimalPlaces)
+                .arg(improvements.back(), 0, 'f', DisplayDecimalPlaces)
+                .arg(adaptiveScoreToleranceControl_->value(), 0, 'f', DisplayDecimalPlaces);
+        } else {
+            searchStopReason_ = tr(
+                "no meaningful best-score improvement in two consecutive refinement rounds "
+                "(score tolerance %1)")
+                .arg(adaptiveScoreToleranceControl_->value(), 0, 'f', DisplayDecimalPlaces);
+        }
         break;
     case analysis::AdaptiveStopReason::NoSuccessfulCandidate:
         searchStopReason_ = tr("no successful candidate was available to refine");
@@ -2048,8 +2952,8 @@ void OptimizationWorkspace::startNextCandidate()
 {
     if (!cancelRequested_ && candidateIndex_ >= candidates_.size()
         && isMultivariable(activeSearchMethod_) && prepareNextSearchCandidates()) {
-        const auto iteration = activeSearchMethod_ == SearchMethod::Adaptive
-            ? adaptiveVectorSearch_->refinementRound() : nelderMeadSearch_->iteration() + 1;
+        const auto iteration = candidates_.empty()
+            ? 0 : candidates_.back().refinementRound;
         progress_->setFormat(tr("%1 iteration %2 · %v of up to %m evaluations")
             .arg(searchMethodName(activeSearchMethod_)).arg(iteration));
     }
@@ -2077,6 +2981,9 @@ void OptimizationWorkspace::startNextCandidate()
             adaptiveVectorSearch_->record(candidate.values, std::nullopt);
         if (activeSearchMethod_ == SearchMethod::NelderMead && nelderMeadSearch_)
             nelderMeadSearch_->record(candidate.values, std::nullopt);
+        if (activeSearchMethod_ == SearchMethod::DifferentialEvolution
+            && differentialEvolutionSearch_)
+            differentialEvolutionSearch_->record(candidate.values, std::nullopt);
         ++candidateIndex_;
         progress_->setValue(static_cast<int>(candidateIndex_));
         QTimer::singleShot(0, this, [this] { startNextCandidate(); });
@@ -2115,24 +3022,37 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
     candidate.record.durationSeconds = result.durationSeconds;
     candidate.record.outputBytes = result.outputBytes;
     candidate.feedpoints = result.analysis.feedpoints;
+    candidate.radiation = result.analysis.radiation;
     candidate.evaluation.reset();
 
-    if (result.status == CandidateEvaluationStatus::Completed && result.objective
-        && result.objective->feedpoint) {
+    if (result.status == CandidateEvaluationStatus::Completed && result.objective) {
         const auto& evaluation = *result.objective;
         candidate.evaluation = evaluation;
         resultsTable_->setItem(candidate.row, ScoreColumn, numericItem(evaluation.score));
-        resultsTable_->setItem(candidate.row, SwrColumn, numericItem(evaluation.swr));
         resultsTable_->setItem(candidate.row, FrequencyColumn,
-            numericItem(evaluation.feedpoint->frequencyMHz));
-        resultsTable_->setItem(candidate.row, ResistanceColumn,
-            numericItem(evaluation.feedpoint->impedance.real()));
-        resultsTable_->setItem(candidate.row, ReactanceColumn,
-            numericItem(evaluation.feedpoint->impedance.imag()));
+            evaluation.evaluatedFrequencyCount == 1
+                ? numericItem(evaluation.evaluationFrequencyMHz)
+                : new QTableWidgetItem(QStringLiteral("—")));
+        if (evaluation.feedpoint) {
+            resultsTable_->setItem(candidate.row, SwrColumn, numericItem(evaluation.swr));
+            resultsTable_->setItem(candidate.row, ResistanceColumn,
+                numericItem(evaluation.feedpoint->impedance.real()));
+            resultsTable_->setItem(candidate.row, ReactanceColumn,
+                numericItem(evaluation.feedpoint->impedance.imag()));
+        }
+        resultsTable_->setItem(candidate.row, GainColumn, evaluation.forwardGainDb
+            ? numericItem(*evaluation.forwardGainDb)
+            : new QTableWidgetItem(QStringLiteral("—")));
+        resultsTable_->setItem(candidate.row, FrontToBackColumn, evaluation.frontToBackDb
+            ? numericItem(*evaluation.frontToBackDb)
+            : new QTableWidgetItem(QStringLiteral("—")));
+        resultsTable_->setItem(candidate.row, FrontToRearColumn, evaluation.frontToRearDb
+            ? numericItem(*evaluation.frontToRearDb)
+            : new QTableWidgetItem(QStringLiteral("—")));
         setCandidateStatus(candidate.row, tr("Completed"));
         candidate.record.status = QStringLiteral("Completed");
         candidate.record.frequencyCount = result.frequencyCount;
-        candidate.record.hasImpedance = true;
+        candidate.record.hasImpedance = !candidate.feedpoints.empty();
         if (evaluation.score < bestScore_) {
             bestScore_ = evaluation.score;
             bestRow_ = candidate.row;
@@ -2154,7 +3074,8 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
             break;
         case CandidateEvaluationStatus::TimedOut: status = tr("Timed out"); break;
         case CandidateEvaluationStatus::Canceled: status = tr("Canceled"); break;
-        case CandidateEvaluationStatus::NoImpedance: status = tr("No impedance results"); break;
+        case CandidateEvaluationStatus::NoImpedance:
+            status = tr("Required objective results unavailable"); break;
         case CandidateEvaluationStatus::Completed: status = tr("Solver failed"); break;
         }
         setCandidateStatus(candidate.row, status);
@@ -2169,6 +3090,11 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
                 ? std::optional<double>{candidate.evaluation->score} : std::nullopt);
     if (activeSearchMethod_ == SearchMethod::NelderMead && nelderMeadSearch_)
         nelderMeadSearch_->record(candidate.values,
+            candidate.evaluation
+                ? std::optional<double>{candidate.evaluation->score} : std::nullopt);
+    if (activeSearchMethod_ == SearchMethod::DifferentialEvolution
+        && differentialEvolutionSearch_)
+        differentialEvolutionSearch_->record(candidate.values,
             candidate.evaluation
                 ? std::optional<double>{candidate.evaluation->score} : std::nullopt);
     runStore_.save(candidate.record);
@@ -2186,6 +3112,11 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
 
 void OptimizationWorkspace::finishSweep()
 {
+    const auto boundaryDescription = bestBoundaryDescription();
+    if (!cancelRequested_ && !boundaryDescription.isEmpty()) {
+        if (!searchStopReason_.isEmpty()) searchStopReason_ += QStringLiteral(". ");
+        searchStopReason_ += boundaryDescription;
+    }
     if (cancelRequested_) {
         for (std::size_t index = candidateIndex_; index < candidates_.size(); ++index)
             setCandidateStatus(candidates_[index].row, tr("Skipped"));
@@ -2199,7 +3130,9 @@ void OptimizationWorkspace::finishSweep()
         statusLabel_->setText(isMultivariable(activeSearchMethod_)
             ? tr("%1 complete: %2.").arg(
                 searchMethodName(activeSearchMethod_), searchStopReason_)
-            : tr("Parameter sweep complete."));
+            : searchStopReason_.isEmpty() ? tr("Parameter sweep complete.")
+                                          : tr("Parameter sweep complete. %1.")
+                                                .arg(searchStopReason_));
         if (isMultivariable(activeSearchMethod_)) {
             const auto evaluations = static_cast<int>(candidates_.size());
             progress_->setRange(0, std::max(1, evaluations));
@@ -2220,16 +3153,21 @@ void OptimizationWorkspace::finishSweep()
             .arg(candidateDescription(candidates_[static_cast<std::size_t>(bestRow_)]))
             .arg(objectiveName(activeObjective_.kind))
             .arg(bestScore_, 0, 'f', 3));
+        resultsTable_->setCurrentCell(bestRow_, ValueColumn);
+        resultsTable_->selectRow(bestRow_);
+        resultsTable_->scrollToItem(resultsTable_->item(bestRow_, ValueColumn),
+            QAbstractItemView::PositionAtCenter);
     } else {
         bestLabel_->setText(tr("No successful candidate produced impedance results."));
     }
     if (sessionRecord_) {
         sessionRecord_->candidateCount = static_cast<int>(candidates_.size());
         sessionRecord_->status = cancelRequested_ ? QStringLiteral("Canceled") : QStringLiteral("Completed");
-        sessionRecord_->summary = isMultivariable(activeSearchMethod_)
-                && !searchStopReason_.isEmpty()
-            ? tr("%1 · Stopped: %2").arg(bestLabel_->text(), searchStopReason_)
-            : bestLabel_->text();
+        sessionRecord_->summary = searchStopReason_.isEmpty()
+            ? bestLabel_->text()
+            : isMultivariable(activeSearchMethod_)
+                ? tr("%1 · Stopped: %2").arg(bestLabel_->text(), searchStopReason_)
+                : tr("%1 · Note: %2").arg(bestLabel_->text(), searchStopReason_);
         saveSessionCompletionMetadata();
         runStore_.save(*sessionRecord_);
         if (runsChangedCallback_) runsChangedCallback_();
@@ -2237,6 +3175,36 @@ void OptimizationWorkspace::finishSweep()
     }
     updateReadiness();
     if (runningChangedCallback_) runningChangedCallback_();
+}
+
+auto OptimizationWorkspace::bestBoundaryDescription() const -> QString
+{
+    if (bestRow_ < 0 || static_cast<std::size_t>(bestRow_) >= candidates_.size()) return {};
+    const auto& values = candidates_[static_cast<std::size_t>(bestRow_)].values;
+    QStringList lowerBounds;
+    QStringList upperBounds;
+    for (auto index = std::size_t{};
+         index < values.size() && index < activeVariables_.size(); ++index) {
+        const auto& variable = activeVariables_[index];
+        const auto scale = std::max({1.0, std::abs(variable.minimum),
+            std::abs(variable.maximum)});
+        const auto epsilon = scale * 1.0e-9;
+        if (std::abs(values[index] - variable.minimum) <= epsilon)
+            lowerBounds.append(variable.name);
+        if (std::abs(values[index] - variable.maximum) <= epsilon)
+            upperBounds.append(variable.name);
+    }
+    QStringList messages;
+    if (!lowerBounds.isEmpty()) {
+        messages.append(tr("Best candidate reached the lower bound for %1")
+            .arg(lowerBounds.join(QStringLiteral(", "))));
+    }
+    if (!upperBounds.isEmpty()) {
+        messages.append(tr("Best candidate reached the upper bound for %1")
+            .arg(upperBounds.join(QStringLiteral(", "))));
+    }
+    if (messages.isEmpty()) return {};
+    return messages.join(tr("; ")) + tr("; consider expanding the search range");
 }
 
 void OptimizationWorkspace::saveSessionCompletionMetadata()
@@ -2270,7 +3238,7 @@ auto OptimizationWorkspace::writeCandidateMetadata(const Candidate& candidate) -
         });
     }
     const auto metadata = QJsonObject{
-        {QStringLiteral("version"), 6},
+        {QStringLiteral("version"), 11},
         {QStringLiteral("variable"), selectedSymbol_},
         {QStringLiteral("value"), candidate.value},
         {QStringLiteral("variables"), variableValues},
@@ -2278,10 +3246,13 @@ auto OptimizationWorkspace::writeCandidateMetadata(const Candidate& candidate) -
         {QStringLiteral("searchMethod"), searchMethodId(activeSearchMethod_)},
         {QStringLiteral("refinementRound"), candidate.refinementRound},
         {QStringLiteral("trialRole"), candidate.trialRole},
-        {QStringLiteral("objective"), activeObjective_.kind
-            == analysis::OptimizationObjectiveKind::WorstPointAcrossFrequencies
-                ? QStringLiteral("worst-point-across-frequencies")
-                : QStringLiteral("minimize-swr-at-frequency")},
+        {QStringLiteral("populationSize"), differentialEvolutionPopulationControl_->value()},
+        {QStringLiteral("maximumGenerations"), differentialEvolutionGenerationControl_->value()},
+        {QStringLiteral("mutationFactor"), differentialEvolutionMutationControl_->value()},
+        {QStringLiteral("crossoverRate"), differentialEvolutionCrossoverControl_->value()},
+        {QStringLiteral("scoreTolerance"), differentialEvolutionScoreToleranceControl_->value()},
+        {QStringLiteral("randomSeed"), differentialEvolutionSeedControl_->value()},
+        {QStringLiteral("objective"), objectiveId(activeObjective_.kind)},
         {QStringLiteral("referenceImpedance"), activeObjective_.referenceImpedance},
         {QStringLiteral("targetFrequencyMHz"), activeObjective_.targetFrequencyMHz},
         {QStringLiteral("swrWeight"), activeObjective_.swrWeight},
@@ -2289,6 +3260,46 @@ auto OptimizationWorkspace::writeCandidateMetadata(const Candidate& candidate) -
         {QStringLiteral("resistanceTargetOhms"), activeObjective_.resistanceTargetOhms},
         {QStringLiteral("reactanceWeight"), activeObjective_.reactanceWeight},
         {QStringLiteral("reactanceTargetOhms"), activeObjective_.reactanceTargetOhms},
+        {QStringLiteral("forwardGainWeight"), activeObjective_.forwardGainWeight},
+        {QStringLiteral("frontToBackWeight"), activeObjective_.frontToBackWeight},
+        {QStringLiteral("frontToRearWeight"), activeObjective_.frontToRearWeight},
+        {QStringLiteral("swrGoal"), static_cast<int>(activeObjective_.swrGoal)},
+        {QStringLiteral("resistanceGoal"), static_cast<int>(activeObjective_.resistanceGoal)},
+        {QStringLiteral("reactanceGoal"), static_cast<int>(activeObjective_.reactanceGoal)},
+        {QStringLiteral("forwardGainGoal"), static_cast<int>(activeObjective_.forwardGainGoal)},
+        {QStringLiteral("frontToBackGoal"), static_cast<int>(activeObjective_.frontToBackGoal)},
+        {QStringLiteral("frontToRearGoal"), static_cast<int>(activeObjective_.frontToRearGoal)},
+        {QStringLiteral("swrTarget"), activeObjective_.swrTarget},
+        {QStringLiteral("forwardGainTarget"), activeObjective_.forwardGainTarget},
+        {QStringLiteral("frontToBackTarget"), activeObjective_.frontToBackTarget},
+        {QStringLiteral("frontToRearTarget"), activeObjective_.frontToRearTarget},
+        {QStringLiteral("swrGoodEnoughDirection"),
+            static_cast<int>(activeObjective_.swrGoodEnoughDirection)},
+        {QStringLiteral("resistanceGoodEnoughDirection"),
+            static_cast<int>(activeObjective_.resistanceGoodEnoughDirection)},
+        {QStringLiteral("reactanceGoodEnoughDirection"),
+            static_cast<int>(activeObjective_.reactanceGoodEnoughDirection)},
+        {QStringLiteral("forwardGainGoodEnoughDirection"),
+            static_cast<int>(activeObjective_.forwardGainGoodEnoughDirection)},
+        {QStringLiteral("frontToBackGoodEnoughDirection"),
+            static_cast<int>(activeObjective_.frontToBackGoodEnoughDirection)},
+        {QStringLiteral("frontToRearGoodEnoughDirection"),
+            static_cast<int>(activeObjective_.frontToRearGoodEnoughDirection)},
+        {QStringLiteral("swrAggregation"), static_cast<int>(activeObjective_.swrAggregation)},
+        {QStringLiteral("resistanceAggregation"),
+            static_cast<int>(activeObjective_.resistanceAggregation)},
+        {QStringLiteral("reactanceAggregation"),
+            static_cast<int>(activeObjective_.reactanceAggregation)},
+        {QStringLiteral("forwardGainAggregation"),
+            static_cast<int>(activeObjective_.forwardGainAggregation)},
+        {QStringLiteral("frontToBackAggregation"),
+            static_cast<int>(activeObjective_.frontToBackAggregation)},
+        {QStringLiteral("frontToRearAggregation"),
+            static_cast<int>(activeObjective_.frontToRearAggregation)},
+        {QStringLiteral("forwardThetaDegrees"), activeObjective_.forwardThetaDegrees},
+        {QStringLiteral("forwardPhiDegrees"), activeObjective_.forwardPhiDegrees},
+        {QStringLiteral("radiationComponent"),
+            static_cast<int>(activeObjective_.radiationComponent)},
         {QStringLiteral("frequencyMode"), activeObjective_.kind
                 == analysis::OptimizationObjectiveKind::SwrAtFrequency
             ? QStringLiteral("objective-frequency")
@@ -2330,8 +3341,7 @@ void OptimizationWorkspace::setCandidateStatus(int row, const QString& status)
 auto OptimizationWorkspace::selectedObjective() const -> analysis::OptimizationObjectiveSpec
 {
     return {
-        .kind = static_cast<analysis::OptimizationObjectiveKind>(
-            objectiveControl_->currentData().toInt()),
+        .kind = analysis::OptimizationObjectiveKind::PerCriterion,
         .referenceImpedance = referenceImpedanceControl_->value(),
         .targetFrequencyMHz = targetFrequencyControl_->value(),
         .swrWeight = swrWeightControl_->value(),
@@ -2339,6 +3349,35 @@ auto OptimizationWorkspace::selectedObjective() const -> analysis::OptimizationO
         .resistanceTargetOhms = resistanceTargetControl_->value(),
         .reactanceWeight = reactanceWeightControl_->value(),
         .reactanceTargetOhms = reactanceTargetControl_->value(),
+        .forwardGainWeight = forwardGainWeightControl_->value(),
+        .frontToBackWeight = frontToBackWeightControl_->value(),
+        .frontToRearWeight = frontToRearWeightControl_->value(),
+        .swrGoal = selectedGoal(objectiveGoalControls_[0]),
+        .resistanceGoal = selectedGoal(objectiveGoalControls_[1]),
+        .reactanceGoal = selectedGoal(objectiveGoalControls_[2]),
+        .forwardGainGoal = selectedGoal(objectiveGoalControls_[3]),
+        .frontToBackGoal = selectedGoal(objectiveGoalControls_[4]),
+        .frontToRearGoal = selectedGoal(objectiveGoalControls_[5]),
+        .swrTarget = objectiveValueControls_[0]->value(),
+        .forwardGainTarget = objectiveValueControls_[3]->value(),
+        .frontToBackTarget = objectiveValueControls_[4]->value(),
+        .frontToRearTarget = objectiveValueControls_[5]->value(),
+        .swrGoodEnoughDirection = selectedGoodEnoughDirection(objectiveGoalControls_[0]),
+        .resistanceGoodEnoughDirection = selectedGoodEnoughDirection(objectiveGoalControls_[1]),
+        .reactanceGoodEnoughDirection = selectedGoodEnoughDirection(objectiveGoalControls_[2]),
+        .forwardGainGoodEnoughDirection = selectedGoodEnoughDirection(objectiveGoalControls_[3]),
+        .frontToBackGoodEnoughDirection = selectedGoodEnoughDirection(objectiveGoalControls_[4]),
+        .frontToRearGoodEnoughDirection = selectedGoodEnoughDirection(objectiveGoalControls_[5]),
+        .swrAggregation = selectedAggregation(objectiveAggregationControls_[0]),
+        .resistanceAggregation = selectedAggregation(objectiveAggregationControls_[1]),
+        .reactanceAggregation = selectedAggregation(objectiveAggregationControls_[2]),
+        .forwardGainAggregation = selectedAggregation(objectiveAggregationControls_[3]),
+        .frontToBackAggregation = selectedAggregation(objectiveAggregationControls_[4]),
+        .frontToRearAggregation = selectedAggregation(objectiveAggregationControls_[5]),
+        .forwardThetaDegrees = forwardThetaControl_->value(),
+        .forwardPhiDegrees = forwardPhiControl_->value(),
+        .radiationComponent = static_cast<analysis::RadiationComponent>(
+            radiationComponentControl_->currentData().toInt()),
     };
 }
 
@@ -2352,6 +3391,7 @@ auto OptimizationWorkspace::selectedSearchMethod() const -> SearchMethod
     switch (searchMethodTabs_->currentIndex()) {
     case 1: return SearchMethod::Adaptive;
     case 2: return SearchMethod::NelderMead;
+    case 3: return SearchMethod::DifferentialEvolution;
     default: return SearchMethod::ParameterSweep;
     }
 }
@@ -2394,6 +3434,7 @@ auto OptimizationWorkspace::explicitFrequencies() const -> std::vector<double>
 auto OptimizationWorkspace::currentStudySetup() const -> StudySetup
 {
     const auto searchMethod = selectedSearchMethod();
+    const auto differentialEvolution = searchMethod == SearchMethod::DifferentialEvolution;
     auto variables = isMultivariable(searchMethod)
         ? selectedAdaptiveVariables() : std::vector<StudySetup::VariableRange>{};
     if (searchMethod == SearchMethod::ParameterSweep && variableControl_->currentIndex() >= 0) {
@@ -2406,10 +3447,20 @@ auto OptimizationWorkspace::currentStudySetup() const -> StudySetup
         .variable = variableControl_->currentText(),
         .minimum = minimumControl_->value(),
         .maximum = maximumControl_->value(),
-        .candidateLimit = isMultivariable(searchMethod)
-            ? adaptiveMaximumEvaluationsControl_->value() : pointsControl_->value(),
+        .candidateLimit = differentialEvolution
+            ? differentialEvolutionPopulationControl_->value()
+                * (differentialEvolutionGenerationControl_->value() + 1)
+            : isMultivariable(searchMethod)
+                ? adaptiveMaximumEvaluationsControl_->value() : pointsControl_->value(),
         .parameterTolerance = adaptiveParameterToleranceControl_->value(),
-        .scoreTolerance = adaptiveScoreToleranceControl_->value(),
+        .scoreTolerance = differentialEvolution
+            ? differentialEvolutionScoreToleranceControl_->value()
+            : adaptiveScoreToleranceControl_->value(),
+        .populationSize = differentialEvolutionPopulationControl_->value(),
+        .maximumGenerations = differentialEvolutionGenerationControl_->value(),
+        .mutationFactor = differentialEvolutionMutationControl_->value(),
+        .crossoverRate = differentialEvolutionCrossoverControl_->value(),
+        .randomSeed = differentialEvolutionSeedControl_->value(),
         .variables = std::move(variables),
         .frequencySelection = captureFrequencySelection(),
         .frequenciesMHz = analysis::frequencyPlanPoints(selectedFrequencyPlan()),
@@ -2444,9 +3495,17 @@ void OptimizationWorkspace::restoreFrequencySelection(
 
 auto OptimizationWorkspace::objectiveName(analysis::OptimizationObjectiveKind kind) const -> QString
 {
-    return kind == analysis::OptimizationObjectiveKind::WorstPointAcrossFrequencies
-        ? tr("Minimax score")
-        : tr("Selected-frequency score");
+    switch (kind) {
+    case analysis::OptimizationObjectiveKind::PerCriterion:
+        return tr("Per-criterion score");
+    case analysis::OptimizationObjectiveKind::WorstPointAcrossFrequencies:
+        return tr("Minimax score");
+    case analysis::OptimizationObjectiveKind::AverageAcrossFrequencies:
+        return tr("Average score");
+    case analysis::OptimizationObjectiveKind::SwrAtFrequency:
+        return tr("Selected-frequency score");
+    }
+    return tr("Objective score");
 }
 
 auto OptimizationWorkspace::isMultivariable(SearchMethod method) noexcept -> bool
@@ -2460,6 +3519,7 @@ auto OptimizationWorkspace::searchMethodName(SearchMethod method) const -> QStri
     case SearchMethod::ParameterSweep: return tr("Parameter Sweep");
     case SearchMethod::Adaptive: return tr("Adaptive Optimize");
     case SearchMethod::NelderMead: return tr("Nelder–Mead");
+    case SearchMethod::DifferentialEvolution: return tr("Differential Evolution");
     }
     return tr("Optimization");
 }
@@ -2470,6 +3530,8 @@ auto OptimizationWorkspace::searchMethodId(SearchMethod method) -> QString
     case SearchMethod::ParameterSweep: return QStringLiteral("parameter-sweep");
     case SearchMethod::Adaptive: return QStringLiteral("adaptive");
     case SearchMethod::NelderMead: return QStringLiteral("nelder-mead");
+    case SearchMethod::DifferentialEvolution:
+        return QStringLiteral("differential-evolution");
     }
     return QStringLiteral("parameter-sweep");
 }
@@ -2478,11 +3540,25 @@ auto OptimizationWorkspace::currentSearchIteration() const noexcept -> int
 {
     if (adaptiveVectorSearch_) return adaptiveVectorSearch_->refinementRound();
     if (nelderMeadSearch_) return nelderMeadSearch_->iteration();
+    if (differentialEvolutionSearch_) return differentialEvolutionSearch_->generation();
     return 0;
 }
 
 auto OptimizationWorkspace::currentStopReasonId() const -> QString
 {
+    if (differentialEvolutionSearch_) {
+        switch (differentialEvolutionSearch_->stopReason()) {
+        case analysis::DifferentialEvolutionStopReason::MaximumGenerations:
+            return QStringLiteral("maximum-generations");
+        case analysis::DifferentialEvolutionStopReason::ParameterTolerance:
+            return QStringLiteral("parameter-tolerance");
+        case analysis::DifferentialEvolutionStopReason::ScoreTolerance:
+            return QStringLiteral("score-tolerance");
+        case analysis::DifferentialEvolutionStopReason::NoSuccessfulCandidate:
+            return QStringLiteral("no-successful-candidate");
+        case analysis::DifferentialEvolutionStopReason::None: break;
+        }
+    }
     if (nelderMeadSearch_) {
         switch (nelderMeadSearch_->stopReason()) {
         case analysis::NelderMeadStopReason::MaximumEvaluations:
