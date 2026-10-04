@@ -3,6 +3,8 @@
 #include "model/Point3D.h"
 #include "model/Wire.h"
 
+namespace necwb::model { class AntennaModel; }
+
 #include <optional>
 #include <span>
 
@@ -36,6 +38,8 @@ struct Bounds2D {
 [[nodiscard]] auto withProjectedCoordinates(const model::Point3D& original, const Point2D& projected,
     ProjectionPlane plane) noexcept -> model::Point3D;
 [[nodiscard]] auto projectedBounds(std::span<const model::Wire> wires, ProjectionPlane plane)
+    -> std::optional<Bounds2D>;
+[[nodiscard]] auto projectedBounds(const model::AntennaModel& model, ProjectionPlane plane)
     -> std::optional<Bounds2D>;
 [[nodiscard]] auto distanceToSegment(const Point2D& point, const Point2D& start, const Point2D& end) noexcept
     -> double;

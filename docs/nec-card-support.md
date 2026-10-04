@@ -20,13 +20,13 @@ preserved exactly and remain editable in Raw Source.
 | `GC` | Tapered wire radius | Understood | Yes, as a tapered `GW` path |
 | `GA` | Wire arc | Structured Editable | Yes |
 | `GH` | Helix or spiral | Structured Editable | Yes for helices; flat spirals preserved but not rendered |
-| `SP` | Surface patch | Understood | Not yet |
-| `SM` | Multiple-patch surface | Understood | Not yet |
-| `SC` | Patch continuation | Understood | Not yet |
+| `SP` | Surface patch | Structured Editable | Yes |
+| `SM` | Multiple-patch surface | Structured Editable | Yes, expanded into grid cells |
+| `SC` | Patch continuation | Structured Editable | Yes, with its parent `SP`/`SM` |
 | `GM` | Move or replicate structure | Understood | Yes, in authored order |
 | `GX` | Reflect structure | Understood | Yes, including combined reflection planes |
 | `GR` | Generate cylindrical structure | Understood | Yes, around the Z axis |
-| `GS` | Scale structure | Structured Editable | Applied in source order to `GW`, `GC`, `GA`, and `GH` geometry |
+| `GS` | Scale structure | Structured Editable | Applied in source order to wire and surface geometry |
 | `GF` | Read Numerical Green's Function | Understood | No; backend-dependent |
 | `GE` | End geometry | Structured Editable | Boundary understood |
 
@@ -34,7 +34,10 @@ The solver receives authored geometry cards unchanged. Workbench expands `GA`, h
 `GH`, `GW`/`GC` taper combinations, and ordered `GM`/`GX`/`GR` transformations into
 semantic paths for selection, fitting, attachment markers, and 2D/3D display. Generated
 or transformed paths are read-only so graphical editing cannot silently replace their
-source operations. Surface patches do not yet appear graphically.
+source operations. `SP` arbitrary and shaped patches, `SM` patch grids, and their `SC`
+continuations remain separate surface primitives and appear as translucent polygons in
+2D, 3D, Dashboard, and radiation antenna overlays. Patch geometry is currently
+read-only outside Raw Source and Structured Cards.
 
 ## Program Control Cards
 

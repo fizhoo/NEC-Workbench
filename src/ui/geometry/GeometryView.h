@@ -86,6 +86,7 @@ private:
     [[nodiscard]] auto gridSpacing() const -> double;
     [[nodiscard]] auto formattedDistance(double meters) const -> QString;
     void drawGrid(QPainter& painter) const;
+    void drawSurfacePatches(QPainter& painter) const;
     void drawWires(QPainter& painter) const;
     void drawExcitations(QPainter& painter) const;
     void drawAttachments(QPainter& painter) const;

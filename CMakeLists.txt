@@ -26,6 +26,7 @@ add_library(necwb_core
     src/analysis/SolverInput.cpp
     src/geometry/OrthographicProjection.cpp
     src/model/AntennaModel.cpp
+    src/model/SurfacePatch.h
     src/model/WireGeometry.cpp
     src/model/AutoSegmentation.cpp
     src/model/LengthUnit.cpp

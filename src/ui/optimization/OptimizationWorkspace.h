@@ -41,6 +41,7 @@ class SweepPlotsView;
 class OptimizationWorkspace final : public QWidget {
 public:
     explicit OptimizationWorkspace(QWidget* parent = nullptr);
+    ~OptimizationWorkspace() override;
 
     void setContext(QString source, QString sourceFile, QString backend,
         QString executable, int timeoutSeconds, bool modelValid);
@@ -49,6 +50,7 @@ public:
     void setRunsChangedCallback(std::function<void()> callback);
     void setRunningChangedCallback(std::function<void()> callback);
     void setReturnToCurrentWorkCallback(std::function<void()> callback);
+    void setParameterizationHelpCallback(std::function<void()> callback);
     void setApplyParameterCallback(
         std::function<bool(std::vector<std::pair<QString, double>>)> callback);
     void setApplyAndRunCallback(
@@ -270,6 +272,7 @@ private:
     std::function<void()> runsChangedCallback_;
     std::function<void()> runningChangedCallback_;
     std::function<void()> returnToCurrentWorkCallback_;
+    std::function<void()> parameterizationHelpCallback_;
     std::function<bool(std::vector<std::pair<QString, double>>)> applyParameterCallback_;
     std::function<bool(std::vector<std::pair<QString, double>>)> applyAndRunCallback_;
     std::vector<nec::SymbolDefinition> definitions_;

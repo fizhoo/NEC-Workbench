@@ -505,6 +505,12 @@ MainWindow::MainWindow()
     updateUndoActions();
 }
 
+MainWindow::~MainWindow()
+{
+    delete detachedResultsWindow_;
+    delete runReviewWindow_;
+}
+
 void MainWindow::closeEvent(QCloseEvent* event)
 {
     if (solverRunner_->isRunning() || optimizationWorkspace_->isRunning()
@@ -828,12 +834,13 @@ void MainWindow::createWorkspace()
     deckUnitBar->addWidget(deckScaleLabel_);
     deckUnitBar->addStretch();
     structuredLayout->addLayout(deckUnitBar);
-    auto* structuredHint = new QLabel(tr(
+    structuredParameterizationHint_ = new QLabel(tr(
         "Double-click to edit · Right-click a numeric cell to parameterize it or link an existing SY symbol."),
         structuredContainer);
-    structuredHint->setObjectName(QStringLiteral("structuredCardParameterizationHint"));
-    structuredHint->setWordWrap(true);
-    structuredLayout->addWidget(structuredHint);
+    structuredParameterizationHint_->setObjectName(
+        QStringLiteral("structuredCardParameterizationHint"));
+    structuredParameterizationHint_->setWordWrap(true);
+    structuredLayout->addWidget(structuredParameterizationHint_);
     auto* structuredPage = new QTabWidget(structuredContainer);
     structuredLayout->addWidget(structuredPage, 1);
     structuredPage->setDocumentMode(true);
@@ -1460,6 +1467,27 @@ void MainWindow::createOptimizationWorkspace()
     optimizationWorkspace_ = new OptimizationWorkspace(moduleStack_);
     optimizationWorkspace_->setRunsChangedCallback([this] { loadRunHistory(); });
     optimizationWorkspace_->setRunningChangedCallback([this] { synchronizeRunnerState(); });
+    optimizationWorkspace_->setParameterizationHelpCallback([this] {
+        if (!showModule(modelModuleIndex_)) return;
+        modelWorkspace_->setCurrentIndex(modelDeckWorkspaceIndex_);
+        sourceWorkspace_->setCurrentIndex(structuredSourceTabIndex_);
+        auto* cardTabs = qobject_cast<QTabWidget*>(wireCardEditor_->parentWidget());
+        if (cardTabs != nullptr && cardTabs->currentWidget() == structuredCardEditor_)
+            structuredCardEditor_->focusParameterizableField();
+        else
+            wireCardEditor_->focusParameterizableField();
+        const auto originalStyle = structuredParameterizationHint_->styleSheet();
+        structuredParameterizationHint_->setStyleSheet(QStringLiteral(
+            "QLabel { background: palette(highlight); color: palette(highlighted-text); "
+            "padding: 4px; border-radius: 3px; }"));
+        QTimer::singleShot(2500, structuredParameterizationHint_,
+            [hint = structuredParameterizationHint_, originalStyle] {
+                hint->setStyleSheet(originalStyle);
+            });
+        statusBar()->showMessage(tr(
+            "Right-click a numeric field and choose Parameterize Field or Change Parameter Link."),
+            6000);
+    });
     optimizationWorkspace_->setApplyParameterCallback(
         [this](std::vector<std::pair<QString, double>> values) {
             return applyOptimizedParameters(values);
@@ -1565,10 +1593,11 @@ void MainWindow::detachResults()
 {
     if (resultsDetached_ || resultsContent_ == nullptr || resultsHostLayout_ == nullptr) return;
     if (detachedResultsWindow_ == nullptr) {
-        detachedResultsWindow_ = new QDialog(this, Qt::Window);
+        detachedResultsWindow_ = new QDialog(nullptr, Qt::Window);
         detachedResultsWindow_->setObjectName(QStringLiteral("detachedResultsWindow"));
         detachedResultsWindow_->setWindowTitle(tr("Results — NEC Workbench"));
         detachedResultsWindow_->setModal(false);
+        detachedResultsWindow_->setAttribute(Qt::WA_QuitOnClose, false);
         detachedResultsWindow_->setWindowFlag(Qt::WindowMinimizeButtonHint, true);
         detachedResultsWindow_->setWindowFlag(Qt::WindowMaximizeButtonHint, true);
         auto* layout = new QVBoxLayout(detachedResultsWindow_);
@@ -1848,7 +1877,7 @@ void MainWindow::showGeometrySettings()
 
 void MainWindow::showAutoSegmentation()
 {
-    if (!modelChecked_ || modelErrorCount_ != 0 || currentModel_.empty()) {
+    if (!modelChecked_ || modelErrorCount_ != 0 || currentModel_.wires().empty()) {
         QMessageBox::information(this, tr("Automatic Segmentation"),
             tr("Run Check Model and resolve geometry errors before calculating segment counts."));
         return;
@@ -2579,10 +2608,11 @@ void MainWindow::checkModel()
     convergenceWorkspace_->setContext(editor_->toPlainText(), currentFile_,
         solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_,
         modelErrorCount_ == 0);
-    checkStatus_->setText(tr("Checked: %1 errors, %2 warnings, %3 wires, %4 cards")
+    checkStatus_->setText(tr("Checked: %1 errors, %2 warnings, %3 wires, %4 patches, %5 cards")
         .arg(static_cast<qulonglong>(result.errorCount()))
         .arg(static_cast<qulonglong>(result.warningCount()))
         .arg(static_cast<qulonglong>(currentModel_.wireCount()))
+        .arg(static_cast<qulonglong>(currentModel_.surfacePatchCount()))
         .arg(static_cast<qulonglong>(document.cards().size())));
     if (!result.diagnostics.empty()) {
         modelCheckWindow_->show();
@@ -3382,7 +3412,7 @@ void MainWindow::updateAnalysisReadiness()
         blockers.append(tr("Run Check Model after the latest source change."));
     }
     if (currentModel_.empty()) {
-        blockers.append(tr("No valid wire geometry."));
+        blockers.append(tr("No valid geometry."));
     }
     if (modelErrorCount_ != 0) {
         blockers.append(tr("Model check reports %1 error(s).").arg(static_cast<qulonglong>(modelErrorCount_)));
@@ -4079,7 +4109,7 @@ void MainWindow::loadSelectedRun()
         record.backend = analysisRuns_->item(row, RunBackendColumn)->text();
         record.status = analysisRuns_->item(row, RunStatusColumn)->text();
         if (runReviewWindow_ == nullptr) {
-            runReviewWindow_ = new RunReviewWindow(this);
+            runReviewWindow_ = new RunReviewWindow;
             runReviewWindow_->setOpenSnapshotCallback(
                 [this](const QString& directory, const QString& modelName, const QString& context) {
                     if (!loadRunModel(directory, modelName, context)) return;

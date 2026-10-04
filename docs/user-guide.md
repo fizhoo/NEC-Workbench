@@ -154,7 +154,8 @@ Workbench also displays wire arcs (`GA`), helical `GH` geometry, tapered `GW`/`G
 wires, and wire structures transformed by `GM`, `GX`, or `GR`. These generated
 paths retain their authored NEC cards and are read-only in the graphical editor;
 selection and segment-based source, load, and transmission-line placement still
-work. Flat-spiral `GH` geometry is not yet expanded.
+work. Surface cards (`SP`, `SM`, and `SC`) appear as translucent polygons and remain
+separate from wire geometry. Flat-spiral `GH` geometry is not yet expanded.
 
 Path: **Model → Geometry**
 
@@ -162,7 +163,8 @@ Path: **Model → Geometry**
 
 Path: **Model → Geometry → 2D Geometry**
 
-The XY, XZ, and YZ planes show the same wires from three orthographic views.
+The XY, XZ, and YZ planes show the same wires and surface patches from three
+orthographic views.
 
 - Click a wire to synchronize selection across the geometry views and Project tree.
 - Drag a wire endpoint to reshape the wire in the active plane.
@@ -200,6 +202,12 @@ Path: **Model → Geometry → 3D Geometry**
 Generated `GA`, `GH`, `GC`, `GM`, `GX`, and `GR` paths can be inspected and selected
 in 3D, but their shape or transformation must be edited in Raw Source or Other
 NEC-2 Geometry Cards.
+
+`SP`, `SM`, and `SC` surfaces can be edited in their dedicated Structured Cards
+tables. An `SP` shape of `0` uses center, normal angles, and area; shapes `1`–`3`
+use corner coordinates from the `SP` and following `SC`. `SM` uses positive U/V
+patch counts, two corners, and a following `SC` third corner. Surface polygons are
+read-only in graphical views.
 
 The 3D geometry view currently supports selection and contextual editing; direct
 3D endpoint dragging is not yet implemented.
@@ -561,7 +569,8 @@ can remain visible while plots update. Selecting Results while detached raises
 that window instead of replacing the main workspace. If it was hidden or minimized,
 the same window is restored to the foreground without reattaching it.
 
-The detached window can be resized, minimized, maximized, or tiled normally and
+The detached window is independent of the main window on every supported platform,
+so either window can move in front of the other. It can be resized, minimized, maximized, or tiled normally and
 remembers its last geometry. Completing or opening another run updates that same
 window without changing its size or position. Choose **Attach to Main Window**, use the placeholder
 in the main Results page, or close the detached window to return the same Results
@@ -728,6 +737,12 @@ Next** for free-text search. Process messages remain in the Run Monitor.
 ### Summary
 
 Path: **Optimize** on the top workspace bar
+
+Use **Choose Parameter Fields…** when the variable you need is not listed. It
+opens **Model → NEC Deck → Structured Cards** and focuses the active card table.
+Right-click a numeric field to create a new `SY` parameter or link an existing
+one. Returning to Optimize refreshes the available variables while retaining the
+current frequency and objective setup.
 
 Optimize provides four bounded workflows that share the same `SY` definitions,
 frequency plan, reference impedance, weighted objectives, candidate table,

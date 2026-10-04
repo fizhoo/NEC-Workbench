@@ -29,6 +29,7 @@ public:
     void setSymbolicGeometryFields(
         std::unordered_map<std::size_t, std::unordered_set<int>> sourceFields);
     void setParameterControlledFields(nec::NecParameterFieldMap sourceFields);
+    void focusParameterizableField();
 
 signals:
     void wireSelected(int tag);

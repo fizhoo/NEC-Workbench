@@ -45,7 +45,7 @@ auto prepareSegmentationConvergenceInput(std::string_view source, double frequen
     const auto document = nec::NecParser{}.parse(normalizeSolverDeck(source));
     const auto conversion = nec::NecModelConverter{}.convert(document);
     const auto setup = nec::NecSetupConverter{}.convert(document);
-    if (conversion.model.empty()) {
+    if (conversion.model.wires().empty()) {
         result.error = "The model contains no supported wire geometry.";
         return result;
     }

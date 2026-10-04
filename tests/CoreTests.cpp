@@ -490,6 +490,60 @@ void testGeometryTransformConversion()
         "GX diagnoses geometry that crosses a selected symmetry plane");
 }
 
+void testSurfacePatchConversion()
+{
+    const auto result = necwb::nec::NecModelConverter{}.convert(
+        necwb::nec::NecParser{}.parse(
+            "SP 0 0 0 0 0 90 0 4\n"
+            "SP 0 1 0 0 1 2 0 1\n"
+            "SC 0 0 2 1 1\n"
+            "SP 0 2 0 0 2 2 0 2\n"
+            "SC 0 0 1 1 2\n"
+            "SP 0 3 0 0 3 2 0 3\n"
+            "SC 0 0 2 1 3 0 1 3\n"
+            "SM 2 1 0 0 4 2 0 4\n"
+            "SC 0 0 2 1 4\n"
+            "GS 0 0 2\n"
+            "GE 0\n"));
+    expect(result.issues.empty() && result.model.surfacePatchCount() == 6,
+        "SP/SC shapes and SM grids produce separate semantic surface patches");
+    expect(result.model.wireCount() == 0 && !result.model.empty(),
+        "a patch-only deck is valid semantic geometry without fake wires");
+    const auto patches = result.model.surfacePatches();
+    expect(patches[0].kind == necwb::model::SurfacePatchKind::Arbitrary
+            && patches[0].corners.size() == 4
+            && std::abs(patches[0].corners[0].x + 2.0) < 1.0e-12,
+        "arbitrary SP center, normal, and area expand into a renderable square");
+    expect(patches[1].kind == necwb::model::SurfacePatchKind::Rectangular
+            && patches[1].corners.size() == 4
+            && patches[1].corners[3] == necwb::model::Point3D{0.0, 2.0, 2.0},
+        "rectangular SP infers its fourth corner and follows GS scaling");
+    expect(patches[2].kind == necwb::model::SurfacePatchKind::Triangular
+            && patches[2].corners.size() == 3,
+        "triangular SP preserves three explicit corners");
+    expect(patches[3].kind == necwb::model::SurfacePatchKind::Quadrilateral
+            && patches[3].corners.size() == 4,
+        "quadrilateral SP preserves all four explicit corners");
+    expect(patches[4].kind == necwb::model::SurfacePatchKind::GridCell
+            && patches[5].kind == necwb::model::SurfacePatchKind::GridCell
+            && patches[4].sourceLine == 8 && patches[5].sourceLine == 8,
+        "SM subdivides its surface and retains the parent source line");
+
+    const auto transformed = necwb::nec::NecModelConverter{}.convert(
+        necwb::nec::NecParser{}.parse(
+            "SP 0 1 1 0 0 2 0 0\nSC 0 0 2 1 0\nGR 0 4\nGE 0\n"));
+    expect(transformed.issues.empty() && transformed.model.surfacePatchCount() == 4,
+        "GR duplicates surface patches around the Z axis");
+    expect(std::abs(transformed.model.surfacePatches()[1].corners[0].x) < 1.0e-12
+            && std::abs(transformed.model.surfacePatches()[1].corners[0].y - 1.0) < 1.0e-12,
+        "surface patch transformations use the same coordinates as wire transformations");
+
+    const auto invalid = necwb::nec::NecModelConverter{}.convert(
+        necwb::nec::NecParser{}.parse("SP 0 3 0 0 0 1 0 0\nGE 0\nSC 0 0 1 1 0 0 1 0\n"));
+    expect(invalid.model.empty() && invalid.issues.size() == 2,
+        "missing and orphaned SC patch continuations are diagnosed");
+}
+
 void testValidModelCheck()
 {
     const std::string source =
@@ -589,8 +643,8 @@ void testIncompleteModelCheck()
         "incomplete analysis setup remains editable rather than becoming a syntax error");
     expect(result.warningCount() == 3,
         "missing geometry, frequency, and source produce completeness warnings");
-    expect(result.diagnostics[0].message.find("no valid wire geometry") != std::string::npos,
-        "incomplete model warning identifies missing wire geometry");
+    expect(result.diagnostics[0].message.find("no valid geometry") != std::string::npos,
+        "incomplete model warning identifies missing geometry");
     expect(result.diagnostics[1].message.find("no supported FR") != std::string::npos,
         "incomplete setup warning identifies missing frequency");
     expect(result.diagnostics[2].message.find("no supported EX") != std::string::npos,
@@ -1873,6 +1927,7 @@ auto main() -> int
     testGeometryScaleConversion();
     testGeneratedWireGeometryConversion();
     testGeometryTransformConversion();
+    testSurfacePatchConversion();
     testValidModelCheck();
     testStaticModelAdequacyChecks();
     testCardValidation();

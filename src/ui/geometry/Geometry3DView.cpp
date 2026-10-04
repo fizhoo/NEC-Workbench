@@ -161,6 +161,15 @@ void Geometry3DView::fitToView()
             maximumY = std::max(maximumY, camera.y);
         }
     }
+    for (const auto& patch : model_.surfacePatches()) {
+        for (const auto& point : patch.corners) {
+            const auto camera = cameraCoordinates(point);
+            minimumX = std::min(minimumX, camera.x);
+            maximumX = std::max(maximumX, camera.x);
+            minimumY = std::min(minimumY, camera.y);
+            maximumY = std::max(maximumY, camera.y);
+        }
+    }
     const auto projectedWidth = std::max(maximumX - minimumX, modelExtent_ * 0.08);
     const auto projectedHeight = std::max(maximumY - minimumY, modelExtent_ * 0.08);
     pixelsPerMeter_ = std::clamp(std::min(
@@ -353,7 +362,7 @@ void Geometry3DView::paintEvent(QPaintEvent*)
     if (model_.empty()) {
         painter.setPen(palette().placeholderText().color());
         painter.drawText(rect(), Qt::AlignCenter,
-            tr("No valid wire geometry\nOpen a NEC file or add GW cards, then run Check Model."));
+            tr("No valid geometry\nOpen a NEC file or add geometry cards, then run Check Model."));
         return;
     }
 
@@ -370,6 +379,29 @@ void Geometry3DView::paintEvent(QPaintEvent*)
         painter.setPen(QPen(axes[index].second, 2.25, Qt::SolidLine, Qt::RoundCap));
         painter.drawLine(projectedOrigin, endpoint);
         painter.drawText(endpoint + QPointF{5.0, -4.0}, labels[index]);
+    }
+
+    struct RenderPatch {
+        QPolygonF polygon;
+        double depth{};
+    };
+    std::vector<RenderPatch> renderPatches;
+    renderPatches.reserve(model_.surfacePatchCount());
+    for (const auto& patch : model_.surfacePatches()) {
+        RenderPatch rendered;
+        for (const auto& corner : patch.corners) {
+            const auto projected = project(corner);
+            rendered.polygon << projected.screen;
+            rendered.depth += projected.depth;
+        }
+        if (!patch.corners.empty()) rendered.depth /= patch.corners.size();
+        renderPatches.push_back(std::move(rendered));
+    }
+    std::ranges::sort(renderPatches, {}, &RenderPatch::depth);
+    painter.setPen(QPen(QColor(25, 125, 110), 1.5));
+    painter.setBrush(QColor(45, 165, 145, 85));
+    for (const auto& patch : renderPatches) {
+        if (patch.polygon.size() >= 3) painter.drawPolygon(patch.polygon);
     }
 
     for (const auto& line : transmissionLines_) {
@@ -475,8 +507,9 @@ void Geometry3DView::paintEvent(QPaintEvent*)
         painter.drawText(screen + QPointF{10.0, -8.0}, tr("EX"));
     }
 
-    const auto overlay = tr("3D Model  •  %1 wires  •  Extent %2\nLeft-drag orbit  •  Shift/middle-drag pan  •  Wheel zoom  •  Click select")
+    const auto overlay = tr("3D Model  •  %1 wires  •  %2 patches  •  Extent %3\nLeft-drag orbit  •  Shift/middle-drag pan  •  Wheel zoom  •  Click select")
         .arg(static_cast<qulonglong>(model_.wireCount()))
+        .arg(static_cast<qulonglong>(model_.surfacePatchCount()))
         .arg(formattedLength(modelExtent_));
     const auto overlayBounds = painter.fontMetrics().boundingRect(QRect(12, 12, width() - 24, 60),
         Qt::AlignLeft | Qt::AlignTop, overlay).adjusted(-7, -5, 7, 5);
@@ -609,11 +642,22 @@ void Geometry3DView::updateModelCenter()
         modelExtent_ = 1.0;
         return;
     }
-    auto minimum = model_.wires().front().start;
+    auto minimum = !model_.wires().empty() ? model_.wires().front().start
+        : model_.surfacePatches().front().corners.front();
     auto maximum = minimum;
     for (const auto& wire : model_.wires()) {
         for (auto index = std::size_t{}; index < model::wirePathPointCount(wire); ++index) {
             const auto& point = model::wirePathPoint(wire, index);
+            minimum.x = std::min(minimum.x, point.x);
+            minimum.y = std::min(minimum.y, point.y);
+            minimum.z = std::min(minimum.z, point.z);
+            maximum.x = std::max(maximum.x, point.x);
+            maximum.y = std::max(maximum.y, point.y);
+            maximum.z = std::max(maximum.z, point.z);
+        }
+    }
+    for (const auto& patch : model_.surfacePatches()) {
+        for (const auto& point : patch.corners) {
             minimum.x = std::min(minimum.x, point.x);
             minimum.y = std::min(minimum.y, point.y);
             minimum.z = std::min(minimum.z, point.z);

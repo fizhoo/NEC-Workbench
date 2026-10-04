@@ -46,6 +46,7 @@ DetachablePanel::DetachablePanel(QString id, QString title, QWidget* parent)
 DetachablePanel::~DetachablePanel()
 {
     saveWindowGeometry();
+    delete dialog_;
 }
 
 void DetachablePanel::setContent(QWidget* content)
@@ -71,10 +72,11 @@ void DetachablePanel::detach()
 {
     if (detached_ || content_ == nullptr) return;
     if (dialog_ == nullptr) {
-        dialog_ = new QDialog(this, Qt::Window);
+        dialog_ = new QDialog(nullptr, Qt::Window);
         dialog_->setObjectName(id_ + QStringLiteral("ResultWindow"));
         dialog_->setWindowTitle(tr("%1 — NEC Workbench").arg(title_));
         dialog_->setModal(false);
+        dialog_->setAttribute(Qt::WA_QuitOnClose, false);
         dialog_->setWindowFlag(Qt::WindowMinimizeButtonHint, true);
         dialog_->setWindowFlag(Qt::WindowMaximizeButtonHint, true);
         auto* dialogLayout = new QVBoxLayout(dialog_);

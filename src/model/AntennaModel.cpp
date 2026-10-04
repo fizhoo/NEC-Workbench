@@ -10,6 +10,11 @@ void AntennaModel::addWire(Wire wire)
     wires_.push_back(std::move(wire));
 }
 
+void AntennaModel::addSurfacePatch(SurfacePatch patch)
+{
+    surfacePatches_.push_back(std::move(patch));
+}
+
 void AntennaModel::scale(double factor) noexcept
 {
     for (auto& wire : wires_) {
@@ -22,6 +27,13 @@ void AntennaModel::scale(double factor) noexcept
         wire.radius *= factor;
         wire.endRadius *= factor;
         for (auto& point : wire.path) {
+            point.x *= factor;
+            point.y *= factor;
+            point.z *= factor;
+        }
+    }
+    for (auto& patch : surfacePatches_) {
+        for (auto& point : patch.corners) {
             point.x *= factor;
             point.y *= factor;
             point.z *= factor;
@@ -46,14 +58,24 @@ auto AntennaModel::wires() const noexcept -> std::span<const Wire>
     return wires_;
 }
 
+auto AntennaModel::surfacePatches() const noexcept -> std::span<const SurfacePatch>
+{
+    return surfacePatches_;
+}
+
 auto AntennaModel::empty() const noexcept -> bool
 {
-    return wires_.empty();
+    return wires_.empty() && surfacePatches_.empty();
 }
 
 auto AntennaModel::wireCount() const noexcept -> std::size_t
 {
     return wires_.size();
+}
+
+auto AntennaModel::surfacePatchCount() const noexcept -> std::size_t
+{
+    return surfacePatches_.size();
 }
 
 }

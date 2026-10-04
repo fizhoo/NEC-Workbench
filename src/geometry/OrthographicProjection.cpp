@@ -1,4 +1,5 @@
 #include "geometry/OrthographicProjection.h"
+#include "model/AntennaModel.h"
 #include "model/WireGeometry.h"
 
 #include <algorithm>
@@ -70,6 +71,26 @@ auto projectedBounds(std::span<const model::Wire> wires, ProjectionPlane plane) 
             bounds.maximumHorizontal = std::max(bounds.maximumHorizontal, point.horizontal);
             bounds.minimumVertical = std::min(bounds.minimumVertical, point.vertical);
             bounds.maximumVertical = std::max(bounds.maximumVertical, point.vertical);
+        }
+    }
+    return bounds;
+}
+
+auto projectedBounds(const model::AntennaModel& model, ProjectionPlane plane)
+    -> std::optional<Bounds2D>
+{
+    auto bounds = projectedBounds(model.wires(), plane);
+    for (const auto& patch : model.surfacePatches()) {
+        for (const auto& corner : patch.corners) {
+            const auto point = project(corner, plane);
+            if (!bounds) {
+                bounds = Bounds2D{point.horizontal, point.horizontal, point.vertical, point.vertical};
+                continue;
+            }
+            bounds->minimumHorizontal = std::min(bounds->minimumHorizontal, point.horizontal);
+            bounds->maximumHorizontal = std::max(bounds->maximumHorizontal, point.horizontal);
+            bounds->minimumVertical = std::min(bounds->minimumVertical, point.vertical);
+            bounds->maximumVertical = std::max(bounds->maximumVertical, point.vertical);
         }
     }
     return bounds;

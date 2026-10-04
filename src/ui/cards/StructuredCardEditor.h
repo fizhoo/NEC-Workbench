@@ -26,6 +26,7 @@ public:
     void setDeckUnitLabel(QString unitLabel);
     void setParameterControlledFields(nec::NecParameterFieldMap sourceFields);
     auto selectCard(std::size_t sourceLine) -> bool;
+    void focusParameterizableField();
 
 signals:
     void cardSelected(std::size_t sourceLine);

@@ -73,6 +73,7 @@ RunReviewWindow::RunReviewWindow(QWidget* parent)
     setObjectName(QStringLiteral("runReviewWindow"));
     setWindowTitle(tr("Run Review — NEC Workbench"));
     setModal(false);
+    setAttribute(Qt::WA_QuitOnClose, false);
     setWindowFlag(Qt::WindowMinimizeButtonHint, true);
     setWindowFlag(Qt::WindowMaximizeButtonHint, true);
     auto* layout = new QVBoxLayout(this);

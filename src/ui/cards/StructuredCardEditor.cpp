@@ -51,7 +51,7 @@ struct CardFamily {
 
 const auto& families()
 {
-    static const std::array<CardFamily, 13> values{{
+    static const std::array<CardFamily, 16> values{{
         {QObject::tr("Geometry"), QObject::tr("GA — Wire Arcs"),
             QObject::tr("Circular wire arcs in the XZ plane. Angles are measured in degrees; lengths use authored NEC deck units."),
             {nec::NecCardKind::GeometryOther},
@@ -66,6 +66,28 @@ const auto& families()
                 QObject::tr("Start Y Radius (deck length)"), QObject::tr("End X Radius (deck length)"),
                 QObject::tr("End Y Radius (deck length)"), QObject::tr("Wire Radius (deck length)")},
             QStringLiteral("GH"), false},
+        {QObject::tr("Geometry"), QObject::tr("SP — Surface Patches"),
+            QObject::tr("Single arbitrary, rectangular, triangular, or quadrilateral surface patches. Shaped patches continue on an SC card."),
+            {nec::NecCardKind::GeometryOther},
+            {QObject::tr("I1 (unused)"), QObject::tr("Shape"),
+                QObject::tr("Center/Corner 1 X"), QObject::tr("Center/Corner 1 Y"),
+                QObject::tr("Center/Corner 1 Z"), QObject::tr("Elevation/Corner 2 X"),
+                QObject::tr("Azimuth/Corner 2 Y"), QObject::tr("Area/Corner 2 Z")},
+            QStringLiteral("SP"), false},
+        {QObject::tr("Geometry"), QObject::tr("SM — Patch Grids"),
+            QObject::tr("Rectangular surfaces divided into a two-dimensional patch grid. A following SC card supplies corner 3."),
+            {nec::NecCardKind::GeometryOther},
+            {QObject::tr("Patches U"), QObject::tr("Patches V"),
+                QObject::tr("Corner 1 X"), QObject::tr("Corner 1 Y"), QObject::tr("Corner 1 Z"),
+                QObject::tr("Corner 2 X"), QObject::tr("Corner 2 Y"), QObject::tr("Corner 2 Z")},
+            QStringLiteral("SM"), false},
+        {QObject::tr("Geometry"), QObject::tr("SC — Patch Continuations"),
+            QObject::tr("Continuation coordinates for a preceding SP or SM surface definition."),
+            {nec::NecCardKind::GeometryOther},
+            {QObject::tr("I1 (unused)"), QObject::tr("Next Shape"),
+                QObject::tr("Corner 3 X"), QObject::tr("Corner 3 Y"), QObject::tr("Corner 3 Z"),
+                QObject::tr("Corner 4 X"), QObject::tr("Corner 4 Y"), QObject::tr("Corner 4 Z")},
+            QStringLiteral("SC"), false},
         {QObject::tr("Geometry"), QObject::tr("Other NEC-2 Geometry Cards"),
             QObject::tr("Remaining recognized geometry generators, patches, and transformations using NEC fixed fields."),
             {nec::NecCardKind::GeometryOther},
@@ -135,10 +157,12 @@ const auto& families()
 auto belongsTo(const nec::NecCard& card, const CardFamily& family) -> bool
 {
     const auto dedicatedGeometry = family.mnemonic == QStringLiteral("GA")
-        || family.mnemonic == QStringLiteral("GH");
+        || family.mnemonic == QStringLiteral("GH") || family.mnemonic == QStringLiteral("SP")
+        || family.mnemonic == QStringLiteral("SM") || family.mnemonic == QStringLiteral("SC");
     if (dedicatedGeometry) return QString::fromStdString(card.mnemonic) == family.mnemonic;
     if (family.kinds.size() == 1 && family.kinds.front() == nec::NecCardKind::GeometryOther
-        && (card.mnemonic == "GA" || card.mnemonic == "GH")) return false;
+        && (card.mnemonic == "GA" || card.mnemonic == "GH" || card.mnemonic == "SP"
+            || card.mnemonic == "SM" || card.mnemonic == "SC")) return false;
     return std::ranges::find(family.kinds, card.kind) != family.kinds.end();
 }
 
@@ -165,6 +189,12 @@ auto fieldType(const QString& mnemonic, int fieldIndex) -> FieldType
 
 auto choicesFor(const QString& mnemonic, int fieldIndex) -> std::vector<FieldChoice>
 {
+    if ((mnemonic == QStringLiteral("SP") || mnemonic == QStringLiteral("SC"))
+        && fieldIndex == 1) return {
+        {QStringLiteral("0"), QObject::tr("0 — Arbitrary patch / first continuation")},
+        {QStringLiteral("1"), QObject::tr("1 — Rectangular patch")},
+        {QStringLiteral("2"), QObject::tr("2 — Triangular patch")},
+        {QStringLiteral("3"), QObject::tr("3 — Quadrilateral patch")}};
     if (fieldIndex != 0) return {};
     if (mnemonic == QStringLiteral("EX")) return {
         {QStringLiteral("0"), QObject::tr("0 — Applied voltage source")},
@@ -215,6 +245,9 @@ auto requiredFieldCount(const QString& mnemonic, const QStringList& fields) -> i
 {
     if (mnemonic == QStringLiteral("GA")) return 6;
     if (mnemonic == QStringLiteral("GH")) return 9;
+    if (mnemonic == QStringLiteral("SP") || mnemonic == QStringLiteral("SM")) return 8;
+    if (mnemonic == QStringLiteral("SC"))
+        return fields.size() > 1 && fields[1].toInt() == 3 ? 8 : 5;
     if (mnemonic == QStringLiteral("EX") || mnemonic == QStringLiteral("FR")) return 6;
     if (mnemonic == QStringLiteral("GS")) return 3;
     if (mnemonic == QStringLiteral("GE") || mnemonic == QStringLiteral("XQ")) return 1;
@@ -254,6 +287,30 @@ auto fieldHelp(const QString& mnemonic, int fieldIndex) -> QString
             QObject::tr("Physical wire radius in the authored NEC deck length unit.")};
         if (fieldIndex >= 0 && fieldIndex < static_cast<int>(help.size())) return help[fieldIndex];
     }
+    if (mnemonic == QStringLiteral("SP")) {
+        static const std::array help{
+            QObject::tr("Must be zero for an SP card."),
+            QObject::tr("0 arbitrary, 1 rectangular, 2 triangular, or 3 quadrilateral."),
+            QObject::tr("Arbitrary-patch center X or shaped-patch corner 1 X."),
+            QObject::tr("Arbitrary-patch center Y or shaped-patch corner 1 Y."),
+            QObject::tr("Arbitrary-patch center Z or shaped-patch corner 1 Z."),
+            QObject::tr("Normal elevation in degrees or shaped-patch corner 2 X."),
+            QObject::tr("Normal azimuth in degrees or shaped-patch corner 2 Y."),
+            QObject::tr("Positive patch area or shaped-patch corner 2 Z.")};
+        if (fieldIndex >= 0 && fieldIndex < static_cast<int>(help.size())) return help[fieldIndex];
+    }
+    if (mnemonic == QStringLiteral("SM")) {
+        static const std::array help{
+            QObject::tr("Positive number of patches along the first surface direction."),
+            QObject::tr("Positive number of patches along the second surface direction."),
+            QObject::tr("First surface corner X."), QObject::tr("First surface corner Y."),
+            QObject::tr("First surface corner Z."), QObject::tr("Second surface corner X."),
+            QObject::tr("Second surface corner Y."), QObject::tr("Second surface corner Z.")};
+        if (fieldIndex >= 0 && fieldIndex < static_cast<int>(help.size())) return help[fieldIndex];
+    }
+    if (mnemonic == QStringLiteral("SC")) {
+        return QObject::tr("Continuation data for the immediately preceding SP or SM card. Corner 4 is required for quadrilateral patches.");
+    }
     return {};
 }
 
@@ -276,6 +333,17 @@ auto semanticFieldError(const QString& mnemonic, const QStringList& fields, int 
         if (fieldIndex >= 4 && fieldIndex <= 8 && fields[fieldIndex].toDouble() <= 0.0)
             return QObject::tr("Radius must be greater than zero.");
     }
+    if (mnemonic == QStringLiteral("SP") && fields.size() >= 8) {
+        if (fieldIndex == 0 && fields[0].toInt() != 0)
+            return QObject::tr("SP I1 must be zero.");
+        if (fieldIndex == 1 && (fields[1].toInt() < 0 || fields[1].toInt() > 3))
+            return QObject::tr("Patch shape must be 0 through 3.");
+        if (fields[1].toInt() == 0 && fieldIndex == 7 && fields[7].toDouble() <= 0.0)
+            return QObject::tr("Arbitrary patch area must be greater than zero.");
+    }
+    if (mnemonic == QStringLiteral("SM") && fields.size() >= 2
+        && fieldIndex < 2 && fields[fieldIndex].toInt() <= 0)
+        return QObject::tr("Patch count must be greater than zero.");
     return {};
 }
 
@@ -485,6 +553,31 @@ void StructuredCardEditor::setParameterControlledFields(
     nec::NecParameterFieldMap sourceFields)
 {
     parameterControlledFields_ = std::move(sourceFields);
+}
+
+void StructuredCardEditor::focusParameterizableField()
+{
+    for (auto row = 0; row < table_->rowCount(); ++row) {
+        if (table_->item(row, 0) == nullptr || table_->item(row, 1) == nullptr) continue;
+        const auto mnemonic = table_->item(row, 1)->text();
+        const auto sourceLine = table_->item(row, 0)->data(SourceLineRole).toULongLong();
+        for (auto column = 2; column < table_->columnCount(); ++column) {
+            auto* item = table_->item(row, column);
+            if (item == nullptr) continue;
+            const auto fieldIndex = column-2;
+            if (fieldType(mnemonic, fieldIndex) != FieldType::Number
+                || !choicesFor(mnemonic, fieldIndex).empty()) continue;
+            const auto parameterLine = parameterControlledFields_.find(sourceLine);
+            const auto parameterControlled = parameterLine != parameterControlledFields_.end()
+                && parameterLine->second.contains(static_cast<std::size_t>(fieldIndex));
+            if (!parameterControlled && !parsesAs<double>(item->text())) continue;
+            table_->setCurrentCell(row, column);
+            table_->scrollToItem(item, QAbstractItemView::PositionAtCenter);
+            table_->setFocus(Qt::OtherFocusReason);
+            return;
+        }
+    }
+    table_->setFocus(Qt::OtherFocusReason);
 }
 
 auto StructuredCardEditor::selectCard(std::size_t sourceLine) -> bool
@@ -741,6 +834,9 @@ auto StructuredCardEditor::defaultCard(int familyIndex) const -> QString
         return QStringLiteral("GA %1 21 1 0 180 0.001").arg(nextGeometryTag);
     if (family.mnemonic == QStringLiteral("GH"))
         return QStringLiteral("GH %1 40 0.05 0.5 0.1 0.1 0.1 0.1 0.001").arg(nextGeometryTag);
+    if (family.mnemonic == QStringLiteral("SP")) return QStringLiteral("SP 0 0 0 0 0 90 0 1");
+    if (family.mnemonic == QStringLiteral("SM")) return QStringLiteral("SM 4 4 0 0 0 1 0 0");
+    if (family.mnemonic == QStringLiteral("SC")) return QStringLiteral("SC 0 0 1 1 0");
     if (family.mnemonic == QStringLiteral("GS")) return QStringLiteral("GS 0 0 0.3048");
     if (family.mnemonic == QStringLiteral("EX") && !wires.empty())
         return QStringLiteral("EX 0 %1 %2 0 1 0").arg(wires.front().first)

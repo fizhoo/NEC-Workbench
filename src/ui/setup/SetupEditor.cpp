@@ -474,7 +474,7 @@ void SetupEditor::setData(const model::AntennaModel& model, const model::ModelSe
     setGroundPending(false);
     setReferenceImpedancePending(false);
     setExcitationPending(false);
-    addExcitationButton_->setEnabled(!model_.empty());
+    addExcitationButton_->setEnabled(!model_.wires().empty());
     updateFrequencyControls();
     updateGroundControls();
     updateExcitationActions();

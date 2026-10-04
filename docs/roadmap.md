@@ -40,16 +40,17 @@ configured by the user and are not bundled.
   safe source preservation, and a published support matrix
 - Read-only semantic 2D/3D geometry for `GA`, helical `GH`, and tapered `GW`/`GC`,
   with ordered `GS`, `GM`, `GX`, and `GR` operations and segment-aware attachments
+- Separate read-only surface primitives for `SP`, `SM`, and `SC`, with dedicated
+  structured fields and shared 2D/3D/result-overlay rendering
 
 ## Next: Geometry Card Semantics
 
 `GM`, `GX`, and `GR` wire transformations now expand in authored order while the
 original cards remain unchanged. The remaining sequence is:
 
-1. Represent `SP`, `SM`, and `SC` surface patches without forcing them into wire models.
-2. Add flat-spiral `GH` semantics and dedicated editors only where card-specific labels
+1. Add flat-spiral `GH` semantics and dedicated editors only where card-specific labels
    and constraints add value.
-3. Verify generated decks with `nec2c` examples for every newly expanded card.
+2. Verify generated decks with `nec2c` examples for every newly expanded card.
 
 Card support distinguishes **Preserved**, **Understood**, and **Structured Editable**
 instead of claiming that every recognized card already has complete graphical semantics.

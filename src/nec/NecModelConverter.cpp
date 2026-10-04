@@ -180,6 +180,143 @@ auto validUnrenderedSpiral(const NecCard& card) -> bool
         && endRadiusX > 0.0 && endRadiusY > 0.0 && wireRadius > 0.0;
 }
 
+auto add(const model::Point3D& first, const model::Point3D& second) noexcept -> model::Point3D
+{
+    return {first.x + second.x, first.y + second.y, first.z + second.z};
+}
+
+auto subtract(const model::Point3D& first, const model::Point3D& second) noexcept
+    -> model::Point3D
+{
+    return {first.x - second.x, first.y - second.y, first.z - second.z};
+}
+
+auto multiply(const model::Point3D& point, double factor) noexcept -> model::Point3D
+{
+    return {point.x * factor, point.y * factor, point.z * factor};
+}
+
+auto cross(const model::Point3D& first, const model::Point3D& second) noexcept
+    -> model::Point3D
+{
+    return {first.y * second.z - first.z * second.y,
+        first.z * second.x - first.x * second.z,
+        first.x * second.y - first.y * second.x};
+}
+
+auto magnitude(const model::Point3D& point) noexcept -> double
+{
+    return std::sqrt(point.x * point.x + point.y * point.y + point.z * point.z);
+}
+
+auto parsePoint(const NecCard& card, std::size_t firstField, model::Point3D& point) -> bool
+{
+    return card.fields.size() >= firstField + 3
+        && parseNumber(card.fields[firstField], point.x)
+        && parseNumber(card.fields[firstField + 1], point.y)
+        && parseNumber(card.fields[firstField + 2], point.z);
+}
+
+auto validPatchCorners(const std::vector<model::Point3D>& corners) noexcept -> bool
+{
+    if (corners.size() < 3) return false;
+    return magnitude(cross(subtract(corners[1], corners[0]),
+               subtract(corners[2], corners[1]))) > 1.0e-12;
+}
+
+auto arbitraryPatch(const NecCard& card, model::SurfacePatch& patch) -> bool
+{
+    if (card.fields.size() < 8) return false;
+    model::Point3D center;
+    double elevationDegrees{};
+    double azimuthDegrees{};
+    double area{};
+    if (!parsePoint(card, 2, center)
+        || !parseNumber(card.fields[5], elevationDegrees)
+        || !parseNumber(card.fields[6], azimuthDegrees)
+        || !parseNumber(card.fields[7], area) || area <= 0.0) return false;
+
+    const auto elevation = elevationDegrees * std::numbers::pi / 180.0;
+    const auto azimuth = azimuthDegrees * std::numbers::pi / 180.0;
+    const model::Point3D normal{std::cos(elevation) * std::cos(azimuth),
+        std::cos(elevation) * std::sin(azimuth), std::sin(elevation)};
+    const auto horizontal = std::hypot(normal.x, normal.y);
+    const auto tangent1 = horizontal >= 1.0e-6
+        ? model::Point3D{-normal.y / horizontal, normal.x / horizontal, 0.0}
+        : model::Point3D{1.0, 0.0, 0.0};
+    const auto tangent2 = cross(normal, tangent1);
+    const auto halfSide = std::sqrt(area) / 2.0;
+    const auto firstOffset = multiply(tangent1, halfSide);
+    const auto secondOffset = multiply(tangent2, halfSide);
+    patch.kind = model::SurfacePatchKind::Arbitrary;
+    patch.sourceLine = card.lineNumber;
+    patch.corners = {
+        subtract(subtract(center, firstOffset), secondOffset),
+        add(subtract(center, secondOffset), firstOffset),
+        add(add(center, firstOffset), secondOffset),
+        add(subtract(center, firstOffset), secondOffset),
+    };
+    return true;
+}
+
+auto shapedPatch(const NecCard& card, const NecCard& continuation, int shape,
+    model::SurfacePatch& patch) -> bool
+{
+    model::Point3D first;
+    model::Point3D second;
+    model::Point3D third;
+    model::Point3D fourth;
+    if (!parsePoint(card, 2, first) || !parsePoint(card, 5, second)
+        || !parsePoint(continuation, 2, third)) return false;
+    patch.sourceLine = card.lineNumber;
+    if (shape == 1) {
+        fourth = add(first, subtract(third, second));
+        patch.kind = model::SurfacePatchKind::Rectangular;
+        patch.corners = {first, second, third, fourth};
+    } else if (shape == 2) {
+        patch.kind = model::SurfacePatchKind::Triangular;
+        patch.corners = {first, second, third};
+    } else if (shape == 3 && parsePoint(continuation, 5, fourth)) {
+        patch.kind = model::SurfacePatchKind::Quadrilateral;
+        patch.corners = {first, second, third, fourth};
+    } else {
+        return false;
+    }
+    return validPatchCorners(patch.corners);
+}
+
+auto appendPatchGrid(const NecCard& card, const NecCard& continuation,
+    std::vector<model::SurfacePatch>& patches) -> bool
+{
+    if (card.fields.size() < 8) return false;
+    int firstCount{};
+    int secondCount{};
+    model::Point3D first;
+    model::Point3D second;
+    model::Point3D third;
+    if (!parseNumber(card.fields[0], firstCount)
+        || !parseNumber(card.fields[1], secondCount)
+        || firstCount <= 0 || secondCount <= 0
+        || !parsePoint(card, 2, first) || !parsePoint(card, 5, second)
+        || !parsePoint(continuation, 2, third)) return false;
+    const auto firstStep = multiply(subtract(second, first), 1.0 / firstCount);
+    const auto secondStep = multiply(subtract(third, second), 1.0 / secondCount);
+    if (magnitude(cross(firstStep, secondStep)) <= 1.0e-12) return false;
+    for (auto secondIndex = 0; secondIndex < secondCount; ++secondIndex) {
+        for (auto firstIndex = 0; firstIndex < firstCount; ++firstIndex) {
+            const auto corner = add(first, add(multiply(firstStep, firstIndex),
+                multiply(secondStep, secondIndex)));
+            model::SurfacePatch patch;
+            patch.kind = model::SurfacePatchKind::GridCell;
+            patch.sourceLine = card.lineNumber;
+            patch.corners = {corner, add(corner, firstStep),
+                add(add(corner, firstStep), secondStep), add(corner, secondStep)};
+            patches.push_back(std::move(patch));
+        }
+    }
+    return true;
+}
+
 auto scaleWire(model::Wire& wire, double factor) noexcept -> void
 {
     const auto scalePoint = [factor](model::Point3D& point) {
@@ -192,6 +329,11 @@ auto scaleWire(model::Wire& wire, double factor) noexcept -> void
     for (auto& point : wire.path) scalePoint(point);
     wire.radius *= factor;
     wire.endRadius *= factor;
+}
+
+auto scalePatch(model::SurfacePatch& patch, double factor) noexcept -> void
+{
+    for (auto& point : patch.corners) point = multiply(point, factor);
 }
 
 struct CoordinateTransform {
@@ -257,7 +399,15 @@ auto transformWire(model::Wire& wire, const CoordinateTransform& transform,
     wire.editable = false;
 }
 
-auto applyMove(const NecCard& card, std::vector<model::Wire>& wires) -> bool
+auto transformPatch(model::SurfacePatch& patch, const CoordinateTransform& transform,
+    std::size_t sourceLine) -> void
+{
+    for (auto& point : patch.corners) point = transformPoint(point, transform);
+    patch.sourceLine = sourceLine;
+}
+
+auto applyMove(const NecCard& card, std::vector<model::Wire>& wires,
+    std::vector<model::SurfacePatch>& patches) -> bool
 {
     if (card.fields.size() < 2 || card.fields.size() > 9) return false;
     int tagIncrement{};
@@ -281,6 +431,7 @@ auto applyMove(const NecCard& card, std::vector<model::Wire>& wires) -> bool
     if (repetitions == 0) {
         for (auto index = first; index < wires.size(); ++index)
             transformWire(wires[index], transform, tagIncrement, card.lineNumber);
+        for (auto& patch : patches) transformPatch(patch, transform, card.lineNumber);
         return true;
     }
     auto previous = std::vector<model::Wire>(wires.begin() + static_cast<std::ptrdiff_t>(first),
@@ -289,6 +440,12 @@ auto applyMove(const NecCard& card, std::vector<model::Wire>& wires) -> bool
         for (auto& wire : previous)
             transformWire(wire, transform, tagIncrement, card.lineNumber);
         wires.insert(wires.end(), previous.begin(), previous.end());
+    }
+    auto previousPatches = patches;
+    for (auto repetition = 0; repetition < repetitions; ++repetition) {
+        for (auto& patch : previousPatches)
+            transformPatch(patch, transform, card.lineNumber);
+        patches.insert(patches.end(), previousPatches.begin(), previousPatches.end());
     }
     return true;
 }
@@ -318,6 +475,19 @@ auto crossesReflectionPlane(const model::Wire& wire, ReflectionAxis axis) noexce
     return false;
 }
 
+auto crossesReflectionPlane(const model::SurfacePatch& patch, ReflectionAxis axis) noexcept -> bool
+{
+    auto hasPositive = false;
+    auto hasNegative = false;
+    for (const auto& corner : patch.corners) {
+        const auto value = coordinate(corner, axis);
+        if (std::abs(value) <= 1.0e-12) return true;
+        hasPositive = hasPositive || value > 0.0;
+        hasNegative = hasNegative || value < 0.0;
+    }
+    return hasPositive && hasNegative;
+}
+
 auto reflectPoint(model::Point3D point, ReflectionAxis axis) noexcept -> model::Point3D
 {
     if (axis == ReflectionAxis::X) point.x = -point.x;
@@ -326,7 +496,8 @@ auto reflectPoint(model::Point3D point, ReflectionAxis axis) noexcept -> model::
     return point;
 }
 
-auto applyReflection(const NecCard& card, std::vector<model::Wire>& wires) -> bool
+auto applyReflection(const NecCard& card, std::vector<model::Wire>& wires,
+    std::vector<model::SurfacePatch>& patches) -> bool
 {
     if (card.fields.size() < 2) return false;
     int tagIncrement{};
@@ -347,6 +518,9 @@ auto applyReflection(const NecCard& card, std::vector<model::Wire>& wires) -> bo
                 [axis](const auto& wire) { return crossesReflectionPlane(wire, axis); })) {
             return false;
         }
+        if (std::ranges::any_of(patches,
+                [axis](const auto& patch) { return crossesReflectionPlane(patch, axis); }))
+            return false;
         const auto sourceCount = wires.size();
         for (auto index = std::size_t{}; index < sourceCount; ++index) {
             auto reflected = wires[index];
@@ -358,12 +532,20 @@ auto applyReflection(const NecCard& card, std::vector<model::Wire>& wires) -> bo
             reflected.editable = false;
             wires.push_back(std::move(reflected));
         }
+        const auto patchCount = patches.size();
+        for (auto index = std::size_t{}; index < patchCount; ++index) {
+            auto reflected = patches[index];
+            for (auto& point : reflected.corners) point = reflectPoint(point, axis);
+            reflected.sourceLine = card.lineNumber;
+            patches.push_back(std::move(reflected));
+        }
         currentIncrement *= 2;
     }
     return true;
 }
 
-auto applyRotation(const NecCard& card, std::vector<model::Wire>& wires) -> bool
+auto applyRotation(const NecCard& card, std::vector<model::Wire>& wires,
+    std::vector<model::SurfacePatch>& patches) -> bool
 {
     if (card.fields.size() < 2) return false;
     int tagIncrement{};
@@ -373,12 +555,17 @@ auto applyRotation(const NecCard& card, std::vector<model::Wire>& wires) -> bool
         return false;
     }
     const auto originals = wires;
+    const auto originalPatches = patches;
     for (auto copy = 1; copy < copies; ++copy) {
         const auto transform = coordinateTransform(0.0, 0.0,
             360.0 * static_cast<double>(copy) / copies, {});
         for (auto wire : originals) {
             transformWire(wire, transform, copy * tagIncrement, card.lineNumber);
             wires.push_back(std::move(wire));
+        }
+        for (auto patch : originalPatches) {
+            transformPatch(patch, transform, card.lineNumber);
+            patches.push_back(std::move(patch));
         }
     }
     return true;
@@ -390,30 +577,122 @@ auto NecModelConverter::convert(const NecDocument& document) const -> ModelConve
 {
     ModelConversionResult result;
     std::vector<model::Wire> wires;
+    std::vector<model::SurfacePatch> patches;
     const auto cards = document.cards();
     for (auto index = std::size_t{}; index < cards.size(); ++index) {
         const auto& card = cards[index];
         if (card.kind == NecCardKind::GeometryScale) {
             if (const auto factor = geometryScaleFactor(card)) {
                 for (auto& wire : wires) scaleWire(wire, *factor);
+                for (auto& patch : patches) scalePatch(patch, *factor);
             }
             else result.issues.push_back({card.lineNumber,
                 "GS requires two integer placeholders and a positive numeric scale factor"});
             continue;
         }
         if (card.mnemonic == "GM") {
-            if (!applyMove(card, wires)) result.issues.push_back({card.lineNumber,
+            if (!applyMove(card, wires, patches)) result.issues.push_back({card.lineNumber,
                 "GM requires a tag increment, nonnegative repetition count, and up to seven numeric transformation fields"});
             continue;
         }
         if (card.mnemonic == "GX") {
-            if (!applyReflection(card, wires)) result.issues.push_back({card.lineNumber,
+            if (!applyReflection(card, wires, patches)) result.issues.push_back({card.lineNumber,
                 "GX requires a tag increment and nonzero XYZ reflection flags; reflected wires cannot lie in or cross a selected symmetry plane"});
             continue;
         }
         if (card.mnemonic == "GR") {
-            if (!applyRotation(card, wires)) result.issues.push_back({card.lineNumber,
+            if (!applyRotation(card, wires, patches)) result.issues.push_back({card.lineNumber,
                 "GR requires a tag increment and a positive total copy count"});
+            continue;
+        }
+        if (card.mnemonic == "SP") {
+            int placeholder{};
+            int shape{};
+            if (card.fields.size() < 2 || !parseNumber(card.fields[0], placeholder)
+                || !parseNumber(card.fields[1], shape) || placeholder != 0
+                || shape < 0 || shape > 3) {
+                result.issues.push_back({card.lineNumber,
+                    "SP requires a zero I1 placeholder and a patch shape from 0 through 3"});
+                continue;
+            }
+            if (shape == 0) {
+                model::SurfacePatch patch;
+                if (!arbitraryPatch(card, patch)) result.issues.push_back({card.lineNumber,
+                    "SP arbitrary patch requires center XYZ, elevation, azimuth, and positive area"});
+                else patches.push_back(std::move(patch));
+                continue;
+            }
+            if (index + 1 >= cards.size() || cards[index + 1].mnemonic != "SC") {
+                result.issues.push_back({card.lineNumber,
+                    "SP rectangular, triangular, and quadrilateral patches require a following SC card"});
+                continue;
+            }
+            model::SurfacePatch patch;
+            if (!shapedPatch(card, cards[index + 1], shape, patch)) {
+                result.issues.push_back({card.lineNumber,
+                    "SP/SC patch corners must define a non-zero-area surface"});
+                ++index;
+                continue;
+            }
+            patches.push_back(std::move(patch));
+            auto previousThird = patches.back().corners[2];
+            auto previousFourth = patches.back().corners.size() == 4
+                ? patches.back().corners[3] : model::Point3D{};
+            ++index;
+            while ((shape == 1 || shape == 3) && index + 1 < cards.size()
+                && cards[index + 1].mnemonic == "SC") {
+                const auto& continuation = cards[++index];
+                int continuationShape{};
+                model::Point3D third;
+                model::Point3D fourth;
+                if (continuation.fields.size() < 5
+                    || !parseNumber(continuation.fields[1], continuationShape)
+                    || (continuationShape != 1 && continuationShape != 3)
+                    || !parsePoint(continuation, 2, third)) {
+                    result.issues.push_back({continuation.lineNumber,
+                        "Additional SC cards require rectangular or quadrilateral shape data"});
+                    continue;
+                }
+                model::SurfacePatch linked;
+                linked.kind = continuationShape == 1 ? model::SurfacePatchKind::Rectangular
+                                                     : model::SurfacePatchKind::Quadrilateral;
+                linked.sourceLine = continuation.lineNumber;
+                if (continuationShape == 1) {
+                    fourth = add(previousFourth, subtract(third, previousThird));
+                } else if (!parsePoint(continuation, 5, fourth)) {
+                    result.issues.push_back({continuation.lineNumber,
+                        "Quadrilateral SC continuation requires both remaining corners"});
+                    continue;
+                }
+                linked.corners = {previousFourth, previousThird, third, fourth};
+                if (!validPatchCorners(linked.corners)) {
+                    result.issues.push_back({continuation.lineNumber,
+                        "SC continuation corners must define a non-zero-area surface"});
+                    continue;
+                }
+                patches.push_back(std::move(linked));
+                previousThird = third;
+                previousFourth = fourth;
+                shape = continuationShape;
+            }
+            continue;
+        }
+        if (card.mnemonic == "SM") {
+            if (index + 1 >= cards.size() || cards[index + 1].mnemonic != "SC") {
+                result.issues.push_back({card.lineNumber,
+                    "SM requires a following SC card with the third surface corner"});
+                continue;
+            }
+            if (!appendPatchGrid(card, cards[index + 1], patches)) {
+                result.issues.push_back({card.lineNumber,
+                    "SM requires positive patch counts and three non-collinear surface corners"});
+            }
+            ++index;
+            continue;
+        }
+        if (card.mnemonic == "SC") {
+            result.issues.push_back({card.lineNumber,
+                "SC must immediately continue an SP or SM surface definition"});
             continue;
         }
         if (card.mnemonic == "GA") {
@@ -467,6 +746,7 @@ auto NecModelConverter::convert(const NecDocument& document) const -> ModelConve
         wires.push_back(std::move(wire));
     }
     for (auto& wire : wires) result.model.addWire(std::move(wire));
+    for (auto& patch : patches) result.model.addSurfacePatch(std::move(patch));
     return result;
 }
 

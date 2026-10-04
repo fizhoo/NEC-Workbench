@@ -223,6 +223,29 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
     updateActionStates();
 }
 
+void WireCardEditor::focusParameterizableField()
+{
+    for (auto row = 0; row < table_->rowCount(); ++row) {
+        for (auto column = static_cast<int>(X1);
+             column <= static_cast<int>(Radius); ++column) {
+            auto* item = table_->item(row, column);
+            if (item == nullptr) continue;
+            const auto* wire = model_.wireByTag(
+                table_->item(row, Tag)->data(WireTagRole).toInt());
+            if (wire == nullptr) continue;
+            const auto parameterLine = parameterControlledFields_.find(wire->sourceLine);
+            const auto parameterControlled = parameterLine != parameterControlledFields_.end()
+                && parameterLine->second.contains(static_cast<std::size_t>(column));
+            if (!(item->flags() & Qt::ItemIsEditable) && !parameterControlled) continue;
+            table_->setCurrentCell(row, column);
+            table_->scrollToItem(item, QAbstractItemView::PositionAtCenter);
+            table_->setFocus(Qt::OtherFocusReason);
+            return;
+        }
+    }
+    table_->setFocus(Qt::OtherFocusReason);
+}
+
 void WireCardEditor::setSymbolicGeometryFields(
     std::unordered_map<std::size_t, std::unordered_set<int>> sourceFields)
 {

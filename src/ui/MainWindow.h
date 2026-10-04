@@ -77,6 +77,7 @@ public:
     };
 
     MainWindow();
+    ~MainWindow() override;
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -312,6 +313,7 @@ private:
     WelcomePage* welcomePage_{};
     WireCardEditor* wireCardEditor_{};
     StructuredCardEditor* structuredCardEditor_{};
+    QLabel* structuredParameterizationHint_{};
     NecEditor* editor_{};
     GeometryView* xyView_{};
     GeometryView* xzView_{};

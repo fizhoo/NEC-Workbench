@@ -81,6 +81,14 @@ auto smokeFailure(const char* checkpoint, int line) -> int
     return EXIT_FAILURE;
 }
 
+auto topLevelDialog(const QString& objectName) -> QDialog*
+{
+    for (auto* widget : QApplication::topLevelWidgets()) {
+        if (widget->objectName() == objectName) return qobject_cast<QDialog*>(widget);
+    }
+    return nullptr;
+}
+
 }
 
 #define NECWB_SMOKE_FAILURE(checkpoint) smokeFailure(checkpoint, __LINE__)
@@ -404,24 +412,32 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationResultsSplitter"));
     auto* optimizationCandidatePlots = optimization.findChild<QWidget*>(
         QStringLiteral("optimizationCandidatePlots"));
-    auto* optimizationCandidateDetailsWindow = optimization.findChild<QDialog*>(
+    auto* optimizationCandidateDetailsWindow = topLevelDialog(
         QStringLiteral("optimizationCandidateDetailsWindow"));
-    auto* optimizationCandidateDetails = optimization.findChild<QTableWidget*>(
-        QStringLiteral("optimizationCandidateDetails"));
-    auto* optimizationCandidateDetailViews = optimization.findChild<QTabWidget*>(
-        QStringLiteral("optimizationCandidateDetailViews"));
-    auto* optimizationCandidateDetailPlots = optimization.findChild<QWidget*>(
-        QStringLiteral("optimizationCandidateDetailPlots"));
-    auto* optimizationCandidateDirectionalPlots = optimization.findChild<QWidget*>(
-        QStringLiteral("optimizationCandidateDirectionalPlots"));
-    auto* optimizationApplyCandidate = optimization.findChild<QPushButton*>(
-        QStringLiteral("optimizationApplyCandidate"));
-    auto* optimizationApplyCandidateAndRun = optimization.findChild<QPushButton*>(
-        QStringLiteral("optimizationApplyCandidateAndRun"));
+    auto* optimizationCandidateDetails = optimizationCandidateDetailsWindow == nullptr
+        ? nullptr : optimizationCandidateDetailsWindow->findChild<QTableWidget*>(
+            QStringLiteral("optimizationCandidateDetails"));
+    auto* optimizationCandidateDetailViews = optimizationCandidateDetailsWindow == nullptr
+        ? nullptr : optimizationCandidateDetailsWindow->findChild<QTabWidget*>(
+            QStringLiteral("optimizationCandidateDetailViews"));
+    auto* optimizationCandidateDetailPlots = optimizationCandidateDetailsWindow == nullptr
+        ? nullptr : optimizationCandidateDetailsWindow->findChild<QWidget*>(
+            QStringLiteral("optimizationCandidateDetailPlots"));
+    auto* optimizationCandidateDirectionalPlots = optimizationCandidateDetailsWindow == nullptr
+        ? nullptr : optimizationCandidateDetailsWindow->findChild<QWidget*>(
+            QStringLiteral("optimizationCandidateDirectionalPlots"));
+    auto* optimizationApplyCandidate = optimizationCandidateDetailsWindow == nullptr
+        ? nullptr : optimizationCandidateDetailsWindow->findChild<QPushButton*>(
+            QStringLiteral("optimizationApplyCandidate"));
+    auto* optimizationApplyCandidateAndRun = optimizationCandidateDetailsWindow == nullptr
+        ? nullptr : optimizationCandidateDetailsWindow->findChild<QPushButton*>(
+            QStringLiteral("optimizationApplyCandidateAndRun"));
     auto* optimizationVariables = optimization.findChild<QTableWidget*>(
         QStringLiteral("optimizationVariablesTable"));
     auto* optimizationParameterSettings = optimization.findChild<QWidget*>(
         QStringLiteral("optimizationParameterSettings"));
+    auto* optimizationChooseParameterFields = optimization.findChild<QPushButton*>(
+        QStringLiteral("optimizationChooseParameterFields"));
     auto* optimizationObjectiveSettings = optimization.findChild<QWidget*>(
         QStringLiteral("optimizationObjectiveSettings"));
     auto* optimizationObjectiveCriteria = optimization.findChild<QTableWidget*>(
@@ -540,6 +556,11 @@ auto main(int argc, char* argv[]) -> int
     if (optimizationResultsTable != nullptr) optimizationResultsTable->setRowCount(1);
     optimization.setContext(optimizationSource,
         QStringLiteral("symbol-units.nec"), QStringLiteral("nec2"), {}, 120, false);
+    auto parameterizationHelpInvoked = false;
+    optimization.setParameterizationHelpCallback(
+        [&parameterizationHelpInvoked] { parameterizationHelpInvoked = true; });
+    if (optimizationChooseParameterFields != nullptr)
+        optimizationChooseParameterFields->click();
     const auto optimizerResultsPreserved = optimizationResultsTable != nullptr
         && optimizationResultsTable->rowCount() == 1;
     if (optimizationResultsTable != nullptr) optimizationResultsTable->setRowCount(0);
@@ -927,6 +948,8 @@ auto main(int argc, char* argv[]) -> int
         || optimizationResultsTable == nullptr
         || optimizationCandidatePlots == nullptr
         || optimizationCandidateDetailsWindow == nullptr
+        || optimizationCandidateDetailsWindow->parentWidget() != nullptr
+        || optimizationCandidateDetailsWindow->testAttribute(Qt::WA_QuitOnClose)
         || optimizationCandidateDetailsWindow->isVisible()
         || optimizationCandidateDetails == nullptr
         || optimizationCandidateDetails->columnCount() != 7
@@ -1046,6 +1069,10 @@ auto main(int argc, char* argv[]) -> int
             != QStringLiteral("Band Evaluation")
         || optimizationResultsTable->columnCount() != 11
         || optimizationVariables->columnCount() != 6
+        || optimizationChooseParameterFields == nullptr
+        || !parameterizationHelpInvoked
+        || !optimizationChooseParameterFields->toolTip().contains(
+            QStringLiteral("Right-click a numeric field"))
         || optimizationVariables->rowCount() != 3
         || optimizationVariables->item(0, 0)->checkState() != Qt::Checked
         || optimizationVariables->item(1, 0)->checkState() != Qt::Checked
@@ -1465,10 +1492,11 @@ auto main(int argc, char* argv[]) -> int
     if (popOutButton == nullptr) return NECWB_SMOKE_FAILURE("detachable panel button");
     popOutButton->click();
     application.processEvents();
-    auto* resultWindow = detachablePanel.findChild<QDialog*>(
-        QStringLiteral("smoke-testResultWindow"));
+    auto* resultWindow = topLevelDialog(QStringLiteral("smoke-testResultWindow"));
     const auto resultPanelDetached = detachablePanel.isDetached()
         && resultWindow != nullptr && resultWindow->isVisible()
+        && resultWindow->parentWidget() == nullptr
+        && !resultWindow->testAttribute(Qt::WA_QuitOnClose)
         && detachableContent->window() == resultWindow;
     resultWindow->close();
     application.processEvents();
@@ -2157,6 +2185,8 @@ auto main(int argc, char* argv[]) -> int
     auto* reviewUnusedInputPage = runReview.findChild<QWidget*>(
         QStringLiteral("runReviewInputPage"));
     const auto runReviewValid = reviewLoaded && runReview.isVisible()
+        && runReview.parentWidget() == nullptr
+        && !runReview.testAttribute(Qt::WA_QuitOnClose)
         && reviewTabs != nullptr && reviewTabs->count() == 3
         && reviewTabs->tabText(0) == QStringLiteral("Summary")
         && reviewTabs->tabText(1) == QStringLiteral("Impedance")

@@ -466,7 +466,7 @@ auto NecModelChecker::check(const NecDocument& document) const -> ModelCheckResu
     const auto setup = NecSetupConverter{}.convert(document);
     if (result.model.empty()) {
         result.diagnostics.push_back({DiagnosticSeverity::Warning, 0,
-            "Incomplete model: no valid wire geometry", "Readiness"});
+            "Incomplete model: no valid geometry", "Readiness"});
     }
     if (!setup.frequency) {
         result.diagnostics.push_back({DiagnosticSeverity::Warning, 0,

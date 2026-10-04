@@ -754,6 +754,25 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     auto* variableSectionLayout = new QVBoxLayout(variableSection);
     variableSectionLayout->setContentsMargins(6, 8, 6, 6);
     variableSectionLayout->addWidget(parameterSettings_);
+    auto* parameterizationBar = new QWidget(variableSection);
+    parameterizationBar->setObjectName(QStringLiteral("optimizationParameterizationHint"));
+    auto* parameterizationLayout = new QHBoxLayout(parameterizationBar);
+    parameterizationLayout->setContentsMargins(0, 0, 0, 0);
+    parameterizationLayout->setSpacing(6);
+    auto* parameterizationHint = new QLabel(tr(
+        "Need another variable? Parameterize a numeric NEC field in Structured Cards."),
+        parameterizationBar);
+    parameterizationHint->setWordWrap(true);
+    auto* chooseParameterFields = new QPushButton(
+        tr("Choose Parameter Fields…"), parameterizationBar);
+    chooseParameterFields->setObjectName(
+        QStringLiteral("optimizationChooseParameterFields"));
+    chooseParameterFields->setToolTip(tr(
+        "Open Model → NEC Deck → Structured Cards. Right-click a numeric field to create "
+        "or link an SY parameter, then return here to optimize it."));
+    parameterizationLayout->addWidget(parameterizationHint, 1);
+    parameterizationLayout->addWidget(chooseParameterFields);
+    variableSectionLayout->addWidget(parameterizationBar);
     variableSectionLayout->addWidget(variablesTable_, 1);
     auto* parameterGrid = new QGridLayout(parameterSettings_);
     parameterGrid->setContentsMargins(0, 0, 0, 0);
@@ -1029,11 +1048,12 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         showCandidateDetails(row);
     });
 
-    candidateDetailsWindow_ = new QDialog(this, Qt::Window);
+    candidateDetailsWindow_ = new QDialog(nullptr, Qt::Window);
     candidateDetailsWindow_->setObjectName(
         QStringLiteral("optimizationCandidateDetailsWindow"));
     candidateDetailsWindow_->setWindowTitle(tr("Candidate Frequency Results"));
     candidateDetailsWindow_->setModal(false);
+    candidateDetailsWindow_->setAttribute(Qt::WA_QuitOnClose, false);
     candidateDetailsWindow_->resize(900, 650);
     auto* detailLayout = new QVBoxLayout(candidateDetailsWindow_);
     candidateDetailLabel_ = new QLabel(candidateDetailsWindow_);
@@ -1244,9 +1264,17 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     connect(returnToCurrentWorkButton_, &QPushButton::clicked, this, [this] {
         if (returnToCurrentWorkCallback_) returnToCurrentWorkCallback_();
     });
+    connect(chooseParameterFields, &QPushButton::clicked, this, [this] {
+        if (parameterizationHelpCallback_) parameterizationHelpCallback_();
+    });
     updateObjectiveControls();
     updateFrequencyControls();
     updateSearchMethodControls();
+}
+
+OptimizationWorkspace::~OptimizationWorkspace()
+{
+    delete candidateDetailsWindow_;
 }
 
 void OptimizationWorkspace::setContext(QString source, QString sourceFile, QString backend,
@@ -1329,6 +1357,12 @@ void OptimizationWorkspace::setRunningChangedCallback(std::function<void()> call
 void OptimizationWorkspace::setReturnToCurrentWorkCallback(std::function<void()> callback)
 {
     returnToCurrentWorkCallback_ = std::move(callback);
+}
+
+void OptimizationWorkspace::setParameterizationHelpCallback(
+    std::function<void()> callback)
+{
+    parameterizationHelpCallback_ = std::move(callback);
 }
 
 void OptimizationWorkspace::setApplyParameterCallback(

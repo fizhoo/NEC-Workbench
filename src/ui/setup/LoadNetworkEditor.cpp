@@ -141,7 +141,7 @@ LoadNetworkEditor::LoadNetworkEditor(QWidget* parent) : QWidget(parent)
     layout->addWidget(new QLabel(tr("Transmission Lines (TL)"), this)); layout->addWidget(lines_, 1); layout->addLayout(lineButtons); layout->addWidget(validation_);
 
     connect(addLoad, &QPushButton::clicked, this, [this] {
-        if (model_.empty()) return;
+        if (model_.wires().empty()) return;
         for (auto row = 0; row < loads_->rowCount(); ++row) {
             if (sourceLineAt(loads_, row) != 0) continue;
             loads_->setCurrentCell(row, 0);
@@ -169,7 +169,7 @@ LoadNetworkEditor::LoadNetworkEditor(QWidget* parent) : QWidget(parent)
         else emit loadDeleteRequested(sourceLine);
     });
     connect(addLine, &QPushButton::clicked, this, [this] {
-        if (model_.empty()) return;
+        if (model_.wires().empty()) return;
         for (auto row = 0; row < lines_->rowCount(); ++row) {
             if (sourceLineAt(lines_, row) != 0) continue;
             lines_->setCurrentCell(row, 0);

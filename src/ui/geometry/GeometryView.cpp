@@ -91,7 +91,7 @@ void GeometryView::selectWire(int tag)
 
 void GeometryView::fitToView()
 {
-    const auto bounds = geometry::projectedBounds(model_.wires(), plane_);
+    const auto bounds = geometry::projectedBounds(model_, plane_);
     if (!bounds) {
         worldCenter_ = {};
         pixelsPerMeter_ = 50.0;
@@ -465,6 +465,7 @@ void GeometryView::paintEvent(QPaintEvent*)
     painter.setRenderHint(QPainter::Antialiasing);
     painter.fillRect(rect(), palette().base());
     drawGrid(painter);
+    drawSurfacePatches(painter);
     drawWires(painter);
     drawAttachments(painter);
     drawExcitations(painter);
@@ -577,6 +578,21 @@ void GeometryView::drawGrid(QPainter& painter) const
                 painter.drawText(origin.x() + 7, 17, verticalAxis(plane_));
             }
         }
+    }
+}
+
+void GeometryView::drawSurfacePatches(QPainter& painter) const
+{
+    auto fill = QColor(45, 165, 145, 80);
+    const auto outline = QColor(25, 125, 110);
+    painter.setPen(QPen(outline, 1.5));
+    painter.setBrush(fill);
+    for (const auto& patch : model_.surfacePatches()) {
+        QPolygonF polygon;
+        polygon.reserve(static_cast<qsizetype>(patch.corners.size()));
+        for (const auto& corner : patch.corners)
+            polygon << mapToScreen(geometry::project(corner, plane_));
+        if (polygon.size() >= 3) painter.drawPolygon(polygon);
     }
 }
 
@@ -752,13 +768,14 @@ void GeometryView::drawOverlay(QPainter& painter) const
     if (model_.empty()) {
         painter.setPen(palette().placeholderText().color());
         painter.drawText(rect(), Qt::AlignCenter,
-            tr("No valid wire geometry\nOpen a NEC file or add GW cards, then run Check Model."));
+            tr("No valid geometry\nOpen a NEC file or add geometry cards, then run Check Model."));
         return;
     }
 
-    const auto summary = tr("%1 View  •  %2 wires  •  Grid %3  •  Snap %4")
+    const auto summary = tr("%1 View  •  %2 wires  •  %3 patches  •  Grid %4  •  Snap %5")
         .arg(planeName(plane_))
         .arg(static_cast<qulonglong>(model_.wireCount()))
+        .arg(static_cast<qulonglong>(model_.surfacePatchCount()))
         .arg(formattedDistance(gridSpacing()))
         .arg(formattedDistance(settings_.snapSpacingMeters));
     const auto coordinates = cursorWorld_

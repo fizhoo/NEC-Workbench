@@ -240,6 +240,10 @@ auto resultModelExtentFromOrigin(const model::AntennaModel& model) -> double
             extent = std::max({extent, std::abs(point.x), std::abs(point.y), std::abs(point.z)});
         }
     }
+    for (const auto& patch : model.surfacePatches()) {
+        for (const auto& point : patch.corners)
+            extent = std::max({extent, std::abs(point.x), std::abs(point.y), std::abs(point.z)});
+    }
     return extent;
 }
 
@@ -897,6 +901,14 @@ private:
     void drawAntenna(QPainter& painter, double scale, double extent)
     {
         if (model_.empty()) return;
+        painter.setPen(QPen(QColor(210, 155, 35), 1.5));
+        painter.setBrush(QColor(245, 190, 45, 75));
+        for (const auto& patch : model_.surfacePatches()) {
+            QPolygonF polygon;
+            for (const auto& point : patch.corners)
+                polygon << project(normalized(point, extent), scale);
+            if (polygon.size() >= 3) painter.drawPolygon(polygon);
+        }
         painter.setPen(QPen(QColor(245, 190, 45), 3));
         for (const auto& wire : model_.wires()) {
             for (auto index = std::size_t{1}; index < model::wirePathPointCount(wire); ++index) {

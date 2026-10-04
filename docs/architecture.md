@@ -84,7 +84,8 @@ solver execution, and both 3D renderers retain their prior boundaries.
 NEC Source presents Raw Source and Structured Cards over the same authoritative
 text document. Structured Cards contains the validated, unit-aware `GW` wire
 table plus a category tree leading to schema-specific tables for `EX`, `FR`,
-`GN/GE`, `LD`, `TL`, `RP`, and `XQ`, plus explicit `GS` scale and `Z0`/`ZO`
+`GN/GE`, `LD`, `TL`, `RP`, and `XQ`, plus explicit `SP`, `SM`, and `SC` surface
+patch editors, `GS` scale, and `Z0`/`ZO`
 reference-impedance editing. Each row retains its original source-line mapping. Selecting a structured
 row positions the raw editor cursor on that card; editing a field rewrites only
 that mapped line through the canonical source-document transaction, parse,
@@ -101,7 +102,13 @@ cards are categorized and type-checked, but the geometry converter continues to 
 only semantics it implements. This boundary prevents the UI from inventing geometry
 while allowing card coverage to grow independently from source preservation.
 
-The semantic wire converter applies `GM`, `GX`, `GR`, and `GS` in authored order.
+The semantic geometry converter keeps wire paths and surface patches as separate model
+primitives. It expands arbitrary and shaped `SP` definitions, linked `SC` patches, and
+`SM` grids without fabricating wire tags or segments. Orthographic, 3D, Dashboard, and
+radiation-overlay renderers consume those same read-only patch polygons.
+
+The converter applies `GM`, `GX`, `GR`, and `GS` in authored order to both supported
+wire and surface geometry.
 `GM` supports move-in-place, first-tag selection, successive copies, and tag increments;
 `GX` expands requested Z, Y, then X plane reflections using NEC tag-increment rules; and
 `GR` treats its count as the total number of azimuthal sectors around Z. Transformed
@@ -124,8 +131,8 @@ remain untouched.
 
 Semantic geometry always uses meters internally, while authored NEC geometry
 may use meters, centimeters, millimeters, inches, feet, or a custom scale. `GS`
-is a first-class ordered geometry operation: it scales coordinates and wire
-radii generated before that card, matching NEC behavior. The standard unit
+is a first-class ordered geometry operation: it scales wire coordinates/radii and
+surface-patch coordinates generated before that card, matching NEC behavior. The standard unit
 selector normalizes supported numeric `GW` decks to one `GS` immediately before
 `GE`; wire editing divides canonical meter values by the effective deck scale
 before rewriting source. Symbolic and unsupported geometry is never flattened
@@ -143,8 +150,8 @@ controls this unit-change behavior, automatic or manual major spacing, minor
 divisions, grid/axis/label visibility, grid and endpoint snapping, and endpoint
 tolerance. Preferences persist between sessions.
 
-The XY, XZ, and YZ geometry views consume the checked semantic model and share
-wire selection with each other and the Project dock. Wire
+The XY, XZ, and YZ geometry views consume the checked semantic model, render surface
+patches behind wires, and share wire selection with each other and the Project dock. Wire
 overlays report live cursor coordinates for the two axes represented by each
 orthographic plane; model extents remain available internally for Fit Geometry.
 endpoints and whole wires can be dragged in any orthographic plane while
