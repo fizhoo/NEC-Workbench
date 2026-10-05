@@ -45,6 +45,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force package | Out-Null
           Copy-Item build/Release/nec-workbench.exe package/
+          Copy-Item LICENSE package/LICENSE.txt
           windeployqt --release --compiler-runtime package/nec-workbench.exe
           Compress-Archive -Path package/* -DestinationPath NEC-Workbench-Windows-x64.zip
 

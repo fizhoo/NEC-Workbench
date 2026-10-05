@@ -183,6 +183,9 @@ if(NECWB_BUILD_GUI)
         BUNDLE DESTINATION .
         RUNTIME DESTINATION bin
     )
+    install(FILES LICENSE
+        DESTINATION share/licenses/nec-workbench
+    )
 
     if(UNIX AND NOT APPLE)
         install(FILES packaging/nec-workbench.desktop
