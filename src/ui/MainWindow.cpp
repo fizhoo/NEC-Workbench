@@ -2360,7 +2360,8 @@ void MainWindow::showAboutDialog()
     QMessageBox::about(this, tr("About NEC Workbench"),
         tr("NEC Workbench\n\n"
            "A cross-platform desktop workbench for creating, checking, analyzing, "
-           "visualizing, and optimizing NEC antenna models."));
+           "visualizing, and optimizing NEC antenna models.\n\n"
+           "Licensed under the GNU General Public License version 3 or later."));
 }
 
 void MainWindow::newModel()

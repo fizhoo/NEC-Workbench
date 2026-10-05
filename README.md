@@ -70,3 +70,8 @@ a separately installed solver under **Analysis → Solver**.
 conversion, solver input generation, result parsing, validation, and optimization
 logic remain separate from the Qt Widgets interface so they can be tested and
 reused independently.
+
+## License
+
+NEC Workbench is free software licensed under the
+[GNU General Public License version 3 or later](LICENSE).
