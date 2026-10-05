@@ -1,131 +1,90 @@
 # Development Roadmap
 
-This roadmap records intended development direction, not guaranteed release
-dates. NEC Workbench remains solver-independent; external NEC executables are
-configured by the user and are not bundled.
+This document records direction rather than promised release dates. NEC
+Workbench remains solver-independent and does not bundle external NEC engines.
 
-## Current Foundation
+## Current Baseline
 
-- Raw and structured NEC source editing with validation and source mapping
-- One canonical, context-labeled source-backed Undo/Redo history across raw,
-  structured, geometry, setup, and analysis-request edits
-- Synchronized 2D and 3D wire geometry inspection and editing
-- Frequency, ground, source, load, transmission-line, and request setup
-- External `nec2c`, OpenNEC, and 4nec2 NEC2dXS execution with durable run artifacts and history
-- Impedance, SWR, current-distribution, and 2D/3D radiation results
-- Historical run snapshots that restore the exact archived input deck
-- Reusable detached Results and optimization-candidate windows with foreground restoration
-- Categorized Project tree with synchronized selection and editor navigation
-- Solver-independent `SY` expressions with numeric NEC run-deck generation
-- Ordered `GS` geometry scaling with separate display and deck-unit controls
-- One-variable bounded sweeps with model-sweep or explicit-frequency SWR objectives
-- Shared candidate evaluator for parameter sweeps and future optimizer algorithms
-- Candidate objective plots with exact weighted SWR, resistance, reactance, gain, F/B, and F/R contributions
-- Forward-gain, physical front-to-back, and rear-cut front-to-rear objectives using focused RP samples
-- Per-criterion Minimize, Maximize, Target, and Good Enough goals for SWR/R/X/Gain/F/B/F/R
-- Independent Minimum, Average, and Maximum frequency reduction per objective criterion
-- Candidate min/average/max performance summaries with archived objective reconstruction
-- Multi-variable adaptive coordinate refinement with per-parameter bounds and tolerances
-- Bounded multi-variable Nelder–Mead search using the shared candidate evaluator
-- Seeded bounded multi-variable Differential Evolution with reproducible populations
-- Explicit, undoable application of the best candidate values to their active `SY` definitions
-- Model-level `Z0` feed reference shared by SWR results and optimizer defaults
-- Shared frequency plans for optimization and model, single, explicit-list, or continuous RP requests
-- Temporary linear/logarithmic Quick Frequency Sweeps with optional all-frequency RP output
-- Static model-adequacy checks for segmentation, thin-wire ratios, sources, and junctions
-- Single-frequency lossless Average Gain Test with archived Validation results
-- Segmentation convergence studies with EX, LD, and TL attachment remapping
-- Linux development builds and automated Windows packaging
-- Complete NEC-2 card recognition with centralized categories, fixed-field validation,
-  safe source preservation, and a published support matrix
-- Read-only semantic 2D/3D geometry for `GA`, helical `GH`, and tapered `GW`/`GC`,
-  with ordered `GS`, `GM`, `GX`, and `GR` operations and segment-aware attachments
-- Separate read-only surface primitives for `SP`, `SM`, and `SC`, with dedicated
-  structured fields and shared 2D/3D/result-overlay rendering
+### Modeling
 
-## Next: Geometry Card Semantics
+- One source-backed document shared by Raw Source, Structured Cards, geometry,
+  model setup, parameter editing, validation, and Undo/Redo
+- Editable straight-wire geometry plus read-only display of supported generated
+  wires, transformations, and surface patches
+- Structured frequency, source, environment, load, transmission-line, request,
+  `SY`, and reference-impedance workflows
+- Complete NEC-2 mnemonic recognition with unknown extensions preserved
 
-`GM`, `GX`, and `GR` wire transformations now expand in authored order while the
-original cards remain unchanged. The remaining sequence is:
+### Analysis and Results
 
-1. Add flat-spiral `GH` semantics and dedicated editors only where card-specific labels
-   and constraints add value.
-2. Verify generated decks with `nec2c` examples for every newly expanded card.
+- `nec2c`, OpenNEC, and 4nec2 NEC2dXS process adapters with independent saved paths
+- Normal runs and temporary quick sweeps without rewriting the authored model
+- Durable run history with authored source, generated solver deck, output, logs,
+  metadata, and detached historical review
+- Impedance/SWR, segment-current, and 2D/3D radiation inspection
+- Static adequacy checks, Average Gain Test, and segmentation convergence
 
-Card support distinguishes **Preserved**, **Understood**, and **Structured Editable**
-instead of claiming that every recognized card already has complete graphical semantics.
-See `docs/nec-card-support.md` for the current matrix.
+### Optimization
 
-## Later: Model Adequacy
+- Source-backed `SY` parameters and structured-card parameter promotion
+- Single-variable exhaustive sweep
+- Multi-variable adaptive coordinate search, Nelder–Mead, and seeded Differential Evolution
+- Shared frequency plans and weighted SWR, resistance, reactance, gain, F/B, and F/R objectives
+- Per-criterion goal and band reduction, retained candidate details, and explicit
+  undoable application of a selected result
 
-Static checks are only the first layer. Following Cebik's guidance, AGT and
-convergence are necessary but not sufficient tests of model adequacy. The next
-sequence is:
+### Delivery
 
-1. Plot impedance, gain, and pattern changes across segmentation levels.
-2. Add safe remapping for supported `NT` network references.
-3. Revalidate optimization finalists with the converged model.
+- Automated Linux AppImage and Windows ZIP builds
+- Qt-free core, plot, and optimization tests
+- In-application tooltips for detailed control behavior
 
-Adequacy findings should warn and explain rather than impose universal pass/fail
-rules. The modeling purpose determines whether a remaining numerical difference
-is operationally significant.
+## Release Readiness
 
-## Parameterized Models
+The next milestone is a dependable early release rather than another broad feature expansion.
 
-Workbench recognizes `SY` declarations, evaluates safe arithmetic and earlier
-parameter references, validates the resolved model, reports source-line
-diagnostics, and produces a numeric solver deck. Each run retains both the
-authored parameterized source and the generated NEC input. The remaining
-sequence is:
+1. Exercise representative real decks across supported solver backends and platforms.
+2. Strengthen regression coverage around source edits, run generation, output parsing,
+   detached windows, and optimization session restoration.
+3. Review card support claims against actual validation, structured editing, and rendering.
+4. Finish concise user-facing release notes, installation guidance, and known limitations.
+5. Publish versioned Linux and Windows binaries through GitHub Releases.
 
-1. Extend the clarified expression and resolved-value presentation into
-   structured editors.
-2. Add safe expression-aware structured and graphical editing.
+## Near-Term Work
 
-Parameterization is the required foundation for both model templates and
-optimization. It should remain a Workbench feature rather than depending on a
-particular solver's extensions.
+### Optimization Confidence
 
-## Later: Optimization Analysis
+- Finalist sensitivity and construction-tolerance analysis
+- Optional per-frequency or per-band importance and explicit pass/fail constraints
+- Two-variable grid sweeps and objective heat maps
+- Clearer comparison of baseline, finalist, and applied-model results
+- Continue validating objective calculations and search stopping reasons with tests
 
-1. Add finalist sensitivity/tolerance analysis for parameter perturbations.
-2. Add optional frequency/band weights and pass/fail constraints.
-3. Add two-variable grid sweeps and objective heat maps.
-4. Add explicit Compare Runs and baseline-versus-candidate overlays.
+Additional search algorithms should be added only when they offer a clear advantage
+over the existing reproducible methods.
 
-Explicit frequency sets and editable amateur-band presets provide the initial
-multi-band foundation. Per-frequency weights and pass/fail constraints remain
-future refinements rather than complicating the first workflow.
+### Results and Validation
 
-Parameter Sweep, Adaptive Optimize, Nelder–Mead, and Differential Evolution now share the same variables,
-frequency plans, objectives, candidate artifacts, and Apply actions. Further methods
-should be added only when they offer a clear advantage over these reproducible baselines.
-Candidate review now includes per-frequency impedance and directional metrics,
-gain/F/B/F/R plots, extrema frequencies, and goal-aware scoring guidance.
-Normal and historical Radiation results now provide the same compact forward
-gain/F/B/F/R versus-frequency inspection without entering Optimize.
+- CSV export for numerical result tables
+- Deliberate two-run impedance/SWR comparison before broader plot overlays
+- Convergence plots for impedance, gain, and pattern changes
+- Input-power normalization for current and field amplitudes
+- Near-field parsing and visualization
 
-## Modeling and Analysis Improvements
+### Modeling
 
-- Add optional filled 3D radiation surfaces while retaining the auditable sample mesh
-- Normalize attachment positions for safe `LD`, `TL`, `NT`, and additional EX remapping
-- Add more geometry-card editors and semantic geometry primitives
-- Add radiation polarization and additional field-component views
-- Improve filled radiation surfaces and export options
-- Add CSV export for numerical and sweep results
-- Add antenna templates and a guided antenna creator
+- Flat-spiral `GH` semantic geometry
+- Additional card-specific editors where labels and constraints improve safety
+- Broader attachment remapping, including supported `NT` cases
+- Antenna templates and a guided antenna creator
 
-## Solver Backends
+## Longer Term
 
-- Keep `nec2c` as the reference external backend
-- Validate OpenNEC and NEC2dXS original-format output against a broader real-deck corpus
-- Support user-provided NEC-4/NEC-5-compatible executables where their command and output formats can be adapted safely
-- Keep backend invocation and output parsing separate from model editing
+- Smith chart and transmission-line, stub, matching, and phasing calculators
+- Filled or shaded 3D radiation surfaces and additional polarization views
+- Signed installers and broader platform packaging
+- Accessibility and theme refinement
+- Carefully bounded plugin interfaces after core model, solver, and result APIs stabilize
 
-## Parking Lot
-
-- Multi-run comparison workspace
-- Near-field visualization
-- Optimization algorithm plugins
-- Additional platform installers and signed release packages
-- Broader accessibility and theme customization
+See [NEC Card Support](nec-card-support.md) for current card-level behavior. Ideas
+that are not yet scheduled remain in [Scratchpad](scratchpad.md).

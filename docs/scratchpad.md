@@ -1,147 +1,44 @@
 # NEC Workbench Scratchpad
 
-Ideas recorded here are discussion items, not implementation commitments. Status values may include Parking Lot, Near-Term, Planned, Implemented, Rejected, or Superseded.
+Unscheduled ideas, not release commitments. Implemented work belongs in the user
+guide and architecture rather than this list.
 
-## Plotting and Transmission Lines
+## Results and RF Tools
 
-### Smith Chart and Transmission-Line Tools
+- Smith chart using NEC impedance sweeps, followed by interactive markers and reference-impedance controls
+- Shared transmission-line core for transformation, loss, electrical length, SWR,
+  open/shorted stubs, matching, and phasing lines
+- Explicit transfer between NEC feedpoint results and standalone RF calculators
+- Display normalization from solved excitation to a selected accepted input power,
+  with peak/RMS labeling and original values retained
+- CSV export for impedance, SWR, current, gain, and directional tables
+- Deliberate two-run overlays, starting with impedance and SWR
 
-- **Status:** Parking Lot
-- Add a Smith chart for impedance, admittance, SWR circles, and frequency traces.
-- Consider transmission-line calculators for line transformation, loss, electrical length, and SWR.
-- Add open/shorted stub calculators, single-stub matching, and basic impedance-matching workflows.
-- Add phasing-line calculations for stacked arrays and multi-element feed systems, including
-  electrical length, velocity factor, phase shift, and transformed impedance.
-- Integrate these tools with NEC results so a calculated feedpoint impedance can become the chart or calculator input without manual re-entry.
-- Keep standalone calculator use available even when no NEC model is open.
+## Visualization
 
-**Direction:** Build this in layers: first a read-only Smith chart for NEC frequency results,
-then interactive markers and reference-impedance controls, followed by a shared
-transmission-line calculation core used by line transformation, stub matching, and phasing
-tools. Keep calculators independently usable, but allow explicit transfer of NEC feedpoint
-results into them and calculated line/stub values back into model setup where appropriate.
+- Optional filled or smoothly shaded 3D radiation surfaces with a numeric color scale
+- Additional polarization and field-component views
+- Near-field parsing and visualization
 
-## 3D Visualization
+## Analysis Requests
 
-### Radiation Color Contours and Shading
-
-- **Status:** Parking Lot
-- Add gain-based color contours or smooth color shading to 3D radiation patterns.
-- Provide a visible dBi color scale so color has an unambiguous numerical meaning.
-- Consider selectable absolute-gain and normalized-to-peak coloring.
-- Preserve antenna geometry visibility and readable surface shape when coloring is enabled.
-
-**Direction:** Start with a simple continuous color gradient mapped to gain and a legend. Add optional contour bands only if they improve interpretation; avoid adding multiple overlapping display modes initially.
-
-### Input-Power Normalization
-
-- **Status:** Parking Lot / Likely Near-Term
-- Allow results produced with a conventional `EX` voltage source, often `1 + j0` V, to be displayed at a user-selected accepted input power such as 100 W.
-- Scale current, source voltage, and field amplitudes by `sqrt(requested_power / solved_input_power)`; impedance, SWR, gain, and pattern shape remain unchanged in a linear model.
-- Offer **As Solved** and **Normalize to Input Power** display modes without silently rewriting the authored `EX` card.
-- Clearly label whether displayed amplitudes are NEC peak phasors or RMS values; 4nec2 presents voltage and current as RMS values.
-- Show normalized segment currents in amperes and source voltage/current where available.
-- Do not initially claim a general voltage distribution along every antenna wire: standard NEC output directly provides segment currents and driving-point voltage/current, but not a simple circuit-like voltage value at every wire segment.
-
-**Direction:** Implement normalization as a results-display transformation using the solver's reported accepted input power. Keep the original solver values available for reproducibility and apply the same scale consistently to currents and field strengths.
-
-## Radiation Requests
-
-### Amateur-Band Pattern Frequencies
-
-- **Status:** Center Implemented; Expanded Modes Parking Lot
-- Extend **Amateur Band Centers…** with selectable frequency coverage modes.
-- **Center** already adds one representative center frequency for each selected band.
-- **Band Edges** adds the lower and upper engineering edges for each selected band.
-- **Full Band Sweep** adds the complete preset range and step for each selected band.
-- Show the resulting frequency and pattern-calculation counts before accepting the selection.
-- Keep generated frequencies editable and remove duplicates automatically.
-
-**Direction:** Implement center frequencies first because radiation calculations are comparatively expensive. Add edge and full-sweep modes only after the simpler picker is tested and the workload impact remains obvious.
+- Expand amateur-band pattern presets beyond center frequency to optional band
+  edges or full-band sweeps, with the resulting calculation count shown first
 
 ## Optimization
 
-### Per-Criterion Objective Builder
+- Finalist sensitivity and construction-tolerance analysis
+- Per-frequency or per-band importance
+- Explicit pass/fail constraints in addition to weighted preferences
+- Two-variable grid sweeps and objective heat maps
+- Baseline-versus-finalist comparison
+- Staged impedance filtering before expensive directional evaluation
+- Revisit whether **Apply This Candidate and Run** adds enough value beyond Apply
+  and the normal Run command
 
-- **Status:** Implemented
-- Each SWR, R, X, gain, F/B, and F/R row selects its own Minimize, Maximize,
-  Target, or Good Enough goal and Minimum, Average, or Maximum frequency reduction.
-- The Frequency section is the sole source of evaluated frequencies; a one-point
-  plan replaces the former global Selected Frequency objective mode.
-- Keep the compact summary on the main Optimize page and the full matrix in the
-  Objective dialog so added power does not crowd the workspace.
+## Modeling and Delivery
 
-### Radiation Objectives for Directional Antennas
-
-- **Status:** Implemented Phase 3
-- Add front-to-back ratio and forward gain as optimization criteria for Yagis and other directional antennas.
-- Require an explicit forward direction, polarization/component, pattern frequency, and suitable RP coverage.
-- Reuse the physical spherical-direction F/B calculation; never substitute minimum pattern gain for the true opposite direction.
-- Report the objective as unavailable when the generated pattern does not include both the forward and physically opposite directions.
-- Support weighting radiation goals alongside SWR, resistance, and reactance.
-- Make the added solver cost clear because each candidate must calculate radiation patterns, not only impedance.
-- Improve parameterization discoverability during this checkpoint without adding a second
-  parameter system:
-  - Structured Cards should visibly explain **Double-click to edit** and
-    **Right-click a numeric cell to parameterize**.
-  - The Parameters page should explain that parameters are managed there, while NEC fields
-    are linked by right-clicking the corresponding Structured Cards cell.
-  - Existing parameter-controlled cells should retain their accent, `ƒx` marker, and link tooltip.
-
-**Direction:** First add single-frequency forward gain and F/B objectives using a
-deliberately selected pattern request. Then support minimax or weighted evaluation
-across several frequencies. Consider a staged workflow that filters candidates by
-impedance before requesting expensive radiation calculations.
-
-Phase 1 added one exact forward `RP` sample and, for F/B, one exact antipodal sample.
-Phase 2 applies those requests at every shared study frequency and supports directional
-Minimax. Phase 3 adds front-to-rear using the strongest response in the rear 180°
-half of the configured azimuth cut, sampled every 5°. Frequency weights,
-constraints, full-hemisphere rear searches, and staged filtering remain parking-lot work.
-
-### Candidate Result Exploration
-
-- **Status:** Implemented Experiment / Revisit; Potential Revert
-- Optimization candidates currently belong to an optimization session rather than the normal analysis Results workflow.
-- Preserve candidate SWR, impedance, gain, and other available result curves so they remain inspectable after optimization completes.
-- Keep these results clearly identified as optimization-candidate data rather than ordinary model runs.
-- Allow a selected candidate to open detailed plots without replacing the active model or pretending the candidate is the active model's official result.
-- Consider an explicit **Promote Candidate** or **Apply and Run** action when the user wants a candidate to become a normal model analysis.
-
-**Direction:** Treat the optimization session as its own result container. The optimizer should retain summary curves for all candidates and permit detailed inspection of one candidate at a time. A candidate only becomes a normal Results run after an explicit action, keeping run history understandable while preserving useful optimization data.
-
-**Revisit note:** Candidate inspection plus **Apply This Candidate to Model** and
-**Apply This Candidate and Run** are intentionally isolated in the reusable details
-window. Re-evaluate whether the run shortcut adds enough value beyond **Apply Best
-to Model** and the normal Run action. Keep this checkpoint easy to remove if it
-makes the optimization workflow feel ambiguous or crowded. For the current trial,
-applying a candidate intentionally preserves its frequency table and SWR/R/X plots;
-unrelated subsequent model edits still clear stale study data.
-
-## Results Comparison
-
-### Numerical Table Export
-
-- **Status:** Parking Lot / Likely Near-Term
-- Export SWR, resistance, reactance, impedance, current, gain, and other numerical result tables.
-- Start with CSV export so results can be opened in spreadsheets and analysis tools.
-- Include frequency, units, source model, run identity, backend, and reference impedance in the exported data or metadata.
-- Export the currently selected result set without changing the active model or historical-run context.
-
-**Direction:** Add consistent **Export CSV…** actions beside each applicable results
-table. Reuse one shared exporter rather than implementing separate formatting logic
-for every results view.
-
-### Multiple Run Graph Overlays
-
-- **Status:** Parking Lot / Likely Near-Term
-- Overlay impedance, SWR, gain, and other compatible result curves from multiple runs.
-- Keep every curve clearly labeled by source model, run date, and candidate or analysis identity.
-- Allow individual runs and quantities to be shown or hidden without reopening them.
-- Require compatible result types and coordinate/frequency domains; explain when two runs cannot be overlaid directly.
-- Keep comparison selections separate from the active model and ordinary single-run Results context.
-
-**Direction:** First add a deliberate **Compare Runs** workflow for two ordinary
-analysis runs, beginning with impedance and SWR. Add gain and radiation-pattern
-overlays only after frequency, cut-plane, polarization, and normalization matching
-are explicit enough to prevent misleading comparisons.
+- Export a strict numeric NEC deck without Workbench extensions
+- Guided antenna templates and creator
+- Signed installers and longer-lived release packages
+- Plugin boundaries only after model, solver, result, and optimization APIs stabilize

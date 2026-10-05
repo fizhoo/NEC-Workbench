@@ -25,3 +25,6 @@ build.ninja
 *.user
 *~
 .DS_Store
+
+# Local design notes not ready for publication
+/docs/optimization-math.md
