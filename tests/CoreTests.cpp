@@ -113,6 +113,25 @@ void testCompleteNec2CardCatalog()
     expect(necwb::nec::findNecCardSpec("GA")->kind == necwb::nec::NecCardKind::GeometryOther
             && necwb::nec::findNecCardSpec("NE")->kind == necwb::nec::NecCardKind::ControlOther,
         "generated geometry and additional controls have stable semantic groups");
+
+    constexpr std::array structuredCards{
+        "GW", "GA", "GH", "SP", "SM", "SC", "GS", "GE", "FR", "GN", "LD", "EX",
+        "TL", "RP", "XQ", "SY", "Z0", "ZO"};
+    for (const auto mnemonic : structuredCards) {
+        const auto* spec = necwb::nec::findNecCardSpec(mnemonic);
+        expect(spec != nullptr
+                && spec->support == necwb::nec::NecCardSupport::StructuredEditable,
+            "dedicated structured card editors match the catalog support contract");
+    }
+
+    constexpr std::array understoodCards{
+        "CM", "CE", "GC", "GM", "GX", "GR", "GF", "EK", "KH", "NT", "CP", "EN",
+        "GD", "NE", "NH", "NX", "PQ", "PT", "WG"};
+    for (const auto mnemonic : understoodCards) {
+        const auto* spec = necwb::nec::findNecCardSpec(mnemonic);
+        expect(spec != nullptr && spec->support == necwb::nec::NecCardSupport::Understood,
+            "generic fixed-field cards remain distinguished from dedicated editors");
+    }
 }
 
 void testSymbolResolution()

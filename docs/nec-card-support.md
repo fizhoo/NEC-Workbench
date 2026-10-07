@@ -4,13 +4,17 @@ NEC Workbench distinguishes three levels of card support:
 
 - **Preserved** — source text survives opening, editing, saving, and run-snapshot archiving.
 - **Understood** — Workbench identifies the card, assigns it to the correct NEC section,
-  validates fixed integer/numeric field types, and exposes existing fields in the
-  structured card view.
+  validates fixed integer/numeric field types, and exposes existing fields through a
+  generic fixed-field table in Structured Cards.
 - **Structured Editable** — a dedicated editor provides card-specific labels, choices,
   validation, or model behavior.
 
 Every standard NEC-2 mnemonic is recognized. Unknown solver extensions are still
 preserved exactly and remain editable in Raw Source.
+
+Support level does not imply graphical rendering or parsed result support. Those are
+listed separately where applicable. Solver acceptance remains authoritative for
+backend-specific options.
 
 ## Geometry Cards
 

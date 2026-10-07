@@ -39,16 +39,17 @@ Workbench remains solver-independent and does not bundle external NEC engines.
 - Qt-free core, plot, and optimization tests
 - In-application tooltips for detailed control behavior
 
-## Release Readiness
+## Current Milestone
 
-The next milestone is a dependable early release rather than another broad feature expansion.
+`v0.1.0-alpha.1` established the first public Linux AppImage and Windows ZIP baseline.
+The current milestone is Alpha 1 stabilization rather than broad feature expansion.
 
 1. Exercise representative real decks across supported solver backends and platforms.
 2. Strengthen regression coverage around source edits, run generation, output parsing,
    detached windows, and optimization session restoration.
-3. Review card support claims against actual validation, structured editing, and rendering.
-4. Finish concise user-facing release notes, installation guidance, and known limitations.
-5. Publish versioned Linux and Windows binaries through GitHub Releases.
+3. Keep card-support claims synchronized with validation, structured editing, and rendering.
+4. Fix reproducible release defects before adding another major workflow.
+5. Prepare a focused `v0.1.0-alpha.2` maintenance release when the fixes justify it.
 
 ## Near-Term Work
 
