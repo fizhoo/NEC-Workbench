@@ -32,7 +32,7 @@ auto distanceToSegment(const QPointF& point, const QPointF& start, const QPointF
 }
 
 Geometry3DView::Geometry3DView(QWidget* parent)
-    : QWidget(parent)
+    : GeometryInteractionView(parent)
 {
     setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(420, 320);
@@ -59,84 +59,9 @@ void Geometry3DView::updateModel(const model::AntennaModel& model)
     update();
 }
 
-void Geometry3DView::selectWire(int tag)
-{
-    selectedWireTag_ = model_.wireByTag(tag) == nullptr ? std::nullopt : std::optional<int>{tag};
-    selectedExcitationLine_.reset();
-    selectedLoadLine_.reset();
-    selectedTransmissionLine_.reset();
-    update();
-}
-
 void Geometry3DView::setLengthUnit(model::LengthUnit unit)
 {
     lengthUnit_ = unit;
-    update();
-}
-
-void Geometry3DView::setExcitations(const std::vector<model::Excitation>& excitations)
-{
-    excitations_ = excitations;
-    if (selectedExcitationLine_
-        && std::ranges::find(excitations_, *selectedExcitationLine_, &model::Excitation::sourceLine)
-            == excitations_.end()) {
-        selectedExcitationLine_.reset();
-    }
-    update();
-}
-
-void Geometry3DView::setAttachments(const std::vector<model::LoadDefinition>& loads,
-    const std::vector<model::TransmissionLineDefinition>& transmissionLines)
-{
-    loads_ = loads;
-    transmissionLines_ = transmissionLines;
-    if (selectedLoadLine_
-        && std::ranges::find(loads_, *selectedLoadLine_, &model::LoadDefinition::sourceLine)
-            == loads_.end()) selectedLoadLine_.reset();
-    if (selectedTransmissionLine_
-        && std::ranges::find(transmissionLines_, *selectedTransmissionLine_,
-            &model::TransmissionLineDefinition::sourceLine) == transmissionLines_.end())
-        selectedTransmissionLine_.reset();
-    update();
-}
-
-void Geometry3DView::setPendingTransmissionLineEndpoint(
-    std::optional<std::pair<int, int>> endpoint)
-{
-    pendingTransmissionLineEndpoint_ = endpoint;
-    update();
-}
-
-void Geometry3DView::selectExcitation(std::size_t sourceLine)
-{
-    const auto found = std::ranges::find(excitations_, sourceLine, &model::Excitation::sourceLine);
-    selectedExcitationLine_ = found == excitations_.end()
-        ? std::nullopt : std::optional<std::size_t>{sourceLine};
-    selectedWireTag_.reset();
-    selectedLoadLine_.reset();
-    selectedTransmissionLine_.reset();
-    update();
-}
-
-void Geometry3DView::selectLoad(std::size_t sourceLine)
-{
-    const auto found = std::ranges::find(loads_, sourceLine, &model::LoadDefinition::sourceLine);
-    selectedLoadLine_ = found == loads_.end() ? std::nullopt : std::optional{sourceLine};
-    selectedExcitationLine_.reset();
-    selectedTransmissionLine_.reset();
-    selectedWireTag_.reset();
-    update();
-}
-
-void Geometry3DView::selectTransmissionLine(std::size_t sourceLine)
-{
-    const auto found = std::ranges::find(transmissionLines_, sourceLine,
-        &model::TransmissionLineDefinition::sourceLine);
-    selectedTransmissionLine_ = found == transmissionLines_.end()
-        ? std::nullopt : std::optional{sourceLine};
-    selectedExcitationLine_.reset();
-    selectedLoadLine_.reset();
-    selectedWireTag_.reset();
     update();
 }
 
@@ -185,99 +110,38 @@ void Geometry3DView::setIsometricView()
     fitToView();
 }
 
-void Geometry3DView::contextMenuEvent(QContextMenuEvent* event)
+auto Geometry3DView::wireMenuOptions(int tag, const QPointF&) const
+    -> GeometryWireMenuOptions
 {
-    QMenu menu(this);
-    if (const auto sourceLine = loadAt(event->pos())) {
-        selectLoad(*sourceLine);
-        emit loadSelected(*sourceLine);
-        auto* editAction = menu.addAction(tr("Edit in Model Setup"));
-        menu.addSeparator();
-        auto* deleteAction = menu.addAction(tr("Delete Load"));
-        const auto* selectedAction = menu.exec(event->globalPos());
-        if (selectedAction == editAction) emit editLoadRequested(*sourceLine);
-        else if (selectedAction == deleteAction) emit deleteLoadRequested(*sourceLine);
-    } else if (const auto sourceLine = transmissionLineAt(event->pos())) {
-        selectTransmissionLine(*sourceLine);
-        emit transmissionLineSelected(*sourceLine);
-        auto* editAction = menu.addAction(tr("Edit in Model Setup"));
-        menu.addSeparator();
-        auto* deleteAction = menu.addAction(tr("Delete Transmission Line"));
-        const auto* selectedAction = menu.exec(event->globalPos());
-        if (selectedAction == editAction) emit editTransmissionLineRequested(*sourceLine);
-        else if (selectedAction == deleteAction) emit deleteTransmissionLineRequested(*sourceLine);
-    } else if (const auto sourceLine = excitationAt(event->pos())) {
-        selectExcitation(*sourceLine);
-        emit excitationSelected(*sourceLine);
-        auto* propertiesAction = menu.addAction(tr("Properties…"));
-        auto* setupAction = menu.addAction(tr("Edit in Setup"));
-        menu.addSeparator();
-        auto* deleteAction = menu.addAction(tr("Delete Voltage Source"));
-        const auto* selectedAction = menu.exec(event->globalPos());
-        if (selectedAction == propertiesAction) {
-            emit editExcitationRequested(*sourceLine);
-        } else if (selectedAction == setupAction) {
-            emit openExcitationSetupRequested(*sourceLine);
-        } else if (selectedAction == deleteAction) {
-            emit deleteExcitationRequested(*sourceLine);
-        }
-    } else if (const auto tag = wireAt(event->pos())) {
-        selectedWireTag_ = *tag;
-        selectedExcitationLine_.reset();
-        selectedLoadLine_.reset();
-        selectedTransmissionLine_.reset();
-        emit wireSelected(*tag);
-        const auto* wire = model_.wireByTag(*tag);
-        const auto editable = wire != nullptr && wire->editable;
-        auto* propertiesAction = menu.addAction(tr("Properties…"));
-        propertiesAction->setEnabled(editable);
-        menu.addSeparator();
-        auto* addSourceAction = menu.addAction(tr("Add Voltage Source Here"));
-        auto* addLoadAction = menu.addAction(tr("Add Load Here"));
-        auto* lineEndpointAction = menu.addAction(pendingTransmissionLineEndpoint_
-            ? tr("Complete Transmission Line Here") : tr("Start Transmission Line Here"));
-        auto* cancelLineAction = pendingTransmissionLineEndpoint_
-            ? menu.addAction(tr("Cancel Transmission Line")) : nullptr;
-        auto* fitAction = menu.addAction(tr("Fit 3D View"));
-        const auto* selectedAction = menu.exec(event->globalPos());
-        if (selectedAction == propertiesAction) {
-            emit wirePropertiesRequested(*tag);
-        } else if (selectedAction == addSourceAction) {
-            emit addExcitationRequested(*tag, segmentAt(*tag, event->pos()));
-        } else if (selectedAction == addLoadAction) {
-            emit addLoadRequested(*tag, segmentAt(*tag, event->pos()));
-        } else if (selectedAction == lineEndpointAction) {
-            emit transmissionLineEndpointRequested(*tag, segmentAt(*tag, event->pos()));
-        } else if (cancelLineAction != nullptr && selectedAction == cancelLineAction) {
-            emit cancelTransmissionLineRequested();
-        } else if (selectedAction == fitAction) {
-            fitToView();
-        }
-    } else {
-        auto* fitAction = menu.addAction(tr("Fit 3D View"));
-        auto* isometricAction = menu.addAction(tr("Isometric View"));
-        auto* cancelLineAction = pendingTransmissionLineEndpoint_
-            ? menu.addAction(tr("Cancel Transmission Line")) : nullptr;
-        const auto* selectedAction = menu.exec(event->globalPos());
-        if (selectedAction == fitAction) {
-            fitToView();
-        } else if (selectedAction == isometricAction) {
-            setIsometricView();
-        } else if (cancelLineAction != nullptr && selectedAction == cancelLineAction) {
-            emit cancelTransmissionLineRequested();
-        }
-    }
-    event->accept();
+    const auto* wire = model_.wireByTag(tag);
+    return {
+        .editable = wire != nullptr && wire->editable,
+        .transmissionLinePending = pendingTransmissionLineEndpoint_.has_value(),
+        .allowFit = true,
+    };
 }
 
-void Geometry3DView::mouseDoubleClickEvent(QMouseEvent* event)
+void Geometry3DView::handleWireContextAction(
+    GeometryContextAction action, int, const QPointF&)
 {
-    if (event->button() == Qt::LeftButton) {
+    if (action == GeometryContextAction::FitView) fitToView();
+}
+
+void Geometry3DView::showEmptyContextMenu(QContextMenuEvent* event)
+{
+    QMenu menu(this);
+    auto* fitAction = menu.addAction(tr("Fit 3D View"));
+    auto* isometricAction = menu.addAction(tr("Isometric View"));
+    auto* cancelLineAction = pendingTransmissionLineEndpoint_
+        ? menu.addAction(tr("Cancel Transmission Line")) : nullptr;
+    const auto* selectedAction = menu.exec(event->globalPos());
+    if (selectedAction == fitAction) {
         fitToView();
-        event->accept();
-        return;
+    } else if (selectedAction == isometricAction) {
+        setIsometricView();
+    } else if (cancelLineAction != nullptr && selectedAction == cancelLineAction) {
+        emit cancelTransmissionLineRequested();
     }
-    QWidget::mouseDoubleClickEvent(event);
 }
 
 void Geometry3DView::mouseMoveEvent(QMouseEvent* event)

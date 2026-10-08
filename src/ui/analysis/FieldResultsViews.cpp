@@ -1,5 +1,6 @@
 #include "ui/analysis/FieldResultsViews.h"
 
+#include "analysis/FrequencyComparison.h"
 #include "model/WireGeometry.h"
 #include "ui/DisplayFormat.h"
 #include "ui/analysis/SweepPlotsView.h"
@@ -55,11 +56,6 @@ auto frequencies(const auto& values) -> std::vector<double>
 auto selectedFrequency(QComboBox* control) -> double
 {
     return control->currentData().toDouble();
-}
-
-auto sameFrequency(double first, double second) -> bool
-{
-    return std::abs(first - second) <= 1.0e-9 * std::max({1.0, std::abs(first), std::abs(second)});
 }
 
 void selectOrAppendFrequency(QComboBox* control, double frequencyMHz)
@@ -1071,8 +1067,9 @@ RadiationPatternView::RadiationPatternView(QWidget* parent) : QWidget(parent)
     auto* previousShortcut = new QShortcut(QKeySequence(Qt::Key_Left), this);
     auto* nextShortcut = new QShortcut(QKeySequence(Qt::Key_Right), this);
     auto* orientationShortcut = new QShortcut(QKeySequence(Qt::Key_Space), this);
-    for (auto* shortcut : {previousShortcut, nextShortcut, orientationShortcut})
+    for (auto* shortcut : {previousShortcut, nextShortcut})
         shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    orientationShortcut->setContext(Qt::WindowShortcut);
     connect(previousShortcut, &QShortcut::activated, this, [this] { stepAngle(-1); });
     connect(nextShortcut, &QShortcut::activated, this, [this] { stepAngle(1); });
     connect(orientationShortcut, &QShortcut::activated, this, [this] { toggleOrientation(); });
@@ -1111,6 +1108,11 @@ void RadiationPatternView::setSettingsChangedCallback(SettingsChangedCallback ca
 { settingsChangedCallback_ = std::move(callback); }
 auto RadiationPatternView::availableCutPlanes(CutOrientation orientation) const -> std::vector<double>
 {
+    return availableCutPlanes(orientation, selectedPatternIndex(dataset_));
+}
+auto RadiationPatternView::availableCutPlanes(CutOrientation orientation, int patternIndex) const
+    -> std::vector<double>
+{
     struct PlaneSamples {
         double plane{};
         std::vector<double> sweepAngles;
@@ -1118,7 +1120,7 @@ auto RadiationPatternView::availableCutPlanes(CutOrientation orientation) const 
     std::vector<PlaneSamples> samplesByPlane;
     for (const auto& value : result_.radiation) {
         if (!sameFrequency(value.frequencyMHz, selectedFrequency(frequency_))) continue;
-        if (value.patternIndex != selectedPatternIndex(dataset_)) continue;
+        if (value.patternIndex != patternIndex) continue;
         auto plane = orientation == CutOrientation::Vertical ? value.phiDegrees : value.thetaDegrees;
         const auto sweepAngle = orientation == CutOrientation::Vertical
             ? value.thetaDegrees : value.phiDegrees;
@@ -1148,6 +1150,19 @@ auto RadiationPatternView::availableCutPlanes(CutOrientation orientation) const 
     std::ranges::sort(planes);
     return planes;
 }
+auto RadiationPatternView::uniqueDatasetForCut(CutOrientation orientation) const -> std::optional<int>
+{
+    std::optional<int> match;
+    const auto selectedIndex = selectedPatternIndex(dataset_);
+    for (auto index = 0; index < dataset_->count(); ++index) {
+        const auto patternIndex = dataset_->itemData(index).toInt();
+        if (patternIndex == selectedIndex || availableCutPlanes(orientation, patternIndex).empty())
+            continue;
+        if (match) return std::nullopt;
+        match = patternIndex;
+    }
+    return match;
+}
 void RadiationPatternView::refreshCutControls()
 {
     const auto verticalAvailable = !availableCutPlanes(CutOrientation::Vertical).empty();
@@ -1160,11 +1175,17 @@ void RadiationPatternView::refreshCutControls()
         ? tr("Vertical Cut") : tr("Horizontal Cut"));
     cutLabel_->setText(orientation_ == CutOrientation::Vertical
         ? tr("Phi plane") : tr("Theta angle"));
-    orientationButton_->setEnabled(verticalAvailable && horizontalAvailable);
+    const auto oppositeOrientation = orientation_ == CutOrientation::Vertical
+        ? CutOrientation::Horizontal : CutOrientation::Vertical;
+    const auto oppositeAvailable = !availableCutPlanes(oppositeOrientation).empty()
+        || uniqueDatasetForCut(oppositeOrientation).has_value();
+    orientationButton_->setEnabled(oppositeAvailable);
     if (verticalAvailable && horizontalAvailable)
         orientationButton_->setToolTip(tr("Switch between vertical and horizontal cuts."));
+    else if (oppositeAvailable)
+        orientationButton_->setToolTip(tr("Switch to the RP dataset containing the opposite cut."));
     else if (verticalAvailable || horizontalAvailable)
-        orientationButton_->setToolTip(tr("The selected RP dataset supports only this cut orientation."));
+        orientationButton_->setToolTip(tr("No unambiguous opposite cut is available at this frequency."));
     else
         orientationButton_->setToolTip(tr("The selected RP dataset has insufficient samples for a 2D cut."));
     refreshSelectors();
@@ -1270,7 +1291,13 @@ void RadiationPatternView::toggleOrientation()
 {
     const auto next = orientation_ == CutOrientation::Vertical
         ? CutOrientation::Horizontal : CutOrientation::Vertical;
-    if (availableCutPlanes(next).empty()) return;
+    if (availableCutPlanes(next).empty()) {
+        const auto patternIndex = uniqueDatasetForCut(next);
+        if (!patternIndex) return;
+        orientation_ = next;
+        dataset_->setCurrentIndex(dataset_->findData(*patternIndex));
+        return;
+    }
     orientation_ = next;
     refreshCutControls();
 }

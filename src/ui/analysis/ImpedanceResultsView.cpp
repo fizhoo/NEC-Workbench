@@ -1,5 +1,6 @@
 #include "ui/analysis/ImpedanceResultsView.h"
 
+#include "analysis/FrequencyComparison.h"
 #include "ui/DisplayFormat.h"
 
 #include <QHeaderView>
@@ -7,17 +8,10 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
-#include <cmath>
-
 namespace necwb::ui {
 namespace {
 
 constexpr auto FrequencyRole = Qt::UserRole;
-
-auto sameFrequency(double first, double second) -> bool
-{
-    return std::abs(first - second) <= 1.0e-9 * std::max({1.0, std::abs(first), std::abs(second)});
-}
 
 }
 

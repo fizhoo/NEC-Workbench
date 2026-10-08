@@ -25,4 +25,7 @@ namespace necwb::nec {
     std::size_t lineNumber, std::size_t fieldIndex,
     std::string_view expression) -> std::optional<std::string>;
 
+[[nodiscard]] auto symbolReferencePreservingValue(std::string_view name,
+    double symbolValue, double fieldValue) -> std::string;
+
 }

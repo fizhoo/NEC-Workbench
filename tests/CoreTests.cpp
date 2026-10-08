@@ -190,9 +190,9 @@ void testSymbolResolution()
     const auto parameterized = necwb::nec::parameterizeNecCardField(
         fixedCard, 2, 2, "wire_x1");
     expect(parameterized
-            && parameterized->find("SY wire_x1=-5\r\nGW 1 11 wire_x1 0 6 5 0 6 0.001")
+            && parameterized->find("SY wire_x1=5\r\nGW 1 11 -wire_x1 0 6 5 0 6 0.001")
                 != std::string::npos,
-        "a fixed numeric card field can be promoted to an inserted SY parameter");
+        "a negative numeric field becomes a positive SY magnitude with a negated reference");
     const auto parameterizedResolution = parameterized
         ? necwb::nec::NecSymbolResolver{}.resolve(*parameterized)
         : necwb::nec::SymbolResolution{};
@@ -200,6 +200,29 @@ void testSymbolResolution()
             && parameterizedResolution.generatedDeck.find(
                 "GW 1 11 -5 0 6 5 0 6 0.001") != std::string::npos,
         "a promoted field resolves back to the original numeric NEC card");
+    const auto symmetricReference = necwb::nec::symbolReferencePreservingValue(
+        "wire_x1", 5.0, 5.0);
+    const auto symmetricWire = parameterized
+        ? necwb::nec::replaceNecCardFieldExpression(
+            *parameterized, 3, 5, symmetricReference)
+        : std::optional<std::string>{};
+    expect(symmetricWire && symmetricWire->find(
+            "SY wire_x1=5\r\nGW 1 11 -wire_x1 0 6 wire_x1 0 6 0.001")
+                != std::string::npos,
+        "one positive SY magnitude controls opposite signed symmetric wire endpoints");
+    const auto detachedSymmetricField = symmetricWire
+        ? necwb::nec::replaceNecCardFieldExpression(*symmetricWire, 3, 2, "-5")
+        : std::optional<std::string>{};
+    expect(detachedSymmetricField && detachedSymmetricField->find(
+            "GW 1 11 -5 0 6 wire_x1 0 6 0.001") != std::string::npos,
+        "detaching a signed parameter writes the resolved number into the raw GW field");
+    expect(necwb::nec::symbolReferencePreservingValue("half_length", 5.0, -5.0)
+                == "-half_length"
+            && necwb::nec::symbolReferencePreservingValue("half_length", 5.0, 5.0)
+                == "half_length"
+            && necwb::nec::symbolReferencePreservingValue("offset", 3.0, 4.0)
+                == "offset",
+        "existing parameters preserve matching direct and opposite field signs");
     expect(!necwb::nec::parameterizeNecCardField(
             "FR 0 1 0 0 start 0\n", 1, 4, "frequency"),
         "an existing symbolic field is not promoted a second time");
@@ -214,7 +237,7 @@ void testSymbolResolution()
         : std::optional<std::string>{};
     expect(detachedField && detachedField->find(
             "GW 1 11 6 0 0 10 0 0 .001") != std::string::npos,
-        "a parameter link can be replaced by its resolved numeric value");
+        "detaching a parameter replaces the raw NEC card field with its resolved numeric value");
     const auto controlledFields = necwb::nec::necCardFieldsReferencingSymbols(
         "SY length=10, half=length/2\nGW 1 11 -half 0 0 half 0 0 0.001\n"
         "FR 0 1 0 0 14+0.175 0\n", std::array<std::string, 2>{"length", "half"});

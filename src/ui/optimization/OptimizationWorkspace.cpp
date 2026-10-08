@@ -1,6 +1,7 @@
 #include "ui/optimization/OptimizationWorkspace.h"
 
 #include "ui/DisplayFormat.h"
+#include "ui/FileIo.h"
 #include "ui/analysis/SweepPlotsView.h"
 
 #include "analysis/AnalysisResult.h"
@@ -330,12 +331,6 @@ auto objectiveSentence(const QString& name, const QString& unit,
     }
     return QObject::tr("• %1 Relative weight: %2.")
         .arg(sentence, formatDecimal(weight));
-}
-
-auto writeFile(const QString& path, const QByteArray& data) -> bool
-{
-    QFile file(path);
-    return file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(data) == data.size();
 }
 
 auto frequencyAt(const model::FrequencyDefinition& frequency, int index) -> double

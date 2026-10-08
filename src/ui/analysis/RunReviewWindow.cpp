@@ -1,5 +1,6 @@
 #include "ui/analysis/RunReviewWindow.h"
 
+#include "analysis/FrequencyComparison.h"
 #include "analysis/NecOutputParser.h"
 #include "nec/NecModelConverter.h"
 #include "nec/NecParser.h"
@@ -58,11 +59,6 @@ auto runContext(const AnalysisRunRecord& record) -> QString
         : QString{};
     return QObject::tr("Model: %1 · Run: %2%3 · Backend: %4")
         .arg(modelName, started, purpose, backend);
-}
-
-auto sameFrequency(double first, double second) -> bool
-{
-    return std::abs(first - second) <= 1.0e-9 * std::max({1.0, std::abs(first), std::abs(second)});
 }
 
 }

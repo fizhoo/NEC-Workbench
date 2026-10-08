@@ -1,6 +1,7 @@
 #include "ui/analysis/ConvergenceWorkspace.h"
 
 #include "ui/DisplayFormat.h"
+#include "ui/FileIo.h"
 
 #include "analysis/NecOutputParser.h"
 #include "analysis/SegmentationConvergence.h"
@@ -50,13 +51,6 @@ enum ResultColumn {
     RunColumn,
     ResultColumnCount
 };
-
-auto writeFile(const QString& path, const QByteArray& contents) -> bool
-{
-    QFile file(path);
-    return file.open(QIODevice::WriteOnly | QIODevice::Truncate)
-        && file.write(contents) == contents.size();
-}
 
 auto numericItem(double value) -> QTableWidgetItem*
 {

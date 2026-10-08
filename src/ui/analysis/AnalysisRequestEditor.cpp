@@ -32,6 +32,7 @@
 namespace necwb::ui {
 namespace {
 constexpr auto SourceLineRole = Qt::UserRole;
+constexpr auto PendingDeletionRole = Qt::UserRole + 7;
 
 enum class PatternType { Full3D, Horizontal, Vertical, Custom };
 enum class PatternFrequencyMode { ModelSweep, Single, Selected, Continuous };
@@ -262,12 +263,20 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
     auto* addPattern = new QPushButton(tr("Add Pattern"), patternGroup);
     addPattern->setObjectName(QStringLiteral("addRadiationPatternButton"));
     auto* duplicatePattern = new QPushButton(tr("Duplicate"), patternGroup);
-    auto* deletePattern = new QPushButton(tr("Delete"), patternGroup);
+    deletePatternButton_ = new QPushButton(tr("Delete Pattern"), patternGroup);
+    deletePatternButton_->setObjectName(QStringLiteral("deleteRadiationPatternButton"));
+    deletePatternButton_->setToolTip(tr(
+        "Mark the selected RP request for deletion. Apply Pattern Changes commits it."));
     patternButtons->addWidget(addPattern);
     patternButtons->addWidget(duplicatePattern);
-    patternButtons->addWidget(deletePattern);
+    patternButtons->addWidget(deletePatternButton_);
     patternButtons->addStretch();
     patternLayout->addLayout(patternButtons);
+    auto* patternActionHint = new QLabel(tr(
+        "Add, edit, or mark a pattern for deletion, then apply the selected pattern change."),
+        patternGroup);
+    patternActionHint->setWordWrap(true);
+    patternLayout->addWidget(patternActionHint);
 
     auto* selectedPatternGroup = new QGroupBox(tr("Selected Pattern Details"), patternGroup);
     selectedPatternGroup->setObjectName(QStringLiteral("selectedRadiationPatternGroup"));
@@ -324,7 +333,7 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
     angleColumns->addWidget(phiGroup, 1);
     selectedPatternLayout->addLayout(angleColumns);
 
-    applyPatternButton_ = new QPushButton(tr("Apply Selected Pattern"), patternControls_);
+    applyPatternButton_ = new QPushButton(tr("Apply Pattern Changes"), patternControls_);
     applyPatternButton_->setObjectName(QStringLiteral("applyRadiationPatternButton"));
     auto* patternActions = new QHBoxLayout;
     patternActions->addStretch();
@@ -367,16 +376,27 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
         pattern.sourceLine = 0;
         addPatternDraft(pattern);
     });
-    connect(deletePattern, &QPushButton::clicked, this, [this] {
+    connect(deletePatternButton_, &QPushButton::clicked, this, [this] {
         const auto row = patterns_->currentRow();
         if (row < 0) return;
-        const auto sourceLine = patterns_->item(row, 0)->data(SourceLineRole).toULongLong();
-        if (sourceLine == 0) patterns_->removeRow(row);
-        else emit patternDeleteRequested(sourceLine);
+        const auto pendingDeletion = !patternDeletionPending(row);
+        for (auto column = 0; column < patterns_->columnCount(); ++column)
+            patterns_->item(row, column)->setData(PendingDeletionRole, pendingDeletion);
         loadSelectedPattern();
     });
     connect(applyPatternButton_, &QPushButton::clicked, this, [this] {
         if (patterns_->currentRow() < 0) return;
+        const auto row = patterns_->currentRow();
+        if (patternDeletionPending(row)) {
+            const auto sourceLine = patterns_->item(row, 0)->data(SourceLineRole).toULongLong();
+            if (sourceLine == 0) {
+                patterns_->removeRow(row);
+                loadSelectedPattern();
+            } else {
+                emit patternDeleteRequested(sourceLine);
+            }
+            return;
+        }
         if (thetaEndControl_->value() < thetaStartControl_->value()
             || phiEndControl_->value() < phiStartControl_->value()) {
             validationLabel_->setText(tr("Pattern end angles must not be less than their start angles."));
@@ -467,11 +487,13 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
     const auto savedFrequencies = frequencySettings.value(
         QStringLiteral("analysis/patternSelectedFrequenciesMHz")).toString()
         .split(QLatin1Char(','), Qt::SkipEmptyParts);
+    loadingFrequency_ = true;
     for (const auto& value : savedFrequencies) {
         bool valid{};
         const auto frequencyMHz = value.toDouble(&valid);
         if (valid) addSelectedFrequency(frequencyMHz);
     }
+    loadingFrequency_ = false;
     connect(applyFrequencyButton_, &QPushButton::clicked, this, [this] {
         if (analysis::frequencyPlanPoints(
                 frequencyPlan(captureFrequencySelection())).empty()) return;
@@ -483,6 +505,7 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
     updateFrequencyControls();
     frequencySelectionInitialized_ = true;
     appliedFrequencySelection_ = captureFrequencySelection();
+    setFrequencyPending(false);
     updatePatternControls();
     setReadiness({tr("Model has not been checked yet.")});
 }
@@ -571,12 +594,8 @@ void AnalysisRequestEditor::addPatternDraft(const model::RadiationPatternRequest
 void AnalysisRequestEditor::updatePatternTableRow(
     int row, const model::RadiationPatternRequest& pattern)
 {
-    const QStringList cells{patternTypeName(patternType(pattern)),
-        rangeSummary(pattern.thetaStart, pattern.thetaCount, pattern.thetaStep),
-        rangeSummary(pattern.phiStart, pattern.phiCount, pattern.phiStep),
-        QString::number(static_cast<qlonglong>(pattern.thetaCount) * pattern.phiCount)};
-    for (auto column = 0; column < cells.size(); ++column) {
-        auto* item = new QTableWidgetItem(cells[column]);
+    for (auto column = 0; column < patterns_->columnCount(); ++column) {
+        auto* item = new QTableWidgetItem;
         item->setData(SourceLineRole, static_cast<qulonglong>(pattern.sourceLine));
         item->setData(Qt::UserRole + 1, QVariant::fromValue(pattern.thetaCount));
         item->setData(Qt::UserRole + 2, QVariant::fromValue(pattern.phiCount));
@@ -584,8 +603,59 @@ void AnalysisRequestEditor::updatePatternTableRow(
         item->setData(Qt::UserRole + 4, pattern.phiStart);
         item->setData(Qt::UserRole + 5, pattern.thetaStep);
         item->setData(Qt::UserRole + 6, pattern.phiStep);
+        item->setData(PendingDeletionRole, false);
         patterns_->setItem(row, column, item);
     }
+    updatePatternTableRowText(row, pattern, false);
+}
+
+void AnalysisRequestEditor::updatePatternTableRowText(
+    int row, const model::RadiationPatternRequest& pattern, bool draft, bool pendingDeletion)
+{
+    auto type = patternTypeName(patternType(pattern));
+    if (pendingDeletion) type += tr(" — Pending deletion");
+    else if (draft) type += tr(" — Draft");
+    const QStringList cells{type,
+        rangeSummary(pattern.thetaStart, pattern.thetaCount, pattern.thetaStep),
+        rangeSummary(pattern.phiStart, pattern.phiCount, pattern.phiStep),
+        QString::number(static_cast<qlonglong>(pattern.thetaCount) * pattern.phiCount)};
+    for (auto column = 0; column < cells.size(); ++column) {
+        patterns_->item(row, column)->setText(cells[column]);
+        patterns_->item(row, column)->setForeground(pendingDeletion
+            ? palette().brush(QPalette::Disabled, QPalette::Text) : QBrush{});
+    }
+}
+
+auto AnalysisRequestEditor::patternFromTableRow(int row) const
+    -> model::RadiationPatternRequest
+{
+    const auto* item = patterns_->item(row, 0);
+    model::RadiationPatternRequest pattern;
+    pattern.sourceLine = item->data(SourceLineRole).toULongLong();
+    pattern.thetaCount = item->data(Qt::UserRole + 1).toInt();
+    pattern.phiCount = item->data(Qt::UserRole + 2).toInt();
+    pattern.thetaStart = item->data(Qt::UserRole + 3).toDouble();
+    pattern.phiStart = item->data(Qt::UserRole + 4).toDouble();
+    pattern.thetaStep = item->data(Qt::UserRole + 5).toDouble();
+    pattern.phiStep = item->data(Qt::UserRole + 6).toDouble();
+    return pattern;
+}
+
+auto AnalysisRequestEditor::patternDeletionPending(int row) const -> bool
+{
+    return row >= 0 && row < patterns_->rowCount()
+        && patterns_->item(row, 0)->data(PendingDeletionRole).toBool();
+}
+
+void AnalysisRequestEditor::refreshPatternPendingState()
+{
+    const auto deletionPending = [this] {
+        for (auto row = 0; row < patterns_->rowCount(); ++row)
+            if (patternDeletionPending(row)) return true;
+        return false;
+    }();
+    patternPending_ = patternPending_ || deletionPending;
+    setPendingEditIndicator(applyPatternButton_, patternPending_);
 }
 
 void AnalysisRequestEditor::applyPatternPreset(int typeValue)
@@ -617,20 +687,18 @@ void AnalysisRequestEditor::applyPatternPreset(int typeValue)
 
 void AnalysisRequestEditor::loadSelectedPattern()
 {
+    for (auto patternRow = 0; patternRow < patterns_->rowCount(); ++patternRow)
+        updatePatternTableRowText(patternRow, patternFromTableRow(patternRow), false,
+            patternDeletionPending(patternRow));
     const auto row = patterns_->currentRow();
     patternControls_->setEnabled(row >= 0);
     if (row < 0) {
-        setPatternPending(false);
+        patternPending_ = false;
+        refreshPatternPendingState();
         return;
     }
     const auto* item = patterns_->item(row, 0);
-    model::RadiationPatternRequest pattern;
-    pattern.thetaCount = item->data(Qt::UserRole + 1).toInt();
-    pattern.phiCount = item->data(Qt::UserRole + 2).toInt();
-    pattern.thetaStart = item->data(Qt::UserRole + 3).toDouble();
-    pattern.phiStart = item->data(Qt::UserRole + 4).toDouble();
-    pattern.thetaStep = item->data(Qt::UserRole + 5).toDouble();
-    pattern.phiStep = item->data(Qt::UserRole + 6).toDouble();
+    const auto pattern = patternFromTableRow(row);
     const auto type = patternType(pattern);
     lastPatternPreset_ = type == PatternType::Custom ? -1 : static_cast<int>(type);
     loadingPattern_ = true;
@@ -644,7 +712,15 @@ void AnalysisRequestEditor::loadSelectedPattern()
     phiStepControl_->setValue(std::max(pattern.phiStep, 0.001));
     loadingPattern_ = false;
     resetPatternButton_->setEnabled(lastPatternPreset_ >= 0);
-    setPatternPending(item->data(SourceLineRole).toULongLong() == 0);
+    const auto pendingDeletion = patternDeletionPending(row);
+    for (auto* control : {thetaStartControl_, thetaEndControl_, thetaStepControl_,
+             phiStartControl_, phiEndControl_, phiStepControl_})
+        control->setEnabled(!pendingDeletion);
+    patternTypeControl_->setEnabled(!pendingDeletion);
+    resetPatternButton_->setEnabled(!pendingDeletion && lastPatternPreset_ >= 0);
+    deletePatternButton_->setText(pendingDeletion ? tr("Restore Pattern") : tr("Delete Pattern"));
+    patternPending_ = item->data(SourceLineRole).toULongLong() == 0 || pendingDeletion;
+    refreshPatternPendingState();
     updatePatternControls();
 }
 
@@ -725,7 +801,11 @@ void AnalysisRequestEditor::updatePatternControls()
 void AnalysisRequestEditor::setPatternPending(bool pending)
 {
     patternPending_ = pending;
-    setPendingEditIndicator(applyPatternButton_, pending);
+    const auto row = patterns_->currentRow();
+    if (row >= 0 && !patternDeletionPending(row))
+        updatePatternTableRowText(row,
+            pending ? patternRequest() : patternFromTableRow(row), pending);
+    refreshPatternPendingState();
 }
 
 void AnalysisRequestEditor::setFrequencyPending(bool pending)

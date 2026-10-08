@@ -6,9 +6,9 @@
 #include "nec/NecModelChecker.h"
 #include "nec/NecParser.h"
 #include "nec/NecSymbolResolver.h"
+#include "ui/FileIo.h"
 
 #include <QDir>
-#include <QFile>
 #include <QTimer>
 
 #include <algorithm>
@@ -17,17 +17,6 @@
 #include <utility>
 
 namespace necwb::ui {
-namespace {
-
-auto writeFile(const QString& path, const QByteArray& data) -> bool
-{
-    QFile file(path);
-    return file.open(QIODevice::WriteOnly | QIODevice::Truncate)
-        && file.write(data) == data.size();
-}
-
-}
-
 CandidateEvaluator::CandidateEvaluator(QObject* parent)
     : QObject(parent)
 {

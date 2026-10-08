@@ -1,25 +1,17 @@
 #include "nec/NecModelConverter.h"
 
 #include "nec/DeckGeometryUnits.h"
+#include "nec/ParseNumber.h"
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <cmath>
 #include <numbers>
-#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace necwb::nec {
 namespace {
-
-template<typename Value>
-auto parseNumber(std::string_view text, Value& value) -> bool
-{
-    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
-    return error == std::errc{} && end == text.data() + text.size();
-}
 
 auto parseWireFields(const NecCard& card, model::Wire& wire) -> bool
 {

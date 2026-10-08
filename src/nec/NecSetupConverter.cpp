@@ -1,21 +1,11 @@
 #include "nec/NecSetupConverter.h"
 
-#include <charconv>
+#include "nec/ParseNumber.h"
+
 #include <cmath>
 #include <numbers>
-#include <string_view>
 
 namespace necwb::nec {
-namespace {
-
-template<typename Value>
-auto parseNumber(std::string_view text, Value& value) -> bool
-{
-    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
-    return error == std::errc{} && end == text.data() + text.size();
-}
-
-}
 
 auto NecSetupConverter::convert(const NecDocument& document) const -> model::ModelSetup
 {

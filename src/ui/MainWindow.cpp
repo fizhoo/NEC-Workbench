@@ -4648,11 +4648,14 @@ void MainWindow::makeFieldOptimizable(std::size_t sourceLine,
             .arg(QString::fromStdString(definition.name))
             .arg(definition.value, 0, 'g', 12),
             QString::fromStdString(definition.name));
+        existing->setItemData(existing->count()-1, definition.value, Qt::UserRole+1);
     }
     const auto directSymbol = std::ranges::find_if(resolution.definitions,
         [&currentExpression](const auto& definition) {
-            return QString::fromStdString(definition.name).compare(
-                currentExpression, Qt::CaseInsensitive) == 0;
+            const auto name = QString::fromStdString(definition.name);
+            return name.compare(currentExpression, Qt::CaseInsensitive) == 0
+                || (QLatin1Char('-') + name).compare(
+                    currentExpression, Qt::CaseInsensitive) == 0;
         });
     if (directSymbol != resolution.definitions.end()) {
         mode->setCurrentIndex(mode->findData(1));
@@ -4685,11 +4688,26 @@ void MainWindow::makeFieldOptimizable(std::size_t sourceLine,
         newNameLabel->setVisible(create);
         existing->setVisible(!create);
         existingLabel->setVisible(!create);
-        preview->setText(create
-            ? QObject::tr("Create SY %1=%2 and link this field to %1.")
-                .arg(newName->text().trimmed(), resolvedValue)
-            : QObject::tr("Link this field to %1.")
-                .arg(existing->currentData().toString()));
+        auto ok = false;
+        const auto fieldValue = resolvedValue.toDouble(&ok);
+        if (create) {
+            auto definition = resolvedValue;
+            auto reference = newName->text().trimmed();
+            if (ok && fieldValue < 0.0) {
+                definition = QString::number(-fieldValue, 'g', 15);
+                reference.prepend(QLatin1Char('-'));
+            }
+            preview->setText(QObject::tr("Create SY %1=%2 and link this field to %3.")
+                .arg(newName->text().trimmed(), definition, reference));
+        } else {
+            const auto name = existing->currentData().toString();
+            const auto symbolValue = existing->currentData(Qt::UserRole+1).toDouble();
+            const auto reference = ok
+                ? QString::fromStdString(nec::symbolReferencePreservingValue(
+                    name.toStdString(), symbolValue, fieldValue))
+                : name;
+            preview->setText(QObject::tr("Link this field to %1.").arg(reference));
+        }
     };
     connect(mode, &QComboBox::currentIndexChanged, &dialog, updateDialog);
     connect(newName, &QLineEdit::textChanged, &dialog, updateDialog);
@@ -4714,12 +4732,21 @@ void MainWindow::makeFieldOptimizable(std::size_t sourceLine,
         sourceForParameter = nec::replaceNecCardFieldExpression(
             source, sourceLine, fieldIndex, resolvedValue.toStdString());
     }
+    auto existingReference = name;
+    if (!create) {
+        auto ok = false;
+        const auto fieldValue = resolvedValue.toDouble(&ok);
+        if (ok) {
+            existingReference = QString::fromStdString(nec::symbolReferencePreservingValue(
+                name.toStdString(), existing->currentData(Qt::UserRole+1).toDouble(), fieldValue));
+        }
+    }
     const auto updated = !sourceForParameter ? std::optional<std::string>{}
         : create
             ? nec::parameterizeNecCardField(
                 *sourceForParameter, sourceLine, fieldIndex, name.toStdString())
             : nec::replaceNecCardFieldExpression(
-                source, sourceLine, fieldIndex, name.toStdString());
+                source, sourceLine, fieldIndex, existingReference.toStdString());
     if (!updated) {
         statusBar()->showMessage(tr("The selected field could not be parameterized."), 5000);
         return;
@@ -4731,13 +4758,24 @@ void MainWindow::makeFieldOptimizable(std::size_t sourceLine,
                 .arg(QString::fromStdString(updatedResolution.diagnostics.front().message)));
         return;
     }
+    const auto updatedConversion = nec::NecModelConverter{}.convert(
+        nec::NecParser{}.parse(updatedResolution.resolvedSource));
+    const auto updatedSourceLine = sourceLine + (create ? 1 : 0);
+    const auto geometryIssue = std::ranges::find(
+        updatedConversion.issues, updatedSourceLine, &nec::ConversionIssue::lineNumber);
+    if (geometryIssue != updatedConversion.issues.end()) {
+        QMessageBox::warning(this, tr("Invalid Parameter Link"),
+            tr("This parameter link would make the geometry invalid: %1")
+                .arg(QString::fromStdString(geometryIssue->message)));
+        return;
+    }
     pushGeometrySourceEdit(create
             ? tr("Parameterize %1 as new %2").arg(fieldLabel, name)
-            : tr("Link %1 to %2").arg(fieldLabel, name),
+            : tr("Link %1 to %2").arg(fieldLabel, existingReference),
         QString::fromStdString(*updated));
     statusBar()->showMessage(create
         ? tr("Created %1. Set its bounds in Optimize.").arg(name)
-        : tr("Linked %1 to %2.").arg(fieldLabel, name), 5000);
+        : tr("Linked %1 to %2.").arg(fieldLabel, existingReference), 5000);
 }
 
 void MainWindow::detachFieldParameter(std::size_t sourceLine,
@@ -4856,11 +4894,14 @@ void MainWindow::applyGeometrySource(const QString& description, const QString& 
     pendingSourceHistoryEntry_.reset();
     editor_->document()->setModified(true);
     checkModel();
-    showEditor(destination, geometryTab);
+    if (destination == EditorDestination::Frequency) {
+        showModule(analysisModuleIndex_);
+        analysisWorkspace_->setCurrentIndex(analysisTab);
+    } else {
+        showEditor(destination, geometryTab);
+    }
     if (destination == EditorDestination::RawSource) {
         sourceWorkspace_->setCurrentIndex(structuredSourceTabIndex_);
-    } else if (destination == EditorDestination::Frequency) {
-        analysisWorkspace_->setCurrentIndex(analysisTab);
     }
 }
 

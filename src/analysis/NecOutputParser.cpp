@@ -1,8 +1,9 @@
 #include "analysis/NecOutputParser.h"
 
+#include "analysis/FrequencyComparison.h"
+
 #include <algorithm>
 #include <cctype>
-#include <cmath>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -11,11 +12,6 @@
 
 namespace necwb::analysis {
 namespace {
-
-auto sameFrequency(double first, double second) -> bool
-{
-    return std::abs(first - second) <= 1.0e-9 * std::max({1.0, std::abs(first), std::abs(second)});
-}
 
 auto parseFrequency(const std::string& line, double& frequencyMHz) -> bool
 {

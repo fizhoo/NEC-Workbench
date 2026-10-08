@@ -1193,6 +1193,7 @@ auto main(int argc, char* argv[]) -> int
     auto* radiation2DDataset = radiation2D.findChild<QComboBox*>(QStringLiteral("radiation2DDataset"));
     auto* radiation3DDataset = radiation3D.findChild<QComboBox*>(QStringLiteral("radiation3DDataset"));
     auto* radiation2DOrientation = radiation2D.findChild<QPushButton*>(QStringLiteral("radiation2DOrientation"));
+    const auto radiation2DShortcuts = radiation2D.findChildren<QShortcut*>();
     auto* radiation2DMaxGainCut = radiation2D.findChild<QPushButton*>(QStringLiteral("radiation2DMaxGainCut"));
     auto* radiation3DSummary = radiation3D.findChild<QLabel*>(QStringLiteral("radiation3DSummary"));
     auto* radiation3DHoverReadout = radiation3D.findChild<QLabel*>(
@@ -1223,6 +1224,11 @@ auto main(int argc, char* argv[]) -> int
         || radiation2DExportImage == nullptr || radiation2DExportData == nullptr
         || radiation3DExportImage == nullptr || radiation3DExportData == nullptr)
         return NECWB_SMOKE_FAILURE("radiation result controls");
+    const auto spaceChangesCutWithoutPriorFocus = std::ranges::any_of(
+        radiation2DShortcuts, [](const QShortcut* shortcut) {
+            return shortcut->key() == QKeySequence(Qt::Key_Space)
+                && shortcut->context() == Qt::WindowShortcut;
+        });
     radiation3D.resize(900, 700);
     radiation3D.show();
     application.processEvents();
@@ -1311,11 +1317,18 @@ auto main(int argc, char* argv[]) -> int
         && radiation3DDataset->currentData().toInt() == 0;
     radiation2DDataset->setCurrentIndex(radiation2DDataset->findData(1));
     application.processEvents();
-    const auto horizontalDatasetSelectsCompatibleCut = !radiation2DOrientation->isEnabled()
+    const auto horizontalDatasetSelectsCompatibleCut = radiation2DOrientation->isEnabled()
         && radiation2DOrientation->text() == QStringLiteral("Horizontal Cut")
         && radiation2DCutPlane->count() == 1
         && radiation2DCutPlane->currentData().toDouble() == 62.0
         && radiation2DSummary->text().contains(QStringLiteral("peak"));
+    radiation2DOrientation->click();
+    application.processEvents();
+    const auto separateDatasetsSwitchCuts = radiation2DDataset->currentData().toInt() == 0
+        && radiation2DOrientation->text() == QStringLiteral("Vertical Cut")
+        && radiation2DCutPlane->count() == 6;
+    radiation2DDataset->setCurrentIndex(radiation2DDataset->findData(1));
+    application.processEvents();
     radiation2DMaxGainCut->click();
     application.processEvents();
     const auto horizontalMaxGainCutStaysCompatible = radiation2DOrientation->text()
@@ -1863,6 +1876,8 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("addRadiationPatternButton"));
     auto* applyPattern = requestEditor.findChild<QPushButton*>(
         QStringLiteral("applyRadiationPatternButton"));
+    auto* deletePattern = requestEditor.findChild<QPushButton*>(
+        QStringLiteral("deleteRadiationPatternButton"));
     auto* patternType = requestEditor.findChild<QComboBox*>(
         QStringLiteral("radiationPatternType"));
     auto* resetPattern = requestEditor.findChild<QPushButton*>(
@@ -1898,6 +1913,7 @@ auto main(int argc, char* argv[]) -> int
     auto* thetaGroup = requestEditor.findChild<QGroupBox*>(QStringLiteral("radiationThetaGroup"));
     auto* phiGroup = requestEditor.findChild<QGroupBox*>(QStringLiteral("radiationPhiGroup"));
     if (requestTable == nullptr || addPattern == nullptr || applyPattern == nullptr
+        || deletePattern == nullptr
         || patternType == nullptr || resetPattern == nullptr || thetaStart == nullptr
         || thetaEnd == nullptr || phiEnd == nullptr || frequencyPolicyGroup == nullptr
         || patternFrequencyMode == nullptr || patternSingleFrequency == nullptr
@@ -1911,6 +1927,8 @@ auto main(int argc, char* argv[]) -> int
             < requestTable->geometry().top()
         && thetaGroup->geometry().top() == phiGroup->geometry().top()
         && thetaGroup->geometry().left() < phiGroup->geometry().left();
+    const auto frequencyApplyInitiallyClean =
+        !applyPatternFrequencies->property("pendingChanges").toBool();
     auto emittedPattern = necwb::model::RadiationPatternRequest{};
     QObject::connect(&requestEditor, &necwb::ui::AnalysisRequestEditor::patternChanged,
         [&emittedPattern](const auto& pattern) { emittedPattern = pattern; });
@@ -1935,9 +1953,15 @@ auto main(int argc, char* argv[]) -> int
         && phiEnd->value() == 350.0;
     addPattern->click();
     patternType->setCurrentIndex(patternType->findData(1));
+    const auto patternDraftPreviewVisible = requestTable->item(
+            requestTable->currentRow(), 0)->text().contains(QStringLiteral("Horizontal cut"))
+        && requestTable->item(requestTable->currentRow(), 0)->text().contains(
+            QStringLiteral("Draft"));
     applyPattern->click();
     const auto applyPatternClearsPending =
-        !applyPattern->property("pendingChanges").toBool();
+        !applyPattern->property("pendingChanges").toBool()
+        && !requestTable->item(requestTable->currentRow(), 0)->text().contains(
+            QStringLiteral("Draft"));
     const auto patternEditorBaseValid = requestTable->rowCount() == 3
         && requestTable->item(0, 0)->text() == QStringLiteral("Full 3D pattern")
         && requestTable->item(1, 0)->text() == QStringLiteral("Horizontal cut")
@@ -1989,6 +2013,26 @@ auto main(int argc, char* argv[]) -> int
     requestEditor.discardPendingEdits();
     const auto discardedFrequencyEditRestored = patternSelectedFrequencies->count() == 1
         && !requestEditor.hasPendingEdits();
+    auto deletedPatternLine = std::size_t{};
+    QObject::connect(&requestEditor,
+        &necwb::ui::AnalysisRequestEditor::patternDeleteRequested,
+        [&deletedPatternLine](std::size_t sourceLine) { deletedPatternLine = sourceLine; });
+    requestTable->selectRow(0);
+    deletePattern->click();
+    const auto deletionDraftVisible = requestTable->item(0, 0)->text().contains(
+            QStringLiteral("Pending deletion"))
+        && deletePattern->text() == QStringLiteral("Restore Pattern")
+        && applyPattern->property("pendingChanges").toBool()
+        && deletedPatternLine == 0;
+    deletePattern->click();
+    const auto deletionDraftRestores = !requestTable->item(0, 0)->text().contains(
+            QStringLiteral("Pending deletion"))
+        && deletePattern->text() == QStringLiteral("Delete Pattern")
+        && !requestEditor.hasPendingEdits();
+    deletePattern->click();
+    applyPattern->click();
+    const auto deletionAppliesExplicitly = deletedPatternLine == 5;
+    requestEditor.setData(requestSetup);
     const auto patternFrequencySelectionValid = continuousPatternPoints.size() == 3
         && std::abs(continuousPatternPoints[1] - 7.1) < 1.0e-9
         && singlePatternPoints.size() == 1
@@ -1998,9 +2042,11 @@ auto main(int argc, char* argv[]) -> int
     const auto multiplePatternEditorValid = patternEditorBaseValid && patternRequestLayoutValid
         && customizedHorizontalRemainsHorizontal && horizontalPresetRestored
         && unclassifiedGridBecomesCustom && fullGridPresetRestored
-        && applyPatternHighlightsPending && applyPatternClearsPending
+        && frequencyApplyInitiallyClean && applyPatternHighlightsPending
+        && patternDraftPreviewVisible && applyPatternClearsPending
         && frequencyApplyHighlightsPending && bandCentersPopulateList
         && clearAllEmptiesList && discardedFrequencyEditRestored
+        && deletionDraftVisible && deletionDraftRestores && deletionAppliesExplicitly
         && patternFrequencySelectionValid;
     auto* shutdownRequestEditor = new necwb::ui::AnalysisRequestEditor;
     shutdownRequestEditor->setData(requestSetup);
@@ -2257,6 +2303,8 @@ auto main(int argc, char* argv[]) -> int
         && radiationControlsSynchronized && radiationSweepSelectable
         && nonPatternFrequencyIgnored && radiationFrequencySynchronized
         && mixedPatternCutsSeparated && horizontalDatasetSelectsCompatibleCut
+        && spaceChangesCutWithoutPriorFocus
+        && separateDatasetsSwitchCuts
         && horizontalMaxGainCutStaysCompatible && radiationMetricsVisible
         && radiationExportReady && maxGainCutSelected && signedThetaTiesNormalized
         && signedThetaCutStaysOpen

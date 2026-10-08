@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <vector>
 
 namespace necwb::nec {
@@ -159,12 +160,23 @@ auto parameterizeNecCardField(std::string_view source, std::size_t lineNumber,
     const auto& card = document.cards()[lineNumber - 1];
     if (fieldIndex >= card.fields.size()
         || !necCardFieldIsNumeric(card.sourceText, fieldIndex)) return std::nullopt;
+
+    auto definition = card.fields[fieldIndex];
+    auto reference = std::string(trim(name));
+    if (definition.starts_with('-')) {
+        definition.erase(definition.begin());
+        reference.insert(reference.begin(), '-');
+    } else if (definition.starts_with('+')) {
+        definition.erase(definition.begin());
+    }
+    std::ranges::replace(definition, 'D', 'E');
+    std::ranges::replace(definition, 'd', 'e');
     const auto replacement = replaceNecCardFields(card.sourceText,
-        std::array{NecFieldReplacement{fieldIndex, std::string(trim(name))}});
+        std::array{NecFieldReplacement{fieldIndex, reference}});
     if (!replacement) return std::nullopt;
     auto lines = sourceLines(document);
     lines[lineNumber - 1] = *replacement;
-    return insertSymbolDefinition(joinSource(lines, document), name, card.fields[fieldIndex]);
+    return insertSymbolDefinition(joinSource(lines, document), name, definition);
 }
 
 auto replaceNecCardFieldExpression(std::string_view source, std::size_t lineNumber,
@@ -180,6 +192,19 @@ auto replaceNecCardFieldExpression(std::string_view source, std::size_t lineNumb
     auto lines = sourceLines(document);
     lines[lineNumber - 1] = *replacement;
     return joinSource(lines, document);
+}
+
+auto symbolReferencePreservingValue(std::string_view name,
+    double symbolValue, double fieldValue) -> std::string
+{
+    const auto scale = std::max({1.0, std::abs(symbolValue), std::abs(fieldValue)});
+    const auto close = [scale](double first, double second) {
+        return std::abs(first - second) <= scale * 1.0e-12;
+    };
+    auto reference = std::string(trim(name));
+    if (!close(fieldValue, symbolValue) && close(fieldValue, -symbolValue))
+        reference.insert(reference.begin(), '-');
+    return reference;
 }
 
 }

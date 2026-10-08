@@ -1,5 +1,6 @@
 #include "ui/analysis/ResultsSummaryView.h"
 
+#include "analysis/FrequencyComparison.h"
 #include "ui/DisplayFormat.h"
 
 #include <QComboBox>
@@ -11,17 +12,11 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <cmath>
 #include <limits>
 #include <vector>
 
 namespace necwb::ui {
 namespace {
-
-auto sameFrequency(double first, double second) -> bool
-{
-    return std::abs(first - second) <= 1.0e-9 * std::max({1.0, std::abs(first), std::abs(second)});
-}
 
 auto valueLabel(QWidget* parent) -> QLabel*
 {

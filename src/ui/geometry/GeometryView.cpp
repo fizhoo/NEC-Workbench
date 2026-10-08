@@ -4,8 +4,8 @@
 #include "model/WireGeometry.h"
 
 #include <QContextMenuEvent>
-#include <QMenu>
 #include <QMouseEvent>
+#include <QMenu>
 #include <QPainter>
 #include <QPalette>
 #include <QLineF>
@@ -52,7 +52,7 @@ auto wireLabel(const model::Wire& wire) -> QString
 }
 
 GeometryView::GeometryView(geometry::ProjectionPlane plane, QWidget* parent)
-    : QWidget(parent)
+    : GeometryInteractionView(parent)
     , plane_(plane)
 {
     setFocusPolicy(Qt::StrongFocus);
@@ -76,16 +76,6 @@ void GeometryView::updateModel(const model::AntennaModel& model)
     if (selectedWireTag_ && model_.wireByTag(*selectedWireTag_) == nullptr) {
         selectedWireTag_.reset();
     }
-    update();
-}
-
-void GeometryView::selectWire(int tag)
-{
-    const auto found = std::ranges::find(model_.wires(), tag, &model::Wire::tag);
-    selectedWireTag_ = found == model_.wires().end() ? std::nullopt : std::optional<int>{tag};
-    selectedExcitationLine_.reset();
-    selectedLoadLine_.reset();
-    selectedTransmissionLine_.reset();
     update();
 }
 
@@ -144,171 +134,46 @@ void GeometryView::setSettings(const GeometrySettings& settings)
     update();
 }
 
-void GeometryView::setExcitations(const std::vector<model::Excitation>& excitations)
+auto GeometryView::wireMenuOptions(int tag, const QPointF& position) const
+    -> GeometryWireMenuOptions
 {
-    excitations_ = excitations;
-    if (selectedExcitationLine_
-        && std::ranges::find(excitations_, *selectedExcitationLine_, &model::Excitation::sourceLine)
-            == excitations_.end()) {
-        selectedExcitationLine_.reset();
+    const auto* wire = model_.wireByTag(tag);
+    return {
+        .editable = wire != nullptr && wire->editable,
+        .transmissionLinePending = pendingTransmissionLineEndpoint_.has_value(),
+        .splitAvailable = splitPointAt(tag, position).has_value(),
+        .allowSplit = true,
+        .allowDelete = true,
+    };
+}
+
+void GeometryView::handleWireContextAction(
+    GeometryContextAction action, int tag, const QPointF& position)
+{
+    if (action == GeometryContextAction::SplitWire) {
+        if (const auto splitPoint = splitPointAt(tag, position)) {
+            emit splitWireRequested(tag, *splitPoint);
+        }
+    } else if (action == GeometryContextAction::Delete) {
+        emit deleteWireRequested(tag);
     }
-    update();
 }
 
-void GeometryView::setAttachments(const std::vector<model::LoadDefinition>& loads,
-    const std::vector<model::TransmissionLineDefinition>& transmissionLines)
-{
-    loads_ = loads;
-    transmissionLines_ = transmissionLines;
-    if (selectedLoadLine_
-        && std::ranges::find(loads_, *selectedLoadLine_, &model::LoadDefinition::sourceLine)
-            == loads_.end()) selectedLoadLine_.reset();
-    if (selectedTransmissionLine_
-        && std::ranges::find(transmissionLines_, *selectedTransmissionLine_,
-            &model::TransmissionLineDefinition::sourceLine) == transmissionLines_.end())
-        selectedTransmissionLine_.reset();
-    update();
-}
-
-void GeometryView::setPendingTransmissionLineEndpoint(
-    std::optional<std::pair<int, int>> endpoint)
-{
-    pendingTransmissionLineEndpoint_ = endpoint;
-    update();
-}
-
-void GeometryView::selectExcitation(std::size_t sourceLine)
-{
-    const auto found = std::ranges::find(excitations_, sourceLine, &model::Excitation::sourceLine);
-    selectedExcitationLine_ = found == excitations_.end()
-        ? std::nullopt : std::optional<std::size_t>{sourceLine};
-    selectedWireTag_.reset();
-    selectedLoadLine_.reset();
-    selectedTransmissionLine_.reset();
-    update();
-}
-
-void GeometryView::selectLoad(std::size_t sourceLine)
-{
-    const auto found = std::ranges::find(loads_, sourceLine, &model::LoadDefinition::sourceLine);
-    selectedLoadLine_ = found == loads_.end() ? std::nullopt : std::optional{sourceLine};
-    selectedExcitationLine_.reset();
-    selectedTransmissionLine_.reset();
-    selectedWireTag_.reset();
-    update();
-}
-
-void GeometryView::selectTransmissionLine(std::size_t sourceLine)
-{
-    const auto found = std::ranges::find(transmissionLines_, sourceLine,
-        &model::TransmissionLineDefinition::sourceLine);
-    selectedTransmissionLine_ = found == transmissionLines_.end()
-        ? std::nullopt : std::optional{sourceLine};
-    selectedExcitationLine_.reset();
-    selectedLoadLine_.reset();
-    selectedWireTag_.reset();
-    update();
-}
-
-void GeometryView::mouseDoubleClickEvent(QMouseEvent* event)
-{
-    if (event->button() == Qt::LeftButton) {
-        fitToView();
-        event->accept();
-        return;
-    }
-    QWidget::mouseDoubleClickEvent(event);
-}
-
-void GeometryView::contextMenuEvent(QContextMenuEvent* event)
+void GeometryView::showEmptyContextMenu(QContextMenuEvent* event)
 {
     QMenu menu(this);
-    if (const auto sourceLine = loadAt(event->pos())) {
-        selectLoad(*sourceLine);
-        emit loadSelected(*sourceLine);
-        auto* editAction = menu.addAction(tr("Edit in Model Setup"));
-        menu.addSeparator();
-        auto* deleteAction = menu.addAction(tr("Delete Load"));
-        const auto* selectedAction = menu.exec(event->globalPos());
-        if (selectedAction == editAction) emit editLoadRequested(*sourceLine);
-        else if (selectedAction == deleteAction) emit deleteLoadRequested(*sourceLine);
-    } else if (const auto sourceLine = transmissionLineAt(event->pos())) {
-        selectTransmissionLine(*sourceLine);
-        emit transmissionLineSelected(*sourceLine);
-        auto* editAction = menu.addAction(tr("Edit in Model Setup"));
-        menu.addSeparator();
-        auto* deleteAction = menu.addAction(tr("Delete Transmission Line"));
-        const auto* selectedAction = menu.exec(event->globalPos());
-        if (selectedAction == editAction) emit editTransmissionLineRequested(*sourceLine);
-        else if (selectedAction == deleteAction) emit deleteTransmissionLineRequested(*sourceLine);
-    } else if (const auto sourceLine = excitationAt(event->pos())) {
-        selectExcitation(*sourceLine);
-        emit excitationSelected(*sourceLine);
-        auto* propertiesAction = menu.addAction(tr("Properties…"));
-        auto* setupAction = menu.addAction(tr("Edit in Setup"));
-        menu.addSeparator();
-        auto* deleteAction = menu.addAction(tr("Delete Voltage Source"));
-        const auto* selectedAction = menu.exec(event->globalPos());
-        if (selectedAction == propertiesAction) {
-            emit editExcitationRequested(*sourceLine);
-        } else if (selectedAction == setupAction) {
-            emit openExcitationSetupRequested(*sourceLine);
-        } else if (selectedAction == deleteAction) {
-            emit deleteExcitationRequested(*sourceLine);
-        }
-    } else if (const auto tag = wireAt(event->pos())) {
-        selectedWireTag_ = *tag;
-        selectedExcitationLine_.reset();
-        selectedLoadLine_.reset();
-        selectedTransmissionLine_.reset();
-        emit wireSelected(*tag);
-        const auto* wire = model_.wireByTag(*tag);
-        const auto editable = wire != nullptr && wire->editable;
-        const auto splitPoint = splitPointAt(*tag, event->pos());
-        auto* propertiesAction = menu.addAction(tr("Properties…"));
-        propertiesAction->setEnabled(editable);
-        menu.addSeparator();
-        auto* addSourceAction = menu.addAction(tr("Add Voltage Source Here"));
-        auto* addLoadAction = menu.addAction(tr("Add Load Here"));
-        auto* lineEndpointAction = menu.addAction(pendingTransmissionLineEndpoint_
-            ? tr("Complete Transmission Line Here") : tr("Start Transmission Line Here"));
-        auto* cancelLineAction = pendingTransmissionLineEndpoint_
-            ? menu.addAction(tr("Cancel Transmission Line")) : nullptr;
-        auto* splitAction = menu.addAction(tr("Split Wire Here"));
-        splitAction->setEnabled(editable && splitPoint.has_value());
-        auto* deleteAction = menu.addAction(tr("Delete Wire"));
-        deleteAction->setEnabled(editable);
-        const auto* selectedAction = menu.exec(event->globalPos());
-        if (selectedAction == splitAction && splitPoint) {
-            emit splitWireRequested(*tag, *splitPoint);
-        } else if (selectedAction == addSourceAction) {
-            emit addExcitationRequested(*tag, segmentAt(*tag, event->pos()));
-        } else if (selectedAction == addLoadAction) {
-            emit addLoadRequested(*tag, segmentAt(*tag, event->pos()));
-        } else if (selectedAction == lineEndpointAction) {
-            emit transmissionLineEndpointRequested(*tag, segmentAt(*tag, event->pos()));
-        } else if (cancelLineAction != nullptr && selectedAction == cancelLineAction) {
-            emit cancelTransmissionLineRequested();
-        } else if (selectedAction == deleteAction) {
-            emit deleteWireRequested(*tag);
-        } else if (selectedAction == propertiesAction) {
-            emit wirePropertiesRequested(*tag);
-        }
-    } else {
-        auto* addAction = menu.addAction(tr("Add Wire Here"));
-        auto* cancelLineAction = pendingTransmissionLineEndpoint_
-            ? menu.addAction(tr("Cancel Transmission Line")) : nullptr;
-        const auto* selectedAction = menu.exec(event->globalPos());
-        if (selectedAction == addAction) {
-            const auto start2D = snappedPoint(mapToWorld(event->pos()), -1);
-            const geometry::Point2D end2D{start2D.horizontal + gridSpacing(), start2D.vertical};
-            emit addWireRequested(geometry::withProjectedCoordinates({}, start2D, plane_),
-                geometry::withProjectedCoordinates({}, end2D, plane_));
-        } else if (cancelLineAction != nullptr && selectedAction == cancelLineAction) {
-            emit cancelTransmissionLineRequested();
-        }
+    auto* addAction = menu.addAction(tr("Add Wire Here"));
+    auto* cancelLineAction = pendingTransmissionLineEndpoint_
+        ? menu.addAction(tr("Cancel Transmission Line")) : nullptr;
+    const auto* selectedAction = menu.exec(event->globalPos());
+    if (selectedAction == addAction) {
+        const auto start2D = snappedPoint(mapToWorld(event->pos()), -1);
+        const geometry::Point2D end2D{start2D.horizontal + gridSpacing(), start2D.vertical};
+        emit addWireRequested(geometry::withProjectedCoordinates({}, start2D, plane_),
+            geometry::withProjectedCoordinates({}, end2D, plane_));
+    } else if (cancelLineAction != nullptr && selectedAction == cancelLineAction) {
+        emit cancelTransmissionLineRequested();
     }
-    event->accept();
 }
 
 void GeometryView::mouseMoveEvent(QMouseEvent* event)

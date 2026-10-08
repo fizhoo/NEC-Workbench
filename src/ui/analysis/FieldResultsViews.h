@@ -62,6 +62,9 @@ public:
 private:
     enum class CutOrientation { Vertical, Horizontal };
     [[nodiscard]] auto availableCutPlanes(CutOrientation orientation) const -> std::vector<double>;
+    [[nodiscard]] auto availableCutPlanes(CutOrientation orientation, int patternIndex) const
+        -> std::vector<double>;
+    [[nodiscard]] auto uniqueDatasetForCut(CutOrientation orientation) const -> std::optional<int>;
     void refreshCutControls();
     void refreshSelectors();
     void refreshDatasets();

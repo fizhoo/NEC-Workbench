@@ -44,6 +44,11 @@ private:
     void updatePatternTypeFromFields();
     void updatePatternControls();
     void updatePatternTableRow(int row, const model::RadiationPatternRequest& pattern);
+    void updatePatternTableRowText(int row, const model::RadiationPatternRequest& pattern,
+        bool draft, bool pendingDeletion = false);
+    [[nodiscard]] auto patternFromTableRow(int row) const -> model::RadiationPatternRequest;
+    [[nodiscard]] auto patternDeletionPending(int row) const -> bool;
+    void refreshPatternPendingState();
     void setPatternPending(bool pending);
     void setFrequencyPending(bool pending);
     void updateFrequencyControls();
@@ -88,6 +93,7 @@ private:
     QLabel* sweepCostLabel_{};
     QWidget* patternControls_{};
     QPushButton* resetPatternButton_{};
+    QPushButton* deletePatternButton_{};
     QPushButton* applyPatternButton_{};
     QPushButton* applyFrequencyButton_{};
     int lastPatternPreset_{-1};

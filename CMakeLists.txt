@@ -17,6 +17,7 @@ add_library(necwb_core
     src/analysis/DifferentialEvolutionSearch.cpp
     src/analysis/DifferentialEvolutionSearch.h
     src/analysis/FrequencyPlan.cpp
+    src/analysis/FrequencyComparison.h
     src/analysis/NecOutputParser.cpp
     src/analysis/NelderMeadSearch.cpp
     src/analysis/NelderMeadSearch.h
@@ -41,6 +42,7 @@ add_library(necwb_core
     src/nec/NecModelChecker.cpp
     src/nec/NecModelConverter.cpp
     src/nec/NecParser.cpp
+    src/nec/ParseNumber.h
     src/nec/NecSetupConverter.cpp
     src/nec/NecSourceEditor.cpp
     src/nec/NecSourceEditor.h
@@ -67,6 +69,7 @@ if(NECWB_BUILD_GUI)
         src/ui/MainWindow.h
         src/ui/DetachablePanel.cpp
         src/ui/DetachablePanel.h
+        src/ui/FileIo.h
         src/ui/ParameterFieldStyle.cpp
         src/ui/ParameterFieldStyle.h
         src/ui/WorkspaceNavigator.cpp
@@ -107,6 +110,8 @@ if(NECWB_BUILD_GUI)
         src/ui/editor/NecHighlighter.h
         src/ui/geometry/GeometryView.cpp
         src/ui/geometry/GeometryView.h
+        src/ui/geometry/GeometryInteractionView.cpp
+        src/ui/geometry/GeometryInteractionView.h
         src/ui/geometry/GeometrySettings.h
         src/ui/geometry/EngineeringSpinBox.cpp
         src/ui/geometry/EngineeringSpinBox.h

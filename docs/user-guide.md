@@ -74,7 +74,11 @@ To parameterize a field:
 3. Create a new parameter or link an existing `SY` definition.
 
 Parameter-controlled cells are marked and retain their source expressions. Integer
-and categorical fields are not currently optimization variables.
+and categorical fields are not currently optimization variables. Parameterizing a
+negative numeric field creates a positive parameter magnitude and preserves the field
+sign in the reference. Linking an existing parameter similarly preserves an equal or
+opposite current value, which supports symmetric geometry such as `-half_length` and
+`half_length` without changing the model.
 
 ### Sources, Loads, Networks, and Environment
 
@@ -153,7 +157,9 @@ does not infer protocol from the executable filename.
 ### Requests
 
 Manage `XQ` and supported normal-mode `RP` requests. Pattern presets populate a
-known theta/phi grid; changing a populated field makes that request custom.
+known theta/phi grid; changing a populated field creates a visible draft that is
+committed with **Apply Pattern Changes**. Deleting a pattern first dims and marks its
+row; Apply commits the deletion, while Restore or discarding page edits keeps it.
 
 Pattern frequencies may follow the model sweep, use one frequency, use an explicit
 list, or use a custom continuous range. Explicit pattern frequencies do not replace
