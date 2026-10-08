@@ -3,6 +3,7 @@
 #include "ui/DisplayFormat.h"
 #include "ui/FileIo.h"
 
+#include "analysis/FrequencyComparison.h"
 #include "analysis/NecOutputParser.h"
 #include "analysis/SegmentationConvergence.h"
 #include "analysis/SolverCommand.h"
@@ -77,8 +78,7 @@ auto peakGain(const analysis::AnalysisResult& result, double frequencyMHz) -> st
 {
     std::optional<double> peak;
     for (const auto& sample : result.radiation) {
-        if (std::abs(sample.frequencyMHz - frequencyMHz)
-                > 1.0e-9 * std::max(1.0, std::abs(frequencyMHz))) continue;
+        if (!nearlyEqual(sample.frequencyMHz, frequencyMHz)) continue;
         if (!peak || sample.totalGainDb > *peak) peak = sample.totalGainDb;
     }
     return peak;

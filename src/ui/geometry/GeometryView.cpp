@@ -65,17 +65,13 @@ GeometryView::GeometryView(geometry::ProjectionPlane plane, QWidget* parent)
 
 void GeometryView::setModel(const model::AntennaModel& model)
 {
-    model_ = model;
-    selectedWireTag_.reset();
+    setInteractionModel(model, true);
     fitToView();
 }
 
 void GeometryView::updateModel(const model::AntennaModel& model)
 {
-    model_ = model;
-    if (selectedWireTag_ && model_.wireByTag(*selectedWireTag_) == nullptr) {
-        selectedWireTag_.reset();
-    }
+    setInteractionModel(model, false);
     update();
 }
 

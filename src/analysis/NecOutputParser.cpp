@@ -160,7 +160,7 @@ auto NecOutputParser::parse(std::string_view output) const -> AnalysisResult
     while (std::getline(lines, line)) {
         if (parseFrequency(line, frequencyMHz)) {
             const auto existing = std::ranges::find_if(frequencies, [frequencyMHz](double value) {
-                return sameFrequency(value, frequencyMHz);
+                return nearlyEqual(value, frequencyMHz);
             });
             if (existing == frequencies.end()) {
                 frequencyIndex = static_cast<int>(frequencies.size());

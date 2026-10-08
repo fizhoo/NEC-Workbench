@@ -85,6 +85,7 @@ protected:
     virtual void showEmptyContextMenu(QContextMenuEvent* event) = 0;
 
     void clearSelection();
+    void setInteractionModel(const model::AntennaModel& model, bool resetWireSelection);
 
     model::AntennaModel model_;
     std::vector<model::Excitation> excitations_;

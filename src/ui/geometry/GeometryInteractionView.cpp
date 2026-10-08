@@ -154,6 +154,15 @@ void GeometryInteractionView::clearSelection()
     selectedTransmissionLine_.reset();
 }
 
+void GeometryInteractionView::setInteractionModel(
+    const model::AntennaModel& model, bool resetWireSelection)
+{
+    model_ = model;
+    if (resetWireSelection || (selectedWireTag_ && model_.wireByTag(*selectedWireTag_) == nullptr)) {
+        selectedWireTag_.reset();
+    }
+}
+
 void GeometryInteractionView::contextMenuEvent(QContextMenuEvent* event)
 {
     if (const auto sourceLine = loadAt(event->pos())) {

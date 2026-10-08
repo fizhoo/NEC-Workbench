@@ -82,7 +82,7 @@ void ImpedanceResultsView::setSelectedFrequency(double frequencyMHz)
     table_->clearSelection();
     for (auto row = 0; row < table_->rowCount(); ++row) {
         const auto* item = table_->item(row, 0);
-        if (item != nullptr && sameFrequency(item->data(FrequencyRole).toDouble(), frequencyMHz)) {
+        if (item != nullptr && nearlyEqual(item->data(FrequencyRole).toDouble(), frequencyMHz)) {
             table_->selectRow(row);
             table_->scrollToItem(item, QAbstractItemView::PositionAtCenter);
             return;

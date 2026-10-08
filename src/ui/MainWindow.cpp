@@ -4,6 +4,7 @@
 #include "ui/DetachablePanel.h"
 #include "ui/WorkspaceNavigator.h"
 
+#include "analysis/FrequencyComparison.h"
 #include "analysis/SolverCommand.h"
 #include "analysis/NecOutputParser.h"
 #include "analysis/SolverInput.h"
@@ -169,10 +170,6 @@ void invokeFocusedEditCommand(const char* command)
     }
 }
 
-auto sameResultFrequency(double first, double second) -> bool
-{
-    return std::abs(first - second) <= 1.0e-9 * std::max({1.0, std::abs(first), std::abs(second)});
-}
 constexpr auto RunDirectoryRole = Qt::UserRole + 3;
 constexpr auto RunContextRole = Qt::UserRole + 4;
 constexpr auto CardMnemonicRole = Qt::UserRole + 5;
@@ -269,7 +266,7 @@ void setRunResultMetadata(AnalysisRunRecord& record, const analysis::AnalysisRes
     std::vector<double> frequencies;
     const auto addFrequency = [&frequencies](double frequencyMHz) {
         if (std::ranges::find_if(frequencies, [frequencyMHz](double existing) {
-                return sameResultFrequency(existing, frequencyMHz);
+                return nearlyEqual(existing, frequencyMHz);
             }) == frequencies.end()) frequencies.push_back(frequencyMHz);
     };
     for (const auto& value : result.feedpoints) addFrequency(value.frequencyMHz);
@@ -4388,7 +4385,7 @@ void MainWindow::setDisplayedResults(const analysis::AnalysisResult& result)
     std::vector<double> frequencies;
     const auto addFrequency = [&frequencies](double frequencyMHz) {
         if (std::ranges::find_if(frequencies, [frequencyMHz](double value) {
-                return sameResultFrequency(value, frequencyMHz);
+                return nearlyEqual(value, frequencyMHz);
             }) == frequencies.end()) frequencies.push_back(frequencyMHz);
     };
     for (const auto& value : result.feedpoints) addFrequency(value.frequencyMHz);
@@ -4400,13 +4397,13 @@ void MainWindow::setDisplayedResults(const analysis::AnalysisResult& result)
     resultsFrequencyControl_->clear();
     for (const auto frequencyMHz : frequencies) {
         const auto hasImpedance = std::ranges::any_of(result.feedpoints, [frequencyMHz](const auto& value) {
-            return sameResultFrequency(value.frequencyMHz, frequencyMHz);
+            return nearlyEqual(value.frequencyMHz, frequencyMHz);
         });
         const auto hasCurrents = std::ranges::any_of(result.currents, [frequencyMHz](const auto& value) {
-            return sameResultFrequency(value.frequencyMHz, frequencyMHz);
+            return nearlyEqual(value.frequencyMHz, frequencyMHz);
         });
         const auto hasRadiation = std::ranges::any_of(result.radiation, [frequencyMHz](const auto& value) {
-            return sameResultFrequency(value.frequencyMHz, frequencyMHz);
+            return nearlyEqual(value.frequencyMHz, frequencyMHz);
         });
         QStringList available;
         if (hasImpedance) available.append(tr("Z"));
@@ -4419,7 +4416,7 @@ void MainWindow::setDisplayedResults(const analysis::AnalysisResult& result)
     auto selectedIndex = 0;
     if (previousFrequency) {
         for (auto index = 0; index < resultsFrequencyControl_->count(); ++index) {
-            if (sameResultFrequency(resultsFrequencyControl_->itemData(index).toDouble(), *previousFrequency)) {
+            if (nearlyEqual(resultsFrequencyControl_->itemData(index).toDouble(), *previousFrequency)) {
                 selectedIndex = index;
                 break;
             }
@@ -4436,13 +4433,13 @@ void MainWindow::setDisplayedResults(const analysis::AnalysisResult& result)
 void MainWindow::applyResultFrequency(double frequencyMHz)
 {
     const auto hasImpedance = std::ranges::any_of(displayedResults_.feedpoints, [frequencyMHz](const auto& value) {
-        return sameResultFrequency(value.frequencyMHz, frequencyMHz);
+        return nearlyEqual(value.frequencyMHz, frequencyMHz);
     });
     const auto hasCurrents = std::ranges::any_of(displayedResults_.currents, [frequencyMHz](const auto& value) {
-        return sameResultFrequency(value.frequencyMHz, frequencyMHz);
+        return nearlyEqual(value.frequencyMHz, frequencyMHz);
     });
     const auto hasRadiation = std::ranges::any_of(displayedResults_.radiation, [frequencyMHz](const auto& value) {
-        return sameResultFrequency(value.frequencyMHz, frequencyMHz);
+        return nearlyEqual(value.frequencyMHz, frequencyMHz);
     });
     QStringList available;
     QStringList missing;
@@ -4479,7 +4476,7 @@ void MainWindow::jumpRawOutputToSelectedFrequency()
         valueText.replace(QLatin1Char('D'), QLatin1Char('E'), Qt::CaseInsensitive);
         bool valid{};
         const auto value = valueText.toDouble(&valid);
-        if (!valid || !sameResultFrequency(value, target)) continue;
+        if (!valid || !nearlyEqual(value, target)) continue;
         QTextCursor cursor(block);
         analysisOutput_->setTextCursor(cursor);
         analysisOutput_->centerCursor();

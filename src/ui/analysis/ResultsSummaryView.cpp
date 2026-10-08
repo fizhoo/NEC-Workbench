@@ -161,7 +161,7 @@ void ResultsSummaryView::refresh()
     std::vector<double> frequencies;
     const auto addFrequency = [&frequencies](double value) {
         if (std::ranges::none_of(frequencies, [value](double existing) {
-                return sameFrequency(existing, value);
+                return nearlyEqual(existing, value);
             })) frequencies.push_back(value);
     };
     for (const auto& value : result_.feedpoints) addFrequency(value.frequencyMHz);
@@ -183,7 +183,7 @@ void ResultsSummaryView::refresh()
             minimumSwr = std::min(minimumSwr, swr);
             maximumSwr = std::max(maximumSwr, swr);
         }
-        if (sameFrequency(feedpoint.frequencyMHz, selectedFrequency_)) selectedFeedpoint = &feedpoint;
+        if (nearlyEqual(feedpoint.frequencyMHz, selectedFrequency_)) selectedFeedpoint = &feedpoint;
     }
     impedanceLabel_->setText(selectedFeedpoint == nullptr ? tr("No feedpoint row at %1 MHz")
             .arg(formatDecimal(selectedFrequency_))
@@ -200,7 +200,7 @@ void ResultsSummaryView::refresh()
 
     std::vector<analysis::RadiationSample> selectedRadiation;
     for (const auto& sample : result_.radiation) {
-        if (sameFrequency(sample.frequencyMHz, selectedFrequency_)) selectedRadiation.push_back(sample);
+        if (nearlyEqual(sample.frequencyMHz, selectedFrequency_)) selectedRadiation.push_back(sample);
     }
     const auto metrics = analysis::radiationMetrics(selectedRadiation, analysis::RadiationComponent::Total);
     if (metrics.valid) {

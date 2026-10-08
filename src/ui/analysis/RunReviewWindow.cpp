@@ -262,7 +262,7 @@ auto RunReviewWindow::showAnalysisRun(const AnalysisRunRecord& record,
     std::vector<double> frequencies;
     const auto addFrequency = [&frequencies](double frequency) {
         if (std::ranges::none_of(frequencies, [frequency](double existing) {
-                return sameFrequency(existing, frequency);
+                return nearlyEqual(existing, frequency);
             })) frequencies.push_back(frequency);
     };
     for (const auto& value : result.feedpoints) addFrequency(value.frequencyMHz);

@@ -61,7 +61,7 @@ auto selectedFrequency(QComboBox* control) -> double
 void selectOrAppendFrequency(QComboBox* control, double frequencyMHz)
 {
     for (auto index = 0; index < control->count(); ++index) {
-        if (sameFrequency(control->itemData(index).toDouble(), frequencyMHz)) {
+        if (nearlyEqual(control->itemData(index).toDouble(), frequencyMHz)) {
             control->setCurrentIndex(index);
             return;
         }
@@ -73,7 +73,7 @@ void selectOrAppendFrequency(QComboBox* control, double frequencyMHz)
 void selectExistingFrequency(QComboBox* control, double frequencyMHz)
 {
     for (auto index = 0; index < control->count(); ++index) {
-        if (!sameFrequency(control->itemData(index).toDouble(), frequencyMHz)) continue;
+        if (!nearlyEqual(control->itemData(index).toDouble(), frequencyMHz)) continue;
         control->setCurrentIndex(index);
         return;
     }
@@ -117,7 +117,7 @@ auto patternDatasets(const analysis::AnalysisResult& result, double frequencyMHz
 {
     std::map<int, PatternDatasetStats> datasets;
     for (const auto& sample : result.radiation) {
-        if (!sameFrequency(sample.frequencyMHz, frequencyMHz)) continue;
+        if (!nearlyEqual(sample.frequencyMHz, frequencyMHz)) continue;
         auto& stats = datasets[sample.patternIndex];
         ++stats.samples;
         if (std::ranges::find(stats.theta, sample.thetaDegrees) == stats.theta.end())
@@ -1119,7 +1119,7 @@ auto RadiationPatternView::availableCutPlanes(CutOrientation orientation, int pa
     };
     std::vector<PlaneSamples> samplesByPlane;
     for (const auto& value : result_.radiation) {
-        if (!sameFrequency(value.frequencyMHz, selectedFrequency(frequency_))) continue;
+        if (!nearlyEqual(value.frequencyMHz, selectedFrequency(frequency_))) continue;
         if (value.patternIndex != patternIndex) continue;
         auto plane = orientation == CutOrientation::Vertical ? value.phiDegrees : value.thetaDegrees;
         const auto sweepAngle = orientation == CutOrientation::Vertical
@@ -1127,11 +1127,11 @@ auto RadiationPatternView::availableCutPlanes(CutOrientation orientation, int pa
         if (orientation == CutOrientation::Vertical) {
             plane = std::fmod(plane + 360.0, 360.0);
             if (plane >= 180.0) plane -= 180.0;
-        } else if (sameFrequency(plane, 0.0) || sameFrequency(plane, 180.0)) {
+        } else if (nearlyEqual(plane, 0.0) || nearlyEqual(plane, 180.0)) {
             continue;
         }
         auto matchingPlane = std::ranges::find_if(samplesByPlane, [plane](const auto& existing) {
-            return sameFrequency(existing.plane, plane);
+            return nearlyEqual(existing.plane, plane);
         });
         if (matchingPlane == samplesByPlane.end()) {
             samplesByPlane.push_back({plane, {}});
@@ -1209,7 +1209,7 @@ void RadiationPatternView::refresh()
     std::vector<analysis::RadiationCutPoint> cutSamples;
     const auto angle = phi_->currentData().toDouble();
     for (const auto& value : result_.radiation) {
-        if (!sameFrequency(value.frequencyMHz, selectedFrequency(frequency_))) continue;
+        if (!nearlyEqual(value.frequencyMHz, selectedFrequency(frequency_))) continue;
         if (value.patternIndex != selectedPatternIndex(dataset_)) continue;
         if (orientation_ == CutOrientation::Horizontal && value.thetaDegrees == angle)
             cutSamples.push_back({value.phiDegrees, value.thetaDegrees, value.phiDegrees,
@@ -1255,7 +1255,7 @@ void RadiationPatternView::refresh()
         if (metrics.tiedPeakAnglesDegrees.size() > 1) {
             QStringList tiedAngles;
             for (const auto tiedAngle : metrics.tiedPeakAnglesDegrees) {
-                if (!sameFrequency(tiedAngle, metrics.peakAngleDegrees))
+                if (!nearlyEqual(tiedAngle, metrics.peakAngleDegrees))
                     tiedAngles.append(QStringLiteral("%1°").arg(formatDecimal(tiedAngle)));
             }
             if (!tiedAngles.empty()) peakText += tr("; tied at %1").arg(tiedAngles.join(QStringLiteral(", ")));
@@ -1280,7 +1280,7 @@ void RadiationPatternView::refresh()
     const auto patternIndex = selectedPatternIndex(dataset_);
     maxGainCutButton_->setEnabled(std::ranges::any_of(result_.radiation, [settings, patternIndex](const auto& sample) {
         const auto gain = analysis::radiationGainDb(sample, settings.component);
-        return sameFrequency(sample.frequencyMHz, settings.frequencyMHz)
+        return nearlyEqual(sample.frequencyMHz, settings.frequencyMHz)
             && sample.patternIndex == patternIndex
             && std::isfinite(gain) && gain > -900.0;
     }));
@@ -1311,7 +1311,7 @@ void RadiationPatternView::showMaxGainCut()
     const auto settings = displaySettings(frequency_, component_, scale_, floor_);
     const auto patternIndex = selectedPatternIndex(dataset_);
     const auto peak = std::ranges::max_element(result_.radiation, {}, [settings, patternIndex](const auto& sample) {
-        if (!sameFrequency(sample.frequencyMHz, settings.frequencyMHz)
+        if (!nearlyEqual(sample.frequencyMHz, settings.frequencyMHz)
             || sample.patternIndex != patternIndex)
             return -std::numeric_limits<double>::infinity();
         const auto gain = analysis::radiationGainDb(sample, settings.component);
@@ -1319,7 +1319,7 @@ void RadiationPatternView::showMaxGainCut()
             ? gain : -std::numeric_limits<double>::infinity();
     });
     if (peak == result_.radiation.end()
-        || !sameFrequency(peak->frequencyMHz, settings.frequencyMHz)) return;
+        || !nearlyEqual(peak->frequencyMHz, settings.frequencyMHz)) return;
 
     if (!availableCutPlanes(CutOrientation::Vertical).empty())
         orientation_ = CutOrientation::Vertical;
@@ -1364,22 +1364,22 @@ void RadiationPatternView::exportData()
     const auto selectedPlane = phi_->currentData().toDouble();
     QString output = QStringLiteral("frequency_mhz,cut,plane_degrees,angle_degrees,gain_dbi\n");
     for (const auto& sample : result_.radiation) {
-        if (!sameFrequency(sample.frequencyMHz, settings.frequencyMHz)) continue;
+        if (!nearlyEqual(sample.frequencyMHz, settings.frequencyMHz)) continue;
         if (sample.patternIndex != selectedPatternIndex(dataset_)) continue;
         auto included = false;
         auto angle = 0.0;
         if (orientation_ == CutOrientation::Horizontal
-            && sameFrequency(sample.thetaDegrees, selectedPlane)) {
+            && nearlyEqual(sample.thetaDegrees, selectedPlane)) {
             included = true;
             angle = sample.phiDegrees;
         }
         if (orientation_ == CutOrientation::Vertical) {
             const auto phi = std::fmod(sample.phiDegrees + 360.0, 360.0);
             const auto opposite = std::fmod(selectedPlane + 180.0, 360.0);
-            if (sameFrequency(phi, selectedPlane)) {
+            if (nearlyEqual(phi, selectedPlane)) {
                 included = true;
                 angle = sample.thetaDegrees;
-            } else if (sameFrequency(phi, opposite)) {
+            } else if (nearlyEqual(phi, opposite)) {
                 included = true;
                 angle = oppositeVerticalCutAngle(sample.thetaDegrees);
             }
@@ -1509,7 +1509,7 @@ void Radiation3DView::refresh()
     std::vector<analysis::RadiationSample> radiation;
     std::vector<analysis::SegmentCurrentResult> currents;
     for (const auto& value : result_.radiation)
-        if (sameFrequency(value.frequencyMHz, selectedFrequency(frequency_))
+        if (nearlyEqual(value.frequencyMHz, selectedFrequency(frequency_))
             && value.patternIndex == selectedPatternIndex(dataset_)) radiation.push_back(value);
     for (const auto& value : result_.currents) if (value.frequencyMHz == selectedFrequency(frequency_)) currents.push_back(value);
     const auto metrics = analysis::radiationMetrics(radiation, settings.component);
@@ -1570,7 +1570,7 @@ void Radiation3DView::exportData()
     QString output = QStringLiteral(
         "frequency_mhz,theta_degrees,phi_degrees,selected_gain_dbi,total_gain_dbi,vertical_gain_dbi,horizontal_gain_dbi\n");
     for (const auto& sample : result_.radiation) {
-        if (!sameFrequency(sample.frequencyMHz, settings.frequencyMHz)) continue;
+        if (!nearlyEqual(sample.frequencyMHz, settings.frequencyMHz)) continue;
         if (sample.patternIndex != selectedPatternIndex(dataset_)) continue;
         const auto gain = analysis::radiationGainDb(sample, settings.component);
         output += QStringLiteral("%1,%2,%3,%4,%5,%6,%7\n")

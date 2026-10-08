@@ -43,18 +43,14 @@ Geometry3DView::Geometry3DView(QWidget* parent)
 
 void Geometry3DView::setModel(const model::AntennaModel& model)
 {
-    model_ = model;
-    selectedWireTag_.reset();
+    setInteractionModel(model, true);
     updateModelCenter();
     fitToView();
 }
 
 void Geometry3DView::updateModel(const model::AntennaModel& model)
 {
-    model_ = model;
-    if (selectedWireTag_ && model_.wireByTag(*selectedWireTag_) == nullptr) {
-        selectedWireTag_.reset();
-    }
+    setInteractionModel(model, false);
     updateModelCenter();
     update();
 }
