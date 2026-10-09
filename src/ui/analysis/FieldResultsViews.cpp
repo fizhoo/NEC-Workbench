@@ -989,7 +989,8 @@ void CurrentDistributionView::setSelectedFrequency(double frequencyMHz)
 void CurrentDistributionView::refresh()
 {
     std::vector<analysis::SegmentCurrentResult> values;
-    for (const auto& value : result_.currents) if (value.frequencyMHz == selectedFrequency(frequency_)) values.push_back(value);
+    for (const auto& value : result_.currents)
+        if (nearlyEqual(value.frequencyMHz, selectedFrequency(frequency_))) values.push_back(value);
     summary_->setText(values.empty()
         ? tr("%1 MHz · No segment-current data · %2")
             .arg(formatDecimal(selectedFrequency(frequency_)), runContext_)
@@ -1211,7 +1212,7 @@ void RadiationPatternView::refresh()
     for (const auto& value : result_.radiation) {
         if (!nearlyEqual(value.frequencyMHz, selectedFrequency(frequency_))) continue;
         if (value.patternIndex != selectedPatternIndex(dataset_)) continue;
-        if (orientation_ == CutOrientation::Horizontal && value.thetaDegrees == angle)
+        if (orientation_ == CutOrientation::Horizontal && nearlyEqual(value.thetaDegrees, angle))
             cutSamples.push_back({value.phiDegrees, value.thetaDegrees, value.phiDegrees,
                 analysis::radiationGainDb(value, settings.component)});
         if (orientation_ == CutOrientation::Vertical) {
@@ -1511,7 +1512,8 @@ void Radiation3DView::refresh()
     for (const auto& value : result_.radiation)
         if (nearlyEqual(value.frequencyMHz, selectedFrequency(frequency_))
             && value.patternIndex == selectedPatternIndex(dataset_)) radiation.push_back(value);
-    for (const auto& value : result_.currents) if (value.frequencyMHz == selectedFrequency(frequency_)) currents.push_back(value);
+    for (const auto& value : result_.currents)
+        if (nearlyEqual(value.frequencyMHz, selectedFrequency(frequency_))) currents.push_back(value);
     const auto metrics = analysis::radiationMetrics(radiation, settings.component);
     std::vector<double> planes;
     for (const auto& sample : radiation)
