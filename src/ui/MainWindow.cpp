@@ -449,7 +449,10 @@ MainWindow::MainWindow()
     connect(solverRunner_, &SolverProcessRunner::finished, this,
         [this](SolverProcessResult result) { finishAnalysis(std::move(result)); });
 
-    connect(editor_, &QPlainTextEdit::textChanged, this, [this] { clearCheckResults(); });
+    connect(editor_, &QPlainTextEdit::textChanged, this, [this] {
+        activeSourceCache_.invalidate();
+        clearCheckResults();
+    });
     connect(editor_->document(), &QTextDocument::modificationChanged, this, [this](bool modified) {
         saveAction_->setEnabled(modified);
         setWindowModified(modified);
@@ -1722,10 +1725,10 @@ void MainWindow::updateDeckUnitControls(const nec::DeckGeometryUnitInfo& info)
 
 auto MainWindow::deckScaleForSourceLine(std::size_t sourceLine) const -> double
 {
-    const auto resolution = nec::NecSymbolResolver{}.resolve(editor_->toPlainText().toStdString());
+    const auto& cache = activeSource();
+    const auto& resolution = cache.resolution();
     if (!resolution.ok()) return deckScaleToMeters_;
-    return nec::geometryScaleForLine(
-        nec::NecParser{}.parse(resolution.resolvedSource), sourceLine);
+    return nec::geometryScaleForLine(*cache.resolvedDocument(), sourceLine);
 }
 
 void MainWindow::changeDeckLengthUnit(model::LengthUnit unit)
@@ -1734,15 +1737,16 @@ void MainWindow::changeDeckLengthUnit(model::LengthUnit unit)
     if (std::abs(targetScale - deckScaleToMeters_) <= 1.0e-12) return;
 
     const auto source = editor_->toPlainText();
-    const auto rawDocument = nec::NecParser{}.parse(source.toStdString());
-    const auto resolution = nec::NecSymbolResolver{}.resolve(source.toStdString());
+    const auto& cache = activeSource();
+    const auto& rawDocument = cache.document();
+    const auto& resolution = cache.resolution();
     if (!resolution.ok()) {
         QMessageBox::warning(this, tr("Change NEC Deck Units"),
             tr("Resolve the model's symbol expressions before changing deck geometry units."));
         checkModel();
         return;
     }
-    const auto resolvedDocument = nec::NecParser{}.parse(resolution.resolvedSource);
+    const auto& resolvedDocument = *cache.resolvedDocument();
     const auto currentUnits = nec::inspectDeckGeometryUnits(resolvedDocument);
     if (!currentUnits.uniform) {
         QMessageBox::warning(this, tr("Change NEC Deck Units"),
@@ -1884,7 +1888,7 @@ void MainWindow::showAutoSegmentation()
             tr("Add an analysis frequency before calculating wavelength-based segment counts."));
         return;
     }
-    const auto document = nec::NecParser{}.parse(editor_->toPlainText().toStdString());
+    const auto& document = activeSource().document();
     const auto unsupportedAttachment = std::ranges::find_if(document.cards(), [this](const auto& card) {
         if (card.kind == nec::NecCardKind::Network) return true;
         if (card.kind == nec::NecCardKind::Load) {
@@ -2507,13 +2511,13 @@ auto MainWindow::maybeSaveChanges() -> bool
 
 void MainWindow::checkModel()
 {
-    const auto source = editor_->toPlainText().toStdString();
-    const auto document = nec::NecParser{}.parse(source);
-    const auto resolution = nec::NecSymbolResolver{}.resolve(source);
+    const auto& cache = activeSource();
+    const auto& document = cache.document();
+    const auto& resolution = cache.resolution();
     auto deckUnitInfo = nec::inspectDeckGeometryUnits(document);
     nec::ModelCheckResult result;
     if (resolution.ok()) {
-        const auto resolvedDocument = nec::NecParser{}.parse(resolution.resolvedSource);
+        const auto& resolvedDocument = *cache.resolvedDocument();
         deckUnitInfo = nec::inspectDeckGeometryUnits(resolvedDocument);
         result = nec::NecModelChecker{}.check(resolvedDocument);
         currentSetup_ = nec::NecSetupConverter{}.convert(resolvedDocument);
@@ -2576,7 +2580,7 @@ void MainWindow::checkModel()
     for (const auto& definition : resolution.definitions)
         parameterNames.push_back(definition.name);
     const auto parameterFields = nec::necCardFieldsReferencingSymbols(
-        editor_->toPlainText().toStdString(), parameterNames);
+        cache.source(), parameterNames);
     wireCardEditor_->setParameterControlledFields(parameterFields);
     updateWireCardEditor();
     xyView_->setModel(currentModel_);
@@ -2906,7 +2910,7 @@ void MainWindow::addWire(const model::Point3D& start, const model::Point3D& end)
 {
     const auto originalSource = editor_->toPlainText();
     auto lines = originalSource.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
-    const auto document = nec::NecParser{}.parse(originalSource.toStdString());
+    const auto& document = activeSource().document();
     auto insertionIndex = lines.size();
     auto lastGeometryIndex = -1;
     auto hasGeometryEnd = false;
@@ -3112,7 +3116,7 @@ auto MainWindow::applyOptimizedParameters(
 {
     if (values.empty()) return false;
     auto source = editor_->toPlainText().toStdString();
-    const auto resolution = nec::NecSymbolResolver{}.resolve(source);
+    const auto& resolution = activeSource().resolution();
     QStringList names;
     for (const auto& [name, value] : values) {
         const auto found = std::ranges::find_if(resolution.definitions, [&name](const auto& definition) {
@@ -3161,7 +3165,7 @@ void MainWindow::changeGround(const model::GroundDefinition& ground)
         }
         lines[lineIndex] = groundCard;
     } else {
-        const auto document = nec::NecParser{}.parse(editor_->toPlainText().toStdString());
+        const auto& document = activeSource().document();
         auto insertionIndex = lines.size();
         for (const auto& card : document.cards()) {
             if (card.kind == nec::NecCardKind::Excitation
@@ -3329,7 +3333,7 @@ void MainWindow::upsertSetupCard(const QString& description, std::size_t sourceL
         if (updated) pushGeometrySourceEdit(description, QString::fromStdString(*updated));
         return;
     }
-    const auto document = nec::NecParser{}.parse(source);
+    const auto& document = activeSource().document();
     auto insertionIndex = nec::sourceLineCount(source);
     for (const auto& card : document.cards()) {
         const bool insertionBoundary = card.kind == nec::NecCardKind::End
@@ -3386,7 +3390,7 @@ void MainWindow::changeRadiationPattern(const model::RadiationPatternRequest& pa
         return;
     }
     const auto source = editor_->toPlainText().toStdString();
-    const auto document = nec::NecParser{}.parse(source);
+    const auto& document = activeSource().document();
     auto insertionIndex = nec::sourceLineCount(source);
     for (const auto& card : document.cards()) {
         if (card.kind == nec::NecCardKind::Execute || card.kind == nec::NecCardKind::End) {
@@ -3508,8 +3512,9 @@ void MainWindow::startAnalysis()
         return;
     }
 
-    const auto source = editor_->toPlainText().toStdString();
-    const auto resolution = nec::NecSymbolResolver{}.resolve(source);
+    const auto& cache = activeSource();
+    const auto source = std::string(cache.source());
+    const auto& resolution = cache.resolution();
     if (!resolution.ok()) {
         QMessageBox::critical(this, tr("Run Failed"),
             tr("The parameterized source could not be resolved."));
@@ -3537,8 +3542,9 @@ void MainWindow::startQuickFrequencySweep()
     QuickSweepDialog dialog(initial, this, !currentSetup_.radiationPatterns.empty());
     if (dialog.exec() != QDialog::Accepted) return;
 
-    const auto source = editor_->toPlainText().toStdString();
-    const auto resolution = nec::NecSymbolResolver{}.resolve(source);
+    const auto& cache = activeSource();
+    const auto source = std::string(cache.source());
+    const auto& resolution = cache.resolution();
     if (!resolution.ok()) {
         QMessageBox::critical(this, tr("Quick Sweep Failed"),
             tr("The parameterized source could not be resolved."));
@@ -3666,8 +3672,9 @@ void MainWindow::startAverageGainTest()
     const auto inputPath = QDir(currentRunDirectory_).filePath(QStringLiteral("model.nec"));
     const auto sourcePath = QDir(currentRunDirectory_).filePath(QStringLiteral("model.source.nec"));
     currentRunOutputPath_ = QDir(currentRunDirectory_).filePath(QStringLiteral("model.out"));
-    const auto source = editor_->toPlainText().toStdString();
-    const auto resolution = nec::NecSymbolResolver{}.resolve(source);
+    const auto& cache = activeSource();
+    const auto source = std::string(cache.source());
+    const auto& resolution = cache.resolution();
     if (!resolution.ok()) {
         QMessageBox::critical(this, tr("AGT Failed"),
             tr("The parameterized source could not be resolved."));
@@ -4588,19 +4595,20 @@ void MainWindow::editStructuredCard(std::size_t sourceLine, const QString& cardT
 void MainWindow::makeFieldOptimizable(std::size_t sourceLine,
     std::size_t fieldIndex, const QString& fieldLabel)
 {
-    const auto source = editor_->toPlainText().toStdString();
-    const auto document = nec::NecParser{}.parse(source);
+    const auto& cache = activeSource();
+    const auto source = std::string(cache.source());
+    const auto& document = cache.document();
     if (sourceLine == 0 || sourceLine > document.cards().size()) return;
     const auto& card = document.cards()[sourceLine - 1];
     if (fieldIndex >= card.fields.size()) return;
-    const auto resolution = nec::NecSymbolResolver{}.resolve(source);
+    const auto& resolution = cache.resolution();
     if (!resolution.ok()) {
         QMessageBox::warning(this, tr("Parameter Error"),
             tr("Resolve the current symbol error before changing parameter links: %1")
                 .arg(QString::fromStdString(resolution.diagnostics.front().message)));
         return;
     }
-    const auto resolvedDocument = nec::NecParser{}.parse(resolution.resolvedSource);
+    const auto& resolvedDocument = *cache.resolvedDocument();
     if (sourceLine > resolvedDocument.cards().size()
         || fieldIndex >= resolvedDocument.cards()[sourceLine - 1].fields.size()) return;
     const auto currentExpression = QString::fromStdString(card.fields[fieldIndex]);
@@ -4778,14 +4786,15 @@ void MainWindow::makeFieldOptimizable(std::size_t sourceLine,
 void MainWindow::detachFieldParameter(std::size_t sourceLine,
     std::size_t fieldIndex, const QString& fieldLabel)
 {
-    const auto source = editor_->toPlainText().toStdString();
-    const auto resolution = nec::NecSymbolResolver{}.resolve(source);
+    const auto& cache = activeSource();
+    const auto source = std::string(cache.source());
+    const auto& resolution = cache.resolution();
     if (!resolution.ok()) {
         QMessageBox::warning(this, tr("Parameter Error"),
             tr("Resolve the current symbol error before detaching this field."));
         return;
     }
-    const auto resolvedDocument = nec::NecParser{}.parse(resolution.resolvedSource);
+    const auto& resolvedDocument = *cache.resolvedDocument();
     if (sourceLine == 0 || sourceLine > resolvedDocument.cards().size()
         || fieldIndex >= resolvedDocument.cards()[sourceLine - 1].fields.size()) return;
     const auto numericValue = resolvedDocument.cards()[sourceLine - 1].fields[fieldIndex];
@@ -4801,7 +4810,7 @@ void MainWindow::detachFieldParameter(std::size_t sourceLine,
 void MainWindow::addStructuredCard(const QString& cardText)
 {
     auto lines = editor_->toPlainText().split(QLatin1Char('\n'), Qt::KeepEmptyParts);
-    const auto document = nec::NecParser{}.parse(editor_->toPlainText().toStdString());
+    const auto& document = activeSource().document();
     auto lastGeometryIndex = -1;
     auto hasGeometryEnd = false;
     for (const auto& card : document.cards()) {
@@ -4848,7 +4857,7 @@ void MainWindow::addStructuredCard(const QString& cardText)
 
 void MainWindow::deleteStructuredCard(std::size_t sourceLine)
 {
-    const auto document = nec::NecParser{}.parse(editor_->toPlainText().toStdString());
+    const auto& document = activeSource().document();
     const auto found = std::ranges::find(document.cards(), sourceLine, &nec::NecCard::lineNumber);
     if (found == document.cards().end()) return;
     const auto source = nec::removeSourceLine(editor_->toPlainText().toStdString(), sourceLine);
@@ -5028,6 +5037,12 @@ void MainWindow::updateUndoActions()
             && !sourceRedoHistory_.empty()
         ? tr("&Redo %1").arg(sourceRedoHistory_.back().description)
         : tr("&Redo"));
+}
+
+auto MainWindow::activeSource() const -> const nec::NecSourceCache&
+{
+    activeSourceCache_.update(editor_->toPlainText().toStdString());
+    return activeSourceCache_;
 }
 
 void MainWindow::updateProjectTree(const model::AntennaModel& antennaModel, const nec::NecDocument& document)

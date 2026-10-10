@@ -46,6 +46,8 @@ add_library(necwb_core
     src/nec/NecSetupConverter.cpp
     src/nec/NecSourceEditor.cpp
     src/nec/NecSourceEditor.h
+    src/nec/NecSourceCache.cpp
+    src/nec/NecSourceCache.h
     src/nec/NecSymbolEditor.cpp
     src/nec/NecSymbolResolver.cpp
     src/nec/NecWriter.cpp

@@ -5,6 +5,7 @@
 #include "model/ModelSetup.h"
 #include "nec/NecDocument.h"
 #include "nec/DeckGeometryUnits.h"
+#include "nec/NecSourceCache.h"
 #include "ui/geometry/GeometrySettings.h"
 #include "ui/analysis/AnalysisRunStore.h"
 #include "ui/analysis/SolverProcessRunner.h"
@@ -250,6 +251,7 @@ private:
     void resetSourceUndoHistory();
     void navigateToSourceHistoryEntry(const SourceHistoryEntry& entry);
     void updateUndoActions();
+    [[nodiscard]] auto activeSource() const -> const nec::NecSourceCache&;
     void updateProjectTree(const model::AntennaModel& model, const nec::NecDocument& document);
     void synchronizeProjectItemSelection(QTreeWidgetItem* item);
     void setCurrentFile(QString path);
@@ -374,6 +376,7 @@ private:
     QLabel* resultsStatusLabel_{};
     QLabel* resultsAvailabilityLabel_{};
     analysis::AnalysisResult displayedResults_;
+    mutable nec::NecSourceCache activeSourceCache_;
     model::AntennaModel currentModel_;
     model::ModelSetup currentSetup_;
     GeometrySettings geometrySettings_;

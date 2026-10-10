@@ -21,6 +21,7 @@
 #include "nec/NecParser.h"
 #include "nec/NecSetupConverter.h"
 #include "nec/NecSourceEditor.h"
+#include "nec/NecSourceCache.h"
 #include "nec/NecSymbolResolver.h"
 #include "nec/NecSymbolEditor.h"
 #include "nec/NecWriter.h"
@@ -74,6 +75,40 @@ void testSourceLineEditing()
             && !necwb::nec::removeSourceLine(source, 99)
             && !necwb::nec::insertSourceLine(source, 99, "invalid"),
         "source-line editing rejects invalid positions");
+}
+
+void testSourceDocumentCache()
+{
+    necwb::nec::NecSourceCache cache;
+    const std::string source =
+        "SY length=2\nGW 1 3 0 0 0 length 0 0 .001\nGE 0\nEN\n";
+    cache.update(source);
+    const auto initialRevision = cache.revision();
+    expect(cache.document().cards().size() == 4,
+        "source cache parses the authored document");
+    expect(cache.resolution().ok() && cache.resolvedDocument() != nullptr
+            && cache.resolvedDocument()->cards()[1].fields[5] == "2",
+        "source cache resolves and parses symbolic source");
+
+    cache.update(source);
+    expect(cache.revision() == initialRevision,
+        "source cache reuses an unchanged source revision");
+
+    cache.update("SY length=3\nGW 1 3 0 0 0 length 0 0 .001\nGE 0\nEN\n");
+    expect(cache.revision() == initialRevision + 1
+            && cache.resolvedDocument()->cards()[1].fields[5] == "3",
+        "source cache rebuilds after a source edit");
+
+    cache.update("SY length=missing\nGW 1 3 0 0 0 length 0 0 .001\nGE 0\nEN\n");
+    expect(!cache.resolution().ok() && cache.resolvedDocument() == nullptr,
+        "source cache does not retain a stale resolved document after an error");
+
+    const auto invalidRevision = cache.revision();
+    const auto invalidSource = std::string(cache.source());
+    cache.invalidate();
+    cache.update(invalidSource);
+    expect(cache.revision() == invalidRevision + 1,
+        "source cache rebuilds an explicitly invalidated revision");
 }
 
 void testKnownCardsAreRecognized()
@@ -1960,6 +1995,7 @@ auto main() -> int
 {
     testRoundTripPreservesSource();
     testSourceLineEditing();
+    testSourceDocumentCache();
     testKnownCardsAreRecognized();
     testCompleteNec2CardCatalog();
     testSymbolResolution();
