@@ -188,12 +188,17 @@ auto resolveCardLine(std::string_view line, std::size_t lineNumber,
     while (position < line.size() && !std::isspace(static_cast<unsigned char>(line[position])))
         result.push_back(line[position++]);
     while (position < line.size()) {
-        if (std::isspace(static_cast<unsigned char>(line[position]))) {
+        if (std::isspace(static_cast<unsigned char>(line[position]))
+            || line[position] == ',') {
             result.push_back(line[position++]);
             continue;
         }
         const auto start = position;
-        while (position < line.size() && !std::isspace(static_cast<unsigned char>(line[position]))) ++position;
+        while (position < line.size()
+            && !std::isspace(static_cast<unsigned char>(line[position]))
+            && line[position] != ',') {
+            ++position;
+        }
         const auto token = line.substr(start, position - start);
         if (!needsEvaluation(token)) {
             result.append(token);

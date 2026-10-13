@@ -12,6 +12,9 @@ NEC Workbench distinguishes three levels of card support:
 Every standard NEC-2 mnemonic is recognized. Unknown solver extensions are still
 preserved exactly and remain editable in Raw Source.
 
+See [NEC Validation Reference](nec-validation-reference.md) for backend profiles,
+severity, card-level checks, control-sequence rules, and the imported-deck audit.
+
 Support level does not imply graphical rendering or parsed result support. Those are
 listed separately where applicable. Solver acceptance remains authoritative for
 backend-specific options.

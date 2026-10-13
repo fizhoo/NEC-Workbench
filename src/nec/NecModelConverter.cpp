@@ -15,17 +15,18 @@ namespace {
 
 auto parseWireFields(const NecCard& card, model::Wire& wire) -> bool
 {
-    if (card.fields.size() != 9) return false;
+    if (card.fields.size() < 8 || card.fields.size() > 9) return false;
     wire.sourceLine = card.lineNumber;
-    return parseNumber(card.fields[0], wire.tag)
+    const auto fieldsValid = parseNumber(card.fields[0], wire.tag)
         && parseNumber(card.fields[1], wire.segments)
         && parseNumber(card.fields[2], wire.start.x)
         && parseNumber(card.fields[3], wire.start.y)
         && parseNumber(card.fields[4], wire.start.z)
         && parseNumber(card.fields[5], wire.end.x)
         && parseNumber(card.fields[6], wire.end.y)
-        && parseNumber(card.fields[7], wire.end.z)
-        && parseNumber(card.fields[8], wire.radius);
+        && parseNumber(card.fields[7], wire.end.z);
+    return fieldsValid
+        && (card.fields.size() == 8 || parseNumber(card.fields[8], wire.radius));
 }
 
 auto validWireBasics(const model::Wire& wire) noexcept -> bool
@@ -714,7 +715,7 @@ auto NecModelConverter::convert(const NecDocument& document) const -> ModelConve
         model::Wire wire;
         if (!parseWireFields(card, wire)) {
             result.issues.push_back({card.lineNumber,
-                "GW requires two integers and seven numeric values"});
+                "GW requires two integers, six endpoint coordinates, and an optional radius"});
             continue;
         }
         if (!validWireBasics(wire)) {

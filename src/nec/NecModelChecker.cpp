@@ -143,8 +143,8 @@ void checkStaticAdequacy(const model::ModelSetup& setup, ModelCheckResult& resul
 
 void checkExcitation(const NecCard& card, ModelCheckResult& result)
 {
-    if (card.fields.size() < 6) {
-        addError(result, card, "EX requires at least four integer fields and two numeric fields");
+    if (card.fields.size() < 5) {
+        addError(result, card, "EX requires four integer fields and at least one numeric field");
         return;
     }
 
@@ -297,7 +297,7 @@ void checkReferenceImpedance(const NecCard& card, ModelCheckResult& result)
 
 void checkLoad(const NecCard& card, CompatibilityProfile profile, ModelCheckResult& result)
 {
-    if (card.fields.size() < 7) { addError(result, card, "LD requires four integer and three numeric fields"); return; }
+    if (card.fields.size() < 5) { addError(result, card, "LD requires four integer fields and at least one numeric field"); return; }
     int type{}, tag{}, first{}, last{};
     if (!isNumber<int>(card.fields[0]) || !isNumber<int>(card.fields[1])
         || !isNumber<int>(card.fields[2]) || !isNumber<int>(card.fields[3])) {
@@ -323,10 +323,10 @@ void checkLoad(const NecCard& card, CompatibilityProfile profile, ModelCheckResu
                 "Compatibility"});
         }
     }
-    const auto* wire = result.model.wireByTag(tag);
-    if (wire == nullptr) addError(result, card, "LD references a wire tag that does not exist");
-    else if (first < 0 || last < 0 || first > wire->segments || last > wire->segments
-        || (first != 0 && last != 0 && first > last)) addError(result, card, "LD segment range is invalid");
+    const auto* wire = tag == 0 ? nullptr : result.model.wireByTag(tag);
+    if (tag != 0 && wire == nullptr) addError(result, card, "LD references a wire tag that does not exist");
+    else if (wire != nullptr && (first < 0 || last < 0 || first > wire->segments || last > wire->segments
+        || (first != 0 && last != 0 && first > last))) addError(result, card, "LD segment range is invalid");
     if (!std::ranges::all_of(card.fields.begin() + 4, card.fields.end(),
             [](const auto& field) { return isNumber<double>(field); }))
         addError(result, card, "LD values must be numeric");
@@ -334,7 +334,7 @@ void checkLoad(const NecCard& card, CompatibilityProfile profile, ModelCheckResu
 
 void checkTransmissionLine(const NecCard& card, ModelCheckResult& result)
 {
-    if (card.fields.size() < 10) { addError(result, card, "TL requires four integer and six numeric fields"); return; }
+    if (card.fields.size() < 5) { addError(result, card, "TL requires four integer fields and an impedance"); return; }
     int tag1{}, segment1{}, tag2{}, segment2{};
     int* integers[]{&tag1, &segment1, &tag2, &segment2};
     for (auto index = 0; index < 4; ++index) {

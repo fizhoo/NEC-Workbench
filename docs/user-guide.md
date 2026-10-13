@@ -115,6 +115,9 @@ Unknown cards and formatting are preserved. Recognition does not imply that ever
 card has a dedicated editor or graphical representation; see
 [NEC Card Support](nec-card-support.md).
 
+For the exact backend profiles, card checks, severity rules, and current audit
+boundaries, see the [NEC Validation Reference](nec-validation-reference.md).
+
 ### Undo and Redo
 
 Source-backed model changes share one history. Undo may reverse a change made in

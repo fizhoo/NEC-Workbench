@@ -699,6 +699,14 @@ void testValidModelCheck()
             != std::string::npos,
         "generated solver deck supplies zero for an omitted single-frequency increment");
 
+    const auto commaResolution = necwb::nec::NecSymbolResolver{}.resolve(
+        "GW 1,21,0,-10.64,0,0,+10.64,0,.004\nGE 0\n"
+        "EX 0,1,11,0,1\nFR 0,0,0,0,7.05\nEN\n");
+    expect(commaResolution.ok()
+            && necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
+                   commaResolution.resolvedSource)).errorCount() == 0,
+        "symbol preprocessing preserves valid comma-delimited NEC fields");
+
     const auto missingSweepIncrement = necwb::nec::NecModelChecker{}.check(
         necwb::nec::NecParser{}.parse(
             "GW 1 21 -5 0 10 5 0 10 .001\nGE 0\nEX 0 1 11 0 1 0\n"
@@ -1280,6 +1288,29 @@ void testLoadsAndTransmissionLines()
         "GW 1 9 0 0 0 0 0 1 .001\nGE 0\nTL 1 1 1 9 0 0 0 0 0 0\nEN\n");
     expect(necwb::nec::NecModelChecker{}.check(invalidLine).errorCount() == 1,
         "zero-impedance transmission lines are rejected");
+
+    const auto omittedTrailingValues = necwb::nec::NecParser{}.parse(
+        "GW 1 9 0 0 0 0 0 1\nGC 0 0 1 .001 .001\n"
+        "GW 2 9 1 0 0 1 0 1 .001\nGE 0\n"
+        "LD 5 0 0 0 3.72e7\nTL 1 5 2 5 50\n"
+        "EX 0 1 5 0 1\nFR 0 1 0 0 14\nEN\n");
+    const auto omittedSetup = necwb::nec::NecSetupConverter{}.convert(omittedTrailingValues);
+    const auto omittedModel = necwb::nec::NecModelConverter{}.convert(omittedTrailingValues);
+    expect(necwb::nec::NecModelChecker{}.check(omittedTrailingValues).errorCount() == 0,
+        "valid omitted trailing zero fields pass model checking");
+    expect(omittedModel.issues.empty() && omittedModel.model.wireCount() == 2,
+        "GW may omit its radius when a following GC supplies taper radii");
+    expect(omittedSetup.excitations.size() == 1
+            && omittedSetup.excitations[0].phaseDegrees == 0.0
+            && omittedSetup.loads.size() == 1
+            && omittedSetup.loads[0].wireTag == 0
+            && omittedSetup.loads[0].value2 == 0.0
+            && omittedSetup.loads[0].value3 == 0.0
+            && omittedSetup.transmissionLines.size() == 1
+            && omittedSetup.transmissionLines[0].lengthMeters == 0.0
+            && omittedSetup.transmissionLines[0].shuntReal1 == 0.0
+            && omittedSetup.transmissionLines[0].shuntImaginary2 == 0.0,
+        "omitted EX, LD, and TL trailing fields convert to zero defaults");
 }
 
 void testSolverCommand()

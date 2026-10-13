@@ -51,6 +51,11 @@ The current milestone is Alpha 1 stabilization rather than broad feature expansi
 4. Fix reproducible release defects before adding another major workflow.
 5. Prepare a focused `v0.1.0-alpha.2` maintenance release when the fixes justify it.
 
+The first imported-deck validation audit is complete and documented in the
+[NEC Validation Reference](nec-validation-reference.md). Follow-up work should focus
+on verified extension profiles and confirmed corpus regressions rather than broad,
+solver-specific permissiveness.
+
 ## Near-Term Work
 
 ### Optimization Confidence

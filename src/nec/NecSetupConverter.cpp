@@ -91,7 +91,7 @@ auto NecSetupConverter::convert(const NecDocument& document) const -> model::Mod
                 setup.radiationPatterns.push_back(request);
             }
         }
-        if (card.kind == NecCardKind::Excitation && card.fields.size() >= 6) {
+        if (card.kind == NecCardKind::Excitation && card.fields.size() >= 5) {
             model::Excitation excitation;
             int unused{};
             double real{};
@@ -103,13 +103,13 @@ auto NecSetupConverter::convert(const NecDocument& document) const -> model::Mod
                 && parseNumber(card.fields[2], excitation.segment)
                 && parseNumber(card.fields[3], unused)
                 && parseNumber(card.fields[4], real)
-                && parseNumber(card.fields[5], imaginary)) {
+                && (card.fields.size() < 6 || parseNumber(card.fields[5], imaginary))) {
                 excitation.magnitude = std::hypot(real, imaginary);
                 excitation.phaseDegrees = std::atan2(imaginary, real) * 180.0 / std::numbers::pi;
                 setup.excitations.push_back(excitation);
             }
         }
-        if (card.kind == NecCardKind::Load && card.fields.size() >= 7) {
+        if (card.kind == NecCardKind::Load && card.fields.size() >= 5) {
             model::LoadDefinition load;
             load.sourceLine = card.lineNumber;
             if (parseNumber(card.fields[0], load.type)
@@ -117,12 +117,12 @@ auto NecSetupConverter::convert(const NecDocument& document) const -> model::Mod
                 && parseNumber(card.fields[2], load.firstSegment)
                 && parseNumber(card.fields[3], load.lastSegment)
                 && parseNumber(card.fields[4], load.value1)
-                && parseNumber(card.fields[5], load.value2)
-                && parseNumber(card.fields[6], load.value3)) {
+                && (card.fields.size() < 6 || parseNumber(card.fields[5], load.value2))
+                && (card.fields.size() < 7 || parseNumber(card.fields[6], load.value3))) {
                 setup.loads.push_back(load);
             }
         }
-        if (card.kind == NecCardKind::TransmissionLine && card.fields.size() >= 10) {
+        if (card.kind == NecCardKind::TransmissionLine && card.fields.size() >= 5) {
             model::TransmissionLineDefinition line;
             line.sourceLine = card.lineNumber;
             if (parseNumber(card.fields[0], line.wireTag1)
@@ -130,11 +130,11 @@ auto NecSetupConverter::convert(const NecDocument& document) const -> model::Mod
                 && parseNumber(card.fields[2], line.wireTag2)
                 && parseNumber(card.fields[3], line.segment2)
                 && parseNumber(card.fields[4], line.characteristicImpedance)
-                && parseNumber(card.fields[5], line.lengthMeters)
-                && parseNumber(card.fields[6], line.shuntReal1)
-                && parseNumber(card.fields[7], line.shuntImaginary1)
-                && parseNumber(card.fields[8], line.shuntReal2)
-                && parseNumber(card.fields[9], line.shuntImaginary2)) {
+                && (card.fields.size() < 6 || parseNumber(card.fields[5], line.lengthMeters))
+                && (card.fields.size() < 7 || parseNumber(card.fields[6], line.shuntReal1))
+                && (card.fields.size() < 8 || parseNumber(card.fields[7], line.shuntImaginary1))
+                && (card.fields.size() < 9 || parseNumber(card.fields[8], line.shuntReal2))
+                && (card.fields.size() < 10 || parseNumber(card.fields[9], line.shuntImaginary2))) {
                 setup.transmissionLines.push_back(line);
             }
         }

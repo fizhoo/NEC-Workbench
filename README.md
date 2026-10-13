@@ -27,6 +27,7 @@ cards.
 - [User Guide](docs/user-guide.md) — normal modeling, analysis, results, and optimization workflows
 - [Architecture](docs/architecture.md) — source, model, solver, result, and UI boundaries
 - [NEC Card Support](docs/nec-card-support.md) — support level by NEC mnemonic
+- [NEC Validation Reference](docs/nec-validation-reference.md) — backend profiles, checks, and audit boundaries
 - [Roadmap](docs/roadmap.md) — current priorities and longer-term direction
 
 Most individual controls also provide tooltips in the application.
