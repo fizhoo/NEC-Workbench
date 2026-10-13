@@ -59,6 +59,44 @@ void testRoundTripPreservesSource()
     expect(necwb::nec::NecWriter{}.write(document) == source, "writer preserves CRLF source exactly");
 }
 
+void testLegacyFreeFormatParsing()
+{
+    const std::string source =
+        "CM Dipolo per i 40m  ( i2kfx )\n"
+        "CM\n"
+        "CM\n"
+        "CMPP  1 0 0 0 0\n"
+        "CE\n"
+        "GW 1 21  0 -10.64 0  0  +10.64  0 0.004\n"
+        "GE 0\n"
+        "FR 0 0 0 0 7.05\n"
+        "EX 0 1 11 0 1.0 0.0\n"
+        "PT -1\n"
+        "RP  0, 1, 1,  1001, 90, 0, 0, 0\n"
+        "RP  0, 1, 1,  1001, 90,180, 0, 0\n"
+        "RP  0, 1, 361, 1001, 90, 0, 1, 1\n"
+        "RP  0, 361, 1, 1001, 0, 0, 1, 1\n"
+        "EN\n";
+    const auto document = necwb::nec::NecParser{}.parse(source);
+    const auto setup = necwb::nec::NecSetupConverter{}.convert(document);
+    const auto result = necwb::nec::NecModelChecker{}.check(document);
+    expect(document.cards().size() == 15
+            && document.cards()[3].kind == necwb::nec::NecCardKind::Comment,
+        "NEC card mnemonics use their first two characters");
+    expect(document.cards()[10].fields.size() == 8
+            && document.cards()[11].fields.size() == 8,
+        "free-format NEC fields accept mixed comma and whitespace separators");
+    expect(result.errorCount() == 0 && result.model.wireCount() == 1,
+        "legacy signed and comma-separated NEC deck passes model checking");
+    expect(setup.frequency && setup.frequency->count == 1
+            && setup.frequency->startMHz == 7.05,
+        "zero FR frequency count uses the NEC-2 single-frequency default");
+    expect(setup.radiationPatterns.size() == 4,
+        "all comma-separated RP requests convert to structured requests");
+    expect(necwb::nec::NecWriter{}.write(document) == source,
+        "legacy free-format parsing preserves authored source exactly");
+}
+
 void testSourceLineEditing()
 {
     const std::string source = "CM note\nGW 1 3 0 0 0 1 0 0 .001\nEN\n";
@@ -634,6 +672,39 @@ void testValidModelCheck()
     expect(result.errorCount() == 0, "valid model has no errors");
     expect(result.warningCount() == 0, "valid model has no warnings");
     expect(result.model.wireCount() == 1, "model check returns semantic geometry");
+
+    const std::string omittedIncrementSource =
+        "GW 1 21 -5 0 10 5 0 10 .001\n"
+        "GE 0\n"
+        "EX 0 1 11 0 1 0\n"
+        "FR 0 1 0 0 14.175\n"
+        "EN\n";
+    const auto omittedIncrementResolution =
+        necwb::nec::NecSymbolResolver{}.resolve(omittedIncrementSource);
+    const auto omittedIncrementDocument = necwb::nec::NecParser{}.parse(
+        omittedIncrementResolution.resolvedSource);
+    const auto omittedIncrementResult =
+        necwb::nec::NecModelChecker{}.check(omittedIncrementDocument);
+    const auto omittedIncrementSetup =
+        necwb::nec::NecSetupConverter{}.convert(omittedIncrementDocument);
+    expect(omittedIncrementResult.diagnostics.empty(),
+        "single-frequency FR silently accepts an omitted increment");
+    expect(omittedIncrementSetup.frequency
+            && omittedIncrementSetup.frequency->startMHz == 14.175
+            && omittedIncrementSetup.frequency->step == 0.0,
+        "omitted single-frequency increment converts to zero");
+    expect(omittedIncrementResolution.resolvedSource == omittedIncrementSource,
+        "symbol resolution preserves the authored FR line without an increment");
+    expect(omittedIncrementResolution.generatedDeck.find("FR 0 1 0 0 14.175 0")
+            != std::string::npos,
+        "generated solver deck supplies zero for an omitted single-frequency increment");
+
+    const auto missingSweepIncrement = necwb::nec::NecModelChecker{}.check(
+        necwb::nec::NecParser{}.parse(
+            "GW 1 21 -5 0 10 5 0 10 .001\nGE 0\nEX 0 1 11 0 1 0\n"
+            "FR 0 2 0 0 14.175\nEN\n"));
+    expect(missingSweepIncrement.errorCount() == 1,
+        "multi-frequency FR still requires an increment");
 }
 
 void testStaticModelAdequacyChecks()
@@ -667,10 +738,11 @@ void testCardValidation()
         "GW 1 3 0 0 0 1 0 0 .001\n"
         "GE 0\n"
         "EX 0 1 bad 0 1 0\n"
-        "FR 0 0 0 0 -14 0\n"
+        "FR 0 -1 0 0 -14 0\n"
         "ZZ unsupported\n"
         "EX 0 1 2 0 1 0\n"
-        "FR 0 1 0 0 14 0\n";
+        "FR 0 1 0 0 14 0\n"
+        "EN\n";
     const auto result = necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(source));
     expect(result.errorCount() == 3, "invalid EX and FR values produce errors");
     expect(result.warningCount() == 1, "unknown card produces a warning");
@@ -710,6 +782,156 @@ void testGeometryCardOrdering()
     expect(std::ranges::any_of(missingEnd.diagnostics, [](const auto& diagnostic) {
         return diagnostic.message.find("requires a GE card") != std::string::npos;
     }), "geometry checker requires GE after the final GW card");
+}
+
+void testDeckStructureValidation()
+{
+    const auto missingCommentEnd = necwb::nec::NecModelChecker{}.check(
+        necwb::nec::NecParser{}.parse(
+            "CMPP 3,0,0,0,0\n"
+            "GW 1 41 -10 0 0 10 0 0 .001\nGE 0\n"
+            "EX 0 1 21 0 1 0\nFR 0 1 0 0 28 0\nEN\n"));
+    expect(missingCommentEnd.errorCount() == 1
+            && missingCommentEnd.diagnostics.front().message.find("before CE")
+                != std::string::npos,
+        "a leading CM comment block requires CE before geometry");
+
+    const auto missingEnd = necwb::nec::NecModelChecker{}.check(
+        necwb::nec::NecParser{}.parse(
+            "GW 1 41 -10 0 0 10 0 0 .001\nGE 0\n"
+            "EX 0 1 21 0 1 0\nFR 0 1 0 0 28 0\n"));
+    expect(missingEnd.errorCount() == 1
+            && missingEnd.diagnostics.front().message.find("final EN")
+                != std::string::npos,
+        "a complete NEC deck requires an EN end card");
+
+    const auto cardsAfterEnd = necwb::nec::NecModelChecker{}.check(
+        necwb::nec::NecParser{}.parse(
+            "GW 1 41 -10 0 0 10 0 0 .001\nGE 0\n"
+            "EX 0 1 21 0 1 0\nFR 0 1 0 0 28 0\nEN\nPT -1\n"));
+    expect(cardsAfterEnd.errorCount() == 1
+            && cardsAfterEnd.diagnostics.back().message.find("EN must be the final")
+                != std::string::npos,
+        "EN must remain the final nonblank deck card");
+
+    const auto corrected = necwb::nec::NecModelChecker{}.check(
+        necwb::nec::NecParser{}.parse(
+            "CMPP 3,0,0,0,0\nCE\n"
+            "GW 1 41 -10 0 0 10 0 0 .001\nGE 0\n"
+            "EX 0 1 21 0 1 0\nFR 0 1 0 0 28 0\nEN\n\n"));
+    expect(corrected.errorCount() == 0,
+        "a CE-terminated comment block and final EN pass structural validation");
+}
+
+void testControlCardSequence()
+{
+    const auto check = [](std::string_view controls) {
+        return necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
+            "GW 1 9 0 0 0 0 0 5 .001\nGE 0\n" + std::string{controls} + "EN\n"));
+    };
+    const auto hasMessage = [](const auto& result, std::string_view text) {
+        return std::ranges::any_of(result.diagnostics, [text](const auto& diagnostic) {
+            return diagnostic.message.find(text) != std::string::npos;
+        });
+    };
+
+    const auto patternThenDivider = check(
+        "EX 0 1 5 0 1 0\nFR 0 3 0 0 14 0.1\n"
+        "RP 0 19 1 1000 0 0 5 0\nXQ 0\n");
+    expect(!hasMessage(patternThenDivider, "final frequency only"),
+        "blank XQ after RP remains a legal NEC-2 execution-group divider");
+
+    const auto sweepThenPattern = check(
+        "EX 0 1 5 0 1 0\nFR 0 3 0 0 14 0.1\n"
+        "XQ 0\nRP 0 19 1 1000 0 0 5 0\n");
+    expect(hasMessage(sweepThenPattern, "final frequency only"),
+        "a later RP without repeated FR reports NEC-2 final-frequency semantics");
+
+    const auto repeatedSweep = check(
+        "EX 0 1 5 0 1 0\nFR 0 3 0 0 14 0.1\nXQ 0\n"
+        "FR 0 3 0 0 14 0.1\nRP 0 19 1 1000 0 0 5 0\n");
+    expect(!hasMessage(repeatedSweep, "final frequency only"),
+        "repeating FR starts a new automatic frequency loop");
+
+    const auto missingExcitation = check(
+        "FR 0 1 0 0 14 0\nRP 0 19 1 1000 0 0 5 0\nEX 0 1 5 0 1 0\n");
+    expect(hasMessage(missingExcitation, "before an EX excitation"),
+        "execution requests require the NEC-2 excitation exception to be satisfied");
+
+    const auto unusedGround = check(
+        "EX 0 1 5 0 1 0\nFR 0 1 0 0 14 0\nXQ 0\nGN 1\n");
+    expect(hasMessage(unusedGround, "after the final execution request"),
+        "a parameter change after the final execution request is rejected as unused");
+
+    const auto repeatedExecution = check(
+        "EX 0 1 5 0 1 0\nFR 0 1 0 0 14 0\nXQ 0\nGN 1\nXQ 0\n");
+    expect(!hasMessage(repeatedExecution, "after the final execution request"),
+        "a later execution request consumes changed calculation parameters");
+
+    const auto unusedRadiationGround = check(
+        "EX 0 1 5 0 1 0\nFR 0 1 0 0 14 0\nGD 0 0 0 0 13 0.005\nXQ 0\n");
+    expect(hasMessage(unusedRadiationGround, "no later RP request"),
+        "XQ does not consume GD parameters intended for radiated-field calculations");
+
+    const auto pendingNearField = check(
+        "EX 0 1 5 0 1 0\nFR 0 3 0 0 14 0.1\n"
+        "NE 0 1 1 1 0 0 1 0 0 0\n");
+    expect(hasMessage(pendingNearField, "follow it with XQ or RP"),
+        "near-field requests in automatic stepping require a later execution card");
+
+    const auto groupedNearField = check(
+        "EX 0 1 5 0 1 0\nFR 0 3 0 0 14 0.1\n"
+        "NE 0 1 1 1 0 0 1 0 0 0\nRP 0 19 1 1000 0 0 5 0\n");
+    expect(!hasMessage(groupedNearField, "follow it with XQ or RP"),
+        "RP executes a preceding near-field request during automatic stepping");
+}
+
+void testBackendCompatibilityProfiles()
+{
+    using necwb::nec::CompatibilityProfile;
+    using necwb::nec::DiagnosticSeverity;
+    using necwb::nec::ModelCheckOptions;
+
+    expect(necwb::nec::compatibilityProfileForBackend("nec2")
+            == CompatibilityProfile::OriginalNec2
+            && necwb::nec::compatibilityProfileForBackend("nec2dxs")
+                == CompatibilityProfile::FourNec2
+            && necwb::nec::compatibilityProfileForBackend("opennec")
+                == CompatibilityProfile::OpenNec,
+        "solver backends map to their compatibility profiles");
+
+    const auto deck = necwb::nec::NecParser{}.parse(
+        "GW 1 9 0 0 0 0 0 5 .001\nGE 0\n"
+        "EX 0 1 5 0 1 0\nFR 0 1 0 0 14.2 0\n"
+        "LD 6 1 1 1 0.000001 0.00000000001 0\nXQ 0\nEN\n");
+    const auto original = necwb::nec::NecModelChecker{}.check(deck,
+        ModelCheckOptions{CompatibilityProfile::OriginalNec2});
+    const auto fourNec2 = necwb::nec::NecModelChecker{}.check(deck,
+        ModelCheckOptions{CompatibilityProfile::FourNec2});
+    const auto openNec = necwb::nec::NecModelChecker{}.check(deck,
+        ModelCheckOptions{CompatibilityProfile::OpenNec});
+    const auto hasMessage = [](const auto& result, std::string_view text) {
+        return std::ranges::any_of(result.diagnostics, [text](const auto& diagnostic) {
+            return diagnostic.message.find(text) != std::string::npos;
+        });
+    };
+    expect(original.errorCount() == 1
+            && hasMessage(original, "Original NEC-2 and NEC2C support LD types 0 through 5"),
+        "Original NEC-2 profile rejects the 4nec2 LD6 extension clearly");
+    expect(fourNec2.errorCount() == 1
+            && hasMessage(fourNec2, "does not yet convert it for direct NEC2dXS execution"),
+        "4nec2 profile recognizes LD6 but blocks the unimplemented direct-solver conversion");
+    expect(openNec.errorCount() == 0,
+        "OpenNEC profile accepts its supported 4nec2 LD6 extension");
+
+    const auto symbolInfo = necwb::nec::NecModelChecker{}.check(deck,
+        ModelCheckOptions{CompatibilityProfile::OpenNec, 2});
+    expect(symbolInfo.informationCount() == 1
+            && std::ranges::any_of(symbolInfo.diagnostics, [](const auto& diagnostic) {
+                return diagnostic.severity == DiagnosticSeverity::Information
+                    && diagnostic.message.find("2 SY symbols") != std::string::npos;
+            }),
+        "resolved SY symbols are reported as a non-blocking generated-deck conversion");
 }
 
 void testIncompleteModelCheck()
@@ -933,7 +1155,8 @@ void testStructuredModelSetup()
         "invalid source references and zero frequency steps are diagnosed");
 
     const auto fullWidthFrequency = necwb::nec::NecParser{}.parse(
-        "FR 0 101 0 0 3.00000E+00 5.00000E-02 8.00000E+00 0.00000E+00 0.00000E+00 0.00000E+00\n");
+        "FR 0 101 0 0 3.00000E+00 5.00000E-02 8.00000E+00 0.00000E+00 0.00000E+00 0.00000E+00\n"
+        "EN\n");
     const auto fullWidthSetup = necwb::nec::NecSetupConverter{}.convert(fullWidthFrequency);
     expect(necwb::nec::NecModelChecker{}.check(fullWidthFrequency).errorCount() == 0,
         "full-width FR cards accept all six floating-point fields");
@@ -1006,7 +1229,9 @@ void testAnalysisRequests()
         "valid XQ and RP requests pass model checking");
 
     const auto shortPattern = necwb::nec::NecParser{}.parse(
-        "RP 0 181 361 1000 0.000 0.000 1.000 1.000\n");
+        "GW 1 9 0 0 0 0 0 5 .001\nGE 0\n"
+        "EX 0 1 5 0 1 0\nFR 0 1 0 0 14.2 0\n"
+        "RP 0 181 361 1000 0.000 0.000 1.000 1.000\nEN\n");
     const auto shortSetup = necwb::nec::NecSetupConverter{}.convert(shortPattern);
     expect(necwb::nec::NecModelChecker{}.check(shortPattern).errorCount() == 0
             && shortSetup.radiationPatterns.size() == 1
@@ -1015,7 +1240,9 @@ void testAnalysisRequests()
         "RP accepts omitted optional distance and normalization fields");
 
     const auto invalid = necwb::nec::NecParser{}.parse(
-        "RP 0 0 2 1000 0 0 1 0 0 0\nXQ bad\nZO -50\n");
+        "GW 1 9 0 0 0 0 0 5 .001\nGE 0\n"
+        "EX 0 1 5 0 1 0\nFR 0 1 0 0 14.2 0\n"
+        "RP 0 0 2 1000 0 0 1 0 0 0\nXQ bad\nZO -50\nEN\n");
     expect(necwb::nec::NecModelChecker{}.check(invalid).errorCount() == 4,
         "invalid RP counts, XQ options, and reference impedance are diagnosed");
 }
@@ -1994,6 +2221,7 @@ void testSegmentationConvergencePreparation()
 auto main() -> int
 {
     testRoundTripPreservesSource();
+    testLegacyFreeFormatParsing();
     testSourceLineEditing();
     testSourceDocumentCache();
     testKnownCardsAreRecognized();
@@ -2011,6 +2239,9 @@ auto main() -> int
     testCardValidation();
     testGenericKnownCardValidation();
     testGeometryCardOrdering();
+    testDeckStructureValidation();
+    testControlCardSequence();
+    testBackendCompatibilityProfiles();
     testIncompleteModelCheck();
     testOrthographicProjection();
     testWireLookupAndWriting();

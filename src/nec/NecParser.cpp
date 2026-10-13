@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <sstream>
 #include <string>
 #include <utility>
 
@@ -27,25 +26,35 @@ auto classify(std::string_view mnemonic) -> NecCardKind
 
 auto parseLine(std::string line, std::size_t lineNumber) -> NecCard
 {
-    std::istringstream input(line);
-    std::string mnemonic;
-    input >> mnemonic;
-
     NecCard card;
     card.sourceText = std::move(line);
     card.lineNumber = lineNumber;
 
-    if (mnemonic.empty()) {
+    const auto first = card.sourceText.find_first_not_of(" \t");
+    if (first == std::string::npos) {
         card.kind = NecCardKind::Blank;
         return card;
     }
 
-    card.mnemonic = upper(std::move(mnemonic));
+    const auto mnemonicLength = std::min<std::size_t>(2, card.sourceText.size() - first);
+    card.mnemonic = upper(card.sourceText.substr(first, mnemonicLength));
     card.kind = classify(card.mnemonic);
 
-    std::string field;
-    while (input >> field) {
-        card.fields.push_back(std::move(field));
+    auto position = first + mnemonicLength;
+    while (position < card.sourceText.size()) {
+        while (position < card.sourceText.size()
+            && (std::isspace(static_cast<unsigned char>(card.sourceText[position]))
+                || card.sourceText[position] == ',')) {
+            ++position;
+        }
+        const auto fieldStart = position;
+        while (position < card.sourceText.size()
+            && !std::isspace(static_cast<unsigned char>(card.sourceText[position]))
+            && card.sourceText[position] != ',') {
+            ++position;
+        }
+        if (position > fieldStart)
+            card.fields.push_back(card.sourceText.substr(fieldStart, position - fieldStart));
     }
     return card;
 }

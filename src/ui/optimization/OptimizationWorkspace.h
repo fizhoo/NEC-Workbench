@@ -121,6 +121,7 @@ private:
         std::optional<analysis::OptimizationObjectiveResult> evaluation;
         int refinementRound{};
         QString trialRole;
+        QString failureDetail;
     };
 
     void populateVariables(const nec::SymbolResolution& resolution);

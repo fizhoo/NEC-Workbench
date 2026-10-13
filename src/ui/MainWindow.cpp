@@ -584,7 +584,7 @@ void MainWindow::createActions()
     checkAction_->setIcon(workbenchIcon("check"));
     checkAction_->setShortcut(QKeySequence(Qt::Key_F7));
     checkAction_->setStatusTip(tr("Check NEC cards and model geometry"));
-    connect(checkAction_, &QAction::triggered, this, [this] { checkModel(); });
+    connect(checkAction_, &QAction::triggered, this, [this] { checkModel(true); });
 
     runAction_ = new QAction(tr("&Run Analysis"), this);
     runAction_->setIcon(workbenchIcon("run"));
@@ -1138,6 +1138,7 @@ void MainWindow::createWorkspace()
     analysisSetupEditor_ = new AnalysisSetupEditor(analysisWorkspace_);
     connect(analysisSetupEditor_, &AnalysisSetupEditor::settingsChanged, this,
         [this](QString backendId, QString executablePath, int timeoutSeconds) {
+            const auto backendChanged = solverBackendId_ != backendId;
             solverBackendId_ = std::move(backendId);
             solverExecutablePath_ = std::move(executablePath);
             solverExecutablePaths_.insert(solverBackendId_, solverExecutablePath_);
@@ -1153,6 +1154,7 @@ void MainWindow::createWorkspace()
             runAction_->setStatusTip(solverExecutablePath_.isEmpty()
                     ? tr("Select a NEC engine executable under Analysis → Solver")
                     : tr("Run the checked model with the selected NEC engine"));
+            if (backendChanged && modelChecked_) checkModel();
             updateAnalysisReadiness();
         });
     connect(analysisSetupEditor_, &AnalysisSetupEditor::executablePathChanged, this,
@@ -1162,7 +1164,7 @@ void MainWindow::createWorkspace()
             QSettings{}.setValue(
                 QStringLiteral("analysis/executables/%1").arg(backendId), executablePath);
         });
-    const auto analysisSolverTabIndex = analysisWorkspace_->addTab(
+    analysisSolverTabIndex_ = analysisWorkspace_->addTab(
         scrollableEditor(analysisSetupEditor_, analysisWorkspace_), tr("Solver"));
     analysisFrequencyTabIndex_ = analysisWorkspace_->addTab(
         setupEditor_->frequencyPage(), tr("Frequency"));
@@ -1194,7 +1196,7 @@ void MainWindow::createWorkspace()
         });
     const auto analysisRequestsTabIndex = analysisWorkspace_->addTab(
         scrollableEditor(analysisRequestEditor_, analysisWorkspace_), tr("Requests"));
-    analysisWorkspace_->setTabIcon(analysisSolverTabIndex, workbenchIcon("settings"));
+    analysisWorkspace_->setTabIcon(analysisSolverTabIndex_, workbenchIcon("settings"));
     analysisWorkspace_->setTabIcon(analysisFrequencyTabIndex_, workbenchIcon("frequency-sweep"));
     analysisWorkspace_->setTabIcon(analysisRequestsTabIndex, workbenchIcon("radiation-pattern"));
 
@@ -2035,15 +2037,26 @@ void MainWindow::createDocks()
     auto* validationButtons = new QHBoxLayout;
     auto* recheckButton = new QPushButton(tr("Recheck"), modelCheckWindow_);
     auto* goToFindingButton = new QPushButton(tr("Go to Selected Finding"), modelCheckWindow_);
+    auto* generatedDeckButton = new QPushButton(tr("View Generated Solver Deck…"), modelCheckWindow_);
+    auto* changeSolverButton = new QPushButton(tr("Change Solver…"), modelCheckWindow_);
     auto* closeValidationButton = new QPushButton(tr("Close"), modelCheckWindow_);
     validationButtons->addWidget(recheckButton);
     validationButtons->addWidget(goToFindingButton);
+    validationButtons->addWidget(generatedDeckButton);
     validationButtons->addStretch();
+    validationButtons->addWidget(changeSolverButton);
     validationButtons->addWidget(closeValidationButton);
     validationLayout->addLayout(validationButtons);
-    connect(recheckButton, &QPushButton::clicked, this, [this] { checkModel(); });
+    connect(recheckButton, &QPushButton::clicked, this, [this] { checkModel(true); });
     connect(goToFindingButton, &QPushButton::clicked, this, [this] {
         if (auto* item = diagnostics_->currentItem()) goToDiagnostic(item);
+    });
+    connect(generatedDeckButton, &QPushButton::clicked,
+        this, [this] { showGeneratedSolverDeck(); });
+    connect(changeSolverButton, &QPushButton::clicked, this, [this] {
+        modelCheckWindow_->hide();
+        if (!showModule(analysisModuleIndex_)) return;
+        analysisWorkspace_->setCurrentIndex(analysisSolverTabIndex_);
     });
     connect(closeValidationButton, &QPushButton::clicked,
         modelCheckWindow_, &QDialog::hide);
@@ -2380,6 +2393,7 @@ void MainWindow::newModel()
     analysisModuleAction_->setEnabled(true);
     resultsModuleAction_->setEnabled(true);
     dashboardStack_->setCurrentIndex(1);
+    analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile({});
     editor_->document()->setModified(false);
     showEditor(EditorDestination::RawSource);
@@ -2415,6 +2429,7 @@ void MainWindow::openFileAtPath(const QString& path)
     analysisModuleAction_->setEnabled(true);
     resultsModuleAction_->setEnabled(true);
     dashboardStack_->setCurrentIndex(1);
+    analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile(path);
     editor_->document()->setModified(false);
     showEditor(EditorDestination::RawSource);
@@ -2509,7 +2524,7 @@ auto MainWindow::maybeSaveChanges() -> bool
     return answer == QMessageBox::Discard || saveFile();
 }
 
-void MainWindow::checkModel()
+void MainWindow::checkModel(bool presentReport)
 {
     const auto& cache = activeSource();
     const auto& document = cache.document();
@@ -2519,7 +2534,9 @@ void MainWindow::checkModel()
     if (resolution.ok()) {
         const auto& resolvedDocument = *cache.resolvedDocument();
         deckUnitInfo = nec::inspectDeckGeometryUnits(resolvedDocument);
-        result = nec::NecModelChecker{}.check(resolvedDocument);
+        result = nec::NecModelChecker{}.check(resolvedDocument,
+            {nec::compatibilityProfileForBackend(solverBackendId_.toStdString()),
+                resolution.definitions.size()});
         currentSetup_ = nec::NecSetupConverter{}.convert(resolvedDocument);
     } else {
         for (const auto& diagnostic : resolution.diagnostics) {
@@ -2541,13 +2558,15 @@ void MainWindow::checkModel()
     diagnostics_->clear();
     for (const auto& diagnostic : result.diagnostics) {
         const bool isError = diagnostic.severity == nec::DiagnosticSeverity::Error;
+        const bool isWarning = diagnostic.severity == nec::DiagnosticSeverity::Warning;
         auto* item = new QTreeWidgetItem(diagnostics_, {
-            isError ? tr("Error") : tr("Warning"),
+            isError ? tr("Error") : isWarning ? tr("Warning") : tr("Converted"),
             QString::fromStdString(diagnostic.category),
             QString::number(diagnostic.lineNumber),
             QString::fromStdString(diagnostic.message)});
         item->setData(0, SourceLineRole, static_cast<qulonglong>(diagnostic.lineNumber));
-        item->setIcon(0, style()->standardIcon(isError ? QStyle::SP_MessageBoxCritical : QStyle::SP_MessageBoxWarning));
+        item->setIcon(0, style()->standardIcon(isError ? QStyle::SP_MessageBoxCritical
+            : isWarning ? QStyle::SP_MessageBoxWarning : QStyle::SP_MessageBoxInformation));
     }
     if (result.diagnostics.empty()) {
         auto* item = new QTreeWidgetItem(diagnostics_,
@@ -2561,8 +2580,16 @@ void MainWindow::checkModel()
         });
     const auto incomplete = currentModel_.empty() || !currentSetup_.frequency
         || currentSetup_.excitations.empty();
+    const auto profileName = nec::compatibilityProfileName(
+        nec::compatibilityProfileForBackend(solverBackendId_.toStdString()));
+    const auto compatibilityName = QString::fromUtf8(
+        profileName.data(), static_cast<qsizetype>(profileName.size()));
+    validationScope_->setText(tr(
+        "Validation target: %1. Static source and geometry findings are shown below; AGT and "
+        "convergence results are available under Results > Validation.").arg(compatibilityName));
     if (result.errorCount() != 0) {
-        validationSummary_->setText(tr("Invalid model · %1 blocking error(s)")
+        validationSummary_->setText(tr("Not ready for %1 · %2 blocking error(s)")
+            .arg(compatibilityName)
             .arg(static_cast<qulonglong>(result.errorCount())));
     } else if (incomplete) {
         validationSummary_->setText(tr("Incomplete model · finish geometry and analysis setup"));
@@ -2570,7 +2597,11 @@ void MainWindow::checkModel()
         validationSummary_->setText(tr("Static adequacy: Caution · %1 finding(s) to review")
             .arg(static_cast<qulonglong>(adequacyWarnings)));
     } else {
-        validationSummary_->setText(tr("Static adequacy checks passed"));
+        validationSummary_->setText(result.informationCount() == 0
+                ? tr("Compatible with %1 · static adequacy checks passed").arg(compatibilityName)
+                : tr("Compatible with %1 · %2 automatic conversion(s)")
+                    .arg(compatibilityName)
+                    .arg(static_cast<qulonglong>(result.informationCount())));
     }
 
     editor_->setDiagnostics(result.diagnostics);
@@ -2616,11 +2647,43 @@ void MainWindow::checkModel()
         .arg(static_cast<qulonglong>(currentModel_.wireCount()))
         .arg(static_cast<qulonglong>(currentModel_.surfacePatchCount()))
         .arg(static_cast<qulonglong>(document.cards().size())));
-    if (!result.diagnostics.empty()) {
+    if (presentReport || result.errorCount() != 0 || result.warningCount() != 0) {
         modelCheckWindow_->show();
         modelCheckWindow_->raise();
+        if (presentReport) modelCheckWindow_->activateWindow();
     }
     updateAnalysisReadiness();
+}
+
+void MainWindow::showGeneratedSolverDeck()
+{
+    const auto& resolution = activeSource().resolution();
+    if (!resolution.ok()) {
+        QMessageBox::warning(this, tr("Generated Solver Deck"),
+            tr("The parameterized source cannot be expanded until its formula errors are fixed."));
+        return;
+    }
+
+    QDialog dialog(modelCheckWindow_);
+    dialog.setWindowTitle(tr("Generated Solver Deck — NEC Workbench"));
+    dialog.resize(820, 560);
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* explanation = new QLabel(tr(
+        "This numeric base deck is generated from the authored source. NEC Workbench may apply "
+        "additional request-specific changes when a run starts; the authored model is unchanged."),
+        &dialog);
+    explanation->setWordWrap(true);
+    auto* source = new QPlainTextEdit(&dialog);
+    source->setReadOnly(true);
+    source->setLineWrapMode(QPlainTextEdit::NoWrap);
+    source->setPlainText(QString::fromStdString(
+        analysis::normalizeSolverDeck(resolution.generatedDeck)));
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(explanation);
+    layout->addWidget(source, 1);
+    layout->addWidget(buttons);
+    dialog.exec();
 }
 
 void MainWindow::clearCheckResults()
@@ -4200,6 +4263,7 @@ auto MainWindow::loadRunModel(const QString& directory, const QString& modelName
     analysisModuleAction_->setEnabled(true);
     resultsModuleAction_->setEnabled(true);
     dashboardStack_->setCurrentIndex(1);
+    analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile({});
     const auto displayName = modelName.isEmpty() ? tr("Archived model.nec") : modelName;
     setWindowTitle(tr("%1 (snapshot)[*] — NEC Workbench").arg(displayName));

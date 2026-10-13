@@ -248,7 +248,9 @@ auto requiredFieldCount(const QString& mnemonic, const QStringList& fields) -> i
     if (mnemonic == QStringLiteral("SP") || mnemonic == QStringLiteral("SM")) return 8;
     if (mnemonic == QStringLiteral("SC"))
         return fields.size() > 1 && fields[1].toInt() == 3 ? 8 : 5;
-    if (mnemonic == QStringLiteral("EX") || mnemonic == QStringLiteral("FR")) return 6;
+    if (mnemonic == QStringLiteral("EX")) return 6;
+    if (mnemonic == QStringLiteral("FR"))
+        return fields.size() > 1 && fields[1].toInt() == 1 ? 5 : 6;
     if (mnemonic == QStringLiteral("GS")) return 3;
     if (mnemonic == QStringLiteral("GE") || mnemonic == QStringLiteral("XQ")) return 1;
     if (mnemonic == QStringLiteral("Z0") || mnemonic == QStringLiteral("ZO")) return 1;

@@ -148,7 +148,8 @@ private:
     auto saveFileAs() -> bool;
     auto writeFile(const QString& path) -> bool;
     auto maybeSaveChanges() -> bool;
-    void checkModel();
+    void checkModel(bool presentReport = false);
+    void showGeneratedSolverDeck();
     void clearCheckResults();
     void goToDiagnostic(QTreeWidgetItem* item);
     void activateProjectItem(QTreeWidgetItem* item);
@@ -418,6 +419,7 @@ private:
     int modelEnvironmentWorkspaceIndex_{};
     int modelDeckWorkspaceIndex_{};
     int analysisModuleIndex_{};
+    int analysisSolverTabIndex_{};
     int analysisFrequencyTabIndex_{};
     int analysisRunsTabIndex_{};
     int resultsSummaryTabIndex_{};

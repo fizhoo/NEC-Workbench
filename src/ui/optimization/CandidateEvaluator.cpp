@@ -17,6 +17,24 @@
 #include <utility>
 
 namespace necwb::ui {
+namespace {
+
+auto solverOutputSummary(const QByteArray& output) -> QString
+{
+    const auto lines = QString::fromLocal8Bit(output).split(QLatin1Char('\n'));
+    for (auto line : lines) {
+        line = line.trimmed();
+        if (line.isEmpty()) continue;
+        constexpr auto maximumLength = 160;
+        if (line.size() > maximumLength)
+            line = line.left(maximumLength - 1) + QChar(0x2026);
+        return line;
+    }
+    return {};
+}
+
+}
+
 CandidateEvaluator::CandidateEvaluator(QObject* parent)
     : QObject(parent)
 {
@@ -52,7 +70,9 @@ void CandidateEvaluator::start(CandidateEvaluationRequest request)
         return;
     }
     const auto checked = nec::NecModelChecker{}.check(
-        nec::NecParser{}.parse(resolution.generatedDeck));
+        nec::NecParser{}.parse(resolution.generatedDeck),
+        {nec::compatibilityProfileForBackend(request_.backend.toStdString()),
+            resolution.definitions.size()});
     if (checked.errorCount() != 0) {
         finishLater(CandidateEvaluationStatus::InvalidModel,
             tr("Candidate model failed NEC validation."));
@@ -114,6 +134,10 @@ void CandidateEvaluator::cancelAndWait()
 
 void CandidateEvaluator::finishProcess(SolverProcessResult result)
 {
+    if (!result.output.isEmpty()) {
+        writeFile(QDir(request_.directory).filePath(QStringLiteral("solver.log")),
+            result.output);
+    }
     switch (result.status) {
     case SolverProcessStatus::Succeeded:
         finish(CandidateEvaluationStatus::Completed);
@@ -122,8 +146,13 @@ void CandidateEvaluator::finishProcess(SolverProcessResult result)
         finish(CandidateEvaluationStatus::FailedToStart, std::move(result.detail));
         break;
     case SolverProcessStatus::Failed:
-        finish(CandidateEvaluationStatus::SolverFailed,
-            tr("Solver exited with code %1.").arg(result.exitCode));
+        if (const auto summary = solverOutputSummary(result.output); !summary.isEmpty()) {
+            finish(CandidateEvaluationStatus::SolverFailed,
+                tr("Solver exited with code %1: %2").arg(result.exitCode).arg(summary));
+        } else {
+            finish(CandidateEvaluationStatus::SolverFailed,
+                tr("Solver exited with code %1.").arg(result.exitCode));
+        }
         break;
     case SolverProcessStatus::TimedOut:
         finish(CandidateEvaluationStatus::TimedOut);

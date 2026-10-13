@@ -128,6 +128,11 @@ This permits impedance across a broad sweep while calculating expensive radiatio
 patterns only where requested. Generated request policy is recorded with the run;
 it does not rewrite the authored cards.
 
+Request-frequency state belongs to the active model session. A newly opened model
+starts in native `FR` mode and seeds its optional single, selected, and continuous
+controls from that deck. Routine rechecks preserve user changes; opening another
+model establishes a new request-frequency state.
+
 ## Result Model
 
 The output parser produces backend-neutral frequency, feedpoint, current, and

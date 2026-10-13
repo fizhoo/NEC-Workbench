@@ -1621,6 +1621,8 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         candidate.evaluation = evaluation;
         candidate.refinementRound = metadata.value(QStringLiteral("refinementRound")).toInt();
         candidate.trialRole = metadata.value(QStringLiteral("trialRole")).toString();
+        if (!evaluation && candidateRecords[index].status != QStringLiteral("Completed"))
+            candidate.failureDetail = candidateRecords[index].summary;
         candidates_.push_back(std::move(candidate));
         resultsTable_->setItem(row, ValueColumn,
             new QTableWidgetItem(candidateDescription(candidates_.back())));
@@ -2505,6 +2507,8 @@ void OptimizationWorkspace::updateCandidateRowToolTip(int row)
             toolTip += tr(" Reduced F/R: %1 dB.")
                 .arg(formatDecimal(*candidate.evaluation->frontToRearDb));
     }
+    if (!candidate.failureDetail.isEmpty())
+        toolTip += tr("\nFailure: %1").arg(candidate.failureDetail);
     for (auto column = 0; column < resultsTable_->columnCount(); ++column) {
         if (auto* item = resultsTable_->item(row, column)) item->setToolTip(toolTip);
     }
@@ -3053,6 +3057,7 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
     candidate.feedpoints = result.analysis.feedpoints;
     candidate.radiation = result.analysis.radiation;
     candidate.evaluation.reset();
+    candidate.failureDetail.clear();
 
     if (result.status == CandidateEvaluationStatus::Completed && result.objective) {
         const auto& evaluation = *result.objective;
@@ -3107,11 +3112,13 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
             status = tr("Required objective results unavailable"); break;
         case CandidateEvaluationStatus::Completed: status = tr("Solver failed"); break;
         }
+        candidate.failureDetail = status;
         setCandidateStatus(candidate.row, status);
         candidate.record.status = result.status == CandidateEvaluationStatus::Canceled
             ? QStringLiteral("Canceled")
             : result.status == CandidateEvaluationStatus::TimedOut
                 ? QStringLiteral("Timed Out") : QStringLiteral("Failed");
+        candidate.record.summary = status;
     }
     if (activeSearchMethod_ == SearchMethod::Adaptive && adaptiveVectorSearch_)
         adaptiveVectorSearch_->record(candidate.values,
@@ -3187,7 +3194,18 @@ void OptimizationWorkspace::finishSweep()
         resultsTable_->scrollToItem(resultsTable_->item(bestRow_, ValueColumn),
             QAbstractItemView::PositionAtCenter);
     } else {
-        bestLabel_->setText(tr("No successful candidate produced impedance results."));
+        const auto firstFailure = std::ranges::find_if(candidates_, [](const Candidate& candidate) {
+            return !candidate.failureDetail.isEmpty();
+        });
+        const auto failureCount = std::ranges::count_if(candidates_, [](const Candidate& candidate) {
+            return !candidate.failureDetail.isEmpty();
+        });
+        bestLabel_->setText(firstFailure != candidates_.end()
+            ? tr("No candidate completed successfully. %1 of %2 failed. First failure: %3")
+                  .arg(static_cast<qulonglong>(failureCount))
+                  .arg(static_cast<qulonglong>(candidates_.size()))
+                  .arg(firstFailure->failureDetail)
+            : tr("No successful candidate produced the required objective results."));
     }
     if (sessionRecord_) {
         sessionRecord_->candidateCount = static_cast<int>(candidates_.size());

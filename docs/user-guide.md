@@ -16,6 +16,18 @@ behavior that is not obvious from an individual control.
 NEC Workbench does not include an NEC solver. Configure a separately installed
 `nec2c`, OpenNEC, or 4nec2 NEC2dXS executable under **Analysis → Solver**.
 
+The selected backend also controls compatibility validation. **NEC-2 / nec2c**
+uses strict original NEC-2 card rules, while **OpenNEC** accepts the verified
+4nec2 extensions that it implements. Workbench always resolves `SY` symbols and
+formulas into a numeric generated solver deck while preserving the authored source.
+The Model Check report identifies backend-specific incompatibilities and links back
+to Solver settings; **View Generated Solver Deck** shows the numeric base deck used
+for execution.
+
+The **4nec2 NEC2dXS** adapter launches the calculator executable directly. Features
+normally preprocessed by the full 4nec2 application, beginning with `LD 6` LC traps,
+remain blocked until equivalent Workbench conversion is available.
+
 ## Application Layout
 
 The top workspace bar changes the main task. A compact navigator inside Model,
@@ -119,6 +131,18 @@ Static checks include card ordering, geometry completeness, field types, referen
 segment length, thin-wire ratios, source placement, adjoining segment consistency,
 and large junctions. Static checks do not prove model accuracy.
 
+Control-sequence checks follow the NEC-2 execution model rather than imposing one
+fixed control-card order. Parameter cards must precede the execution request they
+are intended to affect. After a multi-frequency request executes, repeat `FR`
+before another execution group if that later request must traverse the full sweep.
+During automatic frequency stepping, `NE` and `NH` require a following `XQ` or
+`RP`. Workbench reports unused or ambiguous sequences but never silently reorders
+the authored deck. See the [NEC-2 control-card documentation](https://www.nec2.org/part_3/control.html).
+
+Leading `CM` comment cards must be terminated by `CE` before geometry begins. Every
+complete deck must contain one final `EN` card; blank lines may follow it, but no
+additional NEC cards may appear afterward.
+
 ### Automatic Segmentation
 
 Automatic Segmentation previews proposed segment counts using the highest modeled
@@ -154,6 +178,13 @@ Select the backend protocol and executable. Each backend remembers its own path.
 The backend selection controls command-line or standard-input behavior; Workbench
 does not infer protocol from the executable filename.
 
+### Model Check
+
+Choosing **Check Model** always opens the complete report, including successful
+automatic conversions such as `SY` expansion. Automatic checks after edits update
+the report silently when there are only informational findings; warnings and errors
+still open the report so they are not missed.
+
 ### Requests
 
 Manage `XQ` and supported normal-mode `RP` requests. Pattern presets populate a
@@ -166,8 +197,27 @@ list, or use a custom continuous range. Explicit pattern frequencies do not repl
 the model sweep used for impedance and currents. Workbench generates the necessary
 temporary solver sequence and archives it as `model.nec`.
 
+Opening a model initializes this section from its `FR` card and selects **Use Model
+FR Frequencies**. Changes remain in place while that model is open, including across
+tab changes and model rechecks, but are reset from `FR` when another model is opened.
+Use **Reset from Model FR** to restore this behavior without reopening the model.
+
+For a single-frequency `FR` card, the increment may be omitted. Workbench treats it
+as zero without reporting a finding and writes an explicit zero only in the generated
+solver deck. Multi-frequency sweeps still require a positive increment.
+
+Workbench also accepts original NEC free-format conventions, including comma field
+separators, leading `+` signs, two-character card mnemonics followed immediately by
+text, and an `FR` frequency count of zero as the single-frequency default. Authored
+formatting is preserved when the source is not explicitly edited.
+
 Radiation calculations can dominate run time. Request only the angular and frequency
 coverage needed for the intended result.
+
+Optimization candidates retain their generated deck and solver artifacts. If a
+candidate backend fails, its status and tooltip show the first solver message and
+the complete merged solver output is saved as `solver.log` in that candidate's run
+folder.
 
 ### Running
 

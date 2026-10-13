@@ -1906,6 +1906,8 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("radiationAddAmateurBandCenters"));
     auto* applyPatternFrequencies = requestEditor.findChild<QPushButton*>(
         QStringLiteral("applyRadiationFrequenciesButton"));
+    auto* resetPatternFrequencies = requestEditor.findChild<QPushButton*>(
+        QStringLiteral("resetRadiationFrequenciesButton"));
     auto* clearPatternFrequencies = requestEditor.findChild<QPushButton*>(
         QStringLiteral("radiationClearFrequencies"));
     auto* selectedPatternGroup = requestEditor.findChild<QGroupBox*>(
@@ -1920,6 +1922,7 @@ auto main(int argc, char* argv[]) -> int
         || patternContinuousStart == nullptr || patternContinuousStop == nullptr
         || patternContinuousStep == nullptr || patternSelectedFrequencies == nullptr
         || addPatternBandCenters == nullptr || applyPatternFrequencies == nullptr
+        || resetPatternFrequencies == nullptr
         || clearPatternFrequencies == nullptr
         || selectedPatternGroup == nullptr || thetaGroup == nullptr || phiGroup == nullptr)
         return NECWB_SMOKE_FAILURE("analysis request controls");
@@ -1927,6 +1930,11 @@ auto main(int argc, char* argv[]) -> int
             < requestTable->geometry().top()
         && thetaGroup->geometry().top() == phiGroup->geometry().top()
         && thetaGroup->geometry().left() < phiGroup->geometry().left();
+    const auto patternFrequenciesInitializeFromModel = patternFrequencyMode->currentData().toInt() == 0
+        && std::abs(patternSingleFrequency->value() - 14.15) < 1.0e-9
+        && patternSelectedFrequencies->count() == 1
+        && std::abs(patternSelectedFrequencies->item(0)->data(Qt::UserRole).toDouble()
+            - 14.15) < 1.0e-9;
     const auto frequencyApplyInitiallyClean =
         !applyPatternFrequencies->property("pendingChanges").toBool();
     auto emittedPattern = necwb::model::RadiationPatternRequest{};
@@ -2033,6 +2041,24 @@ auto main(int argc, char* argv[]) -> int
     applyPattern->click();
     const auto deletionAppliesExplicitly = deletedPatternLine == 5;
     requestEditor.setData(requestSetup);
+    const auto sameModelRefreshPreservesPatternFrequencies =
+        patternFrequencyMode->currentData().toInt() == 2
+        && patternSelectedFrequencies->count() == 1
+        && std::abs(patternSelectedFrequencies->item(0)->data(Qt::UserRole).toDouble()
+            - 14.175) < 1.0e-9;
+    resetPatternFrequencies->click();
+    const auto resetActionRestoresModelFrequencies = patternFrequencyMode->currentData().toInt() == 0
+        && std::abs(patternSingleFrequency->value() - 14.15) < 1.0e-9
+        && !requestEditor.hasPendingEdits();
+    auto newRequestSetup = requestSetup;
+    newRequestSetup.frequency = necwb::model::FrequencyDefinition{0, 1, 300.0, 0.0, 4};
+    requestEditor.resetFrequencySelectionForModel();
+    requestEditor.setData(newRequestSetup);
+    const auto newModelResetsPatternFrequencies = patternFrequencyMode->currentData().toInt() == 0
+        && std::abs(patternSingleFrequency->value() - 300.0) < 1.0e-9
+        && patternSelectedFrequencies->count() == 1
+        && std::abs(patternSelectedFrequencies->item(0)->data(Qt::UserRole).toDouble()
+            - 300.0) < 1.0e-9;
     const auto patternFrequencySelectionValid = continuousPatternPoints.size() == 3
         && std::abs(continuousPatternPoints[1] - 7.1) < 1.0e-9
         && singlePatternPoints.size() == 1
@@ -2047,7 +2073,9 @@ auto main(int argc, char* argv[]) -> int
         && frequencyApplyHighlightsPending && bandCentersPopulateList
         && clearAllEmptiesList && discardedFrequencyEditRestored
         && deletionDraftVisible && deletionDraftRestores && deletionAppliesExplicitly
-        && patternFrequencySelectionValid;
+        && patternFrequencySelectionValid && patternFrequenciesInitializeFromModel
+        && sameModelRefreshPreservesPatternFrequencies && resetActionRestoresModelFrequencies
+        && newModelResetsPatternFrequencies;
     auto* shutdownRequestEditor = new necwb::ui::AnalysisRequestEditor;
     shutdownRequestEditor->setData(requestSetup);
     auto* shutdownFrequencyMode = shutdownRequestEditor->findChild<QComboBox*>(

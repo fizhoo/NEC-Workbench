@@ -8,6 +8,7 @@ namespace necwb::nec {
 template<typename Value>
 auto parseNumber(std::string_view text, Value& value) -> bool
 {
+    if (text.size() > 1 && text.front() == '+') text.remove_prefix(1);
     const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
     return error == std::errc{} && end == text.data() + text.size();
 }

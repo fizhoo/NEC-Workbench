@@ -22,7 +22,7 @@ auto NecSetupConverter::convert(const NecDocument& document) const -> model::Mod
         }
     }
     for (const auto& card : document.cards()) {
-        if (card.kind == NecCardKind::Frequency && !setup.frequency && card.fields.size() >= 6) {
+        if (card.kind == NecCardKind::Frequency && !setup.frequency && card.fields.size() >= 5) {
             model::FrequencyDefinition frequency;
             int unused1{};
             int unused2{};
@@ -32,8 +32,9 @@ auto NecSetupConverter::convert(const NecDocument& document) const -> model::Mod
                 && parseNumber(card.fields[2], unused1)
                 && parseNumber(card.fields[3], unused2)
                 && parseNumber(card.fields[4], frequency.startMHz)
-                && parseNumber(card.fields[5], frequency.step)
+                && (card.fields.size() < 6 || parseNumber(card.fields[5], frequency.step))
                 && (frequency.steppingMode == 0 || frequency.steppingMode == 1)) {
+                if (frequency.count == 0) frequency.count = 1;
                 setup.frequency = frequency;
             }
         }
