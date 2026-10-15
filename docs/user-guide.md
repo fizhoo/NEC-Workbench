@@ -211,8 +211,9 @@ solver deck. Multi-frequency sweeps still require a positive increment.
 
 Workbench also accepts original NEC free-format conventions, including comma field
 separators, leading `+` signs, two-character card mnemonics followed immediately by
-text, and an `FR` frequency count of zero as the single-frequency default. Authored
-formatting is preserved when the source is not explicitly edited.
+text, a leading UTF-8 byte-order mark, and an `FR` frequency count of zero as the
+single-frequency default. Authored formatting is preserved when the source is not
+explicitly edited.
 
 Radiation calculations can dominate run time. Request only the angular and frequency
 coverage needed for the intended result.

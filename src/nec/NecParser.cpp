@@ -30,7 +30,9 @@ auto parseLine(std::string line, std::size_t lineNumber) -> NecCard
     card.sourceText = std::move(line);
     card.lineNumber = lineNumber;
 
-    const auto first = card.sourceText.find_first_not_of(" \t");
+    auto contentStart = std::size_t{};
+    if (lineNumber == 1 && card.sourceText.starts_with("\xEF\xBB\xBF")) contentStart = 3;
+    const auto first = card.sourceText.find_first_not_of(" \t", contentStart);
     if (first == std::string::npos) {
         card.kind = NecCardKind::Blank;
         return card;

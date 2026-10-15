@@ -56,6 +56,11 @@ The first imported-deck validation audit is complete and documented in the
 on verified extension profiles and confirmed corpus regressions rather than broad,
 solver-specific permissiveness.
 
+The initial dual-backend execution baseline now covers verified numeric and symbolic
+Workbench decks through NEC2C and the patched OpenNEC test build, including parsing
+the resulting impedance and radiation reports. Continue growing this corpus only with
+documented, reproducible cases.
+
 ## Near-Term Work
 
 ### Optimization Confidence

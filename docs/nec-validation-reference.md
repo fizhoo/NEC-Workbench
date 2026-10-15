@@ -44,7 +44,8 @@ invalid sequence pass.
 Workbench accepts whitespace or commas between fields, leading `+` signs, omitted
 trailing zero/default fields on supported cards, and `FR` count `0` as one frequency.
 A single-frequency `FR` may omit its increment. A multi-frequency `FR` requires a
-positive increment.
+positive increment. A leading UTF-8 byte-order mark is preserved but does not hide
+the first card mnemonic.
 
 Leading `CM` comments must end with `CE` before geometry starts. Geometry must end
 with one `GE`. A complete deck must contain one final `EN`; only blank lines may
@@ -127,3 +128,16 @@ NEC validation deck set, and Workbench examples against all three profiles after
 This is a regression baseline, not a claim that every imported deck is valid NEC-2.
 Corpus findings should become automated tests only after the deck behavior is verified
 against NEC-2 documentation and at least one compatible solver.
+
+## Solver and Output Regression Baseline
+
+The 2026-10-14 stabilization pass executed 22 verified numeric decks through both
+NEC2C and the patched OpenNEC test build. The corpus covered free space, perfect and
+finite ground, loads, `TL`, `NT`, `GX`, frequency sweeps, radiation requests, and
+sequential `FR`/`RP`/`XQ` execution. Workbench successfully parsed impedance and
+radiation data from all 44 reports.
+
+Four additional Workbench examples using `SY` expressions were expanded to numeric
+solver decks, executed through both backends, and parsed successfully. Known-invalid
+or backend-specific legacy files remain classified separately rather than being made
+valid through silent source rewriting.

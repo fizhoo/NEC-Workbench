@@ -59,6 +59,21 @@ void testRoundTripPreservesSource()
     expect(necwb::nec::NecWriter{}.write(document) == source, "writer preserves CRLF source exactly");
 }
 
+void testUtf8BomParsing()
+{
+    const std::string source = "\xEF\xBB\xBFGW 1 3 0 0 0 1 0 0 .001\nGE 0\nEN\n";
+    const auto document = necwb::nec::NecParser{}.parse(source);
+    expect(document.cards().size() == 3
+            && document.cards()[0].kind == necwb::nec::NecCardKind::GeometryWire
+            && document.cards()[0].mnemonic == "GW",
+        "UTF-8 BOM does not hide the first NEC card mnemonic");
+    expect(document.cards()[0].fields.size() == 9
+            && document.cards()[0].fields[0] == "1",
+        "UTF-8 BOM does not alter first-card fields");
+    expect(necwb::nec::NecWriter{}.write(document) == source,
+        "UTF-8 BOM is preserved by source round trips");
+}
+
 void testLegacyFreeFormatParsing()
 {
     const std::string source =
@@ -2252,6 +2267,7 @@ void testSegmentationConvergencePreparation()
 auto main() -> int
 {
     testRoundTripPreservesSource();
+    testUtf8BomParsing();
     testLegacyFreeFormatParsing();
     testSourceLineEditing();
     testSourceDocumentCache();
