@@ -373,6 +373,34 @@ auto main(int argc, char* argv[]) -> int
         && convergenceReturn != nullptr;
     if (!convergenceHistoryControlsValid)
         return NECWB_SMOKE_FAILURE("convergence history controls");
+    convergence.setContext(QStringLiteral("GW 1 1 0 0 0 0.001 0 0 0.00000001\n"
+                                          "GE 0\n"
+                                          "EX 0 1 1 0 1 0\n"
+                                          "FR 0 1 0 0 1 0\n"
+                                          "EN\n"),
+        QStringLiteral("tiny-wire.nec"), QStringLiteral("nec2"),
+        QCoreApplication::applicationFilePath(), 120, true);
+    runConvergence->click();
+    application.processEvents();
+    application.processEvents();
+    auto* convergenceResults = convergence.findChild<QTableWidget*>(
+        QStringLiteral("convergenceResultsTable"));
+    auto* convergenceAssessmentDetail = convergence.findChild<QLabel*>(
+        QStringLiteral("convergenceAssessmentDetail"));
+    const auto* convergenceAssessment = convergenceResults == nullptr
+        ? nullptr : convergenceResults->item(0, 7);
+    if (convergenceAssessment == nullptr
+        || convergenceAssessment->text() != QStringLiteral("Not run — segment < 0.001 λ")
+        || !convergenceAssessment->toolTip().contains(QStringLiteral("0.001 wavelength"))
+        || convergenceAssessment->icon().isNull() || convergenceAssessmentDetail == nullptr) {
+        return NECWB_SMOKE_FAILURE("convergence compact assessment");
+    }
+    convergenceResults->selectRow(0);
+    application.processEvents();
+    if (!convergenceAssessmentDetail->isVisible()
+        || !convergenceAssessmentDetail->text().contains(QStringLiteral("0.001 wavelength"))) {
+        return NECWB_SMOKE_FAILURE("convergence assessment detail");
+    }
     QImage convergenceImage(convergence.size(), QImage::Format_ARGB32_Premultiplied);
     convergenceImage.fill(Qt::transparent);
     QPainter convergencePainter(&convergenceImage);

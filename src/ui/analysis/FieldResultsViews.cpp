@@ -10,7 +10,7 @@
 #include <QDoubleSpinBox>
 #include <QFile>
 #include <QFileDialog>
-#include <QFormLayout>
+#include <QGridLayout>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -1008,7 +1008,8 @@ void CurrentDistributionView::refresh()
 
 RadiationPatternView::RadiationPatternView(QWidget* parent) : QWidget(parent)
 {
-    auto* layout = new QVBoxLayout(this); auto* form = new QFormLayout;
+    auto* layout = new QVBoxLayout(this);
+    auto* form = new QGridLayout;
     frequency_ = new QComboBox(this); frequency_->setObjectName(QStringLiteral("radiation2DFrequency"));
     frequency_->setMinimumContentsLength(20);
     dataset_ = new QComboBox(this); dataset_->setObjectName(QStringLiteral("radiation2DDataset"));
@@ -1018,11 +1019,20 @@ RadiationPatternView::RadiationPatternView(QWidget* parent) : QWidget(parent)
     scale_ = new QComboBox(this); scale_->setObjectName(QStringLiteral("radiation2DScale"));
     floor_ = new QComboBox(this); floor_->setObjectName(QStringLiteral("radiation2DFloor"));
     populateRadiationControls(component_, scale_, floor_);
-    form->addRow(tr("Pattern frequency"), frequency_);
-    form->addRow(tr("Pattern dataset"), dataset_);
-    form->addRow(tr("Component"), component_);
-    form->addRow(tr("Scale"), scale_); form->addRow(tr("Dynamic range"), floor_);
-    form->addRow(cutLabel_, phi_);
+    form->addWidget(new QLabel(tr("Pattern frequency"), this), 0, 0);
+    form->addWidget(frequency_, 0, 1);
+    form->addWidget(new QLabel(tr("Pattern dataset"), this), 0, 2);
+    form->addWidget(dataset_, 0, 3);
+    form->addWidget(new QLabel(tr("Component"), this), 1, 0);
+    form->addWidget(component_, 1, 1);
+    form->addWidget(new QLabel(tr("Scale"), this), 1, 2);
+    form->addWidget(scale_, 1, 3);
+    form->addWidget(new QLabel(tr("Dynamic range"), this), 2, 0);
+    form->addWidget(floor_, 2, 1);
+    form->addWidget(cutLabel_, 2, 2);
+    form->addWidget(phi_, 2, 3);
+    form->setColumnStretch(1, 1);
+    form->setColumnStretch(3, 1);
     auto* navigation = new QHBoxLayout;
     auto* previous = new QPushButton(tr("◀ Previous Angle"), this);
     orientationButton_ = new QPushButton(tr("Vertical Cut"), this);
@@ -1404,7 +1414,7 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
     controls_->setObjectName(QStringLiteral("radiation3DControls"));
     auto* controlsLayout = new QVBoxLayout(controls_);
     controlsLayout->setContentsMargins(0, 0, 0, 0);
-    auto* form = new QFormLayout;
+    auto* form = new QGridLayout;
     frequency_ = new QComboBox(this); frequency_->setObjectName(QStringLiteral("radiation3DFrequency"));
     frequency_->setMinimumContentsLength(20);
     dataset_ = new QComboBox(this); dataset_->setObjectName(QStringLiteral("radiation3DDataset"));
@@ -1412,10 +1422,18 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
     scale_ = new QComboBox(this); scale_->setObjectName(QStringLiteral("radiation3DScale"));
     floor_ = new QComboBox(this); floor_->setObjectName(QStringLiteral("radiation3DFloor"));
     populateRadiationControls(component_, scale_, floor_);
-    form->addRow(tr("Pattern frequency"), frequency_);
-    form->addRow(tr("Pattern dataset"), dataset_);
-    form->addRow(tr("Component"), component_);
-    form->addRow(tr("Scale"), scale_); form->addRow(tr("Dynamic range"), floor_);
+    form->addWidget(new QLabel(tr("Pattern frequency"), this), 0, 0);
+    form->addWidget(frequency_, 0, 1);
+    form->addWidget(new QLabel(tr("Pattern dataset"), this), 0, 2);
+    form->addWidget(dataset_, 0, 3);
+    form->addWidget(new QLabel(tr("Component"), this), 1, 0);
+    form->addWidget(component_, 1, 1);
+    form->addWidget(new QLabel(tr("Scale"), this), 1, 2);
+    form->addWidget(scale_, 1, 3);
+    form->addWidget(new QLabel(tr("Dynamic range"), this), 2, 0);
+    form->addWidget(floor_, 2, 1);
+    form->setColumnStretch(1, 1);
+    form->setColumnStretch(3, 1);
     auto* layers = new QHBoxLayout;
     antennaControl_ = new QCheckBox(tr("Antenna"), this); antennaControl_->setChecked(true);
     currentControl_ = new QCheckBox(tr("Current Overlay"), this); currentControl_->setChecked(true);
