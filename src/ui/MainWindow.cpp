@@ -4431,8 +4431,10 @@ void MainWindow::updateResultReference()
             ? record->id : record->userNote.simplified();
         visualizePlotsView_->setReferenceResults(
             *reference, plotLabel);
+        radiationPatternView_->setReferenceResults(*reference, plotLabel);
     } else {
         visualizePlotsView_->clearReferenceResults();
+        radiationPatternView_->clearReferenceResults();
     }
     updateRunSelectionActions();
 }

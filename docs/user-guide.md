@@ -257,7 +257,11 @@ The radiation frequency selector includes only frequencies with pattern data.
 
 - **2D Pattern** selects vertical or horizontal cuts, cycles available angles,
   reports peak and interpolated 3 dB beamwidth when computable, and probes nearby
-  samples under the pointer.
+  samples under the pointer. A compatible reference run is drawn as a muted dashed
+  trace. Workbench requires the same frequency, cut orientation/plane, and angular
+  sample grid; it reports the reference as unavailable rather than interpolating.
+  Normalized mode normalizes each trace to its own peak for shape comparison;
+  Absolute mode places both traces on the same dBi scale.
 - **3D Pattern** renders the available theta/phi mesh with antenna and current
   overlays. It does not invent missing angular coverage.
 - **Performance vs Frequency** shows available forward gain, F/B, and F/R metrics.

@@ -54,6 +54,8 @@ public:
     using SettingsChangedCallback = std::function<void(const analysis::RadiationDisplaySettings&)>;
     explicit RadiationPatternView(QWidget* parent = nullptr);
     void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
+    void setReferenceResults(const analysis::AnalysisResult& result, QString label);
+    void clearReferenceResults();
     void setSelectedFrequency(double frequencyMHz);
     void setDisplaySettings(const analysis::RadiationDisplaySettings& settings);
     void setComponent(analysis::RadiationComponent component);
@@ -76,6 +78,8 @@ private:
     void exportData();
     void settingsChanged();
     analysis::AnalysisResult result_;
+    std::optional<analysis::AnalysisResult> referenceResult_;
+    QString referenceLabel_;
     QComboBox* frequency_{};
     QComboBox* dataset_{};
     QComboBox* phi_{};

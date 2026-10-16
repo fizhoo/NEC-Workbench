@@ -278,6 +278,65 @@ auto oppositeVerticalCutAngle(double thetaDegrees) -> double
     return angle;
 }
 
+auto radiationCutSamples(const analysis::AnalysisResult& result, double frequencyMHz,
+    int patternIndex, bool vertical, double plane,
+    analysis::RadiationComponent component) -> std::vector<analysis::RadiationCutPoint>
+{
+    std::vector<analysis::RadiationCutPoint> samples;
+    for (const auto& value : result.radiation) {
+        if (!nearlyEqual(value.frequencyMHz, frequencyMHz)
+            || value.patternIndex != patternIndex) continue;
+        if (!vertical && nearlyEqual(value.thetaDegrees, plane)) {
+            samples.push_back({value.phiDegrees, value.thetaDegrees, value.phiDegrees,
+                analysis::radiationGainDb(value, component)});
+        }
+        if (vertical) {
+            const auto normalizedPhi = std::fmod(value.phiDegrees + 360.0, 360.0);
+            if (nearlyEqual(normalizedPhi, plane)) {
+                samples.push_back({value.thetaDegrees, value.thetaDegrees, value.phiDegrees,
+                    analysis::radiationGainDb(value, component)});
+            }
+            const auto opposite = std::fmod(plane + 180.0, 360.0);
+            if (nearlyEqual(normalizedPhi, opposite)) {
+                samples.push_back({oppositeVerticalCutAngle(value.thetaDegrees),
+                    value.thetaDegrees, value.phiDegrees,
+                    analysis::radiationGainDb(value, component)});
+            }
+        }
+    }
+    std::erase_if(samples, [](const auto& sample) {
+        return !std::isfinite(sample.gainDb) || sample.gainDb <= -900.0;
+    });
+    std::vector<analysis::RadiationCutPoint> unique;
+    unique.reserve(samples.size());
+    for (const auto& sample : samples) {
+        const auto duplicate = std::ranges::find_if(unique, [&sample](const auto& existing) {
+            return std::abs(std::remainder(
+                existing.angleDegrees - sample.angleDegrees, 360.0)) < 1.0e-9;
+        });
+        if (duplicate == unique.end()) unique.push_back(sample);
+        else if (sample.gainDb > duplicate->gainDb) *duplicate = sample;
+    }
+    return unique;
+}
+
+auto plotPoints(const std::vector<analysis::RadiationCutPoint>& samples) -> std::vector<QPointF>
+{
+    std::vector<QPointF> values;
+    values.reserve(samples.size());
+    for (const auto& sample : samples) values.emplace_back(sample.angleDegrees, sample.gainDb);
+    std::ranges::sort(values, {}, [](const QPointF& point) { return point.x(); });
+    return values;
+}
+
+auto sameAngularGrid(const std::vector<QPointF>& first, const std::vector<QPointF>& second) -> bool
+{
+    return first.size() == second.size()
+        && std::ranges::equal(first, second, [](const auto& left, const auto& right) {
+            return nearlyEqual(left.x(), right.x());
+        });
+}
+
 auto connectedCurrentPaths(const std::vector<analysis::SegmentCurrentResult>& samples,
     const model::AntennaModel& model) -> std::vector<CurrentPlotPath>
 {
@@ -441,6 +500,14 @@ public:
         if (hoverTextCallback_) hoverTextCallback_({});
         update();
     }
+    void setReferenceSamples(std::vector<QPointF> samples, QString label)
+    {
+        referenceSamples_ = std::move(samples);
+        referenceLabel_ = std::move(label);
+        setProperty("referenceSampleCount", static_cast<int>(referenceSamples_.size()));
+        setProperty("referenceVisible", !referenceSamples_.empty());
+        update();
+    }
     void setDisplaySettings(const analysis::RadiationDisplaySettings& settings)
     {
         settings_ = settings;
@@ -479,8 +546,15 @@ protected:
             maxGain = std::ranges::max(samples_, {},
                 [](const QPointF& point) { return point.y(); }).y();
         }
+        auto referenceMaxGain = 0.0;
+        if (!referenceSamples_.empty()) {
+            referenceMaxGain = std::ranges::max(referenceSamples_, {},
+                [](const QPointF& point) { return point.y(); }).y();
+        }
+        const auto scaleMaximum = settings_.scale == analysis::RadiationScale::Absolute
+            ? std::max(maxGain, referenceMaxGain) : maxGain;
         const auto outerDb = settings_.scale == analysis::RadiationScale::Normalized
-            ? 0.0 : std::ceil(maxGain / 5.0) * 5.0;
+            ? 0.0 : std::ceil(scaleMaximum / 5.0) * 5.0;
         const auto innerDb = outerDb + settings_.floorDb;
         const auto gridColor = palette().color(QPalette::Mid);
         const auto labelColor = palette().color(QPalette::Text);
@@ -517,25 +591,44 @@ protected:
             painter.drawText(rect(), Qt::AlignCenter, tr("No radiation samples"));
             return;
         }
-        QPainterPath path;
-        auto started = false;
-        for (const auto& sample : samples_) {
-            const auto displayedDb = settings_.scale == analysis::RadiationScale::Normalized
-                ? sample.y() - maxGain : sample.y();
-            const auto normalized = std::clamp((displayedDb - innerDb) / (outerDb - innerDb), 0.0, 1.0);
-            const auto radians = sample.x() * std::numbers::pi / 180.0;
-            const auto point = center + QPointF(std::sin(radians), -std::cos(radians)) * radius * normalized;
-            started ? path.lineTo(point) : path.moveTo(point);
-            started = true;
-        }
-        if (radiationAnglesCoverCircle(samples_)) path.closeSubpath();
-        painter.setPen(QPen(QColor(215, 70, 65), 2));
-        painter.drawPath(path);
+        const auto drawPattern = [&](const std::vector<QPointF>& samples, double peak,
+                                     const QPen& pen) {
+            if (samples.empty()) return;
+            QPainterPath path;
+            auto started = false;
+            for (const auto& sample : samples) {
+                const auto displayedDb = settings_.scale == analysis::RadiationScale::Normalized
+                    ? sample.y() - peak : sample.y();
+                const auto normalized = std::clamp(
+                    (displayedDb - innerDb) / (outerDb - innerDb), 0.0, 1.0);
+                const auto radians = sample.x() * std::numbers::pi / 180.0;
+                const auto point = center
+                    + QPointF(std::sin(radians), -std::cos(radians)) * radius * normalized;
+                started ? path.lineTo(point) : path.moveTo(point);
+                started = true;
+            }
+            if (radiationAnglesCoverCircle(samples)) path.closeSubpath();
+            painter.setPen(pen);
+            painter.drawPath(path);
+        };
+        drawPattern(referenceSamples_, referenceMaxGain,
+            QPen(QColor(65, 105, 165, 145), 2, Qt::DashLine));
+        drawPattern(samples_, maxGain, QPen(QColor(215, 70, 65), 2));
         painter.setPen(palette().color(QPalette::Text));
         painter.drawText(8, 20, tr("Angle: degrees · Radial scale: %1 · Absolute peak: %2 dBi")
             .arg(settings_.scale == analysis::RadiationScale::Normalized
                     ? tr("relative gain (dB)") : tr("absolute gain (dBi)"))
             .arg(formatDecimal(maxGain)));
+        if (!referenceSamples_.empty()) {
+            const auto label = painter.fontMetrics().elidedText(
+                tr("Reference: %1").arg(referenceLabel_), Qt::ElideRight,
+                std::max(80, width() / 2));
+            const auto left = width() - painter.fontMetrics().horizontalAdvance(label) - 34;
+            painter.setPen(QPen(QColor(65, 105, 165, 175), 2, Qt::DashLine));
+            painter.drawLine(QPointF(left, 18), QPointF(left + 20, 18));
+            painter.setPen(palette().color(QPalette::Text));
+            painter.drawText(left + 25, 22, label);
+        }
         if (tracking_) {
             auto cursorAngle = std::atan2(cursor_.x() - center.x(), center.y() - cursor_.y())
                 * 180.0 / std::numbers::pi;
@@ -578,6 +671,8 @@ private:
     }
 
     std::vector<QPointF> samples_;
+    std::vector<QPointF> referenceSamples_;
+    QString referenceLabel_;
     analysis::RadiationDisplaySettings settings_;
     QPointF cursor_;
     HoverTextCallback hoverTextCallback_;
@@ -1095,6 +1190,19 @@ void RadiationPatternView::setResults(const analysis::AnalysisResult& result, co
     applyDisplaySettings(previous, frequency_, component_, scale_, floor_);
     refreshDatasets();
 }
+void RadiationPatternView::setReferenceResults(
+    const analysis::AnalysisResult& result, QString label)
+{
+    referenceResult_ = result;
+    referenceLabel_ = std::move(label);
+    refresh();
+}
+void RadiationPatternView::clearReferenceResults()
+{
+    referenceResult_.reset();
+    referenceLabel_.clear();
+    refresh();
+}
 void RadiationPatternView::setSelectedFrequency(double frequencyMHz)
 {
     const QSignalBlocker blocker(frequency_);
@@ -1217,47 +1325,28 @@ void RadiationPatternView::refreshDatasets()
 void RadiationPatternView::refresh()
 {
     const auto settings = displaySettings(frequency_, component_, scale_, floor_);
-    std::vector<analysis::RadiationCutPoint> cutSamples;
     const auto angle = phi_->currentData().toDouble();
-    for (const auto& value : result_.radiation) {
-        if (!nearlyEqual(value.frequencyMHz, selectedFrequency(frequency_))) continue;
-        if (value.patternIndex != selectedPatternIndex(dataset_)) continue;
-        if (orientation_ == CutOrientation::Horizontal && nearlyEqual(value.thetaDegrees, angle))
-            cutSamples.push_back({value.phiDegrees, value.thetaDegrees, value.phiDegrees,
-                analysis::radiationGainDb(value, settings.component)});
-        if (orientation_ == CutOrientation::Vertical) {
-            const auto normalizedPhi = std::fmod(value.phiDegrees + 360.0, 360.0);
-            if (std::abs(normalizedPhi - angle) < 1.0e-9)
-                cutSamples.push_back({value.thetaDegrees, value.thetaDegrees, value.phiDegrees,
-                    analysis::radiationGainDb(value, settings.component)});
-            const auto opposite = std::fmod(angle + 180.0, 360.0);
-            if (std::abs(normalizedPhi - opposite) < 1.0e-9)
-                cutSamples.push_back({oppositeVerticalCutAngle(value.thetaDegrees),
-                    value.thetaDegrees, value.phiDegrees,
-                    analysis::radiationGainDb(value, settings.component)});
+    const auto vertical = orientation_ == CutOrientation::Vertical;
+    const auto cutSamples = radiationCutSamples(result_, settings.frequencyMHz,
+        selectedPatternIndex(dataset_), vertical, angle, settings.component);
+    const auto values = plotPoints(cutSamples);
+    std::vector<QPointF> referenceValues;
+    if (referenceResult_ && !values.empty()) {
+        for (const auto& [patternIndex, stats] : patternDatasets(
+                 *referenceResult_, settings.frequencyMHz)) {
+            Q_UNUSED(stats);
+            auto candidate = plotPoints(radiationCutSamples(*referenceResult_,
+                settings.frequencyMHz, patternIndex, vertical, angle, settings.component));
+            if (!sameAngularGrid(values, candidate)) continue;
+            referenceValues = std::move(candidate);
+            break;
         }
     }
-    std::erase_if(cutSamples, [](const auto& sample) {
-        return !std::isfinite(sample.gainDb) || sample.gainDb <= -900.0;
-    });
-    std::vector<analysis::RadiationCutPoint> uniqueCutSamples;
-    uniqueCutSamples.reserve(cutSamples.size());
-    for (const auto& sample : cutSamples) {
-        const auto duplicate = std::ranges::find_if(uniqueCutSamples, [&sample](const auto& existing) {
-                return std::abs(std::remainder(
-                    existing.angleDegrees - sample.angleDegrees, 360.0)) < 1.0e-9;
-            });
-        if (duplicate == uniqueCutSamples.end()) {
-            uniqueCutSamples.push_back(sample);
-        } else if (sample.gainDb > duplicate->gainDb) {
-            *duplicate = sample;
-        }
-    }
-    cutSamples = std::move(uniqueCutSamples);
-    std::vector<QPointF> values;
-    values.reserve(cutSamples.size());
-    for (const auto& sample : cutSamples) values.emplace_back(sample.angleDegrees, sample.gainDb);
-    std::ranges::sort(values, {}, [](const QPointF& point) { return point.x(); });
+    const auto referenceText = !referenceResult_ ? QString{}
+        : !referenceValues.empty()
+            ? tr(" · Reference %1 shown dashed").arg(referenceLabel_)
+            : tr(" · Reference %1 unavailable for this exact frequency/cut grid")
+                .arg(referenceLabel_);
     const auto metrics = analysis::radiationCutMetrics(cutSamples, radiationAnglesCoverCircle(values));
     if (metrics.valid) {
         auto peakText = tr("%1 peak %2 dBi at %3°")
@@ -1281,10 +1370,11 @@ void RadiationPatternView::refresh()
             : tr("F/B unavailable");
         summary_->setText(tr("%1 MHz · %2 · %3 · %4 · %5 · Left/Right changes angle · Space changes cut")
             .arg(formatDecimal(settings.frequencyMHz), runContext_, peakText,
-                beamwidthText, frontToBackText));
+                beamwidthText, frontToBackText) + referenceText);
     } else {
         summary_->setText(tr("%1 MHz · No %2 samples for this cut · %3")
-            .arg(formatDecimal(settings.frequencyMHz), componentName(settings.component), runContext_));
+            .arg(formatDecimal(settings.frequencyMHz), componentName(settings.component), runContext_)
+            + referenceText);
     }
     exportImageButton_->setEnabled(metrics.valid);
     exportDataButton_->setEnabled(metrics.valid);
@@ -1296,7 +1386,8 @@ void RadiationPatternView::refresh()
             && std::isfinite(gain) && gain > -900.0;
     }));
     plot_->setDisplaySettings(settings);
-    plot_->setSamples(std::move(values));
+    plot_->setReferenceSamples(std::move(referenceValues), referenceLabel_);
+    plot_->setSamples(values);
 }
 void RadiationPatternView::toggleOrientation()
 {

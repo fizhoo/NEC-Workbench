@@ -1,4 +1,5 @@
 #include "analysis/AnalysisResult.h"
+#include "analysis/FrequencyComparison.h"
 #include "ui/DisplayFormat.h"
 #include "ui/DetachablePanel.h"
 #include "ui/WorkspaceNavigator.h"
@@ -1158,6 +1159,9 @@ auto main(int argc, char* argv[]) -> int
     currents.setResults(result, QStringLiteral("test-run"));
     currents.setSelectedFrequency(14.1);
     radiation2D.setResults(result, QStringLiteral("test-run"));
+    auto radiationReference = result;
+    for (auto& sample : radiationReference.radiation) sample.totalGainDb -= 1.0;
+    radiation2D.setReferenceResults(radiationReference, QStringLiteral("Original dipole"));
     radiation2D.resize(800, 800);
     radiation2D.show();
     application.processEvents();
@@ -1190,10 +1194,29 @@ auto main(int argc, char* argv[]) -> int
         || !radiationPolarPlot->property("ringLabelBackground").toBool()
         || radiationPolarPlot->property("hoverSampleMode").toString()
             != QStringLiteral("nearest-nec-sample")
+        || !radiationPolarPlot->property("referenceVisible").toBool()
+        || radiationPolarPlot->property("referenceSampleCount").toInt() <= 0
         || !necwb::ui::radiationAnglesCoverCircle(fullCircle)
         || necwb::ui::radiationAnglesCoverCircle(partialCircle)) {
         return NECWB_SMOKE_FAILURE("radiation cut analysis");
     }
+    auto incompatibleRadiationReference = radiationReference;
+    std::erase_if(incompatibleRadiationReference.radiation, [](const auto& sample) {
+        return necwb::nearlyEqual(sample.frequencyMHz, 14.1)
+            && sample.patternIndex == 0 && necwb::nearlyEqual(sample.phiDegrees, 0.0)
+            && necwb::nearlyEqual(sample.thetaDegrees, 15.0);
+    });
+    radiation2D.setReferenceResults(
+        incompatibleRadiationReference, QStringLiteral("Different grid"));
+    application.processEvents();
+    auto* initialRadiationSummary = radiation2D.findChild<QLabel*>(
+        QStringLiteral("radiation2DSummary"));
+    if (radiationPolarPlot->property("referenceVisible").toBool()
+        || initialRadiationSummary == nullptr
+        || !initialRadiationSummary->text().contains(QStringLiteral("unavailable"))) {
+        return NECWB_SMOKE_FAILURE("incompatible radiation reference grid");
+    }
+    radiation2D.setReferenceResults(radiationReference, QStringLiteral("Original dipole"));
     necwb::model::AntennaModel antenna;
     antenna.addWire({1, {0.0, 0.0, -0.5}, {0.0, 0.0, 0.5}, 11, 0.001, 1});
     radiation3D.setModel(antenna);
