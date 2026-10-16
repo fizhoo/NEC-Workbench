@@ -49,13 +49,21 @@ public:
     explicit SweepPlotsView(QWidget* parent = nullptr);
 
     void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
+    void setReferenceResults(const analysis::AnalysisResult& result, QString label);
+    void clearReferenceResults();
     void setSelectedFrequency(double frequencyMHz);
 
 private:
+    void refreshPlots();
+
     QLabel* summary_{};
     QComboBox* swrScaleControl_{};
     SweepPlotWidget* impedancePlot_{};
     SweepPlotWidget* swrPlot_{};
+    std::optional<analysis::AnalysisResult> result_;
+    std::optional<analysis::AnalysisResult> referenceResult_;
+    QString runDirectory_;
+    QString referenceLabel_;
 };
 
 class DirectionalMetricsView final : public QWidget {

@@ -8,6 +8,7 @@
 #include "nec/NecSourceCache.h"
 #include "ui/geometry/GeometrySettings.h"
 #include "ui/analysis/AnalysisRunStore.h"
+#include "ui/analysis/ResultReferenceController.h"
 #include "ui/analysis/SolverProcessRunner.h"
 #include "analysis/AnalysisResult.h"
 #include "analysis/AverageGainTest.h"
@@ -229,6 +230,10 @@ private:
     auto loadRunModel(const QString& directory, const QString& modelName,
         const QString& runContext) -> bool;
     void deleteSelectedRun();
+    void pinSelectedRunReference();
+    void clearResultReference();
+    void updateResultReference();
+    [[nodiscard]] auto selectedRunRecord() const -> std::optional<AnalysisRunRecord>;
     void updateRunSelectionActions();
     void displayRunArtifacts(const QString& directory, const QString& context);
     void showActiveResultsContext(const QString& context);
@@ -351,6 +356,7 @@ private:
     QPushButton* openRunResultsButton_{};
     QPushButton* inspectRunInputButton_{};
     QPushButton* openRunSnapshotButton_{};
+    QPushButton* pinRunReferenceButton_{};
     QPushButton* deleteRunButton_{};
     QTreeWidget* projectTree_{};
     QTreeWidget* diagnostics_{};
@@ -373,6 +379,8 @@ private:
     QLabel* resultsContextTitleLabel_{};
     QLabel* resultsContextDetailLabel_{};
     QLabel* activeModelResultsLabel_{};
+    QLabel* resultReferenceLabel_{};
+    QPushButton* clearResultReferenceButton_{};
     QPushButton* detachResultsButton_{};
     QLabel* resultsStatusLabel_{};
     QLabel* resultsAvailabilityLabel_{};
@@ -402,6 +410,7 @@ private:
     QString activeModelResultsDirectory_;
     QString activeModelResultsContext_;
     AnalysisRunStore runStore_;
+    ResultReferenceController resultReferenceController_{runStore_};
     std::optional<AnalysisRunRecord> currentRunRecord_;
     SolverRunPurpose currentRunPurpose_{SolverRunPurpose::Analysis};
     analysis::AverageGainEnvironment currentAverageGainEnvironment_{

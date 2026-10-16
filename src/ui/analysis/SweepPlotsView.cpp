@@ -1,5 +1,6 @@
 #include "ui/analysis/SweepPlotsView.h"
 
+#include "analysis/FrequencyComparison.h"
 #include "ui/DisplayFormat.h"
 
 #include <QComboBox>
@@ -63,6 +64,8 @@ struct PlotSeries {
     AxisSide axis{AxisSide::Left};
     std::vector<QPointF> points;
     Qt::PenStyle lineStyle{Qt::SolidLine};
+    bool showMarkers{true};
+    bool reference{};
 };
 
 struct AxisTick {
@@ -254,6 +257,7 @@ public:
         series_ = std::move(series);
         plotKind_ = PlotKind::Impedance;
         rebuildAxes();
+        setSeriesProperties();
         clearHover();
         update();
     }
@@ -266,6 +270,7 @@ public:
         series_ = std::move(series);
         plotKind_ = PlotKind::Swr;
         rebuildAxes();
+        setSeriesProperties();
         clearHover();
         update();
     }
@@ -428,6 +433,18 @@ protected:
     }
 
 private:
+    void setSeriesProperties()
+    {
+        setProperty("seriesCount", static_cast<int>(series_.size()));
+        setProperty("referenceSeriesCount", static_cast<int>(std::ranges::count_if(
+            series_, [](const auto& series) { return series.reference; })));
+        setProperty("referenceSeriesAreGhosted", std::ranges::all_of(series_, [](const auto& series) {
+            return !series.reference
+                || (series.lineStyle == Qt::DashLine && !series.showMarkers
+                    && series.color.alpha() < 255);
+        }));
+    }
+
     void rebuildAxes()
     {
         const auto text = palette().color(QPalette::Text);
@@ -575,9 +592,11 @@ private:
                 } else {
                     path.lineTo(screenPoint);
                 }
-                const auto radius = seriesIndex == hoveredSeries_ && pointIndex == hoveredPoint_
-                    ? 5.0 : 3.0;
-                painter.drawEllipse(screenPoint, radius, radius);
+                if (series.showMarkers) {
+                    const auto radius = seriesIndex == hoveredSeries_ && pointIndex == hoveredPoint_
+                        ? 5.0 : 3.0;
+                    painter.drawEllipse(screenPoint, radius, radius);
+                }
             }
             painter.setBrush(Qt::NoBrush);
             painter.drawPath(path);
@@ -784,8 +803,36 @@ SweepPlotsView::SweepPlotsView(QWidget* parent)
 
 void SweepPlotsView::setResults(const analysis::AnalysisResult& result, const QString& runDirectory)
 {
+    result_ = result;
+    runDirectory_ = runDirectory;
+    refreshPlots();
+}
+
+void SweepPlotsView::setReferenceResults(const analysis::AnalysisResult& result, QString label)
+{
+    referenceResult_ = result;
+    referenceLabel_ = std::move(label);
+    refreshPlots();
+}
+
+void SweepPlotsView::clearReferenceResults()
+{
+    referenceResult_.reset();
+    referenceLabel_.clear();
+    refreshPlots();
+}
+
+void SweepPlotsView::refreshPlots()
+{
+    if (!result_) {
+        impedancePlot_->setImpedancePlot({});
+        swrPlot_->setSwrPlot(tr("SWR"), {});
+        summary_->setText(tr("No analysis results are loaded."));
+        return;
+    }
+
     std::map<std::pair<int, int>, std::vector<analysis::FeedpointResult>> feedpoints;
-    for (const auto& feedpoint : result.feedpoints)
+    for (const auto& feedpoint : result_->feedpoints)
         feedpoints[{feedpoint.wireTag, feedpoint.segment}].push_back(feedpoint);
 
     std::vector<PlotSeries> impedanceSeries;
@@ -802,24 +849,81 @@ void SweepPlotsView::setResults(const analysis::AnalysisResult& result, const QS
             reactanceBase.lighter(100 + colorOffset), AxisSide::Right, {}};
         PlotSeries swr{tr("SWR W%1:S%2").arg(source.first).arg(source.second), {},
             resistanceBase.lighter(100 + colorOffset), AxisSide::Left, {}};
+
+        if (referenceResult_) {
+            auto referenceResistanceColor = resistance.color;
+            auto referenceReactanceColor = reactance.color;
+            referenceResistanceColor.setAlpha(105);
+            referenceReactanceColor.setAlpha(105);
+            PlotSeries referenceResistance{
+                tr("Reference R W%1:S%2").arg(source.first).arg(source.second), tr("Ω"), referenceResistanceColor,
+                AxisSide::Left, {}, Qt::DashLine, false, true};
+            PlotSeries referenceReactance{
+                tr("Reference X W%1:S%2").arg(source.first).arg(source.second), tr("Ω"), referenceReactanceColor,
+                AxisSide::Right, {}, Qt::DashLine, false, true};
+            PlotSeries referenceSwr{
+                tr("Reference SWR W%1:S%2").arg(source.first).arg(source.second), {}, referenceResistanceColor,
+                AxisSide::Left, {}, Qt::DashLine, false, true};
+            for (const auto& referencePoint : referenceResult_->feedpoints) {
+                if (referencePoint.wireTag != source.first
+                    || referencePoint.segment != source.second) continue;
+                const auto frequencyMatches = std::ranges::any_of(points,
+                    [&referencePoint](const auto& activePoint) {
+                        return nearlyEqual(activePoint.frequencyMHz,
+                            referencePoint.frequencyMHz);
+                    });
+                if (!frequencyMatches) continue;
+                referenceResistance.points.emplace_back(referencePoint.frequencyMHz,
+                    referencePoint.impedance.real());
+                referenceReactance.points.emplace_back(referencePoint.frequencyMHz,
+                    referencePoint.impedance.imag());
+                if (nearlyEqual(result_->referenceImpedanceOhms,
+                        referenceResult_->referenceImpedanceOhms)) {
+                    referenceSwr.points.emplace_back(referencePoint.frequencyMHz,
+                        analysis::standingWaveRatio(referencePoint.impedance,
+                            referenceResult_->referenceImpedanceOhms));
+                }
+            }
+            if (!referenceResistance.points.empty()) {
+                std::ranges::sort(referenceResistance.points, {}, &QPointF::x);
+                std::ranges::sort(referenceReactance.points, {}, &QPointF::x);
+                impedanceSeries.push_back(std::move(referenceResistance));
+                impedanceSeries.push_back(std::move(referenceReactance));
+            }
+            if (!referenceSwr.points.empty()) {
+                std::ranges::sort(referenceSwr.points, {}, &QPointF::x);
+                swrSeries.push_back(std::move(referenceSwr));
+            }
+        }
         for (const auto& point : points) {
             resistance.points.emplace_back(point.frequencyMHz, point.impedance.real());
             reactance.points.emplace_back(point.frequencyMHz, point.impedance.imag());
             swr.points.emplace_back(point.frequencyMHz,
-                analysis::standingWaveRatio(point.impedance, result.referenceImpedanceOhms));
+                analysis::standingWaveRatio(point.impedance, result_->referenceImpedanceOhms));
         }
         impedanceSeries.push_back(std::move(resistance));
         impedanceSeries.push_back(std::move(reactance));
         swrSeries.push_back(std::move(swr));
         ++colorIndex;
     }
+    std::ranges::stable_partition(impedanceSeries,
+        [](const auto& series) { return series.reference; });
+    std::ranges::stable_partition(swrSeries,
+        [](const auto& series) { return series.reference; });
     impedancePlot_->setImpedancePlot(std::move(impedanceSeries));
-    swrPlot_->setSwrPlot(tr("SWR (%1 Ω)").arg(formatDecimal(result.referenceImpedanceOhms)),
+    swrPlot_->setSwrPlot(tr("SWR (%1 Ω)").arg(formatDecimal(result_->referenceImpedanceOhms)),
         std::move(swrSeries));
-    summary_->setText(result.feedpoints.empty()
-            ? tr("No supported feedpoint results were found in %1.").arg(runDirectory)
+    const auto referenceNote = referenceResult_
+        ? nearlyEqual(result_->referenceImpedanceOhms,
+                referenceResult_->referenceImpedanceOhms)
+            ? tr(" Reference %1 curves are dashed.").arg(referenceLabel_)
+            : tr(" Reference %1 R/X curves are dashed; reference SWR is hidden because Z0 differs.")
+                .arg(referenceLabel_)
+        : QString{};
+    summary_->setText(result_->feedpoints.empty()
+            ? tr("No supported feedpoint results were found in %1.").arg(runDirectory_)
             : tr("%1 result point(s) from %2. Hover a marker for exact engineering values.")
-                .arg(result.feedpoints.size()).arg(runDirectory));
+                .arg(result_->feedpoints.size()).arg(runDirectory_) + referenceNote);
 }
 
 void SweepPlotsView::setSelectedFrequency(double frequencyMHz)

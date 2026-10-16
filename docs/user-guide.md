@@ -245,6 +245,12 @@ Summary identifies model, run, backend, and reference impedance. Numerical views
 show feedpoint impedance, SWR, current data, and available directional metrics by
 frequency. Plot hover readouts expose exact sampled values.
 
+After a completed analysis, Workbench automatically uses the previous completed run
+of the same saved model as a reference. Impedance and SWR plots draw matching
+feedpoint/frequency data as faint dashed curves behind the active result. The Results
+banner always names the reference; use **Clear Reference** to remove it. Reference
+SWR is hidden when the runs use different reference impedances.
+
 ### Radiation
 
 The radiation frequency selector includes only frequencies with pattern data.
@@ -264,6 +270,10 @@ gain. F/R uses the documented rear azimuth cut and is not a full rear-hemisphere
 
 Run History is discovered from durable run directories. Double-clicking a row opens
 one reusable read-only Run Review window. It does not replace the active editor.
+
+Use **Pin as Reference** to keep a selected completed analysis or quick sweep as the
+comparison baseline for the current session. Pins are explicit, remain labeled, and
+do not turn a historical run into the active result or model.
 
 Run Review can display the authored source and generated solver deck. Use **Open
 Snapshot as New Model** only when you intentionally want an archived deck in the editor.

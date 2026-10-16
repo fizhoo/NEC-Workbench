@@ -1236,12 +1236,16 @@ void MainWindow::createWorkspace()
     openRunSnapshotButton_->setEnabled(false);
     openRunFolderButton_ = new QPushButton(tr("Open Run Folder"), runsPage_);
     openRunFolderButton_->setEnabled(false);
+    pinRunReferenceButton_ = new QPushButton(tr("Pin as Reference"), runsPage_);
+    pinRunReferenceButton_->setObjectName(QStringLiteral("pinRunReferenceButton"));
+    pinRunReferenceButton_->setEnabled(false);
     deleteRunButton_ = new QPushButton(tr("Delete Run…"), runsPage_);
     deleteRunButton_->setObjectName(QStringLiteral("deleteRunButton"));
     deleteRunButton_->setEnabled(false);
     runViewButtons->addWidget(openRunResultsButton_);
     runViewButtons->addWidget(inspectRunInputButton_);
     runViewButtons->addWidget(openRunSnapshotButton_);
+    runViewButtons->addWidget(pinRunReferenceButton_);
     runViewButtons->addStretch();
     runManagementButtons->addWidget(cancelRunButton_);
     runManagementButtons->addWidget(openRunFolderButton_);
@@ -1256,6 +1260,8 @@ void MainWindow::createWorkspace()
     connect(openRunResultsButton_, &QPushButton::clicked, this, [this] { loadSelectedRun(); });
     connect(inspectRunInputButton_, &QPushButton::clicked, this, [this] { inspectSelectedRunInput(); });
     connect(openRunSnapshotButton_, &QPushButton::clicked, this, [this] { openSelectedRunSnapshot(); });
+    connect(pinRunReferenceButton_, &QPushButton::clicked,
+        this, [this] { pinSelectedRunReference(); });
     connect(deleteRunButton_, &QPushButton::clicked, this, [this] { deleteSelectedRun(); });
     connect(openRunFolderButton_, &QPushButton::clicked, this, [this] {
         const auto* item = analysisRuns_->currentRow() >= 0
@@ -1332,10 +1338,21 @@ void MainWindow::createResultsWorkspace()
     resultsContextDetailLabel_->setWordWrap(true);
     activeModelResultsLabel_ = new QLabel(tr("Active Model: None"), resultsContextFrame);
     activeModelResultsLabel_->setObjectName(QStringLiteral("activeModelResultsLabel"));
+    auto* referenceRow = new QHBoxLayout;
+    resultReferenceLabel_ = new QLabel(tr("Reference: None"), resultsContextFrame);
+    resultReferenceLabel_->setObjectName(QStringLiteral("resultReferenceLabel"));
+    clearResultReferenceButton_ = new QPushButton(tr("Clear Reference"), resultsContextFrame);
+    clearResultReferenceButton_->setObjectName(QStringLiteral("clearResultReferenceButton"));
+    clearResultReferenceButton_->setEnabled(false);
+    referenceRow->addWidget(resultReferenceLabel_, 1);
+    referenceRow->addWidget(clearResultReferenceButton_);
     resultsContextLayout->addLayout(resultsContextHeading);
     resultsContextLayout->addWidget(resultsContextDetailLabel_);
     resultsContextLayout->addWidget(activeModelResultsLabel_);
+    resultsContextLayout->addLayout(referenceRow);
     connect(detachResultsButton_, &QPushButton::clicked, this, [this] { toggleResultsDetached(); });
+    connect(clearResultReferenceButton_, &QPushButton::clicked,
+        this, [this] { clearResultReference(); });
     resultsStatusLabel_ = new QLabel(tr("No analysis results are loaded."), resultsContent_);
     resultsStatusLabel_->setContentsMargins(12, 7, 12, 7);
     resultsStatusLabel_->setWordWrap(true);
@@ -4077,6 +4094,11 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             runStore_.save(*currentRunRecord_);
         }
     }
+    if (currentRunPurpose_ == SolverRunPurpose::Analysis && runCompleted
+        && currentRunRecord_) {
+        resultReferenceController_.selectAutomatic(*currentRunRecord_);
+        updateResultReference();
+    }
     appendSolverOutput(tr("\n\nRun status: %1\nElapsed: %2 seconds\n")
         .arg(status).arg(formatDecimal(processResult.durationSeconds)));
     const auto activity = currentRunPurpose_ == SolverRunPurpose::AverageGainTest
@@ -4302,8 +4324,64 @@ void MainWindow::updateRunSelectionActions()
         || selectedType == QStringLiteral("convergence-session");
     inspectRunInputButton_->setEnabled(hasInputSnapshot && !isSession);
     openRunSnapshotButton_->setEnabled(hasInputSnapshot && !isSession && !activeSelection && !solverBusy);
+    const auto canPinReference = hasSelection && !activeSelection && !solverBusy
+        && (selectedType == QStringLiteral("analysis")
+            || selectedType == QStringLiteral("quick-sweep"))
+        && analysisRuns_->item(row, RunStatusColumn)->text() == tr("Completed")
+        && QFileInfo::exists(QDir(analysisRuns_->item(row, RunStartedColumn)
+            ->data(RunDirectoryRole).toString()).filePath(QStringLiteral("model.out")));
+    pinRunReferenceButton_->setEnabled(canPinReference);
     openRunFolderButton_->setEnabled(hasSelection);
     deleteRunButton_->setEnabled(hasSelection && !activeSelection && !solverBusy);
+}
+
+auto MainWindow::selectedRunRecord() const -> std::optional<AnalysisRunRecord>
+{
+    const auto row = analysisRuns_->currentRow();
+    if (row < 0) return std::nullopt;
+    const auto* item = analysisRuns_->item(row, RunStartedColumn);
+    if (item == nullptr) return std::nullopt;
+    const auto id = item->data(RunIdRole).toString();
+    const auto records = runStore_.load();
+    const auto found = std::ranges::find(records, id, &AnalysisRunRecord::id);
+    return found == records.end() ? std::nullopt : std::optional<AnalysisRunRecord>{*found};
+}
+
+void MainWindow::pinSelectedRunReference()
+{
+    const auto record = selectedRunRecord();
+    if (!record) return;
+    resultReferenceController_.pin(*record);
+    updateResultReference();
+    statusBar()->showMessage(tr("Pinned reference run: %1")
+        .arg(resultReferenceController_.label()), 5000);
+}
+
+void MainWindow::clearResultReference()
+{
+    resultReferenceController_.clear();
+    updateResultReference();
+}
+
+void MainWindow::updateResultReference()
+{
+    if (resultReferenceLabel_ == nullptr || clearResultReferenceButton_ == nullptr
+        || visualizePlotsView_ == nullptr) return;
+    const auto* reference = resultReferenceController_.result();
+    const auto hasReference = reference != nullptr;
+    resultReferenceLabel_->setText(hasReference
+        ? tr("Reference: %1").arg(resultReferenceController_.label())
+        : resultReferenceController_.hasReference()
+            ? tr("Reference unavailable: archived output could not be read")
+            : tr("Reference: None"));
+    clearResultReferenceButton_->setEnabled(resultReferenceController_.hasReference());
+    if (hasReference) {
+        visualizePlotsView_->setReferenceResults(
+            *reference, resultReferenceController_.record()->id);
+    } else {
+        visualizePlotsView_->clearReferenceResults();
+    }
+    updateRunSelectionActions();
 }
 
 void MainWindow::deleteSelectedRun()
@@ -4334,6 +4412,10 @@ void MainWindow::deleteSelectedRun()
         QMessageBox::critical(this, tr("Delete Failed"),
             tr("Could not delete the run folder:\n%1").arg(directory));
         return;
+    }
+    if (const auto* reference = resultReferenceController_.record();
+        reference != nullptr && reference->directory == directory) {
+        clearResultReference();
     }
     analysisRuns_->removeRow(row);
     if (activeModelResultsDirectory_ == directory) {
@@ -5269,7 +5351,9 @@ void MainWindow::synchronizeProjectItemSelection(QTreeWidgetItem* item)
 
 void MainWindow::setCurrentFile(QString path)
 {
+    const auto modelChanged = currentFile_ != path;
     currentFile_ = std::move(path);
+    if (modelChanged && resultReferenceController_.hasReference()) clearResultReference();
     if (!currentFile_.isEmpty()) rememberRecentFile(currentFile_);
     const auto name = currentFile_.isEmpty() ? tr("Untitled") : QFileInfo(currentFile_).fileName();
     setWindowTitle(tr("%1[*] — NEC Workbench").arg(name));

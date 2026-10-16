@@ -228,6 +228,10 @@ auto main(int argc, char* argv[]) -> int
     necwb::ui::SweepPlotsView view;
     view.resize(900, 700);
     view.setResults(result, QStringLiteral("test-run"));
+    auto referenceResult = result;
+    for (auto& feedpoint : referenceResult.feedpoints)
+        feedpoint.impedance += std::complex<double>{3.0, -2.0};
+    view.setReferenceResults(referenceResult, QStringLiteral("reference-run"));
     view.setSelectedFrequency(14.2);
     view.show();
     application.processEvents();
@@ -249,12 +253,23 @@ auto main(int argc, char* argv[]) -> int
         && impedanceSweepPlot->property("rightAxisMaximum").toDouble() >= 0.0
         && impedanceSweepPlot->property("leftAxisTickCount").toInt() >= 2
         && impedanceSweepPlot->property("rightAxisTickCount").toInt() >= 2
+        && impedanceSweepPlot->property("referenceSeriesCount").toInt() == 2
+        && impedanceSweepPlot->property("referenceSeriesAreGhosted").toBool()
         && impedanceSweepPlot->property("plotLeftMargin").toDouble() >= 90.0
         && impedanceSweepPlot->property("plotRightMargin").toDouble() >= 90.0
         && !swrSweepPlot->property("dualAxes").toBool()
         && swrSweepPlot->property("leftAxisScale").toInt() == 1
         && swrSweepPlot->property("leftAxisMinimum").toDouble() == 1.0
+        && swrSweepPlot->property("referenceSeriesCount").toInt() == 1
+        && swrSweepPlot->property("referenceSeriesAreGhosted").toBool()
         && swrSweepPlot->property("leftAxisTickCount").toInt() >= 3;
+    referenceResult.referenceImpedanceOhms = 75.0;
+    view.setReferenceResults(referenceResult, QStringLiteral("different-z0"));
+    application.processEvents();
+    if (impedanceSweepPlot->property("referenceSeriesCount").toInt() != 2
+        || swrSweepPlot->property("referenceSeriesCount").toInt() != 0) {
+        return NECWB_SMOKE_FAILURE("reference plots with differing Z0");
+    }
     if (swrScaleControl == nullptr || swrScaleControl->count() != 4
         || swrScaleControl->currentText() != QStringLiteral("Logarithmic")) {
         return NECWB_SMOKE_FAILURE("SWR scale control initialization");
