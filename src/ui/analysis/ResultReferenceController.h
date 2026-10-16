@@ -13,6 +13,7 @@ public:
 
     void selectAutomatic(const AnalysisRunRecord& activeRun);
     void pin(const AnalysisRunRecord& run);
+    void refreshMetadata(const AnalysisRunRecord& run);
     void clear();
 
     [[nodiscard]] auto hasReference() const -> bool;

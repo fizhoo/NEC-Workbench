@@ -52,6 +52,11 @@ void ResultReferenceController::pin(const AnalysisRunRecord& run)
     select(run, true);
 }
 
+void ResultReferenceController::refreshMetadata(const AnalysisRunRecord& run)
+{
+    if (reference_ && reference_->id == run.id) reference_ = run;
+}
+
 void ResultReferenceController::clear()
 {
     reference_.reset();
@@ -104,8 +109,10 @@ auto ResultReferenceController::label() const -> QString
         ? QStringLiteral("Archived model.nec") : QFileInfo(reference_->sourceFile).fileName();
     const auto started = reference_->started.isValid()
         ? reference_->started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : reference_->id;
-    return QStringLiteral("%1 — %2 — %3%4")
-        .arg(modelName, started, reference_->backend,
+    const auto note = reference_->userNote.trimmed().isEmpty()
+        ? QString{} : QStringLiteral(" — “%1”").arg(reference_->userNote.trimmed());
+    return QStringLiteral("%1 — %2 — %3%4%5")
+        .arg(modelName, started, reference_->backend, note,
             pinned_ ? QStringLiteral(" — pinned") : QString{});
 }
 

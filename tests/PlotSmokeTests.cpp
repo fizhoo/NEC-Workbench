@@ -2265,6 +2265,7 @@ auto main(int argc, char* argv[]) -> int
     necwb::ui::AnalysisRunStore store(directory.path());
     auto run = store.create(QStringLiteral("nec2"), QStringLiteral("/tmp/test-dipole.nec"));
     run.status = QStringLiteral("Completed");
+    run.userNote = QStringLiteral("Shortened right side");
     run.durationSeconds = 1.25;
     run.outputBytes = 8192;
     run.frequencyCount = 3;
@@ -2332,6 +2333,7 @@ auto main(int argc, char* argv[]) -> int
     const auto storeValid = loaded.size() == 3 && loadedRun != loaded.end()
         && loadedRun->status == QStringLiteral("Completed")
         && loadedRun->sourceFile == QStringLiteral("/tmp/test-dipole.nec")
+        && loadedRun->userNote == QStringLiteral("Shortened right side")
         && loadedRun->backend == QStringLiteral("nec2")
         && loadedRun->durationSeconds == 1.25 && loadedRun->outputBytes == 8192
         && loadedRun->frequencyCount == 3 && loadedRun->hasImpedance

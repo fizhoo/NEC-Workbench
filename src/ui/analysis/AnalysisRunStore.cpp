@@ -71,7 +71,7 @@ auto AnalysisRunStore::save(const AnalysisRunRecord& record) const -> bool
         return false;
     }
     const QJsonObject object{
-        {QStringLiteral("version"), 4},
+        {QStringLiteral("version"), 5},
         {QStringLiteral("id"), record.id},
         {QStringLiteral("started"), record.started.toString(Qt::ISODateWithMs)},
         {QStringLiteral("sourceFile"), record.sourceFile},
@@ -80,6 +80,7 @@ auto AnalysisRunStore::save(const AnalysisRunRecord& record) const -> bool
         {QStringLiteral("runType"), record.runType},
         {QStringLiteral("parentId"), record.parentId},
         {QStringLiteral("summary"), record.summary},
+        {QStringLiteral("userNote"), record.userNote},
         {QStringLiteral("candidateCount"), record.candidateCount},
         {QStringLiteral("durationSeconds"), record.durationSeconds},
         {QStringLiteral("outputBytes"), record.outputBytes},
@@ -137,6 +138,7 @@ auto AnalysisRunStore::readRecord(const QString& directory) const -> AnalysisRun
     }
     record.parentId = object.value(QStringLiteral("parentId")).toString();
     record.summary = object.value(QStringLiteral("summary")).toString();
+    record.userNote = object.value(QStringLiteral("userNote")).toString();
     record.candidateCount = object.value(QStringLiteral("candidateCount")).toInt();
     record.durationSeconds = object.value(QStringLiteral("durationSeconds")).toDouble();
     record.outputBytes = object.value(QStringLiteral("outputBytes")).toInteger();

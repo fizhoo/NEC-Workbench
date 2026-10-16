@@ -231,6 +231,7 @@ private:
         const QString& runContext) -> bool;
     void deleteSelectedRun();
     void pinSelectedRunReference();
+    void editSelectedRunNote();
     void clearResultReference();
     void updateResultReference();
     [[nodiscard]] auto selectedRunRecord() const -> std::optional<AnalysisRunRecord>;
@@ -357,6 +358,7 @@ private:
     QPushButton* inspectRunInputButton_{};
     QPushButton* openRunSnapshotButton_{};
     QPushButton* pinRunReferenceButton_{};
+    QPushButton* editRunNoteButton_{};
     QPushButton* deleteRunButton_{};
     QTreeWidget* projectTree_{};
     QTreeWidget* diagnostics_{};

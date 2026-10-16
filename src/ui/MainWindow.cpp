@@ -216,6 +216,7 @@ auto workspaceDensityFontSize(MainWindow::WorkspaceDensity density) -> int
 enum RunColumn {
     RunStartedColumn,
     RunModelColumn,
+    RunNoteColumn,
     RunTypeColumn,
     RunResultsColumn,
     RunOutputSizeColumn,
@@ -1214,8 +1215,8 @@ void MainWindow::createWorkspace()
     runsDescription->setWordWrap(true);
     analysisRuns_ = new QTableWidget(0, RunColumnCount, runsPage_);
     analysisRuns_->setObjectName(QStringLiteral("analysisRunsTable"));
-    analysisRuns_->setHorizontalHeaderLabels({tr("Started"), tr("Model"), tr("Type"), tr("Results"),
-        tr("Output"), tr("Backend"), tr("Status"), tr("Duration"), tr("Run Folder")});
+    analysisRuns_->setHorizontalHeaderLabels({tr("Started"), tr("Model"), tr("Note"), tr("Type"),
+        tr("Results"), tr("Output"), tr("Backend"), tr("Status"), tr("Duration"), tr("Run Folder")});
     analysisRuns_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     analysisRuns_->setSelectionBehavior(QAbstractItemView::SelectRows);
     analysisRuns_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -1236,9 +1237,12 @@ void MainWindow::createWorkspace()
     openRunSnapshotButton_->setEnabled(false);
     openRunFolderButton_ = new QPushButton(tr("Open Run Folder"), runsPage_);
     openRunFolderButton_->setEnabled(false);
-    pinRunReferenceButton_ = new QPushButton(tr("Pin as Reference"), runsPage_);
+    pinRunReferenceButton_ = new QPushButton(tr("Set as Reference"), runsPage_);
     pinRunReferenceButton_->setObjectName(QStringLiteral("pinRunReferenceButton"));
     pinRunReferenceButton_->setEnabled(false);
+    editRunNoteButton_ = new QPushButton(tr("Edit Run Note…"), runsPage_);
+    editRunNoteButton_->setObjectName(QStringLiteral("editRunNoteButton"));
+    editRunNoteButton_->setEnabled(false);
     deleteRunButton_ = new QPushButton(tr("Delete Run…"), runsPage_);
     deleteRunButton_->setObjectName(QStringLiteral("deleteRunButton"));
     deleteRunButton_->setEnabled(false);
@@ -1248,6 +1252,7 @@ void MainWindow::createWorkspace()
     runViewButtons->addWidget(pinRunReferenceButton_);
     runViewButtons->addStretch();
     runManagementButtons->addWidget(cancelRunButton_);
+    runManagementButtons->addWidget(editRunNoteButton_);
     runManagementButtons->addWidget(openRunFolderButton_);
     runManagementButtons->addWidget(deleteRunButton_);
     runManagementButtons->addStretch();
@@ -1262,6 +1267,8 @@ void MainWindow::createWorkspace()
     connect(openRunSnapshotButton_, &QPushButton::clicked, this, [this] { openSelectedRunSnapshot(); });
     connect(pinRunReferenceButton_, &QPushButton::clicked,
         this, [this] { pinSelectedRunReference(); });
+    connect(editRunNoteButton_, &QPushButton::clicked,
+        this, [this] { editSelectedRunNote(); });
     connect(deleteRunButton_, &QPushButton::clicked, this, [this] { deleteSelectedRun(); });
     connect(openRunFolderButton_, &QPushButton::clicked, this, [this] {
         const auto* item = analysisRuns_->currentRow() >= 0
@@ -1275,7 +1282,10 @@ void MainWindow::createWorkspace()
     connect(analysisRuns_, &QTableWidget::itemSelectionChanged,
         this, [this] { updateRunSelectionActions(); });
     connect(analysisRuns_, &QTableWidget::cellDoubleClicked,
-        this, [this](int, int) { loadSelectedRun(); });
+        this, [this](int, int column) {
+            if (column == RunNoteColumn) editSelectedRunNote();
+            else loadSelectedRun();
+        });
 
     auto* analysisNavigator = new WorkspaceNavigator(
         analysisWorkspace_, QStringLiteral("analysis"), moduleStack_);
@@ -4139,6 +4149,8 @@ void MainWindow::loadRunHistory()
     }
     analysisRuns_->setUpdatesEnabled(true);
     analysisRuns_->resizeColumnsToContents();
+    analysisRuns_->setColumnWidth(RunNoteColumn,
+        std::clamp(analysisRuns_->columnWidth(RunNoteColumn), 120, 240));
     analysisRuns_->clearSelection();
     updateRunSelectionActions();
 }
@@ -4159,6 +4171,7 @@ void MainWindow::addRunRecord(const AnalysisRunRecord& record, bool prepend)
     const QStringList values{
         record.started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")),
         record.sourceFile.isEmpty() ? tr("Archived model.nec") : QFileInfo(record.sourceFile).fileName(),
+        record.userNote.trimmed().isEmpty() ? tr("—") : record.userNote.simplified(),
         type,
         runResultsText(displayRecord),
         formatByteSize(outputBytes),
@@ -4174,9 +4187,15 @@ void MainWindow::addRunRecord(const AnalysisRunRecord& record, bool prepend)
         item->setData(RunContextRole, runContext(record));
         item->setData(RunTypeRole, record.runType);
         item->setData(RunIdRole, record.id);
+        if (column == RunNoteColumn && !record.userNote.trimmed().isEmpty())
+            item->setToolTip(record.userNote);
         analysisRuns_->setItem(row, column, item);
     }
-    if (prepend) analysisRuns_->resizeColumnsToContents();
+    if (prepend) {
+        analysisRuns_->resizeColumnsToContents();
+        analysisRuns_->setColumnWidth(RunNoteColumn,
+            std::clamp(analysisRuns_->columnWidth(RunNoteColumn), 120, 240));
+    }
 }
 
 void MainWindow::loadSelectedRun()
@@ -4331,6 +4350,7 @@ void MainWindow::updateRunSelectionActions()
         && QFileInfo::exists(QDir(analysisRuns_->item(row, RunStartedColumn)
             ->data(RunDirectoryRole).toString()).filePath(QStringLiteral("model.out")));
     pinRunReferenceButton_->setEnabled(canPinReference);
+    editRunNoteButton_->setEnabled(hasSelection && !solverBusy);
     openRunFolderButton_->setEnabled(hasSelection);
     deleteRunButton_->setEnabled(hasSelection && !activeSelection && !solverBusy);
 }
@@ -4357,6 +4377,36 @@ void MainWindow::pinSelectedRunReference()
         .arg(resultReferenceController_.label()), 5000);
 }
 
+void MainWindow::editSelectedRunNote()
+{
+    auto record = selectedRunRecord();
+    if (!record) return;
+    auto accepted = false;
+    const auto note = QInputDialog::getMultiLineText(this, tr("Edit Run Note"),
+        tr("Describe what changed or why this run matters:"), record->userNote, &accepted);
+    if (!accepted) return;
+    record->userNote = note.trimmed();
+    if (!runStore_.save(*record)) {
+        QMessageBox::critical(this, tr("Run Note Not Saved"),
+            tr("Could not update run metadata in:\n%1").arg(record->directory));
+        return;
+    }
+    if (currentRunRecord_ && currentRunRecord_->id == record->id)
+        currentRunRecord_->userNote = record->userNote;
+    const auto row = analysisRuns_->currentRow();
+    if (row >= 0) {
+        auto* noteItem = analysisRuns_->item(row, RunNoteColumn);
+        if (noteItem == nullptr) {
+            noteItem = new QTableWidgetItem;
+            analysisRuns_->setItem(row, RunNoteColumn, noteItem);
+        }
+        noteItem->setText(record->userNote.isEmpty() ? tr("—") : record->userNote.simplified());
+        noteItem->setToolTip(record->userNote);
+    }
+    resultReferenceController_.refreshMetadata(*record);
+    updateResultReference();
+}
+
 void MainWindow::clearResultReference()
 {
     resultReferenceController_.clear();
@@ -4376,8 +4426,11 @@ void MainWindow::updateResultReference()
             : tr("Reference: None"));
     clearResultReferenceButton_->setEnabled(resultReferenceController_.hasReference());
     if (hasReference) {
+        const auto* record = resultReferenceController_.record();
+        const auto plotLabel = record->userNote.trimmed().isEmpty()
+            ? record->id : record->userNote.simplified();
         visualizePlotsView_->setReferenceResults(
-            *reference, resultReferenceController_.record()->id);
+            *reference, plotLabel);
     } else {
         visualizePlotsView_->clearReferenceResults();
     }

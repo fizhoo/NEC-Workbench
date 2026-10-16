@@ -271,9 +271,13 @@ gain. F/R uses the documented rear azimuth cut and is not a full rear-hemisphere
 Run History is discovered from durable run directories. Double-clicking a row opens
 one reusable read-only Run Review window. It does not replace the active editor.
 
-Use **Pin as Reference** to keep a selected completed analysis or quick sweep as the
-comparison baseline for the current session. Pins are explicit, remain labeled, and
-do not turn a historical run into the active result or model.
+Use **Set as Reference** to keep a selected completed analysis or quick sweep as the
+comparison baseline for the current session. References are explicit, remain labeled,
+and do not turn a historical run into the active result or model.
+
+Use **Edit Run Note…**, or double-click the Note cell, to record what changed or why
+a run matters. Notes are stored only in run metadata; they do not alter archived NEC
+input or solver output. Reference labels use the note when one is available.
 
 Run Review can display the authored source and generated solver deck. Use **Open
 Snapshot as New Model** only when you intentionally want an archived deck in the editor.

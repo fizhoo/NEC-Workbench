@@ -17,6 +17,7 @@ struct AnalysisRunRecord {
     QString runType{QStringLiteral("analysis")};
     QString parentId;
     QString summary;
+    QString userNote;
     int candidateCount{};
     double durationSeconds{};
     qint64 outputBytes{};
