@@ -6,6 +6,7 @@
 #include "analysis/NecOutputParser.h"
 #include "analysis/NelderMeadSearch.h"
 #include "analysis/OptimizationObjective.h"
+#include "analysis/ReferenceRunSelection.h"
 #include "analysis/SegmentationConvergence.h"
 #include "analysis/SolverInput.h"
 #include "geometry/OrthographicProjection.h"
@@ -57,6 +58,28 @@ void testRoundTripPreservesSource()
     expect(document.cards()[1].kind == necwb::nec::NecCardKind::Unknown, "unknown card is represented");
     expect(document.cards()[2].kind == necwb::nec::NecCardKind::Blank, "blank line is represented");
     expect(necwb::nec::NecWriter{}.write(document) == source, "writer preserves CRLF source exactly");
+}
+
+void testReferenceRunSelection()
+{
+    using necwb::analysis::ReferenceRunCandidate;
+    const std::vector<ReferenceRunCandidate> candidates{
+        {"older", "/models/dipole.nec", "analysis", "Completed", 10},
+        {"newer", "/models/dipole.nec", "quick-sweep", "Completed", 30},
+        {"active", "/models/dipole.nec", "analysis", "Completed", 40},
+        {"failed", "/models/dipole.nec", "analysis", "Failed", 50},
+        {"optimization", "/models/dipole.nec", "optimization-session", "Completed", 60},
+        {"other-model", "/models/yagi.nec", "analysis", "Completed", 70},
+    };
+    const auto selected = necwb::analysis::selectPreviousReferenceRun(
+        candidates, "active", "/models/dipole.nec");
+    expect(selected && candidates[*selected].id == "newer",
+        "reference selection chooses the newest eligible previous run");
+    expect(!necwb::analysis::selectPreviousReferenceRun(candidates, "active", {}),
+        "untitled models do not receive an automatic reference");
+    expect(!necwb::analysis::selectPreviousReferenceRun(
+        candidates, "active", "/models/missing.nec"),
+        "reference selection does not cross model identities");
 }
 
 void testUtf8BomParsing()
@@ -2266,6 +2289,7 @@ void testSegmentationConvergencePreparation()
 
 auto main() -> int
 {
+    testReferenceRunSelection();
     testRoundTripPreservesSource();
     testUtf8BomParsing();
     testLegacyFreeFormatParsing();
