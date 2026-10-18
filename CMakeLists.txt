@@ -133,6 +133,8 @@ if(NECWB_BUILD_GUI)
         src/ui/optimization/OptimizationWorkspace.h
         src/ui/optimization/CandidateEvaluator.cpp
         src/ui/optimization/CandidateEvaluator.h
+        src/ui/optimization/DirectionStrategyDialog.cpp
+        src/ui/optimization/DirectionStrategyDialog.h
         src/ui/model/ParameterEditor.cpp
         src/ui/model/ParameterEditor.h
         src/ui/setup/SetupEditor.cpp

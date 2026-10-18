@@ -3,8 +3,10 @@
 #include "ui/DisplayFormat.h"
 #include "ui/FileIo.h"
 #include "ui/analysis/SweepPlotsView.h"
+#include "ui/optimization/DirectionStrategyDialog.h"
 
 #include "analysis/AnalysisResult.h"
+#include "analysis/FrequencyComparison.h"
 #include "analysis/NecOutputParser.h"
 #include "analysis/OptimizationObjective.h"
 #include "analysis/SolverCommand.h"
@@ -34,6 +36,7 @@
 #include <QListView>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QMenu>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -76,6 +79,34 @@ enum ResultColumn {
     ResultColumnCount
 };
 
+constexpr auto CandidateIndexRole = Qt::UserRole + 1;
+
+class SortableResultItem final : public QTableWidgetItem {
+public:
+    explicit SortableResultItem(QString text, std::optional<double> sortValue = std::nullopt)
+        : QTableWidgetItem(std::move(text)), sortValue_(sortValue)
+    {
+    }
+
+    auto operator<(const QTableWidgetItem& other) const -> bool override
+    {
+        const auto* sortable = dynamic_cast<const SortableResultItem*>(&other);
+        if (sortable == nullptr) return QTableWidgetItem::operator<(other);
+        if (sortValue_ && sortable->sortValue_) return *sortValue_ < *sortable->sortValue_;
+        if (sortValue_.has_value() != sortable->sortValue_.has_value()) {
+            const auto order = tableWidget() == nullptr
+                ? Qt::AscendingOrder
+                : tableWidget()->horizontalHeader()->sortIndicatorOrder();
+            return order == Qt::AscendingOrder ? sortValue_.has_value()
+                                               : !sortValue_.has_value();
+        }
+        return QTableWidgetItem::operator<(other);
+    }
+
+private:
+    std::optional<double> sortValue_;
+};
+
 class FocusWheelSpinBox final : public QSpinBox {
 public:
     using QSpinBox::QSpinBox;
@@ -108,9 +139,14 @@ protected:
 
 auto numericItem(double value) -> QTableWidgetItem*
 {
-    auto* item = new QTableWidgetItem(formatDecimal(value));
+    auto* item = new SortableResultItem(formatDecimal(value), value);
     item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
     return item;
+}
+
+auto unavailableResultItem() -> QTableWidgetItem*
+{
+    return new SortableResultItem(QStringLiteral("—"));
 }
 
 auto optionalNumericItem(const std::optional<double>& value) -> QTableWidgetItem*
@@ -452,7 +488,8 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     criterionItem(0, tr("SWR"), tr("Standing-wave ratio at each calculated frequency."));
     criterionItem(1, tr("Resistance (Ω)"), tr("Feedpoint resistance."));
     criterionItem(2, tr("Reactance (Ω)"), tr("Feedpoint reactance."));
-    criterionItem(3, tr("Forward Gain (dBi)"), tr("Gain in the configured physical direction."));
+    criterionItem(3, tr("Peak Gain in Cut (dBi)"),
+        tr("Highest gain found in the selected azimuth or elevation cut."));
     criterionItem(4, tr("F/B (dB)"),
         tr("Forward gain minus gain exactly 180 degrees opposite."));
     criterionItem(5, tr("F/R (dB)"),
@@ -541,11 +578,27 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     forwardThetaControl_->setDecimals(DisplayDecimalPlaces);
     forwardThetaControl_->setValue(90.0);
     forwardThetaControl_->setSuffix(QStringLiteral("°"));
+    forwardThetaControl_->setToolTip(tr(
+        "NEC theta is measured down from +Z. Theta 90° is the horizon."));
     forwardPhiControl_ = new FocusWheelDoubleSpinBox(this);
     forwardPhiControl_->setObjectName(QStringLiteral("optimizationForwardPhi"));
     forwardPhiControl_->setRange(-360.0, 720.0);
     forwardPhiControl_->setDecimals(DisplayDecimalPlaces);
     forwardPhiControl_->setSuffix(QStringLiteral("°"));
+    directionalEvaluationModeControl_ = new QComboBox(this);
+    directionalEvaluationModeControl_->setObjectName(
+        QStringLiteral("optimizationDirectionalEvaluationMode"));
+    directionalEvaluationModeControl_->addItem(
+        tr("Track Peak in Azimuth Cut"),
+        static_cast<int>(analysis::DirectionalEvaluationMode::StrongestInAzimuthCut));
+    directionalEvaluationModeControl_->addItem(
+        tr("Track Peak in Elevation Cut"),
+        static_cast<int>(analysis::DirectionalEvaluationMode::StrongestInElevationCut));
+    directionalEvaluationModeControl_->addItem(
+        tr("Evaluate Fixed Direction"),
+        static_cast<int>(analysis::DirectionalEvaluationMode::SpecifiedDirection));
+    directionalEvaluationModeControl_->setToolTip(tr(
+        "Choose whether each candidate follows the strongest lobe in a 2D cut or evaluates one fixed physical direction."));
     radiationComponentControl_ = new QComboBox(this);
     radiationComponentControl_->setObjectName(QStringLiteral("optimizationRadiationComponent"));
     radiationComponentControl_->addItem(tr("Total"), static_cast<int>(analysis::RadiationComponent::Total));
@@ -939,9 +992,47 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     targetFrequencyLabel_->hide();
     targetFrequencyControl_->hide();
     objectiveForm->addRow(tr("Reference impedance"), referenceImpedanceControl_);
-    objectiveForm->addRow(tr("Forward theta"), forwardThetaControl_);
-    objectiveForm->addRow(tr("Forward phi"), forwardPhiControl_);
+    forwardThetaLabel_ = new QLabel(tr("Azimuth-cut theta"), objectiveSettings);
+    forwardPhiLabel_ = new QLabel(tr("Forward phi"), objectiveSettings);
+    directionalEvaluationModeControl_->hide();
+    forwardThetaControl_->hide();
+    forwardPhiControl_->hide();
+    forwardThetaLabel_->hide();
+    forwardPhiLabel_->hide();
+    auto* directionSetup = new QWidget(objectiveSettings);
+    auto* directionSetupLayout = new QHBoxLayout(directionSetup);
+    directionSetupLayout->setContentsMargins(0, 0, 0, 0);
+    directionSetupSummaryLabel_ = new QLabel(directionSetup);
+    directionSetupSummaryLabel_->setObjectName(
+        QStringLiteral("optimizationDirectionSetupSummary"));
+    directionSetupSummaryLabel_->setWordWrap(true);
+    directionSetupButton_ = new QPushButton(tr("Choose…"), directionSetup);
+    directionSetupButton_->setObjectName(QStringLiteral("optimizationChooseDirection"));
+    findMaximumGainButton_ = new QPushButton(tr("Find Maximum Gain…"), directionSetup);
+    findMaximumGainButton_->setObjectName(QStringLiteral("optimizationFindMaximumGain"));
+    findMaximumGainButton_->setToolTip(tr(
+        "Runs a temporary radiation-pattern calculation to find the model's maximum-gain direction and use it as the default optimization pattern slice. It does not start optimization or modify the NEC model."));
+    directionSetupLayout->addWidget(directionSetupSummaryLabel_, 1);
+    directionSetupLayout->addWidget(findMaximumGainButton_);
+    directionSetupLayout->addWidget(directionSetupButton_);
+    objectiveForm->addRow(tr("Directional setup"), directionSetup);
     objectiveForm->addRow(tr("Radiation component"), radiationComponentControl_);
+    auto* latestPatternPeak = new QWidget(objectiveSettings);
+    auto* latestPatternPeakLayout = new QHBoxLayout(latestPatternPeak);
+    latestPatternPeakLayout->setContentsMargins(0, 0, 0, 0);
+    useLatestPatternPeakButton_ = new QPushButton(tr("Use Latest Pattern Peak"), latestPatternPeak);
+    useLatestPatternPeakButton_->setObjectName(
+        QStringLiteral("optimizationUseLatestPatternPeak"));
+    useLatestPatternPeakButton_->setToolTip(tr(
+        "Set the forward theta and phi from the latest active-model radiation pattern."));
+    useLatestPatternPeakButton_->hide();
+    latestPatternPeakLabel_ = new QLabel(latestPatternPeak);
+    latestPatternPeakLabel_->setObjectName(
+        QStringLiteral("optimizationLatestPatternPeakStatus"));
+    latestPatternPeakLabel_->setWordWrap(true);
+    latestPatternPeakLayout->addWidget(useLatestPatternPeakButton_);
+    latestPatternPeakLayout->addWidget(latestPatternPeakLabel_, 1);
+    objectiveForm->addRow(tr("Pattern peak"), latestPatternPeak);
     directionalFrequencyNote_ = new QLabel(objectiveSettings);
     directionalFrequencyNote_->setObjectName(
         QStringLiteral("optimizationDirectionalFrequencyNote"));
@@ -1032,21 +1123,36 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     resultsTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     resultsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     resultsTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+    resultsTable_->setContextMenuPolicy(Qt::CustomContextMenu);
+    resultsTable_->setToolTip(tr(
+        "Double-click a completed candidate to inspect its results. "
+        "Right-click it to compare with the last analysis run, apply it, or apply and run."));
     resultsTable_->verticalHeader()->hide();
+    resultsTable_->horizontalHeader()->setSortIndicatorShown(false);
+    for (auto column = static_cast<int>(ValueColumn);
+         column <= static_cast<int>(FrontToRearColumn); ++column) {
+        resultsTable_->horizontalHeaderItem(column)->setToolTip(
+            tr("Click to sort completed candidates by this column."));
+    }
+    resultsTable_->horizontalHeaderItem(StatusColumn)->setToolTip(
+        tr("Candidate status is informational and is not sortable."));
+    resultsTable_->horizontalHeaderItem(RunColumn)->setToolTip(
+        tr("Run identifier is informational and is not sortable."));
     resultsTable_->horizontalHeader()->setSectionResizeMode(StatusColumn, QHeaderView::Stretch);
     resultsTable_->horizontalHeader()->setSectionResizeMode(RunColumn, QHeaderView::ResizeToContents);
 
     candidatePlots_ = new CandidatePlotsView(this);
-    candidatePlots_->setCandidateActivatedCallback([this](int row) {
-        if (row < 0 || row >= resultsTable_->rowCount()) return;
+    candidatePlots_->setCandidateActivatedCallback([this](int candidateIndex) {
+        const auto row = tableRowForCandidateIndex(candidateIndex);
+        if (row < 0) return;
         resultsTable_->selectRow(row);
-        showCandidateDetails(row);
+        showCandidateDetails(candidateIndex);
     });
 
     candidateDetailsWindow_ = new QDialog(nullptr, Qt::Window);
     candidateDetailsWindow_->setObjectName(
         QStringLiteral("optimizationCandidateDetailsWindow"));
-    candidateDetailsWindow_->setWindowTitle(tr("Candidate Frequency Results"));
+    candidateDetailsWindow_->setWindowTitle(tr("Optimization Candidate Preview"));
     candidateDetailsWindow_->setModal(false);
     candidateDetailsWindow_->setAttribute(Qt::WA_QuitOnClose, false);
     candidateDetailsWindow_->resize(900, 650);
@@ -1056,10 +1162,11 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     candidateDetailLabel_->setWordWrap(true);
     candidateDetailsTable_ = new QTableWidget(candidateDetailsWindow_);
     candidateDetailsTable_->setObjectName(QStringLiteral("optimizationCandidateDetails"));
-    candidateDetailsTable_->setColumnCount(7);
+    candidateDetailsTable_->setColumnCount(9);
     candidateDetailsTable_->setHorizontalHeaderLabels(
         {tr("Frequency (MHz)"), tr("SWR"), tr("R (Ω)"), tr("X (Ω)"),
-            tr("Gain (dBi)"), tr("F/B (dB)"), tr("F/R (dB)")});
+            tr("Gain (dBi)"), tr("F/B (dB)"), tr("F/R (dB)"),
+            tr("Theta (°)"), tr("Phi (°)")});
     candidateDetailsTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     candidateDetailsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     candidateDetailsTable_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -1068,6 +1175,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     candidateDetailPlots_ = new SweepPlotsView(candidateDetailsWindow_);
     candidateDetailPlots_->setObjectName(
         QStringLiteral("optimizationCandidateDetailPlots"));
+    candidateDetailPlots_->setReferenceControlVisible(false);
     candidateDirectionalPlots_ = new DirectionalMetricsView(candidateDetailsWindow_);
     candidateDetailViews_ = new QTabWidget(candidateDetailsWindow_);
     candidateDetailViews_->setObjectName(
@@ -1080,6 +1188,11 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     candidateDetailViews_->setTabEnabled(directionalTab, false);
     candidateDetailViews_->setTabToolTip(directionalTab, tr(
         "Available after a completed candidate evaluates a Gain, F/B, or F/R objective."));
+    compareCandidateButton_ = new QPushButton(tr("Compare with Last Analysis Run"),
+        candidateDetailsWindow_);
+    compareCandidateButton_->setObjectName(QStringLiteral("optimizationCompareCandidate"));
+    compareCandidateButton_->setToolTip(tr(
+        "Show this temporary candidate as a dashed overlay on the normal results from the last analysis run. The model is not changed and the solver is not run again."));
     applyCandidateButton_ = new QPushButton(tr("Apply This Candidate to Model"),
         candidateDetailsWindow_);
     applyCandidateButton_->setObjectName(QStringLiteral("optimizationApplyCandidate"));
@@ -1093,6 +1206,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         "Update the active model's optimized SY values, then start a normal analysis using the model's current requests."));
     auto* candidateActionRow = new QHBoxLayout;
     candidateActionRow->addStretch();
+    candidateActionRow->addWidget(compareCandidateButton_);
     candidateActionRow->addWidget(applyCandidateButton_);
     candidateActionRow->addWidget(applyCandidateAndRunButton_);
     detailLayout->addWidget(candidateDetailLabel_);
@@ -1110,6 +1224,12 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     resultsLayout->addWidget(progress_);
     resultsLayout->addWidget(statusLabel_);
     resultsLayout->addLayout(resultStatusRow);
+    auto* candidateHint = new QLabel(tr(
+        "Double-click to preview a candidate; right-click to compare it with the last analysis run, apply it, or apply and run."),
+        resultsPanel);
+    candidateHint->setObjectName(QStringLiteral("optimizationCandidateHint"));
+    candidateHint->setWordWrap(true);
+    resultsLayout->addWidget(candidateHint);
     auto* resultsSplitter = new QSplitter(Qt::Vertical, resultsPanel);
     resultsSplitter->setObjectName(QStringLiteral("optimizationResultsSplitter"));
     resultsSplitter->addWidget(resultsTable_);
@@ -1135,6 +1255,15 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     layout->addWidget(workspaceSplitter, 1);
 
     connect(variableControl_, &QComboBox::currentIndexChanged, this, [this] { updateBounds(); });
+    connect(directionalEvaluationModeControl_, &QComboBox::currentIndexChanged,
+        this, [this] { updateObjectiveControls(); });
+    connect(directionalEvaluationModeControl_, qOverload<int>(&QComboBox::activated),
+        this, [this](int) {
+            if (static_cast<analysis::DirectionalEvaluationMode>(
+                    directionalEvaluationModeControl_->currentData().toInt())
+                != analysis::DirectionalEvaluationMode::SpecifiedDirection)
+                seedDirectionFromLatestPattern();
+        });
     for (auto* control : {swrWeightControl_, resistanceWeightControl_,
              reactanceWeightControl_, forwardGainWeightControl_,
              frontToBackWeightControl_,
@@ -1144,6 +1273,15 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
             updateWorkload();
             updateReadiness();
         });
+    }
+    for (auto* control : {forwardGainWeightControl_, frontToBackWeightControl_,
+             frontToRearWeightControl_}) {
+        connect(control, &QDoubleSpinBox::valueChanged,
+            this, [this] { updateDirectionalSeedState(); });
+    }
+    for (auto* control : {forwardThetaControl_, forwardPhiControl_}) {
+        connect(control, &QDoubleSpinBox::valueChanged,
+            this, [this] { updateObjectiveControls(); });
     }
     for (auto row = 0; row < 6; ++row) {
         connect(objectiveValueControls_[row], &QDoubleSpinBox::valueChanged,
@@ -1167,12 +1305,30 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     connect(resetObjectiveDefaultsButton_, &QPushButton::clicked, this, [this] {
         auto defaults = analysis::OptimizationObjectiveSpec{};
         defaults.referenceImpedance = referenceImpedanceControl_->value();
+        defaults.directionalEvaluationMode =
+            analysis::DirectionalEvaluationMode::StrongestInAzimuthCut;
+        directionSetupConfigured_ = false;
         restoreObjectiveSetup(defaults);
         updateObjectiveControls();
     });
     connect(radiationComponentControl_, &QComboBox::currentIndexChanged, this, [this] {
+        updateLatestPatternPeakControls();
         updateWorkload();
         updateReadiness();
+    });
+    connect(useLatestPatternPeakButton_, &QPushButton::clicked,
+        this, [this] { useLatestPatternPeak(); });
+    connect(directionSetupButton_, &QPushButton::clicked,
+        this, [this] { chooseDirectionStrategy(); });
+    connect(findMaximumGainButton_, &QPushButton::clicked, this, [this] {
+        const auto setup = currentStudySetup();
+        if (setup.frequenciesMHz.empty() || !findMaximumGainCallback_) return;
+        maximumGainSearchRequested_ = true;
+        updateLatestPatternPeakControls();
+        if (!findMaximumGainCallback_(setup.frequenciesMHz.front())) {
+            maximumGainSearchRequested_ = false;
+            updateLatestPatternPeakControls();
+        }
     });
     connect(frequencyModeControl_, &QComboBox::currentIndexChanged,
         this, [this] { updateFrequencyControls(); });
@@ -1233,7 +1389,14 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     connect(addAmateurBandButton_, &QPushButton::clicked,
         this, [this] { chooseAmateurBands(); });
     connect(resultsTable_, &QTableWidget::cellDoubleClicked,
-        this, [this](int row, int) { showCandidateDetails(row); });
+        this, [this](int row, int) {
+            const auto candidateIndex = candidateIndexAtTableRow(row);
+            if (candidateIndex >= 0) showCandidateDetails(candidateIndex);
+        });
+    connect(resultsTable_, &QTableWidget::customContextMenuRequested,
+        this, [this](const QPoint& position) { showCandidateContextMenu(position); });
+    connect(resultsTable_->horizontalHeader(), &QHeaderView::sectionClicked,
+        this, [this](int column) { sortCandidateTable(column); });
     connect(variablesTable_, &QTableWidget::cellClicked, this, [this](int row, int) {
         const auto* item = variablesTable_->item(row, 1);
         const auto index = item == nullptr ? -1 : variableControl_->findText(item->text());
@@ -1248,6 +1411,8 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     connect(applyBestButton_, &QPushButton::clicked, this, [this] {
         applyCandidate(bestRow_, false);
     });
+    connect(compareCandidateButton_, &QPushButton::clicked,
+        this, [this] { compareCandidateWithActiveResults(detailCandidateRow_); });
     connect(applyCandidateButton_, &QPushButton::clicked,
         this, [this] { applyCandidate(detailCandidateRow_, false); });
     connect(applyCandidateAndRunButton_, &QPushButton::clicked,
@@ -1293,6 +1458,10 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
         updateReadiness();
         return;
     }
+    maximumGainDirectionStale_ = preserveFrequencySelection
+        && (maximumGainDirectionStale_ || !latestRadiation_.empty());
+    latestRadiation_.clear();
+    directionSetupConfigured_ = false;
     const auto resolution = nec::NecSymbolResolver{}.resolve(source_.toStdString());
     populateVariables(resolution);
     if (resolution.ok()) {
@@ -1327,10 +1496,27 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
     updateReadiness();
 }
 
+void OptimizationWorkspace::setLatestAnalysisResult(
+    const analysis::AnalysisResult& result)
+{
+    if (historicalSession_) return;
+    latestRadiation_ = result.radiation;
+    maximumGainSearchRequested_ = false;
+    maximumGainDirectionStale_ = false;
+    const auto objective = selectedObjective();
+    if (!directionSetupConfigured_
+        && objective.directionalEvaluationMode
+            != analysis::DirectionalEvaluationMode::SpecifiedDirection)
+        seedDirectionFromLatestPattern();
+    updateObjectiveControls();
+}
+
 void OptimizationWorkspace::setExternalRunActive(bool active)
 {
     externalRunActive_ = active;
+    if (!active) maximumGainSearchRequested_ = false;
     updateReadiness();
+    updateLatestPatternPeakControls();
 }
 
 void OptimizationWorkspace::setModelValid(bool valid)
@@ -1372,6 +1558,13 @@ void OptimizationWorkspace::setApplyAndRunCallback(
 {
     applyAndRunCallback_ = std::move(callback);
     updateReadiness();
+}
+
+void OptimizationWorkspace::setFindMaximumGainCallback(
+    std::function<bool(double)> callback)
+{
+    findMaximumGainCallback_ = std::move(callback);
+    updateLatestPatternPeakControls();
 }
 
 auto OptimizationWorkspace::isRunning() const noexcept -> bool
@@ -1475,12 +1668,9 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
     auto restoredObjective = analysis::OptimizationObjectiveSpec{};
     for (std::size_t index = 0; index < candidateRecords.size(); ++index) {
         const auto row = static_cast<int>(index);
-        resultsTable_->setItem(row, GainColumn,
-            new QTableWidgetItem(QStringLiteral("—")));
-        resultsTable_->setItem(row, FrontToBackColumn,
-            new QTableWidgetItem(QStringLiteral("—")));
-        resultsTable_->setItem(row, FrontToRearColumn,
-            new QTableWidgetItem(QStringLiteral("—")));
+        for (auto column = static_cast<int>(ScoreColumn);
+             column <= static_cast<int>(FrontToRearColumn); ++column)
+            resultsTable_->setItem(row, column, unavailableResultItem());
         QFile metadataFile(QDir(candidateRecords[index].directory).filePath(
             QStringLiteral("optimization.json")));
         const auto metadata = metadataFile.open(QIODevice::ReadOnly)
@@ -1525,6 +1715,10 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
             QStringLiteral("forwardThetaDegrees")).toDouble(90.0);
         restoredObjective.forwardPhiDegrees = metadata.value(
             QStringLiteral("forwardPhiDegrees")).toDouble();
+        restoredObjective.directionalEvaluationMode =
+            static_cast<analysis::DirectionalEvaluationMode>(metadata.value(
+                QStringLiteral("directionalEvaluationMode")).toInt(
+                    static_cast<int>(analysis::DirectionalEvaluationMode::SpecifiedDirection)));
         restoredObjective.radiationComponent = static_cast<analysis::RadiationComponent>(
             metadata.value(QStringLiteral("radiationComponent")).toInt(
                 static_cast<int>(analysis::RadiationComponent::Total)));
@@ -1589,7 +1783,7 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
             resultsTable_->setItem(row, FrequencyColumn,
                 evaluation->evaluatedFrequencyCount == 1
                     ? numericItem(evaluation->evaluationFrequencyMHz)
-                    : new QTableWidgetItem(QStringLiteral("—")));
+                    : unavailableResultItem());
             if (evaluation->feedpoint) {
                 resultsTable_->setItem(row, SwrColumn, numericItem(evaluation->swr));
                 resultsTable_->setItem(row, ResistanceColumn,
@@ -1599,13 +1793,13 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
             }
             resultsTable_->setItem(row, GainColumn, evaluation->forwardGainDb
                 ? numericItem(*evaluation->forwardGainDb)
-                : new QTableWidgetItem(QStringLiteral("—")));
+                : unavailableResultItem());
             resultsTable_->setItem(row, FrontToBackColumn, evaluation->frontToBackDb
                 ? numericItem(*evaluation->frontToBackDb)
-                : new QTableWidgetItem(QStringLiteral("—")));
+                : unavailableResultItem());
             resultsTable_->setItem(row, FrontToRearColumn, evaluation->frontToRearDb
                 ? numericItem(*evaluation->frontToRearDb)
-                : new QTableWidgetItem(QStringLiteral("—")));
+                : unavailableResultItem());
             if (evaluation->score < bestScore_) {
                 bestScore_ = evaluation->score;
                 bestRow_ = row;
@@ -1624,8 +1818,11 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         if (!evaluation && candidateRecords[index].status != QStringLiteral("Completed"))
             candidate.failureDetail = candidateRecords[index].summary;
         candidates_.push_back(std::move(candidate));
-        resultsTable_->setItem(row, ValueColumn,
-            new QTableWidgetItem(candidateDescription(candidates_.back())));
+        auto* valueItem = new SortableResultItem(
+            candidateDescription(candidates_.back()), candidates_.back().value);
+        valueItem->setData(CandidateIndexRole, row);
+        valueItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        resultsTable_->setItem(row, ValueColumn, valueItem);
         setCandidateStatus(row, candidateRecords[index].status);
         updateCandidateRowToolTip(row);
     }
@@ -1650,8 +1847,10 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
     progress_->setValue(static_cast<int>(candidateRecords.size()));
     progress_->setFormat(tr("Complete — %v candidates"));
     candidateIndex_ = candidates_.size();
+    applyCandidateSort();
     if (bestRow_ >= 0) {
-        resultsTable_->selectRow(bestRow_);
+        const auto bestTableRow = tableRowForCandidateIndex(bestRow_);
+        if (bestTableRow >= 0) resultsTable_->selectRow(bestTableRow);
     }
     updateWorkload();
     updateReadiness();
@@ -1824,10 +2023,185 @@ void OptimizationWorkspace::updateObjectiveControls()
                 || goal == analysis::OptimizationGoal::GoodEnough));
     }
     resultsTable_->horizontalHeaderItem(ScoreColumn)->setText(tr("Objective Score"));
-    forwardThetaControl_->setEnabled(directional && !isRunning() && !historicalSession_);
-    forwardPhiControl_->setEnabled(directional && !isRunning() && !historicalSession_);
+    const auto fixedDirection = objective.directionalEvaluationMode
+        == analysis::DirectionalEvaluationMode::SpecifiedDirection;
+    const auto azimuthCut = objective.directionalEvaluationMode
+        == analysis::DirectionalEvaluationMode::StrongestInAzimuthCut;
+    const auto trackedCut = !fixedDirection;
+    directionalEvaluationModeControl_->setEnabled(directional && editable);
+    directionSetupButton_->setEnabled(editable);
+    forwardThetaControl_->setEnabled(directional && editable
+        && (fixedDirection || azimuthCut));
+    forwardPhiControl_->setEnabled(directional && editable
+        && (fixedDirection || !azimuthCut));
+    forwardThetaLabel_->setText(azimuthCut
+        ? tr("Cut theta (90° = horizon)") : tr("Forward theta"));
+    forwardPhiLabel_->setText(!fixedDirection && !azimuthCut
+        ? tr("Elevation-cut phi") : tr("Forward phi"));
+    if (azimuthCut) {
+        directionSetupSummaryLabel_->setText(tr(
+            "Azimuth pattern · strongest gain · elevation %1°")
+            .arg(formatDecimal(90.0 - objective.forwardThetaDegrees)));
+    } else if (!fixedDirection) {
+        directionSetupSummaryLabel_->setText(tr(
+            "Elevation pattern · strongest gain · azimuth %1°")
+            .arg(formatDecimal(objective.forwardPhiDegrees)));
+    } else {
+        directionSetupSummaryLabel_->setText(tr(
+            "Specific direction · elevation %1°, azimuth %2°")
+            .arg(formatDecimal(90.0 - objective.forwardThetaDegrees),
+                formatDecimal(objective.forwardPhiDegrees)));
+    }
     radiationComponentControl_->setEnabled(directional && !isRunning() && !historicalSession_);
+    auto* gainCriterion = objectiveCriteriaTable_->item(3, 0);
+    gainCriterion->setText(trackedCut
+        ? tr("Peak Gain in Cut (dBi)") : tr("Gain at Direction (dBi)"));
+    gainCriterion->setToolTip(trackedCut
+        ? tr("Highest gain found in the selected azimuth or elevation cut.")
+        : tr("Gain at the specified physical theta and phi direction."));
+    resultsTable_->horizontalHeaderItem(GainColumn)->setText(trackedCut
+        ? tr("Peak Gain (dBi)") : tr("Gain (dBi)"));
+    resultsTable_->horizontalHeaderItem(GainColumn)->setToolTip(trackedCut
+        ? tr("Highest gain found in the selected cut for this candidate.")
+        : tr("Gain at the specified theta, phi, frequency, and radiation component."));
+    updateLatestPatternPeakControls();
     updateFrequencyControls();
+}
+
+void OptimizationWorkspace::updateLatestPatternPeakControls()
+{
+    const auto setup = currentStudySetup();
+    const auto targetFrequencyMHz = setup.frequenciesMHz.empty()
+        ? 0.0 : setup.frequenciesMHz.front();
+    const auto component = static_cast<analysis::RadiationComponent>(
+        radiationComponentControl_->currentData().toInt());
+    const auto peak = analysis::radiationPeakAtNearestFrequency(
+        latestRadiation_, component, targetFrequencyMHz);
+    const auto editable = !isRunning() && !historicalSession_;
+    const auto usable = peak && peak->sampleCount > 1;
+    findMaximumGainButton_->setText(maximumGainSearchRequested_
+            ? tr("Finding Maximum…")
+            : usable || maximumGainDirectionStale_
+                ? tr("Update Maximum…") : tr("Find Maximum Gain…"));
+    findMaximumGainButton_->setEnabled(editable && !externalRunActive_
+        && modelValid_ && static_cast<bool>(findMaximumGainCallback_)
+        && !maximumGainSearchRequested_);
+    useLatestPatternPeakButton_->setEnabled(editable && usable);
+    const auto mode = static_cast<analysis::DirectionalEvaluationMode>(
+        directionalEvaluationModeControl_->currentData().toInt());
+    useLatestPatternPeakButton_->setText(mode
+            == analysis::DirectionalEvaluationMode::SpecifiedDirection
+        ? tr("Use Latest Pattern Peak") : tr("Use Latest Peak to Set Cut"));
+    if (usable) {
+        auto status = tr(
+            "%1 dBi at elevation %2°, azimuth %3° · %4 MHz")
+            .arg(formatDecimal(peak->metrics.peakGainDb))
+            .arg(formatDecimal(90.0 - peak->metrics.peakThetaDegrees))
+            .arg(formatDecimal(peak->metrics.peakPhiDegrees))
+            .arg(formatDecimal(peak->frequencyMHz));
+        if (mode != analysis::DirectionalEvaluationMode::SpecifiedDirection) {
+            const auto cutAngle = mode
+                    == analysis::DirectionalEvaluationMode::StrongestInAzimuthCut
+                ? forwardThetaControl_->value() : forwardPhiControl_->value();
+            const auto cutMetrics = analysis::radiationTrackedCutFrequencyMetrics(
+                latestRadiation_, component, mode, cutAngle);
+            const auto nearest = std::ranges::min_element(cutMetrics, {},
+                [targetFrequencyMHz](const auto& metrics) {
+                    return std::abs(metrics.frequencyMHz - targetFrequencyMHz);
+                });
+            if (nearest != cutMetrics.end()
+                && nearest->forwardAvailability
+                    == analysis::RadiationMetricAvailability::PatternNull) {
+                status += mode
+                        == analysis::DirectionalEvaluationMode::StrongestInAzimuthCut
+                    ? tr(" · Warning: θ %1° cut contains only pattern nulls; latest peak suggests θ %2°")
+                          .arg(formatDecimal(cutAngle))
+                          .arg(formatDecimal(peak->metrics.peakThetaDegrees))
+                    : tr(" · Warning: φ %1° cut contains only pattern nulls; latest peak suggests φ %2°")
+                          .arg(formatDecimal(cutAngle))
+                          .arg(formatDecimal(peak->metrics.peakPhiDegrees));
+            }
+        }
+        latestPatternPeakLabel_->setText(status);
+        return;
+    }
+    latestPatternPeakLabel_->setText(maximumGainDirectionStale_
+        ? tr("Maximum-gain direction is stale because the model changed. Run again to update it.")
+        : latestRadiation_.empty()
+            ? tr("Run the active model with a radiation pattern first.")
+            : tr("The latest run has no usable multi-angle pattern near the optimization frequencies."));
+}
+
+void OptimizationWorkspace::updateDirectionalSeedState()
+{
+    const auto objective = selectedObjective();
+    const auto directional = objective.forwardGainWeight > 0.0
+        || objective.frontToBackWeight > 0.0
+        || objective.frontToRearWeight > 0.0;
+    if (!directional) {
+        directionalObjectiveWasEnabled_ = false;
+        return;
+    }
+    if (directionalObjectiveWasEnabled_) return;
+    directionalObjectiveWasEnabled_ = true;
+    if (objective.directionalEvaluationMode
+        != analysis::DirectionalEvaluationMode::SpecifiedDirection)
+        seedDirectionFromLatestPattern();
+}
+
+void OptimizationWorkspace::seedDirectionFromLatestPattern()
+{
+    const auto setup = currentStudySetup();
+    if (setup.frequenciesMHz.empty()) return;
+    const auto component = static_cast<analysis::RadiationComponent>(
+        radiationComponentControl_->currentData().toInt());
+    const auto peak = analysis::radiationPeakAtNearestFrequency(
+        latestRadiation_, component, setup.frequenciesMHz.front());
+    if (!peak || peak->sampleCount <= 1) return;
+    const auto mode = static_cast<analysis::DirectionalEvaluationMode>(
+        directionalEvaluationModeControl_->currentData().toInt());
+    if (mode != analysis::DirectionalEvaluationMode::StrongestInElevationCut)
+        forwardThetaControl_->setValue(peak->metrics.peakThetaDegrees);
+    if (mode != analysis::DirectionalEvaluationMode::StrongestInAzimuthCut)
+        forwardPhiControl_->setValue(peak->metrics.peakPhiDegrees);
+    updateLatestPatternPeakControls();
+}
+
+void OptimizationWorkspace::chooseDirectionStrategy()
+{
+    const auto wasConfigured = directionSetupConfigured_;
+    if (!directionSetupConfigured_) seedDirectionFromLatestPattern();
+    const auto setup = currentStudySetup();
+    const auto targetFrequencyMHz = setup.frequenciesMHz.empty()
+        ? targetFrequencyControl_->value() : setup.frequenciesMHz.front();
+    DirectionStrategyDialog dialog(latestRadiation_, targetFrequencyMHz,
+        static_cast<analysis::RadiationComponent>(
+            radiationComponentControl_->currentData().toInt()),
+        static_cast<analysis::DirectionalEvaluationMode>(
+            directionalEvaluationModeControl_->currentData().toInt()),
+        forwardThetaControl_->value(), forwardPhiControl_->value(), objectiveDialog_);
+    const auto originalMode = static_cast<analysis::DirectionalEvaluationMode>(
+        directionalEvaluationModeControl_->currentData().toInt());
+    const auto originalTheta = forwardThetaControl_->value();
+    const auto originalPhi = forwardPhiControl_->value();
+    if (dialog.exec() != QDialog::Accepted) return;
+    const auto changed = dialog.mode() != originalMode
+            || !nearlyEqual(dialog.thetaDegrees(), originalTheta)
+            || !nearlyEqual(dialog.phiDegrees(), originalPhi);
+    directionSetupConfigured_ = dialog.usesLatestPatternPeak()
+        ? false : changed || wasConfigured;
+    const auto modeIndex = directionalEvaluationModeControl_->findData(
+        static_cast<int>(dialog.mode()));
+    if (modeIndex >= 0) directionalEvaluationModeControl_->setCurrentIndex(modeIndex);
+    forwardThetaControl_->setValue(dialog.thetaDegrees());
+    forwardPhiControl_->setValue(dialog.phiDegrees());
+    updateObjectiveControls();
+}
+
+void OptimizationWorkspace::useLatestPatternPeak()
+{
+    seedDirectionFromLatestPattern();
+    updateObjectiveControls();
 }
 
 void OptimizationWorkspace::updateFrequencyControls()
@@ -1903,8 +2277,11 @@ void OptimizationWorkspace::updateSetupSummaries()
     const std::array weights{setup.objective.swrWeight, setup.objective.resistanceWeight,
         setup.objective.reactanceWeight, setup.objective.forwardGainWeight,
         setup.objective.frontToBackWeight, setup.objective.frontToRearWeight};
+    const auto gainName = setup.objective.directionalEvaluationMode
+            == analysis::DirectionalEvaluationMode::SpecifiedDirection
+        ? tr("gain at the specified direction") : tr("peak gain in the selected cut");
     const std::array names{tr("SWR"), tr("resistance"), tr("reactance"),
-        tr("forward gain"), tr("F/B"), tr("F/R")};
+        gainName, tr("F/B"), tr("F/R")};
     const std::array units{QString{}, tr(" Ω"), tr(" Ω"), tr(" dBi"), tr(" dB"), tr(" dB")};
     const std::array goals{setup.objective.swrGoal, setup.objective.resistanceGoal,
         setup.objective.reactanceGoal, setup.objective.forwardGainGoal,
@@ -1928,9 +2305,28 @@ void OptimizationWorkspace::updateSetupSummaries()
         criteria.append(objectiveSentence(names[row], units[row], goals[row],
             directions[row], aggregations[row], targets[row], weights[row]));
     }
+    QString directionSummary;
+    if (setup.objective.directionalEvaluationMode
+        == analysis::DirectionalEvaluationMode::StrongestInAzimuthCut) {
+        directionSummary = tr("\nTrack peak in azimuth cut at θ %1°")
+            .arg(formatDecimal(setup.objective.forwardThetaDegrees));
+    } else if (setup.objective.directionalEvaluationMode
+        == analysis::DirectionalEvaluationMode::StrongestInElevationCut) {
+        directionSummary = tr("\nTrack peak in elevation cut at φ %1°")
+            .arg(formatDecimal(setup.objective.forwardPhiDegrees));
+    } else {
+        directionSummary = tr("\nEvaluate fixed direction θ %1°, φ %2°")
+            .arg(formatDecimal(setup.objective.forwardThetaDegrees))
+            .arg(formatDecimal(setup.objective.forwardPhiDegrees));
+    }
     objectiveSummaryLabel_->setText(tr("Reference Z %1 Ω\n%2")
         .arg(formatDecimal(setup.objective.referenceImpedance))
-        .arg(criteria.isEmpty() ? tr("No enabled criteria") : criteria.join(QLatin1Char('\n'))));
+        .arg(criteria.isEmpty() ? tr("No enabled criteria") : criteria.join(QLatin1Char('\n')))
+        + (setup.objective.forwardGainWeight > 0.0
+                || setup.objective.frontToBackWeight > 0.0
+                || setup.objective.frontToRearWeight > 0.0
+            ? directionSummary
+            : QString{}));
     objectiveExplanationLabel_->setText(criteria.isEmpty()
         ? tr("No criteria are enabled. Set at least one weight above zero.")
         : criteria.join(QLatin1Char('\n')));
@@ -1951,11 +2347,26 @@ void OptimizationWorkspace::updateWorkload()
             .arg(candidateCount).arg(frequencyCount)
             .arg(frequencyCount == 1 ? tr("frequency") : tr("frequencies"))
             .arg(static_cast<qulonglong>(candidateCount * frequencyCount));
-    const auto directionalSamplesPerFrequency = setup.objective.frontToRearWeight > 0.0
-        ? 38U
-        : (setup.objective.forwardGainWeight > 0.0
-            || setup.objective.frontToBackWeight > 0.0 ? 1U : 0U)
-            + (setup.objective.frontToBackWeight > 0.0 ? 1U : 0U);
+    const auto directionalEnabled = setup.objective.forwardGainWeight > 0.0
+        || setup.objective.frontToBackWeight > 0.0
+        || setup.objective.frontToRearWeight > 0.0;
+    auto directionalSamplesPerFrequency = 0U;
+    if (directionalEnabled) {
+        if (setup.objective.directionalEvaluationMode
+            == analysis::DirectionalEvaluationMode::StrongestInAzimuthCut) {
+            directionalSamplesPerFrequency = 72U;
+            if ((setup.objective.frontToBackWeight > 0.0
+                    || setup.objective.frontToRearWeight > 0.0)
+                && std::abs(setup.objective.forwardThetaDegrees - 90.0) > 1.0e-6)
+                directionalSamplesPerFrequency = 144U;
+        } else if (setup.objective.directionalEvaluationMode
+            == analysis::DirectionalEvaluationMode::StrongestInElevationCut) {
+            directionalSamplesPerFrequency = 37U;
+        } else {
+            directionalSamplesPerFrequency = setup.objective.frontToRearWeight > 0.0
+                ? 38U : 1U + (setup.objective.frontToBackWeight > 0.0 ? 1U : 0U);
+        }
+    }
     if (directionalSamplesPerFrequency > 0) {
         workload += tr(" · %1 directional RP samples")
             .arg(static_cast<qulonglong>(candidateCount * frequencyCount
@@ -2213,6 +2624,10 @@ void OptimizationWorkspace::restoreObjectiveSetup(
     }
     forwardThetaControl_->setValue(objective.forwardThetaDegrees);
     forwardPhiControl_->setValue(objective.forwardPhiDegrees);
+    const auto directionModeIndex = directionalEvaluationModeControl_->findData(
+        static_cast<int>(objective.directionalEvaluationMode));
+    if (directionModeIndex >= 0)
+        directionalEvaluationModeControl_->setCurrentIndex(directionModeIndex);
     const auto componentIndex = radiationComponentControl_->findData(
         static_cast<int>(objective.radiationComponent));
     if (componentIndex >= 0) radiationComponentControl_->setCurrentIndex(componentIndex);
@@ -2258,8 +2673,8 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
     analysis::AnalysisResult candidateAnalysis;
     candidateAnalysis.feedpoints = feedpoints;
     candidateAnalysis.radiation = candidate.radiation;
-    const auto evaluation = analysis::evaluateOptimizationObjective(
-        candidateAnalysis, activeObjective_);
+    const auto evaluation = candidate.evaluation
+        ? candidate.evaluation : candidate.availableMeasurements;
     const auto detailRows = evaluation ? evaluation->frequencyMetrics.size() : feedpoints.size();
     candidateDetailsTable_->setRowCount(static_cast<int>(detailRows));
     for (std::size_t index = 0; index < detailRows; ++index) {
@@ -2286,7 +2701,11 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
             optionalNumericItem(metrics.frontToBackDb));
         candidateDetailsTable_->setItem(detailRow, 6,
             optionalNumericItem(metrics.frontToRearDb));
-        if (evaluation && evaluation->evaluatedFrequencyCount == 1
+        candidateDetailsTable_->setItem(detailRow, 7,
+            optionalNumericItem(metrics.forwardThetaDegrees));
+        candidateDetailsTable_->setItem(detailRow, 8,
+            optionalNumericItem(metrics.forwardPhiDegrees));
+        if (candidate.evaluation && evaluation->evaluatedFrequencyCount == 1
             && std::abs(evaluation->evaluationFrequencyMHz - metrics.frequencyMHz) < 1.0e-9) {
             for (auto column = 0; column < candidateDetailsTable_->columnCount(); ++column) {
                 auto* item = candidateDetailsTable_->item(detailRow, column);
@@ -2297,7 +2716,7 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
         }
     }
     QStringList breakdown;
-    if (evaluation) {
+    if (candidate.evaluation) {
         breakdown.append(evaluation->evaluatedFrequencyCount == 1
             ? tr("Score %1 at %2 MHz")
                 .arg(formatDecimal(evaluation->score))
@@ -2342,7 +2761,10 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
                 evaluation->reactanceComponent, tr(" Ω"));
         }
         if (evaluation->forwardGainDb) {
-            addCriterion(tr("Forward gain"), activeObjective_.forwardGainWeight,
+            addCriterion(activeObjective_.directionalEvaluationMode
+                    == analysis::DirectionalEvaluationMode::SpecifiedDirection
+                    ? tr("Gain at direction") : tr("Peak gain in cut"),
+                activeObjective_.forwardGainWeight,
                 activeObjective_.forwardGainGoal,
                 activeObjective_.forwardGainGoodEnoughDirection,
                 activeObjective_.forwardGainAggregation,
@@ -2379,13 +2801,41 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
         addSummary(tr("Gain"), tr("dBi"), evaluation->forwardGainSummary);
         addSummary(tr("F/B"), tr("dB"), evaluation->frontToBackSummary);
         addSummary(tr("F/R"), tr("dB"), evaluation->frontToRearSummary);
+        if (activeObjective_.directionalEvaluationMode
+            != analysis::DirectionalEvaluationMode::SpecifiedDirection) {
+            const auto firstDirection = std::ranges::find_if(
+                evaluation->frequencyMetrics, [](const auto& metrics) {
+                    return metrics.forwardThetaDegrees && metrics.forwardPhiDegrees;
+                });
+            if (firstDirection != evaluation->frequencyMetrics.end()) {
+                const auto directionVaries = std::ranges::any_of(
+                    evaluation->frequencyMetrics, [&firstDirection](const auto& metrics) {
+                        return metrics.forwardThetaDegrees && metrics.forwardPhiDegrees
+                            && (std::abs(*metrics.forwardThetaDegrees
+                                    - *firstDirection->forwardThetaDegrees) > 1.0e-6
+                                || std::abs(*metrics.forwardPhiDegrees
+                                    - *firstDirection->forwardPhiDegrees) > 1.0e-6);
+                    });
+                breakdown.append(directionVaries
+                    ? tr("Tracked lobe direction varies by frequency; see Theta/Phi columns")
+                    : tr("Tracked lobe direction θ %1°, φ %2°")
+                          .arg(formatDecimal(*firstDirection->forwardThetaDegrees))
+                          .arg(formatDecimal(*firstDirection->forwardPhiDegrees)));
+            }
+        }
+    }
+    if (!candidate.evaluation && candidate.availableMeasurements) {
+        breakdown.append(tr("Objective unavailable: %1").arg(candidate.failureDetail));
+        breakdown.append(tr("Available measurements retained across %1 frequencies")
+            .arg(candidate.availableMeasurements->evaluatedFrequencyCount));
     }
     candidateDetailLabel_->setText(tr(
         "Optimization Candidate — %1 · %2 frequencies · %3\n%4\n"
-        "This is candidate data and does not represent the active model's official results.")
+        "Candidate preview from a temporary optimization evaluation; the active model's "
+        "normal Results remain separate.")
         .arg(candidateDescription(candidate))
         .arg(feedpoints.size())
-        .arg(evaluation && evaluation->evaluatedFrequencyCount == 1
+        .arg(candidate.evaluation && evaluation->evaluatedFrequencyCount == 1
                 ? tr("evaluated frequency bold") : tr("per-criterion frequency reductions"))
         .arg(breakdown.isEmpty() ? tr("Objective breakdown unavailable")
                                  : breakdown.join(tr(" · "))));
@@ -2405,12 +2855,25 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
         : tr("Unavailable because this candidate did not evaluate a Gain, F/B, or F/R objective."));
     if (!hasDirectionalMetrics && candidateDetailViews_->currentIndex() == directionalTab)
         candidateDetailViews_->setCurrentIndex(0);
-    if (evaluation && evaluation->evaluatedFrequencyCount == 1) {
+    if (candidate.evaluation && evaluation->evaluatedFrequencyCount == 1) {
         candidateDetailPlots_->setSelectedFrequency(
             evaluation->evaluationFrequencyMHz);
         candidateDirectionalPlots_->setSelectedFrequency(
             evaluation->evaluationFrequencyMHz);
     }
+    updateCandidateActionState();
+}
+
+void OptimizationWorkspace::setCompareCandidateCallback(
+    std::function<bool(const analysis::AnalysisResult&, QString)> callback)
+{
+    compareCandidateCallback_ = std::move(callback);
+    updateCandidateActionState();
+}
+
+void OptimizationWorkspace::setActiveResultsAvailable(bool available)
+{
+    activeResultsAvailable_ = available;
     updateCandidateActionState();
 }
 
@@ -2420,7 +2883,8 @@ void OptimizationWorkspace::resetCandidateDetails()
     detailCandidateRow_ = -1;
     candidateDetailsTable_->setRowCount(0);
     candidateDetailLabel_->setText(
-        tr("Double-click a completed candidate to view its frequency table and plots."));
+        tr("Optimization candidate preview — not the active model's normal analysis results.\n"
+           "Double-click a completed candidate to view its frequency table and plots."));
     candidateDetailPlots_->setResults({}, tr("a selected candidate"));
     candidateDirectionalPlots_->setResults({});
     candidateDetailViews_->setTabEnabled(directionalTab, false);
@@ -2433,12 +2897,118 @@ void OptimizationWorkspace::resetCandidateDetails()
 
 void OptimizationWorkspace::updateCandidateActionState()
 {
-    const auto validCandidate = detailCandidateRow_ >= 0
-        && static_cast<std::size_t>(detailCandidateRow_) < candidates_.size()
-        && candidates_[static_cast<std::size_t>(detailCandidateRow_)].evaluation.has_value();
+    const auto candidateIndexValid = detailCandidateRow_ >= 0
+        && static_cast<std::size_t>(detailCandidateRow_) < candidates_.size();
+    const auto* candidate = candidateIndexValid
+        ? &candidates_[static_cast<std::size_t>(detailCandidateRow_)] : nullptr;
+    const auto validCandidate = candidate != nullptr && candidate->evaluation.has_value();
+    const auto comparable = candidate != nullptr
+        && (!candidate->feedpoints.empty() || !candidate->radiation.empty());
     const auto editable = validCandidate && !historicalSession_ && modelValid_ && !isRunning();
+    compareCandidateButton_->setEnabled(comparable && activeResultsAvailable_
+        && static_cast<bool>(compareCandidateCallback_));
     applyCandidateButton_->setEnabled(editable && static_cast<bool>(applyParameterCallback_));
     applyCandidateAndRunButton_->setEnabled(editable && static_cast<bool>(applyAndRunCallback_));
+}
+
+void OptimizationWorkspace::showCandidateContextMenu(const QPoint& position)
+{
+    const auto index = resultsTable_->indexAt(position);
+    if (!index.isValid()) return;
+    const auto row = index.row();
+    const auto candidateIndex = candidateIndexAtTableRow(row);
+    if (candidateIndex < 0
+        || static_cast<std::size_t>(candidateIndex) >= candidates_.size()) return;
+    resultsTable_->selectRow(row);
+
+    const auto& candidate = candidates_[static_cast<std::size_t>(candidateIndex)];
+    const auto hasDetails = candidate.evaluation.has_value()
+        || candidate.availableMeasurements.has_value() || !candidate.feedpoints.empty();
+    const auto editable = candidate.evaluation.has_value() && !historicalSession_
+        && modelValid_ && !isRunning();
+
+    QMenu menu(resultsTable_);
+    menu.setToolTipsVisible(true);
+    auto* inspectAction = menu.addAction(tr("Open Candidate Results"));
+    inspectAction->setEnabled(hasDetails);
+    auto* compareAction = menu.addAction(tr("Compare Candidate with Last Analysis Run"));
+    compareAction->setEnabled(hasDetails && activeResultsAvailable_
+        && static_cast<bool>(compareCandidateCallback_));
+    compareAction->setToolTip(activeResultsAvailable_
+        ? tr("Show this candidate as a dashed comparison overlay on the normal Results from the last analysis run.")
+        : tr("Run or load a normal analysis before comparing this candidate."));
+    menu.addSeparator();
+    auto* applyAction = menu.addAction(tr("Apply Candidate to Model"));
+    applyAction->setEnabled(editable && static_cast<bool>(applyParameterCallback_));
+    auto* applyAndRunAction = menu.addAction(tr("Apply Candidate and Run Analysis"));
+    applyAndRunAction->setEnabled(editable && static_cast<bool>(applyAndRunCallback_));
+
+    const auto* selected = menu.exec(resultsTable_->viewport()->mapToGlobal(position));
+    if (selected == inspectAction) showCandidateDetails(candidateIndex);
+    else if (selected == compareAction) compareCandidateWithActiveResults(candidateIndex);
+    else if (selected == applyAction) applyCandidate(candidateIndex, false);
+    else if (selected == applyAndRunAction) applyCandidate(candidateIndex, true);
+}
+
+void OptimizationWorkspace::compareCandidateWithActiveResults(int candidateIndex)
+{
+    if (!activeResultsAvailable_ || !compareCandidateCallback_
+        || candidateIndex < 0
+        || static_cast<std::size_t>(candidateIndex) >= candidates_.size()) return;
+    const auto& candidate = candidates_[static_cast<std::size_t>(candidateIndex)];
+    if (candidate.feedpoints.empty() && candidate.radiation.empty()) return;
+    analysis::AnalysisResult result;
+    result.feedpoints = candidate.feedpoints;
+    result.radiation = candidate.radiation;
+    result.referenceImpedanceOhms = activeObjective_.referenceImpedance;
+    const auto label = tr("Optimization Candidate — %1").arg(candidateDescription(candidate));
+    if (compareCandidateCallback_(result, label)) {
+        statusLabel_->setText(tr(
+            "Candidate comparison opened in Results; the last analysis run remains the primary result."));
+    }
+}
+
+void OptimizationWorkspace::sortCandidateTable(int column)
+{
+    if (isRunning() || column < ValueColumn || column > FrontToRearColumn) return;
+    const auto naturalOrder = column >= GainColumn && column <= FrontToRearColumn
+        ? Qt::DescendingOrder : Qt::AscendingOrder;
+    if (candidateSortColumn_ == column) {
+        candidateSortOrder_ = candidateSortOrder_ == Qt::AscendingOrder
+            ? Qt::DescendingOrder : Qt::AscendingOrder;
+    } else {
+        candidateSortColumn_ = column;
+        candidateSortOrder_ = naturalOrder;
+    }
+    applyCandidateSort();
+}
+
+void OptimizationWorkspace::applyCandidateSort()
+{
+    if (candidateSortColumn_ < ValueColumn || candidateSortColumn_ > FrontToRearColumn)
+        return;
+    resultsTable_->horizontalHeader()->setSortIndicator(
+        candidateSortColumn_, candidateSortOrder_);
+    resultsTable_->horizontalHeader()->setSortIndicatorShown(true);
+    resultsTable_->sortItems(candidateSortColumn_, candidateSortOrder_);
+}
+
+auto OptimizationWorkspace::candidateIndexAtTableRow(int row) const -> int
+{
+    if (row < 0 || row >= resultsTable_->rowCount()) return -1;
+    const auto* item = resultsTable_->item(row, ValueColumn);
+    if (item == nullptr) return -1;
+    auto valid = false;
+    const auto candidateIndex = item->data(CandidateIndexRole).toInt(&valid);
+    return valid ? candidateIndex : -1;
+}
+
+auto OptimizationWorkspace::tableRowForCandidateIndex(int candidateIndex) const -> int
+{
+    for (auto row = 0; row < resultsTable_->rowCount(); ++row) {
+        if (candidateIndexAtTableRow(row) == candidateIndex) return row;
+    }
+    return -1;
 }
 
 auto OptimizationWorkspace::candidateParameterValues(int row) const
@@ -2482,16 +3052,20 @@ void OptimizationWorkspace::updateCandidateRowToolTip(int row)
 {
     if (row < 0 || static_cast<std::size_t>(row) >= candidates_.size()) return;
     const auto& candidate = candidates_[static_cast<std::size_t>(row)];
+    const auto tableRow = tableRowForCandidateIndex(row);
+    if (tableRow < 0) return;
     const auto hasDetails = !candidate.feedpoints.empty();
-    const auto* statusItem = resultsTable_->item(row, StatusColumn);
+    const auto* statusItem = resultsTable_->item(tableRow, StatusColumn);
     const auto inProgress = statusItem != nullptr
         && (statusItem->text() == tr("Pending") || statusItem->text() == tr("Running"));
     auto toolTip = hasDetails
-        ? tr("Double-click to view the frequency table, SWR, and impedance plots for this candidate.")
+        ? tr("Double-click to inspect this candidate. Right-click to apply it or apply and run.")
         : inProgress
             ? tr("Frequency details will be available after this candidate completes.")
             : tr("Frequency details are unavailable because this candidate did not complete with impedance results.");
     if (candidate.evaluation) {
+        toolTip += tr("\nFull objective score: %1.")
+            .arg(candidate.evaluation->score, 0, 'f', 6);
         toolTip += candidate.evaluation->evaluatedFrequencyCount == 1
             ? tr("\nObjective evaluated at %1 MHz.")
                 .arg(formatDecimal(candidate.evaluation->evaluationFrequencyMHz))
@@ -2507,10 +3081,12 @@ void OptimizationWorkspace::updateCandidateRowToolTip(int row)
             toolTip += tr(" Reduced F/R: %1 dB.")
                 .arg(formatDecimal(*candidate.evaluation->frontToRearDb));
     }
+    if (!candidate.evaluation && candidate.availableMeasurements)
+        toolTip += tr("\nAvailable measurements are shown, but this candidate has no objective score.");
     if (!candidate.failureDetail.isEmpty())
         toolTip += tr("\nFailure: %1").arg(candidate.failureDetail);
     for (auto column = 0; column < resultsTable_->columnCount(); ++column) {
-        if (auto* item = resultsTable_->item(row, column)) item->setToolTip(toolTip);
+        if (auto* item = resultsTable_->item(tableRow, column)) item->setToolTip(toolTip);
     }
 }
 
@@ -2565,6 +3141,7 @@ void OptimizationWorkspace::updateReadiness()
         : !hasObjective ? tr("Set at least one objective weight above zero.")
         : QString{});
     cancelButton_->setEnabled(isRunning());
+    resultsTable_->horizontalHeader()->setSectionsClickable(!isRunning());
     applyBestButton_->setEnabled(!historicalSession_ && modelValid_ && !isRunning()
         && bestRow_ >= 0 && static_cast<std::size_t>(bestRow_) < candidates_.size()
         && static_cast<bool>(applyParameterCallback_));
@@ -2601,9 +3178,15 @@ void OptimizationWorkspace::updateReadiness()
             && (goal == analysis::OptimizationGoal::Target
                 || goal == analysis::OptimizationGoal::GoodEnough));
     }
-    forwardThetaControl_->setEnabled(editable && directional);
-    forwardPhiControl_->setEnabled(editable && directional);
+    const auto directionMode = static_cast<analysis::DirectionalEvaluationMode>(
+        directionalEvaluationModeControl_->currentData().toInt());
+    forwardThetaControl_->setEnabled(editable && directional
+        && directionMode != analysis::DirectionalEvaluationMode::StrongestInElevationCut);
+    forwardPhiControl_->setEnabled(editable && directional
+        && directionMode != analysis::DirectionalEvaluationMode::StrongestInAzimuthCut);
+    directionalEvaluationModeControl_->setEnabled(editable && directional);
     radiationComponentControl_->setEnabled(editable && directional);
+    updateLatestPatternPeakControls();
     const auto explicitMode = selectedFrequencyMode() == FrequencyMode::Explicit;
     frequencyTable_->setEnabled(editable && explicitMode);
     frequencyEntryControl_->setEnabled(editable && explicitMode);
@@ -2724,6 +3307,8 @@ void OptimizationWorkspace::startSweep()
             static_cast<int>(activeObjective_.frontToRearAggregation)},
         {QStringLiteral("forwardThetaDegrees"), activeObjective_.forwardThetaDegrees},
         {QStringLiteral("forwardPhiDegrees"), activeObjective_.forwardPhiDegrees},
+        {QStringLiteral("directionalEvaluationMode"),
+            static_cast<int>(activeObjective_.directionalEvaluationMode)},
         {QStringLiteral("radiationComponent"),
             static_cast<int>(activeObjective_.radiationComponent)},
         {QStringLiteral("frequencyMode"), activeObjective_.kind
@@ -2852,14 +3437,15 @@ void OptimizationWorkspace::appendCandidate(std::vector<double> values,
     candidate.refinementRound = refinementRound;
     candidate.trialRole = std::move(trialRole);
     candidates_.push_back(std::move(candidate));
-    auto* valueItem = new QTableWidgetItem(candidateDescription(candidates_.back()));
+    const auto candidateIndex = static_cast<int>(candidates_.size()) - 1;
+    auto* valueItem = new SortableResultItem(
+        candidateDescription(candidates_.back()), candidates_.back().value);
+    valueItem->setData(CandidateIndexRole, candidateIndex);
     valueItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
     resultsTable_->setItem(row, ValueColumn, valueItem);
-    resultsTable_->setItem(row, GainColumn, new QTableWidgetItem(QStringLiteral("—")));
-    resultsTable_->setItem(row, FrontToBackColumn,
-        new QTableWidgetItem(QStringLiteral("—")));
-    resultsTable_->setItem(row, FrontToRearColumn,
-        new QTableWidgetItem(QStringLiteral("—")));
+    for (auto column = static_cast<int>(ScoreColumn);
+         column <= static_cast<int>(FrontToRearColumn); ++column)
+        resultsTable_->setItem(row, column, unavailableResultItem());
     setCandidateStatus(row, tr("Pending"));
 }
 
@@ -3057,7 +3643,11 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
     candidate.feedpoints = result.analysis.feedpoints;
     candidate.radiation = result.analysis.radiation;
     candidate.evaluation.reset();
+    candidate.availableMeasurements = result.availableMeasurements;
     candidate.failureDetail.clear();
+    candidate.record.frequencyCount = result.frequencyCount;
+    candidate.record.hasImpedance = !candidate.feedpoints.empty();
+    candidate.record.hasRadiation = !candidate.radiation.empty();
 
     if (result.status == CandidateEvaluationStatus::Completed && result.objective) {
         const auto& evaluation = *result.objective;
@@ -3066,7 +3656,7 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
         resultsTable_->setItem(candidate.row, FrequencyColumn,
             evaluation.evaluatedFrequencyCount == 1
                 ? numericItem(evaluation.evaluationFrequencyMHz)
-                : new QTableWidgetItem(QStringLiteral("—")));
+                : unavailableResultItem());
         if (evaluation.feedpoint) {
             resultsTable_->setItem(candidate.row, SwrColumn, numericItem(evaluation.swr));
             resultsTable_->setItem(candidate.row, ResistanceColumn,
@@ -3076,17 +3666,15 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
         }
         resultsTable_->setItem(candidate.row, GainColumn, evaluation.forwardGainDb
             ? numericItem(*evaluation.forwardGainDb)
-            : new QTableWidgetItem(QStringLiteral("—")));
+            : unavailableResultItem());
         resultsTable_->setItem(candidate.row, FrontToBackColumn, evaluation.frontToBackDb
             ? numericItem(*evaluation.frontToBackDb)
-            : new QTableWidgetItem(QStringLiteral("—")));
+            : unavailableResultItem());
         resultsTable_->setItem(candidate.row, FrontToRearColumn, evaluation.frontToRearDb
             ? numericItem(*evaluation.frontToRearDb)
-            : new QTableWidgetItem(QStringLiteral("—")));
+            : unavailableResultItem());
         setCandidateStatus(candidate.row, tr("Completed"));
         candidate.record.status = QStringLiteral("Completed");
-        candidate.record.frequencyCount = result.frequencyCount;
-        candidate.record.hasImpedance = !candidate.feedpoints.empty();
         if (evaluation.score < bestScore_) {
             bestScore_ = evaluation.score;
             bestRow_ = candidate.row;
@@ -3108,8 +3696,10 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
             break;
         case CandidateEvaluationStatus::TimedOut: status = tr("Timed out"); break;
         case CandidateEvaluationStatus::Canceled: status = tr("Canceled"); break;
-        case CandidateEvaluationStatus::NoImpedance:
-            status = tr("Required objective results unavailable"); break;
+        case CandidateEvaluationStatus::ObjectiveUnavailable:
+            status = result.detail.isEmpty()
+                ? tr("Required objective results unavailable") : result.detail;
+            break;
         case CandidateEvaluationStatus::Completed: status = tr("Solver failed"); break;
         }
         candidate.failureDetail = status;
@@ -3119,6 +3709,31 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
             : result.status == CandidateEvaluationStatus::TimedOut
                 ? QStringLiteral("Timed Out") : QStringLiteral("Failed");
         candidate.record.summary = status;
+        if (candidate.availableMeasurements) {
+            const auto& measurements = *candidate.availableMeasurements;
+            resultsTable_->setItem(candidate.row, FrequencyColumn,
+                measurements.evaluatedFrequencyCount == 1
+                    ? numericItem(measurements.evaluationFrequencyMHz)
+                    : unavailableResultItem());
+            if (measurements.feedpoint) {
+                resultsTable_->setItem(candidate.row, SwrColumn,
+                    numericItem(measurements.swr));
+                resultsTable_->setItem(candidate.row, ResistanceColumn,
+                    numericItem(measurements.feedpoint->impedance.real()));
+                resultsTable_->setItem(candidate.row, ReactanceColumn,
+                    numericItem(measurements.feedpoint->impedance.imag()));
+            }
+            if (measurements.forwardGainDb)
+                resultsTable_->setItem(candidate.row, GainColumn,
+                    numericItem(*measurements.forwardGainDb));
+            if (measurements.frontToBackDb)
+                resultsTable_->setItem(candidate.row, FrontToBackColumn,
+                    numericItem(*measurements.frontToBackDb));
+            if (measurements.frontToRearDb)
+                resultsTable_->setItem(candidate.row, FrontToRearColumn,
+                    numericItem(*measurements.frontToRearDb));
+        }
+        updateCandidateRowToolTip(candidate.row);
     }
     if (activeSearchMethod_ == SearchMethod::Adaptive && adaptiveVectorSearch_)
         adaptiveVectorSearch_->record(candidate.values,
@@ -3180,19 +3795,28 @@ void OptimizationWorkspace::finishSweep()
     }
     candidateIndex_ = candidates_.size();
     if (bestRow_ >= 0) {
-        auto font = resultsTable_->item(bestRow_, ValueColumn)->font();
+        const auto bestTableRow = tableRowForCandidateIndex(bestRow_);
+        auto* bestValueItem = bestTableRow < 0
+            ? nullptr : resultsTable_->item(bestTableRow, ValueColumn);
+        auto font = bestValueItem == nullptr ? resultsTable_->font() : bestValueItem->font();
         font.setBold(true);
-        for (auto column = 0; column < ResultColumnCount; ++column) {
-            if (auto* item = resultsTable_->item(bestRow_, column)) item->setFont(font);
+        if (bestTableRow >= 0) {
+            for (auto column = 0; column < ResultColumnCount; ++column) {
+                if (auto* item = resultsTable_->item(bestTableRow, column)) item->setFont(font);
+            }
         }
         bestLabel_->setText(tr("Best candidate: %1, %2 = %3")
             .arg(candidateDescription(candidates_[static_cast<std::size_t>(bestRow_)]))
             .arg(objectiveName(activeObjective_.kind))
             .arg(bestScore_, 0, 'f', 3));
-        resultsTable_->setCurrentCell(bestRow_, ValueColumn);
-        resultsTable_->selectRow(bestRow_);
-        resultsTable_->scrollToItem(resultsTable_->item(bestRow_, ValueColumn),
-            QAbstractItemView::PositionAtCenter);
+        applyCandidateSort();
+        const auto sortedBestRow = tableRowForCandidateIndex(bestRow_);
+        if (sortedBestRow >= 0) {
+            resultsTable_->setCurrentCell(sortedBestRow, ValueColumn);
+            resultsTable_->selectRow(sortedBestRow);
+            resultsTable_->scrollToItem(resultsTable_->item(sortedBestRow, ValueColumn),
+                QAbstractItemView::PositionAtCenter);
+        }
     } else {
         const auto firstFailure = std::ranges::find_if(candidates_, [](const Candidate& candidate) {
             return !candidate.failureDetail.isEmpty();
@@ -3345,6 +3969,8 @@ auto OptimizationWorkspace::writeCandidateMetadata(const Candidate& candidate) -
             static_cast<int>(activeObjective_.frontToRearAggregation)},
         {QStringLiteral("forwardThetaDegrees"), activeObjective_.forwardThetaDegrees},
         {QStringLiteral("forwardPhiDegrees"), activeObjective_.forwardPhiDegrees},
+        {QStringLiteral("directionalEvaluationMode"),
+            static_cast<int>(activeObjective_.directionalEvaluationMode)},
         {QStringLiteral("radiationComponent"),
             static_cast<int>(activeObjective_.radiationComponent)},
         {QStringLiteral("frequencyMode"), activeObjective_.kind
@@ -3423,6 +4049,8 @@ auto OptimizationWorkspace::selectedObjective() const -> analysis::OptimizationO
         .frontToRearAggregation = selectedAggregation(objectiveAggregationControls_[5]),
         .forwardThetaDegrees = forwardThetaControl_->value(),
         .forwardPhiDegrees = forwardPhiControl_->value(),
+        .directionalEvaluationMode = static_cast<analysis::DirectionalEvaluationMode>(
+            directionalEvaluationModeControl_->currentData().toInt()),
         .radiationComponent = static_cast<analysis::RadiationComponent>(
             radiationComponentControl_->currentData().toInt()),
     };

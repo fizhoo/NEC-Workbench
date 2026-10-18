@@ -51,12 +51,18 @@ auto directionalSample(std::span<const RadiationSample> samples, double frequenc
         ? selected : nullptr;
 }
 
+struct RearSampleSearch {
+    const RadiationSample* sample{};
+    RadiationMetricAvailability availability{RadiationMetricAvailability::Missing};
+};
+
 auto strongestRearSample(std::span<const RadiationSample> samples, double frequencyMHz,
     double forwardThetaDegrees, double forwardPhiDegrees, RadiationComponent component)
-    -> const RadiationSample*
+    -> RearSampleSearch
 {
     const RadiationSample* strongest{};
     auto strongestGain = -std::numeric_limits<double>::infinity();
+    auto hasCoverage = false;
     for (const auto& sample : samples) {
         if (std::abs(sample.frequencyMHz - frequencyMHz) > frequencyToleranceMHz
             || std::abs(sample.thetaDegrees - forwardThetaDegrees) > angleToleranceDegrees)
@@ -65,13 +71,17 @@ auto strongestRearSample(std::span<const RadiationSample> samples, double freque
         if (offset < 90.0 - angleToleranceDegrees
             || offset > 270.0 + angleToleranceDegrees)
             continue;
+        hasCoverage = true;
         const auto gain = radiationGainDb(sample, component);
         if (std::isfinite(gain) && gain > -900.0 && gain > strongestGain) {
             strongest = &sample;
             strongestGain = gain;
         }
     }
-    return strongest;
+    if (strongest != nullptr)
+        return {strongest, RadiationMetricAvailability::Available};
+    return {nullptr, hasCoverage ? RadiationMetricAvailability::PatternNull
+                                 : RadiationMetricAvailability::Missing};
 }
 
 auto interpolatedCrossing(double outsideAngle, double outsideGain,
@@ -173,6 +183,37 @@ auto radiationMetrics(std::span<const RadiationSample> samples,
     return result;
 }
 
+auto radiationPeakAtNearestFrequency(std::span<const RadiationSample> samples,
+    RadiationComponent component, double targetFrequencyMHz)
+    -> std::optional<RadiationPeak>
+{
+    std::vector<double> frequencies;
+    frequencies.reserve(samples.size());
+    for (const auto& sample : samples) {
+        if (std::isfinite(sample.frequencyMHz)
+            && std::ranges::none_of(frequencies, [frequency = sample.frequencyMHz](double value) {
+                return std::abs(value - frequency) <= frequencyToleranceMHz;
+            })) {
+            frequencies.push_back(sample.frequencyMHz);
+        }
+    }
+    if (frequencies.empty()) return std::nullopt;
+
+    const auto nearest = std::ranges::min_element(frequencies,
+        [targetFrequencyMHz](double left, double right) {
+            return std::abs(left - targetFrequencyMHz)
+                < std::abs(right - targetFrequencyMHz);
+        });
+    std::vector<RadiationSample> selected;
+    for (const auto& sample : samples) {
+        if (std::abs(sample.frequencyMHz - *nearest) <= frequencyToleranceMHz)
+            selected.push_back(sample);
+    }
+    auto metrics = radiationMetrics(selected, component);
+    if (!metrics.valid) return std::nullopt;
+    return RadiationPeak{*nearest, std::move(metrics), selected.size()};
+}
+
 auto radiationFrequencyMetrics(std::span<const RadiationSample> samples,
     RadiationComponent component, double forwardThetaDegrees,
     double forwardPhiDegrees) -> std::vector<RadiationFrequencyMetric>
@@ -197,19 +238,115 @@ auto radiationFrequencyMetrics(std::span<const RadiationSample> samples,
         if (front != nullptr) {
             const auto frontGain = radiationGainDb(*front, component);
             if (std::isfinite(frontGain) && frontGain > -900.0) {
+                metric.forwardAvailability = RadiationMetricAvailability::Available;
                 metric.forwardGainDb = frontGain;
+                metric.forwardThetaDegrees = front->thetaDegrees;
+                metric.forwardPhiDegrees = front->phiDegrees;
                 if (const auto* back = directionalSample(samples, frequencyMHz, backDirection)) {
                     const auto backGain = radiationGainDb(*back, component);
-                    if (std::isfinite(backGain) && backGain > -900.0)
+                    if (std::isfinite(backGain) && backGain > -900.0) {
+                        metric.backAvailability = RadiationMetricAvailability::Available;
                         metric.frontToBackDb = frontGain - backGain;
+                    } else {
+                        metric.backAvailability = RadiationMetricAvailability::PatternNull;
+                    }
                 }
-                if (const auto* rear = strongestRearSample(samples, frequencyMHz,
-                        forwardThetaDegrees, forwardPhiDegrees, component)) {
-                    const auto rearGain = radiationGainDb(*rear, component);
+                const auto rear = strongestRearSample(samples, frequencyMHz,
+                    forwardThetaDegrees, forwardPhiDegrees, component);
+                metric.rearAvailability = rear.availability;
+                if (rear.sample != nullptr) {
+                    const auto rearGain = radiationGainDb(*rear.sample, component);
                     if (std::isfinite(rearGain) && rearGain > -900.0)
                         metric.frontToRearDb = frontGain - rearGain;
                 }
+            } else {
+                metric.forwardAvailability = RadiationMetricAvailability::PatternNull;
             }
+        }
+        result.push_back(metric);
+    }
+    return result;
+}
+
+auto radiationTrackedCutFrequencyMetrics(std::span<const RadiationSample> samples,
+    RadiationComponent component, DirectionalEvaluationMode mode,
+    double cutAngleDegrees) -> std::vector<RadiationFrequencyMetric>
+{
+    std::vector<double> frequencies;
+    for (const auto& sample : samples) frequencies.push_back(sample.frequencyMHz);
+    std::ranges::sort(frequencies);
+    const auto duplicates = std::ranges::unique(frequencies, [](double left, double right) {
+        return std::abs(left - right) <= frequencyToleranceMHz;
+    });
+    frequencies.erase(duplicates.begin(), duplicates.end());
+
+    std::vector<RadiationFrequencyMetric> result;
+    result.reserve(frequencies.size());
+    for (const auto frequencyMHz : frequencies) {
+        RadiationFrequencyMetric metric;
+        metric.frequencyMHz = frequencyMHz;
+        const RadiationSample* front{};
+        auto strongestGain = -std::numeric_limits<double>::infinity();
+        auto hasFrontCoverage = false;
+        for (const auto& sample : samples) {
+            if (std::abs(sample.frequencyMHz - frequencyMHz) > frequencyToleranceMHz)
+                continue;
+            const auto inPrimaryCut = mode == DirectionalEvaluationMode::StrongestInElevationCut
+                || std::abs(sample.thetaDegrees - cutAngleDegrees) <= angleToleranceDegrees;
+            if (!inPrimaryCut) continue;
+            hasFrontCoverage = true;
+            const auto gain = radiationGainDb(sample, component);
+            if (std::isfinite(gain) && gain > -900.0 && gain > strongestGain) {
+                front = &sample;
+                strongestGain = gain;
+            }
+        }
+        if (front == nullptr) {
+            metric.forwardAvailability = hasFrontCoverage
+                ? RadiationMetricAvailability::PatternNull
+                : RadiationMetricAvailability::Missing;
+            result.push_back(metric);
+            continue;
+        }
+
+        metric.forwardAvailability = RadiationMetricAvailability::Available;
+        metric.forwardGainDb = strongestGain;
+        metric.forwardThetaDegrees = front->thetaDegrees;
+        metric.forwardPhiDegrees = front->phiDegrees;
+        const auto frontDirection = unitDirection(front->thetaDegrees, front->phiDegrees);
+        const std::array<double, 3> backDirection{
+            -frontDirection[0], -frontDirection[1], -frontDirection[2]};
+        if (const auto* back = directionalSample(samples, frequencyMHz, backDirection)) {
+            const auto backGain = radiationGainDb(*back, component);
+            if (std::isfinite(backGain) && backGain > -900.0) {
+                metric.backAvailability = RadiationMetricAvailability::Available;
+                metric.frontToBackDb = strongestGain - backGain;
+            } else {
+                metric.backAvailability = RadiationMetricAvailability::PatternNull;
+            }
+        }
+
+        auto hasRearCoverage = false;
+        const RadiationSample* rear{};
+        auto rearGain = -std::numeric_limits<double>::infinity();
+        for (const auto& sample : samples) {
+            if (std::abs(sample.frequencyMHz - frequencyMHz) > frequencyToleranceMHz)
+                continue;
+            if (directionDot(unitDirection(sample.thetaDegrees, sample.phiDegrees),
+                    frontDirection) > angleToleranceDegrees)
+                continue;
+            hasRearCoverage = true;
+            const auto gain = radiationGainDb(sample, component);
+            if (std::isfinite(gain) && gain > -900.0 && gain > rearGain) {
+                rear = &sample;
+                rearGain = gain;
+            }
+        }
+        if (rear != nullptr) {
+            metric.rearAvailability = RadiationMetricAvailability::Available;
+            metric.frontToRearDb = strongestGain - rearGain;
+        } else if (hasRearCoverage) {
+            metric.rearAvailability = RadiationMetricAvailability::PatternNull;
         }
         result.push_back(metric);
     }

@@ -40,10 +40,13 @@
 #include <QImage>
 #include <QFileInfo>
 #include <QGroupBox>
+#include <QHeaderView>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QListView>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPalette>
@@ -245,6 +248,8 @@ auto main(int argc, char* argv[]) -> int
     auto* impedanceSweepPlot = view.findChild<QWidget*>(QStringLiteral("impedanceSweepPlot"));
     auto* swrSweepPlot = view.findChild<QWidget*>(QStringLiteral("swrSweepPlot"));
     auto* swrScaleControl = view.findChild<QComboBox*>(QStringLiteral("swrScaleControl"));
+    auto* sweepShowReference = view.findChild<QCheckBox*>(
+        QStringLiteral("sweepShowReference"));
     const auto engineeringAxes = impedanceSweepPlot != nullptr && swrSweepPlot != nullptr
         && impedanceSweepPlot->property("dualAxes").toBool()
         && impedanceSweepPlot->property("leftAxisScale").toInt() == 1
@@ -264,6 +269,13 @@ auto main(int argc, char* argv[]) -> int
         && swrSweepPlot->property("referenceSeriesCount").toInt() == 1
         && swrSweepPlot->property("referenceSeriesAreGhosted").toBool()
         && swrSweepPlot->property("leftAxisTickCount").toInt() >= 3;
+    if (sweepShowReference != nullptr) sweepShowReference->setChecked(false);
+    application.processEvents();
+    const auto sweepReferenceCanHide = impedanceSweepPlot != nullptr
+        && impedanceSweepPlot->property("referenceSeriesCount").toInt() == 0
+        && swrSweepPlot != nullptr
+        && swrSweepPlot->property("referenceSeriesCount").toInt() == 0;
+    if (sweepShowReference != nullptr) sweepShowReference->setChecked(true);
     referenceResult.referenceImpedanceOhms = 75.0;
     view.setReferenceResults(referenceResult, QStringLiteral("different-z0"));
     application.processEvents();
@@ -271,7 +283,8 @@ auto main(int argc, char* argv[]) -> int
         || swrSweepPlot->property("referenceSeriesCount").toInt() != 0) {
         return NECWB_SMOKE_FAILURE("reference plots with differing Z0");
     }
-    if (swrScaleControl == nullptr || swrScaleControl->count() != 4
+    if (sweepShowReference == nullptr || !sweepReferenceCanHide
+        || swrScaleControl == nullptr || swrScaleControl->count() != 4
         || swrScaleControl->currentText() != QStringLiteral("Logarithmic")) {
         return NECWB_SMOKE_FAILURE("SWR scale control initialization");
     }
@@ -452,6 +465,8 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationObjectiveSection"));
     auto* optimizationResultsTable = optimization.findChild<QTableWidget*>(
         QStringLiteral("optimizationResultsTable"));
+    auto* optimizationCandidateHint = optimization.findChild<QLabel*>(
+        QStringLiteral("optimizationCandidateHint"));
     auto* optimizationResultsSplitter = optimization.findChild<QSplitter*>(
         QStringLiteral("optimizationResultsSplitter"));
     auto* optimizationCandidatePlots = optimization.findChild<QWidget*>(
@@ -467,12 +482,18 @@ auto main(int argc, char* argv[]) -> int
     auto* optimizationCandidateDetailPlots = optimizationCandidateDetailsWindow == nullptr
         ? nullptr : optimizationCandidateDetailsWindow->findChild<QWidget*>(
             QStringLiteral("optimizationCandidateDetailPlots"));
+    auto* optimizationCandidateReferenceControl = optimizationCandidateDetailsWindow == nullptr
+        ? nullptr : optimizationCandidateDetailsWindow->findChild<QCheckBox*>(
+            QStringLiteral("sweepShowReference"));
     auto* optimizationCandidateDirectionalPlots = optimizationCandidateDetailsWindow == nullptr
         ? nullptr : optimizationCandidateDetailsWindow->findChild<QWidget*>(
             QStringLiteral("optimizationCandidateDirectionalPlots"));
     auto* optimizationApplyCandidate = optimizationCandidateDetailsWindow == nullptr
         ? nullptr : optimizationCandidateDetailsWindow->findChild<QPushButton*>(
             QStringLiteral("optimizationApplyCandidate"));
+    auto* optimizationCompareCandidate = optimizationCandidateDetailsWindow == nullptr
+        ? nullptr : optimizationCandidateDetailsWindow->findChild<QPushButton*>(
+            QStringLiteral("optimizationCompareCandidate"));
     auto* optimizationApplyCandidateAndRun = optimizationCandidateDetailsWindow == nullptr
         ? nullptr : optimizationCandidateDetailsWindow->findChild<QPushButton*>(
             QStringLiteral("optimizationApplyCandidateAndRun"));
@@ -542,6 +563,22 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationTargetFrequencyLabel"));
     auto* optimizationDirectionalFrequencyNote = optimization.findChild<QLabel*>(
         QStringLiteral("optimizationDirectionalFrequencyNote"));
+    auto* optimizationDirectionMode = optimization.findChild<QComboBox*>(
+        QStringLiteral("optimizationDirectionalEvaluationMode"));
+    auto* optimizationDirectionSetupSummary = optimization.findChild<QLabel*>(
+        QStringLiteral("optimizationDirectionSetupSummary"));
+    auto* optimizationChooseDirection = optimization.findChild<QPushButton*>(
+        QStringLiteral("optimizationChooseDirection"));
+    auto* optimizationFindMaximumGain = optimization.findChild<QPushButton*>(
+        QStringLiteral("optimizationFindMaximumGain"));
+    auto* optimizationUseLatestPatternPeak = optimization.findChild<QPushButton*>(
+        QStringLiteral("optimizationUseLatestPatternPeak"));
+    auto* optimizationLatestPatternPeakStatus = optimization.findChild<QLabel*>(
+        QStringLiteral("optimizationLatestPatternPeakStatus"));
+    auto* optimizationForwardTheta = optimization.findChild<QDoubleSpinBox*>(
+        QStringLiteral("optimizationForwardTheta"));
+    auto* optimizationForwardPhi = optimization.findChild<QDoubleSpinBox*>(
+        QStringLiteral("optimizationForwardPhi"));
     auto* optimizationFrontToBackWeight = optimization.findChild<QDoubleSpinBox*>(
         QStringLiteral("optimizationFrontToBackWeight"));
     auto* optimizationFrontToRearWeight = optimization.findChild<QDoubleSpinBox*>(
@@ -697,6 +734,23 @@ auto main(int argc, char* argv[]) -> int
         && workspaceCandidateScorePlot->property("seriesCount").toInt() == 3
         && workspaceCandidateScorePlot->property("xAxisLabel").toString()
             == QStringLiteral("Evaluation Number");
+    const auto candidateScoreTooltip = optimizationResultsTable == nullptr
+        || optimizationResultsTable->item(0, 1) == nullptr
+        ? QString{} : optimizationResultsTable->item(0, 1)->toolTip();
+    if (optimizationResultsTable != nullptr)
+        optimizationResultsTable->horizontalHeader()->sectionClicked(1);
+    application.processEvents();
+    const auto numericCandidateSortingEnabled = optimizationResultsTable != nullptr
+        && optimizationResultsTable->horizontalHeader()->isSortIndicatorShown()
+        && optimizationResultsTable->horizontalHeader()->sortIndicatorSection() == 1
+        && optimizationResultsTable->horizontalHeader()->sortIndicatorOrder()
+            == Qt::AscendingOrder
+        && candidateScoreTooltip.contains(QStringLiteral("Full objective score:"));
+    if (optimizationResultsTable != nullptr)
+        optimizationResultsTable->horizontalHeader()->sectionClicked(9);
+    application.processEvents();
+    const auto informationalCandidateColumnsStayUnsorted = optimizationResultsTable != nullptr
+        && optimizationResultsTable->horizontalHeader()->sortIndicatorSection() == 1;
     optimization.leaveHistoricalSession();
     auto activeFrequenciesRestored = optimizationFrequencyMode != nullptr
         && optimizationFrequencyMode->currentData().toInt() == 1
@@ -724,8 +778,38 @@ auto main(int argc, char* argv[]) -> int
             return true;
         });
     optimization.setApplyAndRunCallback([](const auto&) { return true; });
+    auto candidateComparedWithActiveResults = false;
+    optimization.setCompareCandidateCallback(
+        [&candidateComparedWithActiveResults](const auto& result, const QString& label) {
+            candidateComparedWithActiveResults = result.feedpoints.size() == 2
+                && label.contains(QStringLiteral("Optimization Candidate"));
+            return candidateComparedWithActiveResults;
+        });
+    optimization.setActiveResultsAvailable(true);
     optimization.setContext(refreshedOptimizationSource,
         QStringLiteral("symbol-units.nec"), QStringLiteral("nec2"), {}, 120, true);
+    QTimer::singleShot(0, &optimization, [] {
+        auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+        if (menu == nullptr) return;
+        const auto actions = menu->actions();
+        const auto found = std::ranges::find_if(actions, [](const auto* action) {
+            return action->text() == QStringLiteral(
+                "Compare Candidate with Last Analysis Run");
+        });
+        if (found == actions.end()) {
+            menu->close();
+            return;
+        }
+        menu->setActiveAction(*found);
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        QKeyEvent release(QEvent::KeyRelease, Qt::Key_Return, Qt::NoModifier);
+        QApplication::sendEvent(menu, &press);
+        QApplication::sendEvent(menu, &release);
+    });
+    optimizationResultsTable->customContextMenuRequested(
+        optimizationResultsTable->visualItemRect(
+            optimizationResultsTable->item(0, 0)).center());
+    application.processEvents();
     optimizationResultsTable->cellDoubleClicked(0, 0);
     application.processEvents();
     auto* candidateImpedancePlot = optimizationCandidateDetailPlots->findChild<QWidget*>(
@@ -739,6 +823,10 @@ auto main(int argc, char* argv[]) -> int
     const auto candidateDetailsLoaded = optimizationCandidateDetails->rowCount() == 2
         && candidateImpedancePlot != nullptr
         && candidatePlotHasResults()
+        && optimizationCandidateReferenceControl != nullptr
+        && optimizationCandidateReferenceControl->isHidden()
+        && optimizationCompareCandidate != nullptr
+        && optimizationCompareCandidate->isEnabled()
         && !optimizationCandidateDetailViews->isTabEnabled(2)
         && optimizationCandidateDetailViews->tabToolTip(2).contains(
             QStringLiteral("did not evaluate"))
@@ -856,6 +944,104 @@ auto main(int argc, char* argv[]) -> int
     if (optimizationFrontToBackWeight != nullptr)
         optimizationFrontToBackWeight->setValue(1.0);
     application.processEvents();
+    const auto patternRunPrerequisiteVisible = optimizationUseLatestPatternPeak != nullptr
+        && !optimizationUseLatestPatternPeak->isEnabled()
+        && optimizationLatestPatternPeakStatus != nullptr
+        && optimizationLatestPatternPeakStatus->text().contains(
+            QStringLiteral("Run the active model"));
+    if (optimizationFrontToBackWeight != nullptr)
+        optimizationFrontToBackWeight->setValue(0.0);
+    auto requestedMaximumGainFrequency = 0.0;
+    optimization.setFindMaximumGainCallback(
+        [&requestedMaximumGainFrequency](double frequencyMHz) {
+            requestedMaximumGainFrequency = frequencyMHz;
+            return false;
+        });
+    optimization.setModelValid(true);
+    if (optimizationFindMaximumGain != nullptr)
+        optimizationFindMaximumGain->click();
+    optimization.setModelValid(false);
+    const auto maximumGainActionValid = optimizationFindMaximumGain != nullptr
+        && requestedMaximumGainFrequency > 0.0
+        && optimizationFindMaximumGain->text() == QStringLiteral("Find Maximum Gain…")
+        && optimizationFindMaximumGain->toolTip().contains(
+            QStringLiteral("does not start optimization or modify the NEC model"));
+    necwb::analysis::AnalysisResult latestPattern;
+    latestPattern.radiation = {
+        {.frequencyMHz = 7.15, .thetaDegrees = 55.0, .phiDegrees = 0.0,
+            .totalGainDb = 6.2},
+        {.frequencyMHz = 7.15, .thetaDegrees = 90.0, .phiDegrees = 0.0,
+            .totalGainDb = -999.99},
+    };
+    optimization.setLatestAnalysisResult(latestPattern);
+    application.processEvents();
+    const auto latestPatternPeakAutoSeeded = optimizationForwardTheta != nullptr
+        && optimizationForwardTheta->value() == 55.0;
+    const auto automaticDirectionVisible = optimizationDirectionSetupSummary != nullptr
+        && optimizationDirectionSetupSummary->text().contains(
+            QStringLiteral("strongest gain · elevation 35.000°"));
+    if (optimizationFrontToBackWeight != nullptr)
+        optimizationFrontToBackWeight->setValue(1.0);
+    auto directionDialogStructured = false;
+    QTimer::singleShot(0, &optimization, [&directionDialogStructured] {
+        auto* dialog = topLevelDialog(QStringLiteral("optimizationDirectionStrategyDialog"));
+        if (dialog == nullptr) return;
+        auto* pattern = dialog->findChild<QComboBox*>(
+            QStringLiteral("directionSetupPattern"));
+        auto* sliceAngle = dialog->findChild<QDoubleSpinBox*>(
+            QStringLiteral("directionSetupSliceAngle"));
+        auto* measurement = dialog->findChild<QComboBox*>(
+            QStringLiteral("directionSetupMeasurement"));
+        auto* gainAngle = dialog->findChild<QDoubleSpinBox*>(
+            QStringLiteral("directionSetupGainAngle"));
+        directionDialogStructured = pattern != nullptr && pattern->count() == 2
+            && sliceAngle != nullptr && sliceAngle->value() == 35.0
+            && measurement != nullptr && measurement->count() == 2
+            && gainAngle != nullptr;
+        dialog->reject();
+    });
+    if (optimizationChooseDirection != nullptr) optimizationChooseDirection->click();
+    auto manualDirectionPreserved = false;
+    QTimer::singleShot(0, &optimization, [&manualDirectionPreserved] {
+        auto* dialog = topLevelDialog(QStringLiteral("optimizationDirectionStrategyDialog"));
+        if (dialog == nullptr) return;
+        auto* pattern = dialog->findChild<QComboBox*>(
+            QStringLiteral("directionSetupPattern"));
+        auto* sliceAngle = dialog->findChild<QDoubleSpinBox*>(
+            QStringLiteral("directionSetupSliceAngle"));
+        auto* measurement = dialog->findChild<QComboBox*>(
+            QStringLiteral("directionSetupMeasurement"));
+        if (pattern != nullptr) pattern->setCurrentIndex(0);
+        if (sliceAngle != nullptr) sliceAngle->setValue(20.0);
+        if (measurement != nullptr) measurement->setCurrentIndex(0);
+        manualDirectionPreserved = pattern != nullptr && sliceAngle != nullptr
+            && measurement != nullptr;
+        dialog->accept();
+    });
+    if (optimizationChooseDirection != nullptr) optimizationChooseDirection->click();
+    optimization.setLatestAnalysisResult(latestPattern);
+    manualDirectionPreserved = manualDirectionPreserved
+        && optimizationForwardTheta != nullptr
+        && optimizationForwardTheta->value() == 70.0;
+    if (optimizationForwardTheta != nullptr) optimizationForwardTheta->setValue(90.0);
+    application.processEvents();
+    const auto nullCutWarningVisible = optimizationLatestPatternPeakStatus != nullptr
+        && optimizationLatestPatternPeakStatus->text().contains(
+            QStringLiteral("contains only pattern nulls"));
+    if (optimizationUseLatestPatternPeak != nullptr)
+        optimizationUseLatestPatternPeak->click();
+    const auto latestPatternPeakApplied = optimizationUseLatestPatternPeak != nullptr
+        && optimizationUseLatestPatternPeak->isEnabled()
+        && optimizationLatestPatternPeakStatus != nullptr
+        && optimizationLatestPatternPeakStatus->text().contains(QStringLiteral("35.000"))
+        && optimizationForwardTheta != nullptr && optimizationForwardTheta->value() == 55.0
+        && optimizationForwardPhi != nullptr && optimizationForwardPhi->value() == 0.0
+        && optimizationObjectiveSummary != nullptr
+        && optimizationObjectiveSummary->text().contains(
+            QStringLiteral("Track peak in azimuth cut at θ 55.000°"))
+        && optimizationDirectionSetupSummary != nullptr
+        && optimizationDirectionSetupSummary->text().contains(
+            QStringLiteral("elevation 35.000°"));
     const auto perCriterionDirectionalObjectiveValid = optimizationObjective != nullptr
         && !optimizationObjective->isVisible()
         && optimizationTargetFrequency != nullptr
@@ -864,7 +1050,13 @@ auto main(int argc, char* argv[]) -> int
         && !optimizationTargetFrequencyLabel->isVisible()
         && optimizationDirectionalFrequencyNote != nullptr
         && optimizationDirectionalFrequencyNote->text().contains(
-            QStringLiteral("Each criterion independently"));
+            QStringLiteral("Each criterion independently"))
+        && patternRunPrerequisiteVisible && latestPatternPeakAutoSeeded
+        && maximumGainActionValid
+        && automaticDirectionVisible
+        && manualDirectionPreserved
+        && nullCutWarningVisible
+        && latestPatternPeakApplied && directionDialogStructured;
     if (optimizationFrontToBackWeight != nullptr)
         optimizationFrontToBackWeight->setValue(0.0);
     const auto perCriterionFrequencyPlanValid = optimizationFrequencyMode != nullptr
@@ -978,6 +1170,21 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("optimizationConfigurationTabs")) == nullptr
         && optimization.findChild<QTabWidget*>(
             QStringLiteral("optimizationResultViews")) == nullptr;
+    necwb::ui::OptimizationWorkspace staleDirectionWorkspace;
+    staleDirectionWorkspace.setContext(optimizationSource,
+        QStringLiteral("stale-direction.nec"), QStringLiteral("nec2"), {}, 120, true);
+    staleDirectionWorkspace.setFindMaximumGainCallback([](double) { return false; });
+    staleDirectionWorkspace.setLatestAnalysisResult(latestPattern);
+    staleDirectionWorkspace.setContext(QStringLiteral("CM edited\n") + optimizationSource,
+        QStringLiteral("stale-direction.nec"), QStringLiteral("nec2"), {}, 120, true);
+    auto* staleDirectionStatus = staleDirectionWorkspace.findChild<QLabel*>(
+        QStringLiteral("optimizationLatestPatternPeakStatus"));
+    auto* staleDirectionButton = staleDirectionWorkspace.findChild<QPushButton*>(
+        QStringLiteral("optimizationFindMaximumGain"));
+    const auto staleDirectionReported = staleDirectionStatus != nullptr
+        && staleDirectionStatus->text().contains(QStringLiteral("direction is stale"))
+        && staleDirectionButton != nullptr
+        && staleDirectionButton->text() == QStringLiteral("Update Maximum…");
     if (optimizationConfiguration == nullptr
         || optimizationWorkspaceSplitter == nullptr
         || optimizationWorkspaceSplitter->orientation() != Qt::Horizontal
@@ -990,13 +1197,28 @@ auto main(int argc, char* argv[]) -> int
         || optimizationConfigurationScrollArea->horizontalScrollBarPolicy()
             != Qt::ScrollBarAlwaysOff
         || optimizationResultsTable == nullptr
+        || optimizationResultsTable->contextMenuPolicy() != Qt::CustomContextMenu
+        || !optimizationResultsTable->toolTip().contains(QStringLiteral("Right-click"))
+        || optimizationCandidateHint == nullptr
+        || !optimizationCandidateHint->text().contains(QStringLiteral("right-click"))
         || optimizationCandidatePlots == nullptr
         || optimizationCandidateDetailsWindow == nullptr
         || optimizationCandidateDetailsWindow->parentWidget() != nullptr
         || optimizationCandidateDetailsWindow->testAttribute(Qt::WA_QuitOnClose)
         || optimizationCandidateDetailsWindow->isVisible()
+        || !staleDirectionReported
         || optimizationCandidateDetails == nullptr
-        || optimizationCandidateDetails->columnCount() != 7
+        || optimizationCandidateDetails->columnCount() != 9
+        || optimizationDirectionMode == nullptr
+        || optimizationDirectionMode->count() != 3
+        || optimizationDirectionMode->currentText()
+            != QStringLiteral("Track Peak in Azimuth Cut")
+        || !optimizationDirectionMode->isHidden()
+        || optimizationDirectionSetupSummary == nullptr
+        || optimizationChooseDirection == nullptr
+        || optimizationFindMaximumGain == nullptr
+        || !optimizationForwardTheta->isHidden()
+        || !optimizationForwardPhi->isHidden()
         || !optimizationCandidateDetailsWindow->isAncestorOf(
             optimizationCandidateDetails)
         || optimizationCandidateDetailViews == nullptr
@@ -1016,6 +1238,8 @@ auto main(int argc, char* argv[]) -> int
         || !optimizationCandidateDetailsWindow->isAncestorOf(
             optimizationCandidateDirectionalPlots)
         || optimizationApplyCandidate == nullptr || optimizationApplyCandidate->isEnabled()
+        || optimizationCompareCandidate == nullptr
+        || optimizationCompareCandidate->isEnabled()
         || optimizationApplyCandidateAndRun == nullptr
         || optimizationApplyCandidateAndRun->isEnabled()
         || optimizationApplyCandidateAndRun->toolTip().isEmpty()
@@ -1099,8 +1323,11 @@ auto main(int argc, char* argv[]) -> int
         || !sameModelFrequenciesPreserved
         || !historicalFrequencySelectionLoaded
         || !historicalObjectiveBreakdownLoaded
+        || !numericCandidateSortingEnabled
+        || !informationalCandidateColumnsStayUnsorted
         || !historicalInputInitiallyHidden || !authoredInputShown || !generatedInputShown
         || !activeFrequenciesRestored
+        || !candidateComparedWithActiveResults
         || !candidateApplyPreservesDetails
         || !hiddenCandidateDetailsRestored
         || !minimizedCandidateDetailsRestored
@@ -1162,6 +1389,9 @@ auto main(int argc, char* argv[]) -> int
     auto radiationReference = result;
     for (auto& sample : radiationReference.radiation) sample.totalGainDb -= 1.0;
     radiation2D.setReferenceResults(radiationReference, QStringLiteral("Original dipole"));
+    radiation3D.setReferenceResults(radiationReference, QStringLiteral("Original dipole"));
+    radiationPerformance.setReferenceResults(
+        radiationReference, QStringLiteral("Original dipole"));
     radiation2D.resize(800, 800);
     radiation2D.show();
     application.processEvents();
@@ -1247,8 +1477,12 @@ auto main(int argc, char* argv[]) -> int
         radiation3D.setComponent(component);
     });
     auto* radiation2DComponent = radiation2D.findChild<QComboBox*>(QStringLiteral("radiation2DComponent"));
+    auto* radiation2DShowReference = radiation2D.findChild<QCheckBox*>(
+        QStringLiteral("radiation2DShowReference"));
     auto* radiation2DFrequency = radiation2D.findChild<QComboBox*>(QStringLiteral("radiation2DFrequency"));
     auto* radiation3DComponent = radiation3D.findChild<QComboBox*>(QStringLiteral("radiation3DComponent"));
+    auto* radiation3DShowReference = radiation3D.findChild<QCheckBox*>(
+        QStringLiteral("radiation3DShowReference"));
     auto* radiationPerformanceComponent = radiationPerformance.findChild<QComboBox*>(
         QStringLiteral("radiationPerformanceComponent"));
     auto* radiation3DFrequency = radiation3D.findChild<QComboBox*>(QStringLiteral("radiation3DFrequency"));
@@ -1272,6 +1506,8 @@ auto main(int argc, char* argv[]) -> int
     auto* radiation3DExportData = radiation3D.findChild<QPushButton*>(QStringLiteral("radiation3DExportData"));
     auto* radiationPerformanceSummary = radiationPerformance.findChild<QLabel*>(
         QStringLiteral("radiationPerformanceSummary"));
+    auto* radiationPerformanceShowReference = radiationPerformance.findChild<QCheckBox*>(
+        QStringLiteral("radiationPerformanceShowReference"));
     auto* radiationPerformancePlot = radiationPerformance.findChild<QWidget*>(
         QStringLiteral("directionalMetricsPlot"));
     auto* radiationPerformanceTheta = radiationPerformance.findChild<QDoubleSpinBox*>(
@@ -1285,11 +1521,35 @@ auto main(int argc, char* argv[]) -> int
         || radiation2DCutPlane == nullptr || radiation2DOrientation == nullptr
         || radiation2DDataset == nullptr || radiation3DDataset == nullptr
         || radiation2DMaxGainCut == nullptr
+        || radiation2DShowReference == nullptr || radiation3DShowReference == nullptr
+        || radiationPerformanceShowReference == nullptr
         || radiationPerformanceSummary == nullptr || radiationPerformancePlot == nullptr
         || radiationPerformanceTheta == nullptr
         || radiation2DExportImage == nullptr || radiation2DExportData == nullptr
         || radiation3DExportImage == nullptr || radiation3DExportData == nullptr)
         return NECWB_SMOKE_FAILURE("radiation result controls");
+    application.processEvents();
+    const auto radiation2DReferenceVisible = radiationPolarPlot->property(
+        "referenceVisible").toBool();
+    const auto radiation3DReferenceVisible = radiation3DSurface->property(
+        "referenceVisible").toBool();
+    const auto radiationPerformanceReferenceCount = radiationPerformancePlot->property(
+        "referenceSeriesCount").toInt();
+    const auto radiationReferencesVisible = radiation2DReferenceVisible
+        && radiation3DReferenceVisible && radiationPerformanceReferenceCount > 0;
+    radiation2DShowReference->setChecked(false);
+    radiation3DShowReference->setChecked(false);
+    radiationPerformanceShowReference->setChecked(false);
+    application.processEvents();
+    const auto radiationReferencesCanHide = !radiationPolarPlot->property(
+            "referenceVisible").toBool()
+        && !radiation3DSurface->property("referenceVisible").toBool()
+        && radiationPerformancePlot->property("referenceSeriesCount").toInt() == 0;
+    radiation2DShowReference->setChecked(true);
+    radiation3DShowReference->setChecked(true);
+    radiationPerformanceShowReference->setChecked(true);
+    if (!radiationReferencesVisible || !radiationReferencesCanHide)
+        return NECWB_SMOKE_FAILURE("radiation reference visibility controls");
     const auto spaceChangesCutWithoutPriorFocus = std::ranges::any_of(
         radiation2DShortcuts, [](const QShortcut* shortcut) {
             return shortcut->key() == QKeySequence(Qt::Key_Space)
@@ -1411,9 +1671,13 @@ auto main(int argc, char* argv[]) -> int
         && radiationPerformanceSummary->text().contains(QStringLiteral("Gain 2/2"))
         && radiationPerformanceSummary->text().contains(QStringLiteral("F/B 2/2"))
         && radiationPerformancePlot->property("pointCount").toInt() == 2
-        && radiationPerformancePlot->property("seriesCount").toInt() == 3
+        && radiationPerformancePlot->property("seriesCount").toInt() == 6
+        && radiationPerformancePlot->property("referenceSeriesCount").toInt() == 3
         && radiationPerformancePlot->property("seriesStyles").toStringList()
-            == QStringList{QString::number(static_cast<int>(Qt::SolidLine)),
+            == QStringList{QString::number(static_cast<int>(Qt::DashLine)),
+                QString::number(static_cast<int>(Qt::DashLine)),
+                QString::number(static_cast<int>(Qt::DashLine)),
+                QString::number(static_cast<int>(Qt::SolidLine)),
                 QString::number(static_cast<int>(Qt::SolidLine)),
                 QString::number(static_cast<int>(Qt::DashLine))}
         && radiationPerformancePlot->property("selectedFrequencyMHz").toDouble() == 14.2;
@@ -1884,7 +2148,10 @@ auto main(int argc, char* argv[]) -> int
     parameterTable->selectRow(1);
     application.processEvents();
     parameterTable->item(1, 1)->setText(QStringLiteral("LENGTH/2+1"));
+    parameterTable->selectRow(0);
+    application.processEvents();
     const auto parameterEditPending = parameterEditor.hasPendingEdits()
+        && parameterTable->currentRow() == 1
         && applyParameter->isEnabled() && revertParameter->isEnabled()
         && applyParameter->property("pendingChanges").toBool()
         && parameterTable->item(1, 2)->text() == QStringLiteral("Apply to resolve");

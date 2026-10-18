@@ -323,6 +323,123 @@ auto prepareDirectionalOptimizationInput(std::string_view source,
     return joinLines(lines);
 }
 
+auto prepareDirectionalCutOptimizationInput(std::string_view source,
+    std::span<const double> frequenciesMHz, DirectionalEvaluationMode mode,
+    double cutAngleDegrees, bool includeOppositeDirection,
+    bool includeRearRegion) -> std::string
+{
+    if (mode == DirectionalEvaluationMode::SpecifiedDirection
+        || !std::isfinite(cutAngleDegrees))
+        return prepareImpedanceInput(source);
+
+    std::vector<double> frequencies;
+    frequencies.reserve(frequenciesMHz.size());
+    for (const auto frequencyMHz : frequenciesMHz) {
+        if (std::isfinite(frequencyMHz) && frequencyMHz > 0.0)
+            frequencies.push_back(frequencyMHz);
+    }
+    std::ranges::sort(frequencies);
+    const auto duplicates = std::ranges::unique(frequencies);
+    frequencies.erase(duplicates.begin(), duplicates.end());
+    if (frequencies.empty()) return prepareImpedanceInput(source);
+
+    constexpr auto cutStepDegrees = 5.0;
+    model::RadiationPatternRequest primary;
+    if (mode == DirectionalEvaluationMode::StrongestInAzimuthCut) {
+        primary.thetaCount = 1;
+        primary.phiCount = 72;
+        primary.thetaStart = cutAngleDegrees;
+        primary.phiStart = 0.0;
+        primary.thetaStep = 0.0;
+        primary.phiStep = cutStepDegrees;
+    } else {
+        primary.thetaCount = 37;
+        primary.phiCount = 1;
+        primary.thetaStart = -90.0;
+        primary.phiStart = cutAngleDegrees;
+        primary.thetaStep = cutStepDegrees;
+        primary.phiStep = 0.0;
+    }
+
+    std::vector<model::RadiationPatternRequest> patterns{primary};
+    const auto needsRearCoverage = includeOppositeDirection || includeRearRegion;
+    if (mode == DirectionalEvaluationMode::StrongestInAzimuthCut
+        && needsRearCoverage && std::abs(cutAngleDegrees - 90.0) > 1.0e-6) {
+        auto oppositeRing = primary;
+        oppositeRing.thetaStart = 180.0 - cutAngleDegrees;
+        patterns.push_back(oppositeRing);
+    }
+
+    const auto document = nec::NecParser{}.parse(normalizeSolverDeck(source));
+    const nec::NecWriter writer;
+    std::vector<std::string> requests;
+    requests.reserve(frequencies.size() * (2U + patterns.size()));
+    for (const auto frequencyMHz : frequencies) {
+        model::FrequencyDefinition frequency;
+        frequency.startMHz = frequencyMHz;
+        requests.push_back(writer.writeFrequencyCard(frequency));
+        requests.emplace_back("XQ 0");
+        for (const auto& pattern : patterns)
+            requests.push_back(writer.writeRadiationPatternCard(pattern));
+    }
+
+    std::vector<std::string> lines;
+    lines.reserve(document.cards().size() + requests.size());
+    auto insertedRequests = false;
+    for (const auto& card : document.cards()) {
+        if (card.kind == nec::NecCardKind::Frequency
+            || card.kind == nec::NecCardKind::RadiationPattern
+            || card.kind == nec::NecCardKind::Execute) continue;
+        if (!insertedRequests && card.kind == nec::NecCardKind::End) {
+            lines.insert(lines.end(), requests.begin(), requests.end());
+            insertedRequests = true;
+        }
+        lines.push_back(card.sourceText);
+    }
+    if (!insertedRequests) lines.insert(lines.end(), requests.begin(), requests.end());
+    return joinLines(lines);
+}
+
+auto prepareMaximumGainSearchInput(std::string_view source,
+    double frequencyMHz, bool aboveGroundOnly) -> std::string
+{
+    if (!std::isfinite(frequencyMHz) || frequencyMHz <= 0.0)
+        return prepareImpedanceInput(source);
+
+    const auto document = nec::NecParser{}.parse(normalizeSolverDeck(source));
+    const nec::NecWriter writer;
+    model::FrequencyDefinition frequency;
+    frequency.startMHz = frequencyMHz;
+    model::RadiationPatternRequest pattern;
+    pattern.thetaCount = aboveGroundOnly ? 19 : 37;
+    pattern.phiCount = 72;
+    pattern.thetaStart = 0.0;
+    pattern.phiStart = 0.0;
+    pattern.thetaStep = 5.0;
+    pattern.phiStep = 5.0;
+    const std::array requests{
+        writer.writeFrequencyCard(frequency),
+        std::string{"XQ 0"},
+        writer.writeRadiationPatternCard(pattern),
+    };
+
+    std::vector<std::string> lines;
+    lines.reserve(document.cards().size() + requests.size());
+    auto insertedRequests = false;
+    for (const auto& card : document.cards()) {
+        if (card.kind == nec::NecCardKind::Frequency
+            || card.kind == nec::NecCardKind::RadiationPattern
+            || card.kind == nec::NecCardKind::Execute) continue;
+        if (!insertedRequests && card.kind == nec::NecCardKind::End) {
+            lines.insert(lines.end(), requests.begin(), requests.end());
+            insertedRequests = true;
+        }
+        lines.push_back(card.sourceText);
+    }
+    if (!insertedRequests) lines.insert(lines.end(), requests.begin(), requests.end());
+    return joinLines(lines);
+}
+
 auto prepareFrequencySweepInput(std::string_view source,
     const model::FrequencyDefinition& sweep, bool includeRadiationPatterns) -> std::string
 {

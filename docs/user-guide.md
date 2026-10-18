@@ -247,9 +247,11 @@ frequency. Plot hover readouts expose exact sampled values.
 
 After a completed analysis, Workbench automatically uses the previous completed run
 of the same saved model as a reference. Impedance and SWR plots draw matching
-feedpoint/frequency data as faint dashed curves behind the active result. The Results
-banner always names the reference; use **Clear Reference** to remove it. Reference
-SWR is hidden when the runs use different reference impedances.
+feedpoint/frequency data as faint dashed curves behind the active result. Use each
+plot's **Show Reference Overlay** checkbox to hide or restore that comparison without
+losing the selected Reference Run. The Results banner always names the Reference Run;
+use **Change Reference…** to choose another completed run or **Clear Reference** to
+remove it. Reference SWR is unavailable when the runs use different reference impedances.
 
 ### Radiation
 
@@ -263,8 +265,10 @@ The radiation frequency selector includes only frequencies with pattern data.
   Normalized mode normalizes each trace to its own peak for shape comparison;
   Absolute mode places both traces on the same dBi scale.
 - **3D Pattern** renders the available theta/phi mesh with antenna and current
-  overlays. It does not invent missing angular coverage.
-- **Performance vs Frequency** shows available forward gain, F/B, and F/R metrics.
+  overlays. A compatible reference grid appears as a muted dashed wireframe. It
+  does not invent missing angular coverage.
+- **Performance vs Frequency** shows available forward gain, F/B, and F/R metrics,
+  with compatible reference curves shown dashed.
 
 F/B requires the physical direction 180° opposite the selected front direction.
 If that sample is absent, F/B is unavailable rather than substituted with minimum
@@ -278,6 +282,9 @@ one reusable read-only Run Review window. It does not replace the active editor.
 Use **Set as Reference** to keep a selected completed analysis or quick sweep as the
 comparison baseline for the current session. References are explicit, remain labeled,
 and do not turn a historical run into the active result or model.
+
+The ordinary Results workspace compares one reference at a time. Comparing several
+runs belongs in a separate comparison workflow and is not performed implicitly.
 
 Use **Edit Run Note…**, or double-click the Note cell, to record what changed or why
 a run matters. Notes are stored only in run metadata; they do not alter archived NEC
@@ -363,17 +370,68 @@ Examples:
 - Maximize gain with Worst Point protects the lowest gain in the plan.
 - Good Enough SWR ≤ 2 contributes no penalty where the threshold is satisfied.
 
-Directional objectives require a forward theta/phi direction and component. They
-generate focused radiation samples at every study frequency instead of retaining
-broad model `RP` grids. This keeps candidates smaller but is still more expensive
-than impedance-only optimization.
+Directional objectives select a radiation component and one 2D pattern slice:
+
+- **Azimuth** measures around the antenna at a selected elevation.
+- **Elevation** measures above the ground at a selected azimuth.
+- **Strongest gain in this slice** is the default and follows the strongest
+  sampled lobe for every candidate and frequency.
+- **Gain at a specific angle** evaluates one direction and prevents the
+  optimizer from switching between lobes.
+
+Use **Choose…** beside **Directional setup** to open the temporary direction
+dialog. It shows one selected pattern preview without adding another permanent
+panel to the optimization workspace. If a prior multi-angle pattern is
+available, Workbench initially fills the slice from its maximum-gain direction.
+
+Tracked cuts use 5-degree samples. They can follow a lobe as geometry changes, but
+are more expensive than a specified direction and may switch between competing
+lobes. Candidate frequency details show the theta and phi actually selected. F/B
+continues to use the physical 180-degree opposite direction; F/R uses the strongest
+sample in the rear half of the requested cut.
+
+**Find Maximum Gain…** runs a temporary one-frequency, 5-degree radiation grid
+at the first optimization frequency and uses its peak to seed the default slice.
+It does not start optimization or modify the authored NEC model. Over ground it
+searches the upper hemisphere; in free space it searches the full sphere. The
+button changes to **Update Maximum…** after a usable result and reports when that
+direction becomes stale after a model change.
+
+An ordinary active-model run with a multi-angle radiation pattern can provide the
+same seed. **Use Latest Pattern Peak** then copies the peak theta/phi from the
+latest active-model pattern nearest the first optimization frequency.
+When a valid latest pattern exists, enabling a tracked directional objective or
+selecting a tracked strategy automatically seeds the cut from that pattern's peak.
+**Use Latest Peak to Set Cut** manually reseeds it. A prior run is therefore useful
+for setup, but tracked-cut modes recalculate the strongest direction for every
+candidate rather than locking to that initial peak. NEC theta is measured down from
+the +Z axis, so theta 90 degrees is the horizon and may be a pattern null over ground.
 
 ### Candidate Review
 
 The candidate table and objective plot retain the evaluated values and score
 breakdown. The winning row is selected and centered when a study completes.
 Double-click a candidate to inspect its frequency table, SWR/impedance plots, and
-available directional plots in one reusable window.
+available directional plots in one reusable preview window. This is temporary
+optimization data, not the active model's normal Results, so the preview does not
+show the historical-reference control. Right-click any completed candidate and
+choose **Compare Candidate with Last Analysis Run**, or use the same button in the
+candidate preview, to show it as a dashed overlay behind the most recently displayed
+normal analysis. Run or load a normal analysis first so there is a primary result to
+compare against. This comparison does not edit the model or run the solver, and
+Results clearly labels the optimization candidate overlay.
+The same menu can apply a scored candidate directly to the model or apply it and
+start a normal analysis. The existing **Apply Best to Model** action remains the
+shortcut for the winning row. After evaluation stops, click any numeric column heading from
+Value through F/R to sort the table; Status and Run remain informational. Gain,
+F/B, and F/R initially sort highest-first, while the other numeric columns sort
+lowest-first. Row tooltips retain the full objective score to six decimal places
+when several displayed three-decimal scores appear tied.
+
+If a required directional result is missing, the candidate remains unscored and
+the status identifies the affected frequency and direction. Valid impedance
+measurements remain available for inspection. Workbench distinguishes absent
+pattern coverage from a solver-reported pattern null (`-999.99 dBi`).
 
 Candidate measurements remain optimization data until explicitly promoted:
 

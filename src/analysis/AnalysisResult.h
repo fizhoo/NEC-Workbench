@@ -51,6 +51,12 @@ enum class RadiationScale {
     Normalized
 };
 
+enum class DirectionalEvaluationMode {
+    SpecifiedDirection,
+    StrongestInAzimuthCut,
+    StrongestInElevationCut
+};
+
 struct RadiationSample {
     double frequencyMHz{};
     double thetaDegrees{};
@@ -73,11 +79,28 @@ struct RadiationMetrics {
     std::optional<double> frontToBackDb;
 };
 
+enum class RadiationMetricAvailability {
+    Missing,
+    PatternNull,
+    Available
+};
+
 struct RadiationFrequencyMetric {
     double frequencyMHz{};
+    RadiationMetricAvailability forwardAvailability{RadiationMetricAvailability::Missing};
+    RadiationMetricAvailability backAvailability{RadiationMetricAvailability::Missing};
+    RadiationMetricAvailability rearAvailability{RadiationMetricAvailability::Missing};
     std::optional<double> forwardGainDb;
     std::optional<double> frontToBackDb;
     std::optional<double> frontToRearDb;
+    std::optional<double> forwardThetaDegrees;
+    std::optional<double> forwardPhiDegrees;
+};
+
+struct RadiationPeak {
+    double frequencyMHz{};
+    RadiationMetrics metrics;
+    std::size_t sampleCount{};
 };
 
 struct RadiationCutPoint {
@@ -121,9 +144,16 @@ struct AnalysisResult {
     RadiationComponent component) -> double;
 [[nodiscard]] auto radiationMetrics(std::span<const RadiationSample> samples,
     RadiationComponent component) -> RadiationMetrics;
+[[nodiscard]] auto radiationPeakAtNearestFrequency(
+    std::span<const RadiationSample> samples, RadiationComponent component,
+    double targetFrequencyMHz) -> std::optional<RadiationPeak>;
 [[nodiscard]] auto radiationFrequencyMetrics(std::span<const RadiationSample> samples,
     RadiationComponent component, double forwardThetaDegrees,
     double forwardPhiDegrees) -> std::vector<RadiationFrequencyMetric>;
+[[nodiscard]] auto radiationTrackedCutFrequencyMetrics(
+    std::span<const RadiationSample> samples, RadiationComponent component,
+    DirectionalEvaluationMode mode, double cutAngleDegrees)
+    -> std::vector<RadiationFrequencyMetric>;
 [[nodiscard]] auto radiationCutMetrics(std::span<const RadiationCutPoint> samples,
     bool wraps) -> RadiationCutMetrics;
 

@@ -24,6 +24,7 @@ class QDialog;
 class QDoubleSpinBox;
 class QLabel;
 class QListWidget;
+class QPoint;
 class QProgressBar;
 class QPushButton;
 class QSplitter;
@@ -55,6 +56,11 @@ public:
         std::function<bool(std::vector<std::pair<QString, double>>)> callback);
     void setApplyAndRunCallback(
         std::function<bool(std::vector<std::pair<QString, double>>)> callback);
+    void setCompareCandidateCallback(
+        std::function<bool(const analysis::AnalysisResult&, QString)> callback);
+    void setActiveResultsAvailable(bool available);
+    void setFindMaximumGainCallback(std::function<bool(double)> callback);
+    void setLatestAnalysisResult(const analysis::AnalysisResult& result);
     auto loadSession(const QString& sessionId) -> bool;
     void leaveHistoricalSession();
     [[nodiscard]] auto isRunning() const noexcept -> bool;
@@ -119,6 +125,7 @@ private:
         std::vector<analysis::FeedpointResult> feedpoints;
         std::vector<analysis::RadiationSample> radiation;
         std::optional<analysis::OptimizationObjectiveResult> evaluation;
+        std::optional<analysis::OptimizationObjectiveResult> availableMeasurements;
         int refinementRound{};
         QString trialRole;
         QString failureDetail;
@@ -130,6 +137,11 @@ private:
     [[nodiscard]] auto candidateDescription(const Candidate& candidate) const -> QString;
     void updateBounds();
     void updateObjectiveControls();
+    void updateLatestPatternPeakControls();
+    void updateDirectionalSeedState();
+    void seedDirectionFromLatestPattern();
+    void chooseDirectionStrategy();
+    void useLatestPatternPeak();
     void updateFrequencyControls();
     void updateSearchMethodControls();
     void updateSetupSummaries();
@@ -138,6 +150,12 @@ private:
     void updateCandidateDetails(int row);
     void resetCandidateDetails();
     void updateCandidateActionState();
+    void showCandidateContextMenu(const QPoint& position);
+    void compareCandidateWithActiveResults(int candidateIndex);
+    void sortCandidateTable(int column);
+    void applyCandidateSort();
+    [[nodiscard]] auto candidateIndexAtTableRow(int row) const -> int;
+    [[nodiscard]] auto tableRowForCandidateIndex(int candidateIndex) const -> int;
     [[nodiscard]] auto candidateParameterValues(int row) const
         -> std::vector<std::pair<QString, double>>;
     void applyCandidate(int row, bool runAfterApply);
@@ -206,7 +224,15 @@ private:
     QPushButton* resetObjectiveDefaultsButton_{};
     QDoubleSpinBox* forwardThetaControl_{};
     QDoubleSpinBox* forwardPhiControl_{};
+    QComboBox* directionalEvaluationModeControl_{};
+    QLabel* forwardThetaLabel_{};
+    QLabel* forwardPhiLabel_{};
+    QLabel* directionSetupSummaryLabel_{};
+    QPushButton* directionSetupButton_{};
+    QPushButton* findMaximumGainButton_{};
     QComboBox* radiationComponentControl_{};
+    QPushButton* useLatestPatternPeakButton_{};
+    QLabel* latestPatternPeakLabel_{};
     QComboBox* frequencyModeControl_{};
     QWidget* explicitFrequencyPanel_{};
     QWidget* continuousFrequencyPanel_{};
@@ -263,6 +289,7 @@ private:
     QTabWidget* candidateDetailViews_{};
     SweepPlotsView* candidateDetailPlots_{};
     DirectionalMetricsView* candidateDirectionalPlots_{};
+    QPushButton* compareCandidateButton_{};
     QPushButton* applyCandidateButton_{};
     QPushButton* applyCandidateAndRunButton_{};
     QWidget* historicalBanner_{};
@@ -276,9 +303,17 @@ private:
     std::function<void()> parameterizationHelpCallback_;
     std::function<bool(std::vector<std::pair<QString, double>>)> applyParameterCallback_;
     std::function<bool(std::vector<std::pair<QString, double>>)> applyAndRunCallback_;
+    std::function<bool(const analysis::AnalysisResult&, QString)> compareCandidateCallback_;
+    std::function<bool(double)> findMaximumGainCallback_;
     std::vector<nec::SymbolDefinition> definitions_;
     std::vector<Candidate> candidates_;
     std::vector<double> modelFrequenciesMHz_;
+    std::vector<analysis::RadiationSample> latestRadiation_;
+    bool directionalObjectiveWasEnabled_{};
+    bool directionSetupConfigured_{};
+    bool maximumGainSearchRequested_{};
+    bool maximumGainDirectionStale_{};
+    bool activeResultsAvailable_{};
     std::vector<double> activeFrequenciesMHz_;
     std::optional<AnalysisRunRecord> sessionRecord_;
     std::optional<FrequencySelectionState> activeFrequencySelection_;
@@ -300,6 +335,8 @@ private:
     std::optional<analysis::DifferentialEvolutionSearch> differentialEvolutionSearch_;
     int bestRow_{-1};
     int detailCandidateRow_{-1};
+    int candidateSortColumn_{-1};
+    Qt::SortOrder candidateSortOrder_{Qt::AscendingOrder};
     bool modelValid_{};
     bool externalRunActive_{};
     bool cancelRequested_{};

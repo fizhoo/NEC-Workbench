@@ -36,6 +36,7 @@
 #include <numbers>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <vector>
 
 namespace necwb::ui {
@@ -148,6 +149,20 @@ auto patternDatasetLabel(int index, const PatternDatasetStats& stats) -> QString
     else kind = QObject::tr("Partial grid");
     return QObject::tr("RP %1 — %2 (%3×%4)").arg(index + 1).arg(kind)
         .arg(stats.theta.size()).arg(stats.phi.size());
+}
+
+auto samePatternGrid(const PatternDatasetStats& first,
+    const PatternDatasetStats& second) -> bool
+{
+    const auto sameValues = [](const auto& left, const auto& right) {
+        return left.size() == right.size()
+            && std::ranges::all_of(left, [&right](double value) {
+                return std::ranges::any_of(right, [value](double candidate) {
+                    return nearlyEqual(value, candidate);
+                });
+            });
+    };
+    return sameValues(first.theta, second.theta) && sameValues(first.phi, second.phi);
 }
 
 void populatePatternDatasets(QComboBox* control, const analysis::AnalysisResult& result,
@@ -621,7 +636,7 @@ protected:
             .arg(formatDecimal(maxGain)));
         if (!referenceSamples_.empty()) {
             const auto label = painter.fontMetrics().elidedText(
-                tr("Reference: %1").arg(referenceLabel_), Qt::ElideRight,
+                tr("Reference — %1").arg(referenceLabel_), Qt::ElideRight,
                 std::max(80, width() / 2));
             const auto left = width() - painter.fontMetrics().horizontalAdvance(label) - 34;
             painter.setPen(QPen(QColor(65, 105, 165, 175), 2, Qt::DashLine));
@@ -700,6 +715,14 @@ public:
         if (hoverTextCallback_) hoverTextCallback_({});
         update();
     }
+    void setReferenceSamples(std::vector<analysis::RadiationSample> samples, QString label)
+    {
+        referenceSamples_ = std::move(samples);
+        referenceLabel_ = std::move(label);
+        setProperty("referenceSampleCount", static_cast<int>(referenceSamples_.size()));
+        setProperty("referenceVisible", !referenceSamples_.empty());
+        update();
+    }
     void setDisplaySettings(const analysis::RadiationDisplaySettings& settings)
     { settings_ = settings; update(); }
     void setCurrents(std::vector<analysis::SegmentCurrentResult> currents) { currents_ = std::move(currents); update(); }
@@ -762,11 +785,15 @@ protected:
         QPainter painter(this); painter.setRenderHint(QPainter::Antialiasing);
         painter.fillRect(rect(), palette().brush(QPalette::Base));
         const auto scale = std::min(width(), height()) * 0.38 * zoom_;
-        const auto maximum = showRadiation_ ? maximumGain() : std::nullopt;
+        const auto maximum = showRadiation_ ? maximumGain(samples_) : std::nullopt;
+        const auto referenceMaximum = showRadiation_
+            ? maximumGain(referenceSamples_) : std::nullopt;
         const auto hasRadiation = maximum.has_value();
         const auto maxGain = maximum.value_or(0.0);
         const auto maximumCurrent = showCurrents_ ? currentMaximum() : std::nullopt;
-        if (hasRadiation) drawRadiation(painter, scale, maxGain);
+        if (referenceMaximum)
+            drawRadiation(painter, scale, *referenceMaximum, referenceSamples_, true);
+        if (hasRadiation) drawRadiation(painter, scale, maxGain, samples_, false);
         const auto modelExtent = resultModelExtentFromOrigin(model_);
         const auto antennaScale = hasRadiation ? scale * 0.32 : scale * 1.7;
         drawAxes(painter, scale * 0.34);
@@ -788,6 +815,8 @@ protected:
             auto status = tr("Drag to orbit · wheel to zoom · zoom %1×").arg(formatDecimal(zoom_));
             if (hasRadiation) status += tr(" · %1 peak %2 dBi")
                 .arg(componentName(settings_.component), formatDecimal(maxGain));
+            if (referenceMaximum)
+                status += tr(" · Reference overlay %1 shown dashed").arg(referenceLabel_);
             painter.drawText(10, 22, status + tr(" · Shift/middle-drag to pan"));
         }
         if (hasRadiation && showOverlay_) {
@@ -822,10 +851,11 @@ private:
         double gain{};
     };
 
-    [[nodiscard]] auto maximumGain() const -> std::optional<double>
+    [[nodiscard]] auto maximumGain(
+        std::span<const analysis::RadiationSample> samples) const -> std::optional<double>
     {
         auto maximum = -std::numeric_limits<double>::infinity();
-        for (const auto& sample : samples_) {
+        for (const auto& sample : samples) {
             const auto gain = analysis::radiationGainDb(sample, settings_.component);
             if (std::isfinite(gain) && gain > -900.0) maximum = std::max(maximum, gain);
         }
@@ -893,7 +923,7 @@ private:
     [[nodiscard]] auto nearestSampleText(const QPointF& position) const -> QString
     {
         if (!showRadiation_ || samples_.empty()) return {};
-        const auto maxGain = maximumGain();
+        const auto maxGain = maximumGain(samples_);
         if (!maxGain) return {};
         const auto reference = gainReference(*maxGain);
         const auto scale = std::min(width(), height()) * 0.38 * zoom_;
@@ -948,7 +978,8 @@ private:
             painter.drawText(end + QPointF(4.0, -4.0), labels[index]);
         }
     }
-    void drawRadiation(QPainter& painter, double scale, double maxGain)
+    void drawRadiation(QPainter& painter, double scale, double maxGain,
+        std::span<const analysis::RadiationSample> samples, bool referencePattern)
     {
         struct Vertex {
             double order{};
@@ -958,7 +989,7 @@ private:
         std::map<double, std::vector<Vertex>> phiPaths;
         std::map<double, std::vector<Vertex>> thetaPaths;
         const auto reference = gainReference(maxGain);
-        for (const auto& sample : samples_) {
+        for (const auto& sample : samples) {
             const auto gain = analysis::radiationGainDb(sample, settings_.component);
             if (!std::isfinite(gain) || gain <= -900.0) continue;
             const auto screen = project(samplePoint(sample, gain, reference), scale);
@@ -966,28 +997,33 @@ private:
             phiPaths[sample.phiDegrees].push_back({sample.thetaDegrees, screen, ratio});
             thetaPaths[sample.thetaDegrees].push_back({sample.phiDegrees, screen, ratio});
         }
-        const auto drawPaths = [&painter](auto& paths, double width, bool close) {
+        const auto drawPaths = [&painter, referencePattern](auto& paths,
+                                   double width, bool close) {
             for (auto& [key, points] : paths) {
                 Q_UNUSED(key);
                 std::ranges::sort(points, {}, &Vertex::order);
                 for (auto index = std::size_t{1}; index < points.size(); ++index) {
                     const auto ratio = (points[index - 1].colorRatio
                         + points[index].colorRatio) / 2.0;
-                    painter.setPen(QPen(gainColor(ratio), width));
+                    painter.setPen(QPen(referencePattern
+                            ? QColor(75, 75, 75, 135) : gainColor(ratio),
+                        width, referencePattern ? Qt::DashLine : Qt::SolidLine));
                     painter.drawLine(points[index - 1].screen, points[index].screen);
                 }
                 if (close && points.size() > 2) {
                     const auto ratio = (points.front().colorRatio
                         + points.back().colorRatio) / 2.0;
-                    painter.setPen(QPen(gainColor(ratio), width));
+                    painter.setPen(QPen(referencePattern
+                            ? QColor(75, 75, 75, 135) : gainColor(ratio),
+                        width, referencePattern ? Qt::DashLine : Qt::SolidLine));
                     painter.drawLine(points.back().screen, points.front().screen);
                 }
             }
         };
-        drawPaths(phiPaths, 2.0, false);
+        drawPaths(phiPaths, referencePattern ? 1.3 : 2.0, false);
         const auto closeAzimuth = phiPaths.size() >= 3
             && (phiPaths.rbegin()->first - phiPaths.begin()->first) >= 270.0;
-        drawPaths(thetaPaths, 1.0, closeAzimuth);
+        drawPaths(thetaPaths, referencePattern ? 0.8 : 1.0, closeAzimuth);
     }
     void drawAntenna(QPainter& painter, double scale, double extent)
     {
@@ -1046,6 +1082,8 @@ private:
     }
     model::AntennaModel model_;
     std::vector<analysis::RadiationSample> samples_;
+    std::vector<analysis::RadiationSample> referenceSamples_;
+    QString referenceLabel_;
     std::vector<analysis::SegmentCurrentResult> currents_;
     analysis::RadiationDisplaySettings settings_;
     QPointF last_;
@@ -1139,9 +1177,14 @@ RadiationPatternView::RadiationPatternView(QWidget* parent) : QWidget(parent)
     exportImageButton_->setObjectName(QStringLiteral("radiation2DExportImage"));
     exportDataButton_ = new QPushButton(tr("Export CSV…"), this);
     exportDataButton_->setObjectName(QStringLiteral("radiation2DExportData"));
+    referenceControl_ = new QCheckBox(tr("Show Reference Overlay"), this);
+    referenceControl_->setObjectName(QStringLiteral("radiation2DShowReference"));
+    referenceControl_->setChecked(true);
+    referenceControl_->setEnabled(false);
     navigation->addWidget(previous); navigation->addWidget(orientationButton_); navigation->addWidget(next);
     navigation->addWidget(maxGainCutButton_);
-    navigation->addStretch(); navigation->addWidget(exportImageButton_); navigation->addWidget(exportDataButton_);
+    navigation->addStretch(); navigation->addWidget(referenceControl_);
+    navigation->addWidget(exportImageButton_); navigation->addWidget(exportDataButton_);
     summary_ = new QLabel(tr("Run an RP analysis to populate radiation patterns."), this);
     summary_->setObjectName(QStringLiteral("radiation2DSummary"));
     summary_->setWordWrap(true);
@@ -1168,6 +1211,7 @@ RadiationPatternView::RadiationPatternView(QWidget* parent) : QWidget(parent)
     connect(next, &QPushButton::clicked, this, [this] { stepAngle(1); });
     connect(orientationButton_, &QPushButton::clicked, this, [this] { toggleOrientation(); });
     connect(maxGainCutButton_, &QPushButton::clicked, this, [this] { showMaxGainCut(); });
+    connect(referenceControl_, &QCheckBox::toggled, this, [this] { refresh(); });
     connect(exportImageButton_, &QPushButton::clicked, this, [this] { exportImage(); });
     connect(exportDataButton_, &QPushButton::clicked, this, [this] { exportData(); });
     auto* previousShortcut = new QShortcut(QKeySequence(Qt::Key_Left), this);
@@ -1195,12 +1239,14 @@ void RadiationPatternView::setReferenceResults(
 {
     referenceResult_ = result;
     referenceLabel_ = std::move(label);
+    referenceControl_->setEnabled(true);
     refresh();
 }
 void RadiationPatternView::clearReferenceResults()
 {
     referenceResult_.reset();
     referenceLabel_.clear();
+    referenceControl_->setEnabled(false);
     refresh();
 }
 void RadiationPatternView::setSelectedFrequency(double frequencyMHz)
@@ -1331,7 +1377,7 @@ void RadiationPatternView::refresh()
         selectedPatternIndex(dataset_), vertical, angle, settings.component);
     const auto values = plotPoints(cutSamples);
     std::vector<QPointF> referenceValues;
-    if (referenceResult_ && !values.empty()) {
+    if (referenceResult_ && referenceControl_->isChecked() && !values.empty()) {
         for (const auto& [patternIndex, stats] : patternDatasets(
                  *referenceResult_, settings.frequencyMHz)) {
             Q_UNUSED(stats);
@@ -1342,10 +1388,10 @@ void RadiationPatternView::refresh()
             break;
         }
     }
-    const auto referenceText = !referenceResult_ ? QString{}
+    const auto referenceText = !referenceResult_ || !referenceControl_->isChecked() ? QString{}
         : !referenceValues.empty()
-            ? tr(" · Reference %1 shown dashed").arg(referenceLabel_)
-            : tr(" · Reference %1 unavailable for this exact frequency/cut grid")
+            ? tr(" · Reference overlay %1 shown dashed").arg(referenceLabel_)
+            : tr(" · Reference overlay %1 unavailable: exact frequency/cut grid differs")
                 .arg(referenceLabel_);
     const auto metrics = analysis::radiationCutMetrics(cutSamples, radiationAnglesCoverCircle(values));
     if (metrics.valid) {
@@ -1529,12 +1575,17 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
     antennaControl_ = new QCheckBox(tr("Antenna"), this); antennaControl_->setChecked(true);
     currentControl_ = new QCheckBox(tr("Current Overlay"), this); currentControl_->setChecked(true);
     radiationControl_ = new QCheckBox(tr("Radiation Surface"), this); radiationControl_->setChecked(true);
+    referenceControl_ = new QCheckBox(tr("Show Reference Overlay"), this);
+    referenceControl_->setObjectName(QStringLiteral("radiation3DShowReference"));
+    referenceControl_->setChecked(true);
+    referenceControl_->setEnabled(false);
     auto* resetView = new QPushButton(tr("Reset View"), this);
     exportImageButton_ = new QPushButton(tr("Export Image…"), this);
     exportImageButton_->setObjectName(QStringLiteral("radiation3DExportImage"));
     exportDataButton_ = new QPushButton(tr("Export CSV…"), this);
     exportDataButton_->setObjectName(QStringLiteral("radiation3DExportData"));
-    layers->addWidget(antennaControl_); layers->addWidget(currentControl_); layers->addWidget(radiationControl_);
+    layers->addWidget(antennaControl_); layers->addWidget(currentControl_);
+    layers->addWidget(radiationControl_); layers->addWidget(referenceControl_);
     layers->addStretch(); layers->addWidget(resetView); layers->addWidget(exportImageButton_); layers->addWidget(exportDataButton_);
     summary_ = new QLabel(tr("Run a multi-phi RP analysis to populate the 3D pattern."), this);
     summary_->setObjectName(QStringLiteral("radiation3DSummary")); summary_->setWordWrap(true);
@@ -1566,6 +1617,7 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
     connect(antennaControl_, &QCheckBox::toggled, this, updateLayers);
     connect(currentControl_, &QCheckBox::toggled, this, updateLayers);
     connect(radiationControl_, &QCheckBox::toggled, this, updateLayers);
+    connect(referenceControl_, &QCheckBox::toggled, this, [this] { refresh(); });
     connect(resetView, &QPushButton::clicked, surface_, [this] { surface_->resetView(); });
     connect(exportImageButton_, &QPushButton::clicked, this, [this] { exportImage(); });
     connect(exportDataButton_, &QPushButton::clicked, this, [this] { exportData(); });
@@ -1579,6 +1631,21 @@ void Radiation3DView::setResults(const analysis::AnalysisResult& result, const Q
     populateRadiationFrequencies(frequency_, result);
     applyDisplaySettings(previous, frequency_, component_, scale_, floor_);
     refreshDatasets();
+}
+void Radiation3DView::setReferenceResults(
+    const analysis::AnalysisResult& result, QString label)
+{
+    referenceResult_ = result;
+    referenceLabel_ = std::move(label);
+    referenceControl_->setEnabled(true);
+    refresh();
+}
+void Radiation3DView::clearReferenceResults()
+{
+    referenceResult_.reset();
+    referenceLabel_.clear();
+    referenceControl_->setEnabled(false);
+    refresh();
 }
 void Radiation3DView::setModel(const model::AntennaModel& model)
 { model_ = model; surface_->setModel(model_); }
@@ -1617,10 +1684,27 @@ void Radiation3DView::refresh()
 {
     const auto settings = displaySettings(frequency_, component_, scale_, floor_);
     std::vector<analysis::RadiationSample> radiation;
+    std::vector<analysis::RadiationSample> referenceRadiation;
     std::vector<analysis::SegmentCurrentResult> currents;
     for (const auto& value : result_.radiation)
         if (nearlyEqual(value.frequencyMHz, selectedFrequency(frequency_))
             && value.patternIndex == selectedPatternIndex(dataset_)) radiation.push_back(value);
+    if (referenceResult_ && referenceControl_->isChecked()) {
+        const auto activeDatasets = patternDatasets(result_, settings.frequencyMHz);
+        const auto activeDataset = activeDatasets.find(selectedPatternIndex(dataset_));
+        if (activeDataset != activeDatasets.end()) {
+            for (const auto& [referenceIndex, stats] : patternDatasets(
+                     *referenceResult_, settings.frequencyMHz)) {
+                if (!samePatternGrid(activeDataset->second, stats)) continue;
+                for (const auto& value : referenceResult_->radiation) {
+                    if (nearlyEqual(value.frequencyMHz, settings.frequencyMHz)
+                        && value.patternIndex == referenceIndex)
+                        referenceRadiation.push_back(value);
+                }
+                break;
+            }
+        }
+    }
     for (const auto& value : result_.currents)
         if (nearlyEqual(value.frequencyMHz, selectedFrequency(frequency_))) currents.push_back(value);
     const auto metrics = analysis::radiationMetrics(radiation, settings.component);
@@ -1643,6 +1727,11 @@ void Radiation3DView::refresh()
             text += tr(" · %1 tied peak directions").arg(metrics.tiedPeaks.size());
         if (planes.size() < 3)
             text += tr(" · Partial coverage; request Full 3D Pattern for a complete surface.");
+        if (referenceResult_ && referenceControl_->isChecked())
+            text += referenceRadiation.empty()
+                ? tr(" · Reference overlay %1 unavailable: exact frequency/grid differs")
+                      .arg(referenceLabel_)
+                : tr(" · Reference overlay %1 shown dashed").arg(referenceLabel_);
         summary_->setText(text);
     } else {
         summary_->setText(tr("%1 MHz · %2 · No %3 radiation samples · %4 current segment(s)")
@@ -1652,6 +1741,7 @@ void Radiation3DView::refresh()
     exportImageButton_->setEnabled(!radiation.empty() || !currents.empty() || !model_.empty());
     exportDataButton_->setEnabled(!radiation.empty());
     surface_->setDisplaySettings(settings);
+    surface_->setReferenceSamples(std::move(referenceRadiation), referenceLabel_);
     surface_->setSamples(std::move(radiation)); surface_->setCurrents(std::move(currents));
 }
 void Radiation3DView::refreshDatasets()
@@ -1727,6 +1817,11 @@ RadiationPerformanceView::RadiationPerformanceView(QWidget* parent)
     controls->addWidget(new QLabel(tr("Forward φ"), this));
     controls->addWidget(forwardPhi_);
     controls->addStretch();
+    referenceControl_ = new QCheckBox(tr("Show Reference Overlay"), this);
+    referenceControl_->setObjectName(QStringLiteral("radiationPerformanceShowReference"));
+    referenceControl_->setChecked(true);
+    referenceControl_->setEnabled(false);
+    controls->addWidget(referenceControl_);
     summary_ = new QLabel(tr(
         "Load radiation results to inspect directional performance across frequency."), this);
     summary_->setObjectName(QStringLiteral("radiationPerformanceSummary"));
@@ -1745,6 +1840,7 @@ RadiationPerformanceView::RadiationPerformanceView(QWidget* parent)
     });
     connect(forwardTheta_, &QDoubleSpinBox::valueChanged, this, [this] { refresh(); });
     connect(forwardPhi_, &QDoubleSpinBox::valueChanged, this, [this] { refresh(); });
+    connect(referenceControl_, &QCheckBox::toggled, this, [this] { refresh(); });
 }
 
 void RadiationPerformanceView::setResults(
@@ -1752,6 +1848,23 @@ void RadiationPerformanceView::setResults(
 {
     result_ = result;
     runContext_ = runDirectory;
+    refresh();
+}
+
+void RadiationPerformanceView::setReferenceResults(
+    const analysis::AnalysisResult& result, QString label)
+{
+    referenceResult_ = result;
+    referenceLabel_ = std::move(label);
+    referenceControl_->setEnabled(true);
+    refresh();
+}
+
+void RadiationPerformanceView::clearReferenceResults()
+{
+    referenceResult_.reset();
+    referenceLabel_.clear();
+    referenceControl_->setEnabled(false);
     refresh();
 }
 
@@ -1794,6 +1907,20 @@ void RadiationPerformanceView::refresh()
         frontToRearCount += metric.frontToRearDb.has_value();
     }
     plot_->setMetrics(points);
+    if (referenceResult_ && referenceControl_->isChecked()) {
+        const auto referenceMetrics = analysis::radiationFrequencyMetrics(
+            referenceResult_->radiation, component,
+            forwardTheta_->value(), forwardPhi_->value());
+        std::vector<DirectionalPlotPoint> referencePoints;
+        referencePoints.reserve(referenceMetrics.size());
+        for (const auto& metric : referenceMetrics) {
+            referencePoints.push_back({metric.frequencyMHz, metric.forwardGainDb,
+                metric.frontToBackDb, metric.frontToRearDb});
+        }
+        plot_->setReferenceMetrics(referencePoints, referenceLabel_);
+    } else {
+        plot_->clearReferenceMetrics();
+    }
     if (selectedFrequencyMHz_) plot_->setSelectedFrequency(*selectedFrequencyMHz_);
     if (metrics.empty()) {
         summary_->setText(tr("No radiation samples are available · %1").arg(runContext_));

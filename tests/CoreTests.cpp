@@ -1623,6 +1623,24 @@ void testNecOutputParsing()
             && std::abs(*metrics.frontToBackDb - 10.0) < 1.0e-12,
         "radiation metrics report peak direction and front-to-back ratio");
 
+    const std::vector<necwb::analysis::RadiationSample> frequencyPatterns{
+        {.frequencyMHz = 14.0, .thetaDegrees = 55.0, .phiDegrees = 0.0,
+            .totalGainDb = 6.2},
+        {.frequencyMHz = 14.0, .thetaDegrees = 90.0, .phiDegrees = 0.0,
+            .totalGainDb = -999.99},
+        {.frequencyMHz = 14.3, .thetaDegrees = 60.0, .phiDegrees = 0.0,
+            .totalGainDb = 6.3},
+        {.frequencyMHz = 14.3, .thetaDegrees = 90.0, .phiDegrees = 0.0,
+            .totalGainDb = -999.99},
+    };
+    const auto nearestPeak = necwb::analysis::radiationPeakAtNearestFrequency(
+        frequencyPatterns, necwb::analysis::RadiationComponent::Total, 14.05);
+    expect(nearestPeak && nearestPeak->frequencyMHz == 14.0
+            && nearestPeak->sampleCount == 2
+            && nearestPeak->metrics.peakThetaDegrees == 55.0
+            && nearestPeak->metrics.peakPhiDegrees == 0.0,
+        "radiation peak selection uses the pattern nearest the requested frequency");
+
     std::vector<necwb::analysis::RadiationCutPoint> elevationCut;
     for (auto theta = -90; theta <= 90; ++theta)
         elevationCut.push_back({static_cast<double>(theta), static_cast<double>(theta), 90.0, -20.0});
@@ -1809,12 +1827,45 @@ void testOptimizationObjectives()
     expect(!necwb::analysis::evaluateOptimizationObjective(
             directional, directionalObjective),
         "directional F/B is unavailable when the physical opposite sample is absent");
+    const auto missingBack = necwb::analysis::diagnoseOptimizationObjectiveFailure(
+        directional, directionalObjective);
+    expect(missingBack.kind
+                == necwb::analysis::OptimizationObjectiveFailureKind::MissingBackDirection
+            && missingBack.frequencyMHz
+            && std::abs(*missingBack.frequencyMHz - 14.2) < 1.0e-12,
+        "objective diagnostics identify the frequency with missing antipodal F/B coverage");
     directional.radiation.front().frequencyMHz = 14.1;
     auto forwardOnlyObjective = directionalObjective;
     forwardOnlyObjective.frontToBackWeight = 0.0;
     expect(!necwb::analysis::evaluateOptimizationObjective(
             directional, forwardOnlyObjective),
         "directional gain is unavailable when the requested frequency is absent");
+
+    necwb::analysis::AnalysisResult nullPattern;
+    nullPattern.feedpoints = {
+        {.frequencyMHz = 14.2, .impedance = {75.0, 15.0}},
+    };
+    nullPattern.radiation = {
+        {.frequencyMHz = 14.2, .thetaDegrees = 90.0, .phiDegrees = 0.0,
+            .verticalGainDb = -999.99, .horizontalGainDb = -999.99,
+            .totalGainDb = -999.99},
+    };
+    auto mixedNullObjective = forwardOnlyObjective;
+    mixedNullObjective.swrWeight = 1.0;
+    const auto nullFailure = necwb::analysis::diagnoseOptimizationObjectiveFailure(
+        nullPattern, mixedNullObjective);
+    expect(nullFailure.kind
+                == necwb::analysis::OptimizationObjectiveFailureKind::NullForwardGain
+            && nullFailure.frequencyMHz
+            && std::abs(*nullFailure.frequencyMHz - 14.2) < 1.0e-12,
+        "objective diagnostics distinguish an NEC pattern null from missing coverage");
+    const auto nullMetrics = necwb::analysis::radiationFrequencyMetrics(
+        nullPattern.radiation, necwb::analysis::RadiationComponent::Total, 90.0, 0.0);
+    expect(nullMetrics.size() == 1
+            && nullMetrics.front().forwardAvailability
+                == necwb::analysis::RadiationMetricAvailability::PatternNull
+            && !nullMetrics.front().forwardGainDb,
+        "radiation metrics retain pattern-null availability without exposing invalid gain");
 
     const auto directionalDeck = necwb::analysis::prepareDirectionalOptimizationInput(
         "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nFR 0 3 0 0 14 .1\n"
@@ -1854,6 +1905,10 @@ void testOptimizationObjectives()
             .verticalGainDb = 0.0, .horizontalGainDb = -30.0, .totalGainDb = 0.0},
         {.frequencyMHz = 148.0, .thetaDegrees = 90.0, .phiDegrees = 90.0,
             .verticalGainDb = 1.0, .horizontalGainDb = -30.0, .totalGainDb = 1.0},
+        {.frequencyMHz = 148.0, .thetaDegrees = 90.0, .phiDegrees = 45.0,
+            .verticalGainDb = 7.0, .horizontalGainDb = -30.0, .totalGainDb = 7.0},
+        {.frequencyMHz = 148.0, .thetaDegrees = 90.0, .phiDegrees = 225.0,
+            .verticalGainDb = -3.0, .horizontalGainDb = -30.0, .totalGainDb = -3.0},
     };
     const auto directionalFrequencyMetrics = necwb::analysis::radiationFrequencyMetrics(
         directionalSweep.radiation, necwb::analysis::RadiationComponent::Total, 90.0, 0.0);
@@ -1866,6 +1921,36 @@ void testOptimizationObjectives()
             && directionalFrequencyMetrics.back().frontToRearDb
             && *directionalFrequencyMetrics.back().frontToRearDb == 4.0,
         "shared radiation frequency metrics retain gain, F/B, and F/R");
+
+    const auto trackedCutMetrics = necwb::analysis::radiationTrackedCutFrequencyMetrics(
+        directionalSweep.radiation, necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 90.0);
+    expect(trackedCutMetrics.size() == 2
+            && trackedCutMetrics.front().forwardGainDb
+            && *trackedCutMetrics.front().forwardGainDb == 8.0
+            && trackedCutMetrics.front().forwardPhiDegrees
+            && *trackedCutMetrics.front().forwardPhiDegrees == 0.0
+            && trackedCutMetrics.back().forwardGainDb
+            && *trackedCutMetrics.back().forwardGainDb == 7.0
+            && trackedCutMetrics.back().forwardPhiDegrees
+            && *trackedCutMetrics.back().forwardPhiDegrees == 45.0
+            && trackedCutMetrics.back().frontToBackDb
+            && *trackedCutMetrics.back().frontToBackDb == 10.0,
+        "tracked azimuth-cut metrics select the strongest sampled lobe per frequency");
+    auto trackedObjective = directionalObjective;
+    trackedObjective.kind = necwb::analysis::OptimizationObjectiveKind::PerCriterion;
+    trackedObjective.directionalEvaluationMode =
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut;
+    const auto trackedScore = necwb::analysis::evaluateOptimizationObjective(
+        directionalSweep, trackedObjective);
+    expect(trackedScore && trackedScore->frequencyMetrics.size() == 2
+            && trackedScore->frequencyMetrics.back().forwardGainDb
+            && *trackedScore->frequencyMetrics.back().forwardGainDb == 7.0
+            && trackedScore->frequencyMetrics.back().forwardThetaDegrees
+            && *trackedScore->frequencyMetrics.back().forwardThetaDegrees == 90.0
+            && trackedScore->frequencyMetrics.back().forwardPhiDegrees
+            && *trackedScore->frequencyMetrics.back().forwardPhiDegrees == 45.0,
+        "optimization objectives retain the direction selected by tracked cuts");
     auto directionalMinimax = directionalObjective;
     directionalMinimax.kind = necwb::analysis::OptimizationObjectiveKind::WorstPointAcrossFrequencies;
     directionalMinimax.swrWeight = 1.0;
@@ -1949,6 +2034,46 @@ void testOptimizationObjectives()
                 != std::string::npos
             && std::count(directionalSweepDeck.begin(), directionalSweepDeck.end(), '\n') >= 9,
         "directional optimization deck executes exact front/back requests at every study frequency");
+
+    const auto azimuthCutDeck = necwb::analysis::prepareDirectionalCutOptimizationInput(
+        "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nFR 0 1 0 0 146 0\nEN\n",
+        directionalFrequencies,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut,
+        90.0, true, true);
+    expect(azimuthCutDeck.find("RP 0 1 72 1000 90 0 0 5") != std::string::npos
+            && std::count(azimuthCutDeck.begin(), azimuthCutDeck.end(), '\n') >= 7,
+        "azimuth tracking requests a complete fixed-theta cut at every frequency");
+    const auto elevationCutDeck = necwb::analysis::prepareDirectionalCutOptimizationInput(
+        "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nEN\n",
+        directionalFrequencies,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInElevationCut,
+        30.0, true, true);
+    expect(elevationCutDeck.find("RP 0 37 1 1000 -90 30 5 0") != std::string::npos,
+        "elevation tracking requests a complete fixed-phi cut");
+
+    const auto maximumGainDeck = necwb::analysis::prepareMaximumGainSearchInput(
+        "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nFR 0 3 0 0 14 .1\n"
+        "XQ 0\nRP 0 1 1 1000 90 0 0 0\nEN\n",
+        14.2, true);
+    const auto maximumGainSetup = necwb::nec::NecSetupConverter{}.convert(
+        necwb::nec::NecParser{}.parse(maximumGainDeck));
+    expect(maximumGainSetup.frequency && maximumGainSetup.frequency->count == 1
+            && std::abs(maximumGainSetup.frequency->startMHz - 14.2) < 1.0e-12
+            && maximumGainSetup.executionRequest.has_value()
+            && maximumGainSetup.radiationPatterns.size() == 1
+            && maximumGainSetup.radiationPatterns.front().thetaCount == 19
+            && maximumGainSetup.radiationPatterns.front().phiCount == 72
+            && maximumGainSetup.radiationPatterns.front().thetaStep == 5.0
+            && maximumGainSetup.radiationPatterns.front().phiStep == 5.0,
+        "maximum-gain search replaces authored requests with a one-frequency hemisphere grid");
+    const auto freeSpaceMaximumGainDeck = necwb::analysis::prepareMaximumGainSearchInput(
+        "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nEN\n", 28.5, false);
+    const auto freeSpaceMaximumGainSetup = necwb::nec::NecSetupConverter{}.convert(
+        necwb::nec::NecParser{}.parse(freeSpaceMaximumGainDeck));
+    expect(freeSpaceMaximumGainSetup.radiationPatterns.size() == 1
+            && freeSpaceMaximumGainSetup.radiationPatterns.front().thetaCount == 37
+            && freeSpaceMaximumGainSetup.radiationPatterns.front().phiCount == 72,
+        "maximum-gain search covers the full sphere for a free-space model");
 }
 
 void testAdaptiveSearch()

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "analysis/AnalysisResult.h"
 #include "analysis/FrequencyPlan.h"
 #include "model/ModelSetup.h"
 
@@ -36,6 +37,13 @@ enum class RadiationSweepMode {
 [[nodiscard]] auto prepareDirectionalOptimizationInput(std::string_view source,
     std::span<const double> frequenciesMHz, double thetaDegrees, double phiDegrees,
     bool includeOppositeDirection, bool includeRearRegion = false) -> std::string;
+[[nodiscard]] auto prepareDirectionalCutOptimizationInput(std::string_view source,
+    std::span<const double> frequenciesMHz, DirectionalEvaluationMode mode,
+    double cutAngleDegrees, bool includeOppositeDirection,
+    bool includeRearRegion = false) -> std::string;
+
+[[nodiscard]] auto prepareMaximumGainSearchInput(std::string_view source,
+    double frequencyMHz, bool aboveGroundOnly) -> std::string;
 
 [[nodiscard]] auto prepareFrequencySweepInput(std::string_view source,
     const model::FrequencyDefinition& sweep, bool includeRadiationPatterns) -> std::string;

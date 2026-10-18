@@ -87,7 +87,8 @@ protected:
 private:
     enum class SolverRunPurpose {
         Analysis,
-        AverageGainTest
+        AverageGainTest,
+        OptimizationPeakSearch
     };
 
     enum class EditorDestination {
@@ -210,7 +211,9 @@ private:
     void startAnalysis();
     void startQuickFrequencySweep();
     void startAnalysisRun(const std::string& authoredSource, const std::string& solverInput,
-        const QString& runType, const QString& summary, const QString& activity);
+        const QString& runType, const QString& summary, const QString& activity,
+        SolverRunPurpose purpose = SolverRunPurpose::Analysis);
+    [[nodiscard]] auto startOptimizationPeakSearch(double frequencyMHz) -> bool;
     void startAverageGainTest();
     void showConvergenceStudy();
     void synchronizeRunnerState();
@@ -231,9 +234,12 @@ private:
         const QString& runContext) -> bool;
     void deleteSelectedRun();
     void pinSelectedRunReference();
+    void chooseResultReference();
     void editSelectedRunNote();
     void clearResultReference();
     void updateResultReference();
+    auto setCandidateComparisonOverlay(
+        const analysis::AnalysisResult& result, QString label) -> bool;
     [[nodiscard]] auto selectedRunRecord() const -> std::optional<AnalysisRunRecord>;
     void updateRunSelectionActions();
     void displayRunArtifacts(const QString& directory, const QString& context);
@@ -382,6 +388,7 @@ private:
     QLabel* resultsContextDetailLabel_{};
     QLabel* activeModelResultsLabel_{};
     QLabel* resultReferenceLabel_{};
+    QPushButton* changeResultReferenceButton_{};
     QPushButton* clearResultReferenceButton_{};
     QPushButton* detachResultsButton_{};
     QLabel* resultsStatusLabel_{};
@@ -413,11 +420,14 @@ private:
     QString activeModelResultsContext_;
     AnalysisRunStore runStore_;
     ResultReferenceController resultReferenceController_{runStore_};
+    std::optional<analysis::AnalysisResult> candidateComparisonOverlay_;
+    QString candidateComparisonLabel_;
     std::optional<AnalysisRunRecord> currentRunRecord_;
     SolverRunPurpose currentRunPurpose_{SolverRunPurpose::Analysis};
     analysis::AverageGainEnvironment currentAverageGainEnvironment_{
         analysis::AverageGainEnvironment::FreeSpace};
     double currentAverageGainFrequencyMHz_{};
+    double currentPeakSearchFrequencyMHz_{};
     int currentRunRow_{-1};
     int geometryTabIndex_{};
     int structuredSourceTabIndex_{1};
