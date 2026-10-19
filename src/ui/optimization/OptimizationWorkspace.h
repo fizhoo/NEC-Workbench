@@ -311,7 +311,6 @@ private:
     QLabel* candidateDetailLabel_{};
     QTableWidget* candidateDetailsTable_{};
     QTabWidget* candidateDetailViews_{};
-    SweepPlotsView* candidateDetailPlots_{};
     DirectionalMetricsView* candidateDirectionalPlots_{};
     QPushButton* applyCandidateButton_{};
     QPushButton* applyCandidateAndRunButton_{};

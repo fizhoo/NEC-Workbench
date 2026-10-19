@@ -20,7 +20,8 @@ OptimizationComparePanel::OptimizationComparePanel(QWidget* parent)
 {
     setObjectName(QStringLiteral("optimizationComparePanel"));
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setContentsMargins(4, 4, 4, 4);
+    layout->setSpacing(4);
     status_ = new QLabel(tr(
         "Run an optimization baseline before comparing a completed candidate."), this);
     statusText_ = status_->text();
@@ -31,9 +32,13 @@ OptimizationComparePanel::OptimizationComparePanel(QWidget* parent)
     comparison_->setWordWrap(true);
     tabs_ = new QTabWidget(this);
     tabs_->setDocumentMode(true);
+    tabs_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     sweepPlots_ = new SweepPlotsView(tabs_);
+    sweepPlots_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     sweepPlots_->setReferenceControlVisible(false);
+    sweepPlots_->configureForCompactReview();
     pattern_ = new RadiationPatternView(tabs_);
+    pattern_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     breakdown_ = new QLabel(tabs_);
     breakdown_->setObjectName(QStringLiteral("optimizationCompareBreakdown"));
     breakdown_->setAlignment(Qt::AlignLeft | Qt::AlignTop);
@@ -45,7 +50,7 @@ OptimizationComparePanel::OptimizationComparePanel(QWidget* parent)
     breakdownScroll->setWidget(breakdown_);
     tabs_->addTab(sweepPlots_, tr("SWR && Impedance"));
     tabs_->addTab(pattern_, tr("2D Pattern"));
-    tabs_->addTab(breakdownScroll, tr("Candidate Details"));
+    tabs_->addTab(breakdownScroll, tr("Objective Details"));
     layout->addWidget(status_);
     layout->addWidget(comparison_);
     layout->addWidget(tabs_, 1);

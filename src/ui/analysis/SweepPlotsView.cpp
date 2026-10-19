@@ -776,18 +776,18 @@ SweepPlotsView::SweepPlotsView(QWidget* parent)
     heading->addWidget(referenceControl_);
     summary_ = new QLabel(tr("Run an analysis to populate sweep plots."), this);
     summary_->setWordWrap(true);
-    auto* splitter = new QSplitter(Qt::Vertical, this);
+    splitter_ = new QSplitter(Qt::Vertical, this);
 
-    impedancePlot_ = new SweepPlotWidget(splitter);
+    impedancePlot_ = new SweepPlotWidget(splitter_);
     impedancePlot_->setObjectName(QStringLiteral("impedanceSweepPlot"));
 
-    auto* swrPanel = new QWidget(splitter);
-    auto* swrLayout = new QVBoxLayout(swrPanel);
+    swrPanel_ = new QWidget(splitter_);
+    auto* swrLayout = new QVBoxLayout(swrPanel_);
     swrLayout->setContentsMargins(0, 0, 0, 0);
     auto* swrControls = new QHBoxLayout;
     swrControls->addStretch();
-    swrControls->addWidget(new QLabel(tr("SWR scale:"), swrPanel));
-    swrScaleControl_ = new QComboBox(swrPanel);
+    swrControls->addWidget(new QLabel(tr("SWR scale:"), swrPanel_));
+    swrScaleControl_ = new QComboBox(swrPanel_);
     swrScaleControl_->setObjectName(QStringLiteral("swrScaleControl"));
     swrScaleControl_->addItem(tr("Logarithmic"), static_cast<int>(SwrScaleMode::Logarithmic));
     swrScaleControl_->addItem(tr("Linear"), static_cast<int>(SwrScaleMode::Linear));
@@ -795,17 +795,17 @@ SweepPlotsView::SweepPlotsView(QWidget* parent)
     swrScaleControl_->addItem(tr("Limit 1–5"), static_cast<int>(SwrScaleMode::LimitFive));
     swrControls->addWidget(swrScaleControl_);
     swrLayout->addLayout(swrControls);
-    swrPlot_ = new SweepPlotWidget(swrPanel);
+    swrPlot_ = new SweepPlotWidget(swrPanel_);
     swrPlot_->setObjectName(QStringLiteral("swrSweepPlot"));
     swrLayout->addWidget(swrPlot_, 1);
 
-    splitter->addWidget(impedancePlot_);
-    splitter->addWidget(swrPanel);
-    splitter->setStretchFactor(0, 1);
-    splitter->setStretchFactor(1, 1);
+    splitter_->addWidget(impedancePlot_);
+    splitter_->addWidget(swrPanel_);
+    splitter_->setStretchFactor(0, 1);
+    splitter_->setStretchFactor(1, 1);
     layout->addLayout(heading);
     layout->addWidget(summary_);
-    layout->addWidget(splitter, 1);
+    layout->addWidget(splitter_, 1);
 
     QSettings settings;
     swrScaleControl_->setCurrentIndex(std::clamp(
@@ -846,6 +846,16 @@ void SweepPlotsView::clearReferenceResults()
 void SweepPlotsView::setReferenceControlVisible(bool visible)
 {
     referenceControl_->setVisible(visible);
+}
+
+void SweepPlotsView::configureForCompactReview()
+{
+    layout()->setContentsMargins(4, 4, 4, 4);
+    layout()->setSpacing(4);
+    impedancePlot_->setMinimumHeight(120);
+    swrPlot_->setMinimumHeight(120);
+    splitter_->insertWidget(0, swrPanel_);
+    splitter_->setSizes({140, 140});
 }
 
 void SweepPlotsView::refreshPlots()

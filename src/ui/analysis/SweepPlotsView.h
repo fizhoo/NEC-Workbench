@@ -12,6 +12,7 @@
 class QComboBox;
 class QCheckBox;
 class QLabel;
+class QSplitter;
 
 namespace necwb::ui {
 
@@ -54,6 +55,7 @@ public:
     void clearReferenceResults();
     void setReferenceControlVisible(bool visible);
     void setSelectedFrequency(double frequencyMHz);
+    void configureForCompactReview();
 
 private:
     void refreshPlots();
@@ -63,6 +65,8 @@ private:
     QComboBox* swrScaleControl_{};
     SweepPlotWidget* impedancePlot_{};
     SweepPlotWidget* swrPlot_{};
+    QSplitter* splitter_{};
+    QWidget* swrPanel_{};
     std::optional<analysis::AnalysisResult> result_;
     std::optional<analysis::AnalysisResult> referenceResult_;
     QString runDirectory_;

@@ -44,6 +44,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollArea>
+#include <QSettings>
 #include <QSizePolicy>
 #include <QSignalBlocker>
 #include <QShortcut>
@@ -66,6 +67,11 @@
 
 namespace necwb::ui {
 namespace {
+
+auto candidateReviewSizeKey() -> QString
+{
+    return QStringLiteral("optimization/candidateReviewSizeV1");
+}
 
 enum ResultColumn {
     ValueColumn,
@@ -1217,14 +1223,18 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     candidateDetailsWindow_ = new QDialog(nullptr, Qt::Window);
     candidateDetailsWindow_->setObjectName(
         QStringLiteral("optimizationCandidateDetailsWindow"));
-    candidateDetailsWindow_->setWindowTitle(tr("Optimization Candidate Preview"));
+    candidateDetailsWindow_->setWindowTitle(tr("Candidate Review"));
     candidateDetailsWindow_->setModal(false);
     candidateDetailsWindow_->setAttribute(Qt::WA_QuitOnClose, false);
-    candidateDetailsWindow_->resize(900, 650);
+    const auto savedReviewSize = QSettings{}.value(candidateReviewSizeKey()).toSize();
+    candidateDetailsWindow_->resize(savedReviewSize.isValid()
+        ? savedReviewSize : QSize{640, 460});
     auto* detailLayout = new QVBoxLayout(candidateDetailsWindow_);
+    detailLayout->setContentsMargins(6, 6, 6, 6);
+    detailLayout->setSpacing(6);
     candidateDetailLabel_ = new QLabel(candidateDetailsWindow_);
     candidateDetailLabel_->setObjectName(QStringLiteral("optimizationCandidateDetailLabel"));
-    candidateDetailLabel_->setWordWrap(true);
+    candidateDetailLabel_->setWordWrap(false);
     candidateDetailsTable_ = new QTableWidget(candidateDetailsWindow_);
     candidateDetailsTable_->setObjectName(QStringLiteral("optimizationCandidateDetails"));
     candidateDetailsTable_->setColumnCount(9);
@@ -1236,23 +1246,25 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     candidateDetailsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     candidateDetailsTable_->setSelectionMode(QAbstractItemView::SingleSelection);
     candidateDetailsTable_->verticalHeader()->hide();
-    candidateDetailsTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    candidateDetailPlots_ = new SweepPlotsView(candidateDetailsWindow_);
-    candidateDetailPlots_->setObjectName(
-        QStringLiteral("optimizationCandidateDetailPlots"));
-    candidateDetailPlots_->setReferenceControlVisible(false);
+    candidateDetailsTable_->verticalHeader()->setDefaultSectionSize(21);
+    candidateDetailsTable_->horizontalHeader()->setSectionResizeMode(
+        QHeaderView::ResizeToContents);
+    candidateDetailsTable_->horizontalHeader()->setStretchLastSection(false);
+    candidateDetailsTable_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     candidateDirectionalPlots_ = new DirectionalMetricsView(candidateDetailsWindow_);
+    candidateDirectionalPlots_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     comparePanel_ = new OptimizationComparePanel(candidateDetailsWindow_);
+    comparePanel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     candidateDetailViews_ = new QTabWidget(candidateDetailsWindow_);
     candidateDetailViews_->setObjectName(
         QStringLiteral("optimizationCandidateDetailViews"));
     candidateDetailViews_->setDocumentMode(true);
-    candidateDetailViews_->addTab(candidateDetailsTable_, tr("Frequency Table"));
-    candidateDetailViews_->addTab(candidateDetailPlots_, tr("SWR && Impedance Plots"));
-    const auto directionalTab = candidateDetailViews_->addTab(
-        candidateDirectionalPlots_, tr("Directional Plots"));
+    candidateDetailViews_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     candidateDetailViews_->addTab(comparePanel_, tr("Candidate vs Baseline"));
-    candidateDetailViews_->setTabEnabled(directionalTab, false);
+    candidateDetailViews_->addTab(candidateDetailsTable_, tr("Frequency Table"));
+    const auto directionalTab = candidateDetailViews_->addTab(
+        candidateDirectionalPlots_, tr("Directional Performance"));
+    candidateDetailViews_->setTabVisible(directionalTab, false);
     candidateDetailViews_->setTabToolTip(directionalTab, tr(
         "Available after a completed candidate evaluates a Gain, F/B, or F/R objective."));
     applyCandidateButton_ = new QPushButton(tr("Apply This Candidate to Model"),
@@ -1273,6 +1285,10 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     detailLayout->addWidget(candidateDetailLabel_);
     detailLayout->addWidget(candidateDetailViews_, 1);
     detailLayout->addLayout(candidateActionRow);
+    connect(candidateDetailsWindow_, &QDialog::finished, this, [this] {
+        QSettings{}.setValue(candidateReviewSizeKey(),
+            candidateDetailsWindow_->size());
+    });
     resetCandidateDetails();
 
     auto* resultsPanel = new QWidget(this);
@@ -1286,7 +1302,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     resultsLayout->addWidget(statusLabel_);
     resultsLayout->addLayout(resultStatusRow);
     auto* candidateHint = new QLabel(tr(
-        "Double-click one completed candidate to inspect Candidate vs Baseline in a separate window. Right-click to apply or run."),
+        "Double-click a completed candidate to open Candidate Review. While it is open, select another row to update it. Right-click to apply or run."),
         resultsPanel);
     candidateHint->setObjectName(QStringLiteral("optimizationCandidateHint"));
     candidateHint->setWordWrap(true);
@@ -1490,7 +1506,18 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     connect(resultsTable_, &QTableWidget::customContextMenuRequested,
         this, [this](const QPoint& position) { showCandidateContextMenu(position); });
     connect(resultsTable_, &QTableWidget::currentCellChanged, this,
-        [this](int, int, int, int) { updateComparisonCandidate(); });
+        [this](int currentRow, int, int, int) {
+            updateComparisonCandidate();
+            if (!candidateDetailsWindow_->isVisible()) return;
+            const auto candidateIndex = candidateIndexAtTableRow(currentRow);
+            if (candidateIndex < 0
+                || static_cast<std::size_t>(candidateIndex) >= candidates_.size()) return;
+            const auto& candidate = candidates_[static_cast<std::size_t>(candidateIndex)];
+            if (candidate.evaluation || candidate.availableMeasurements
+                || !candidate.feedpoints.empty()) {
+                updateCandidateDetails(candidateIndex);
+            }
+        });
     connect(resultsTable_->horizontalHeader(), &QHeaderView::sectionClicked,
         this, [this](int column) { sortCandidateTable(column); });
     connect(variablesTable_, &QTableWidget::cellClicked, this, [this](int row, int) {
@@ -1528,6 +1555,8 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
 
 OptimizationWorkspace::~OptimizationWorkspace()
 {
+    QSettings{}.setValue(candidateReviewSizeKey(),
+        candidateDetailsWindow_->size());
     delete candidateDetailsWindow_;
 }
 
@@ -2905,6 +2934,7 @@ void OptimizationWorkspace::showCandidateDetails(int row)
 {
     detailCandidateRow_ = row;
     updateCandidateDetails(row);
+    candidateDetailViews_->setCurrentIndex(0);
     restoreCandidateDetailsWindow();
 }
 
@@ -2924,9 +2954,8 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
     if (row < 0 || static_cast<std::size_t>(row) >= candidates_.size()) {
         candidateDetailLabel_->setText(
             tr("Candidate details are unavailable."));
-        candidateDetailPlots_->setResults({}, tr("this candidate"));
         candidateDirectionalPlots_->setResults({});
-        candidateDetailViews_->setTabEnabled(directionalTab, false);
+        candidateDetailViews_->setTabVisible(directionalTab, false);
         candidateDetailViews_->setTabToolTip(directionalTab, tr(
             "Double-click a completed candidate that evaluated Gain, F/B, or F/R."));
         if (candidateDetailViews_->currentIndex() == directionalTab)
@@ -2939,13 +2968,8 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
     const auto candidateIdentity = tr("Candidate %1 — %2")
         .arg(row + 1)
         .arg(candidateDescription(candidate));
-    candidateDetailsWindow_->setWindowTitle(
-        tr("Optimization Candidate Preview — Candidate %1").arg(row + 1));
     auto feedpoints = candidate.feedpoints;
     std::ranges::sort(feedpoints, {}, &analysis::FeedpointResult::frequencyMHz);
-    analysis::AnalysisResult candidateAnalysis;
-    candidateAnalysis.feedpoints = feedpoints;
-    candidateAnalysis.radiation = candidate.radiation;
     const auto evaluation = candidate.evaluation
         ? candidate.evaluation : candidate.availableMeasurements;
     const auto detailRows = evaluation ? evaluation->frequencyMetrics.size() : feedpoints.size();
@@ -3102,35 +3126,43 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
         breakdown.append(tr("Available measurements retained across %1 frequencies")
             .arg(candidate.availableMeasurements->evaluatedFrequencyCount));
     }
-    candidateDetailLabel_->setText(tr(
-        "%1 · %2 frequencies · %3\n%4\n"
-        "Candidate preview from a temporary optimization evaluation; the active model's "
-        "normal Results remain separate.")
-        .arg(candidateIdentity)
-        .arg(feedpoints.size())
-        .arg(candidate.evaluation && evaluation->evaluatedFrequencyCount == 1
-                ? tr("evaluated frequency bold") : tr("per-criterion frequency reductions"))
-        .arg(breakdown.isEmpty() ? tr("Objective breakdown unavailable")
-                                 : breakdown.join(tr(" · "))));
-    analysis::AnalysisResult detailResult = std::move(candidateAnalysis);
-    detailResult.referenceImpedanceOhms = activeObjective_.referenceImpedance;
-    candidateDetailPlots_->setResults(detailResult,
-        candidateIdentity);
+    QStringList header{tr("Candidate %1").arg(row + 1), candidateDescription(candidate)};
+    if (candidate.evaluation) {
+        auto score = tr("score %1").arg(formatDecimal(candidate.evaluation->score));
+        if (baselineCompatibility_.compatible() && baselineResult_) {
+            if (const auto baselineEvaluation = analysis::evaluateOptimizationObjective(
+                    *baselineResult_, activeObjective_)) {
+                score += tr(" vs baseline %1").arg(formatDecimal(baselineEvaluation->score));
+            }
+        }
+        header.append(score);
+        if (candidate.evaluation->swrSummary) {
+            header.append(tr("min SWR %1 @ %2 MHz")
+                .arg(formatDecimal(candidate.evaluation->swrSummary->minimum),
+                    formatDecimal(candidate.evaluation->swrSummary->minimumFrequencyMHz)));
+        }
+    }
+    auto headerText = header.join(QStringLiteral(" | "));
+    if (headerText.size() > 110) headerText = headerText.left(109) + QChar(0x2026);
+    candidateDetailLabel_->setText(headerText);
+    candidateDetailLabel_->setToolTip(tr(
+        "%1\n%2\nTemporary optimization evaluation; normal Results remain separate.")
+        .arg(candidateIdentity,
+            breakdown.isEmpty() ? tr("Objective breakdown unavailable")
+                                : breakdown.join(tr(" · "))));
     candidateDirectionalPlots_->setResults(evaluation.value_or(
         analysis::OptimizationObjectiveResult{}));
     const auto hasDirectionalMetrics = evaluation
         && std::ranges::any_of(evaluation->frequencyMetrics, [](const auto& metrics) {
             return metrics.forwardGainDb || metrics.frontToBackDb || metrics.frontToRearDb;
         });
-    candidateDetailViews_->setTabEnabled(directionalTab, hasDirectionalMetrics);
+    candidateDetailViews_->setTabVisible(directionalTab, hasDirectionalMetrics);
     candidateDetailViews_->setTabToolTip(directionalTab, hasDirectionalMetrics
         ? tr("Forward Gain, F/B, and F/R across this candidate's evaluated frequencies.")
         : tr("Unavailable because this candidate did not evaluate a Gain, F/B, or F/R objective."));
     if (!hasDirectionalMetrics && candidateDetailViews_->currentIndex() == directionalTab)
         candidateDetailViews_->setCurrentIndex(0);
     if (candidate.evaluation && evaluation->evaluatedFrequencyCount == 1) {
-        candidateDetailPlots_->setSelectedFrequency(
-            evaluation->evaluationFrequencyMHz);
         candidateDirectionalPlots_->setSelectedFrequency(
             evaluation->evaluationFrequencyMHz);
     }
@@ -3188,11 +3220,10 @@ void OptimizationWorkspace::resetCandidateDetails()
     detailCandidateRow_ = -1;
     candidateDetailsTable_->setRowCount(0);
     candidateDetailLabel_->setText(
-        tr("Optimization candidate preview — not the active model's normal analysis results.\n"
-           "Double-click a completed candidate to view its frequency table and plots."));
-    candidateDetailPlots_->setResults({}, tr("a selected candidate"));
+        tr("Select a completed candidate to review it against the optimization baseline."));
+    candidateDetailLabel_->setToolTip({});
     candidateDirectionalPlots_->setResults({});
-    candidateDetailViews_->setTabEnabled(directionalTab, false);
+    candidateDetailViews_->setTabVisible(directionalTab, false);
     candidateDetailViews_->setTabToolTip(directionalTab, tr(
         "Double-click a completed candidate that evaluated Gain, F/B, or F/R."));
     if (candidateDetailViews_->currentIndex() == directionalTab)
