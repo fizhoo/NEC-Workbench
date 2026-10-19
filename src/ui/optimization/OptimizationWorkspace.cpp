@@ -166,6 +166,191 @@ auto optionalNumericItem(const std::optional<double>& value) -> QTableWidgetItem
     return item;
 }
 
+void addOptionalNumber(QJsonObject& object, const QString& key,
+    const std::optional<double>& value)
+{
+    if (value) object.insert(key, *value);
+}
+
+auto optionalNumber(const QJsonObject& object, const QString& key)
+    -> std::optional<double>
+{
+    const auto value = object.value(key);
+    return value.isDouble() ? std::optional<double>{value.toDouble()} : std::nullopt;
+}
+
+auto metricSummaryJson(const analysis::OptimizationMetricSummary& summary) -> QJsonObject
+{
+    return {{QStringLiteral("minimum"), summary.minimum},
+        {QStringLiteral("average"), summary.average},
+        {QStringLiteral("maximum"), summary.maximum},
+        {QStringLiteral("minimumFrequencyMHz"), summary.minimumFrequencyMHz},
+        {QStringLiteral("maximumFrequencyMHz"), summary.maximumFrequencyMHz}};
+}
+
+auto metricSummaryFromJson(const QJsonValue& value)
+    -> std::optional<analysis::OptimizationMetricSummary>
+{
+    if (!value.isObject()) return std::nullopt;
+    const auto object = value.toObject();
+    return analysis::OptimizationMetricSummary{
+        object.value(QStringLiteral("minimum")).toDouble(),
+        object.value(QStringLiteral("average")).toDouble(),
+        object.value(QStringLiteral("maximum")).toDouble(),
+        object.value(QStringLiteral("minimumFrequencyMHz")).toDouble(),
+        object.value(QStringLiteral("maximumFrequencyMHz")).toDouble()};
+}
+
+auto objectiveResultJson(const analysis::OptimizationObjectiveResult& result) -> QJsonObject
+{
+    QJsonObject object{{QStringLiteral("score"), result.score},
+        {QStringLiteral("evaluationFrequencyMHz"), result.evaluationFrequencyMHz},
+        {QStringLiteral("evaluatedFrequencyCount"),
+            static_cast<qint64>(result.evaluatedFrequencyCount)},
+        {QStringLiteral("swr"), result.swr},
+        {QStringLiteral("swrComponent"), result.swrComponent},
+        {QStringLiteral("resistanceComponent"), result.resistanceComponent},
+        {QStringLiteral("reactanceComponent"), result.reactanceComponent},
+        {QStringLiteral("forwardGainComponent"), result.forwardGainComponent},
+        {QStringLiteral("frontToBackComponent"), result.frontToBackComponent},
+        {QStringLiteral("frontToRearComponent"), result.frontToRearComponent}};
+    addOptionalNumber(object, QStringLiteral("forwardGainDb"), result.forwardGainDb);
+    addOptionalNumber(object, QStringLiteral("forwardGainFrequencyMHz"),
+        result.forwardGainFrequencyMHz);
+    addOptionalNumber(object, QStringLiteral("forwardThetaDegrees"),
+        result.forwardThetaDegrees);
+    addOptionalNumber(object, QStringLiteral("forwardPhiDegrees"), result.forwardPhiDegrees);
+    addOptionalNumber(object, QStringLiteral("backGainDb"), result.backGainDb);
+    addOptionalNumber(object, QStringLiteral("frontToBackDb"), result.frontToBackDb);
+    addOptionalNumber(object, QStringLiteral("frontToBackFrequencyMHz"),
+        result.frontToBackFrequencyMHz);
+    addOptionalNumber(object, QStringLiteral("rearGainDb"), result.rearGainDb);
+    addOptionalNumber(object, QStringLiteral("frontToRearDb"), result.frontToRearDb);
+    addOptionalNumber(object, QStringLiteral("frontToRearFrequencyMHz"),
+        result.frontToRearFrequencyMHz);
+    if (result.swrSummary)
+        object.insert(QStringLiteral("swrSummary"), metricSummaryJson(*result.swrSummary));
+    if (result.forwardGainSummary)
+        object.insert(QStringLiteral("forwardGainSummary"),
+            metricSummaryJson(*result.forwardGainSummary));
+    if (result.frontToBackSummary)
+        object.insert(QStringLiteral("frontToBackSummary"),
+            metricSummaryJson(*result.frontToBackSummary));
+    if (result.frontToRearSummary)
+        object.insert(QStringLiteral("frontToRearSummary"),
+            metricSummaryJson(*result.frontToRearSummary));
+    if (result.feedpoint) {
+        object.insert(QStringLiteral("feedpoint"), QJsonObject{
+            {QStringLiteral("frequencyMHz"), result.feedpoint->frequencyMHz},
+            {QStringLiteral("resistanceOhms"), result.feedpoint->impedance.real()},
+            {QStringLiteral("reactanceOhms"), result.feedpoint->impedance.imag()}});
+    }
+    QJsonArray metrics;
+    for (const auto& value : result.frequencyMetrics) {
+        QJsonObject metric{{QStringLiteral("frequencyMHz"), value.frequencyMHz}};
+        addOptionalNumber(metric, QStringLiteral("swr"), value.swr);
+        addOptionalNumber(metric, QStringLiteral("resistanceOhms"), value.resistanceOhms);
+        addOptionalNumber(metric, QStringLiteral("reactanceOhms"), value.reactanceOhms);
+        addOptionalNumber(metric, QStringLiteral("forwardGainDb"), value.forwardGainDb);
+        addOptionalNumber(metric, QStringLiteral("frontToBackDb"), value.frontToBackDb);
+        addOptionalNumber(metric, QStringLiteral("frontToRearDb"), value.frontToRearDb);
+        addOptionalNumber(metric, QStringLiteral("forwardThetaDegrees"),
+            value.forwardThetaDegrees);
+        addOptionalNumber(metric, QStringLiteral("forwardPhiDegrees"),
+            value.forwardPhiDegrees);
+        metrics.append(metric);
+    }
+    object.insert(QStringLiteral("frequencyMetrics"), metrics);
+    return object;
+}
+
+auto objectiveResultFromJson(const QJsonValue& value)
+    -> std::optional<analysis::OptimizationObjectiveResult>
+{
+    if (!value.isObject()) return std::nullopt;
+    const auto object = value.toObject();
+    if (!object.contains(QStringLiteral("score"))) return std::nullopt;
+    analysis::OptimizationObjectiveResult result;
+    result.score = object.value(QStringLiteral("score")).toDouble();
+    result.evaluationFrequencyMHz = object.value(
+        QStringLiteral("evaluationFrequencyMHz")).toDouble();
+    result.evaluatedFrequencyCount = static_cast<std::size_t>(object.value(
+        QStringLiteral("evaluatedFrequencyCount")).toInteger());
+    result.swr = object.value(QStringLiteral("swr")).toDouble();
+    result.swrComponent = object.value(QStringLiteral("swrComponent")).toDouble();
+    result.resistanceComponent = object.value(
+        QStringLiteral("resistanceComponent")).toDouble();
+    result.reactanceComponent = object.value(
+        QStringLiteral("reactanceComponent")).toDouble();
+    result.forwardGainComponent = object.value(
+        QStringLiteral("forwardGainComponent")).toDouble();
+    result.frontToBackComponent = object.value(
+        QStringLiteral("frontToBackComponent")).toDouble();
+    result.frontToRearComponent = object.value(
+        QStringLiteral("frontToRearComponent")).toDouble();
+    result.forwardGainDb = optionalNumber(object, QStringLiteral("forwardGainDb"));
+    result.forwardGainFrequencyMHz = optionalNumber(
+        object, QStringLiteral("forwardGainFrequencyMHz"));
+    result.forwardThetaDegrees = optionalNumber(object, QStringLiteral("forwardThetaDegrees"));
+    result.forwardPhiDegrees = optionalNumber(object, QStringLiteral("forwardPhiDegrees"));
+    result.backGainDb = optionalNumber(object, QStringLiteral("backGainDb"));
+    result.frontToBackDb = optionalNumber(object, QStringLiteral("frontToBackDb"));
+    result.frontToBackFrequencyMHz = optionalNumber(
+        object, QStringLiteral("frontToBackFrequencyMHz"));
+    result.rearGainDb = optionalNumber(object, QStringLiteral("rearGainDb"));
+    result.frontToRearDb = optionalNumber(object, QStringLiteral("frontToRearDb"));
+    result.frontToRearFrequencyMHz = optionalNumber(
+        object, QStringLiteral("frontToRearFrequencyMHz"));
+    result.swrSummary = metricSummaryFromJson(object.value(QStringLiteral("swrSummary")));
+    result.forwardGainSummary = metricSummaryFromJson(
+        object.value(QStringLiteral("forwardGainSummary")));
+    result.frontToBackSummary = metricSummaryFromJson(
+        object.value(QStringLiteral("frontToBackSummary")));
+    result.frontToRearSummary = metricSummaryFromJson(
+        object.value(QStringLiteral("frontToRearSummary")));
+    const auto feedpoint = object.value(QStringLiteral("feedpoint"));
+    if (feedpoint.isObject()) {
+        const auto feedpointObject = feedpoint.toObject();
+        analysis::FeedpointResult value;
+        value.frequencyMHz = feedpointObject.value(QStringLiteral("frequencyMHz")).toDouble();
+        value.impedance = {feedpointObject.value(QStringLiteral("resistanceOhms")).toDouble(),
+            feedpointObject.value(QStringLiteral("reactanceOhms")).toDouble()};
+        result.feedpoint = value;
+    }
+    for (const auto value : object.value(QStringLiteral("frequencyMetrics")).toArray()) {
+        const auto metric = value.toObject();
+        result.frequencyMetrics.push_back({
+            metric.value(QStringLiteral("frequencyMHz")).toDouble(),
+            optionalNumber(metric, QStringLiteral("swr")),
+            optionalNumber(metric, QStringLiteral("resistanceOhms")),
+            optionalNumber(metric, QStringLiteral("reactanceOhms")),
+            optionalNumber(metric, QStringLiteral("forwardGainDb")),
+            optionalNumber(metric, QStringLiteral("frontToBackDb")),
+            optionalNumber(metric, QStringLiteral("frontToRearDb")),
+            optionalNumber(metric, QStringLiteral("forwardThetaDegrees")),
+            optionalNumber(metric, QStringLiteral("forwardPhiDegrees"))});
+    }
+    return result;
+}
+
+void writeObjectiveResultCache(const QString& directory,
+    const std::optional<analysis::OptimizationObjectiveResult>& evaluation,
+    const std::optional<analysis::OptimizationObjectiveResult>& availableMeasurements)
+{
+    const auto path = QDir(directory).filePath(QStringLiteral("optimization.json"));
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return;
+    auto metadata = QJsonDocument::fromJson(file.readAll()).object();
+    if (evaluation)
+        metadata.insert(QStringLiteral("objectiveEvaluation"),
+            objectiveResultJson(*evaluation));
+    if (availableMeasurements)
+        metadata.insert(QStringLiteral("availableMeasurements"),
+            objectiveResultJson(*availableMeasurements));
+    metadata.insert(QStringLiteral("resultCacheVersion"), 1);
+    writeFile(path, QJsonDocument(metadata).toJson(QJsonDocument::Indented));
+}
+
 auto objectiveId(analysis::OptimizationObjectiveKind kind) -> QString
 {
     switch (kind) {
@@ -1151,13 +1336,13 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     configurationScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     configurationScrollArea->setWidget(setupContent);
 
-    auto* configurationPanel = new QWidget(this);
-    configurationPanel->setObjectName(QStringLiteral("optimizationConfigurationPanel"));
-    auto* configurationLayout = new QVBoxLayout(configurationPanel);
+    configurationPanel_ = new QWidget(this);
+    configurationPanel_->setObjectName(QStringLiteral("optimizationConfigurationPanel"));
+    auto* configurationLayout = new QVBoxLayout(configurationPanel_);
     configurationLayout->setContentsMargins(0, 0, 0, 0);
     configurationLayout->addWidget(configurationScrollArea, 1);
-    configurationPanel->setMinimumWidth(280);
-    configurationPanel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    configurationPanel_->setMinimumWidth(280);
+    configurationPanel_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
 
     auto* buttons = new QHBoxLayout;
     runButton_ = new QPushButton(tr("Run Parameter Sweep"), this);
@@ -1223,7 +1408,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     candidateDetailsWindow_ = new QDialog(nullptr, Qt::Window);
     candidateDetailsWindow_->setObjectName(
         QStringLiteral("optimizationCandidateDetailsWindow"));
-    candidateDetailsWindow_->setWindowTitle(tr("Candidate Review"));
+    candidateDetailsWindow_->setWindowTitle(tr("Candidate Results"));
     candidateDetailsWindow_->setModal(false);
     candidateDetailsWindow_->setAttribute(Qt::WA_QuitOnClose, false);
     const auto savedReviewSize = QSettings{}.value(candidateReviewSizeKey()).toSize();
@@ -1251,8 +1436,6 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         QHeaderView::ResizeToContents);
     candidateDetailsTable_->horizontalHeader()->setStretchLastSection(false);
     candidateDetailsTable_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-    candidateDirectionalPlots_ = new DirectionalMetricsView(candidateDetailsWindow_);
-    candidateDirectionalPlots_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     comparePanel_ = new OptimizationComparePanel(candidateDetailsWindow_);
     comparePanel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     candidateDetailViews_ = new QTabWidget(candidateDetailsWindow_);
@@ -1260,13 +1443,8 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         QStringLiteral("optimizationCandidateDetailViews"));
     candidateDetailViews_->setDocumentMode(true);
     candidateDetailViews_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-    candidateDetailViews_->addTab(comparePanel_, tr("Candidate vs Baseline"));
+    candidateDetailViews_->addTab(comparePanel_, tr("Results"));
     candidateDetailViews_->addTab(candidateDetailsTable_, tr("Frequency Table"));
-    const auto directionalTab = candidateDetailViews_->addTab(
-        candidateDirectionalPlots_, tr("Directional Performance"));
-    candidateDetailViews_->setTabVisible(directionalTab, false);
-    candidateDetailViews_->setTabToolTip(directionalTab, tr(
-        "Available after a completed candidate evaluates a Gain, F/B, or F/R objective."));
     applyCandidateButton_ = new QPushButton(tr("Apply This Candidate to Model"),
         candidateDetailsWindow_);
     applyCandidateButton_->setObjectName(QStringLiteral("optimizationApplyCandidate"));
@@ -1302,7 +1480,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     resultsLayout->addWidget(statusLabel_);
     resultsLayout->addLayout(resultStatusRow);
     auto* candidateHint = new QLabel(tr(
-        "Double-click a completed candidate to open Candidate Review. While it is open, select another row to update it. Right-click to apply or run."),
+        "Double-click a completed candidate to open Candidate Results. While it is open, select another row to update it. Right-click to apply or run."),
         resultsPanel);
     candidateHint->setObjectName(QStringLiteral("optimizationCandidateHint"));
     candidateHint->setWordWrap(true);
@@ -1320,7 +1498,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
 
     auto* workspaceSplitter = new QSplitter(Qt::Horizontal, this);
     workspaceSplitter->setObjectName(QStringLiteral("optimizationWorkspaceSplitter"));
-    workspaceSplitter->addWidget(configurationPanel);
+    workspaceSplitter->addWidget(configurationPanel_);
     workspaceSplitter->addWidget(resultsPanel);
     workspaceSplitter->setChildrenCollapsible(false);
     workspaceSplitter->setStretchFactor(0, 0);
@@ -1709,6 +1887,8 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
     auto records = runStore_.load();
     const auto session = std::ranges::find(records, sessionId, &AnalysisRunRecord::id);
     if (session == records.end() || session->runType != QStringLiteral("optimization-session")) return false;
+    setUpdatesEnabled(false);
+    const QSignalBlocker resultsBlocker(resultsTable_);
     if (!historicalSession_) activeFrequencySelection_ = captureFrequencySelection();
     std::vector<AnalysisRunRecord> candidateRecords;
     for (const auto& record : records) {
@@ -1815,10 +1995,12 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         for (const auto variableValue : metadata.value(QStringLiteral("variables")).toArray())
             candidateValues.push_back(variableValue.toObject().value(QStringLiteral("value")).toDouble());
         if (candidateValues.empty()) candidateValues.push_back(value);
-        QFile outputFile(QDir(candidateRecords[index].directory).filePath(QStringLiteral("model.out")));
         analysis::AnalysisResult result;
-        if (outputFile.open(QIODevice::ReadOnly))
-            result = analysis::NecOutputParser{}.parse(outputFile.readAll().toStdString());
+        auto evaluation = objectiveResultFromJson(
+            metadata.value(QStringLiteral("objectiveEvaluation")));
+        auto availableMeasurements = objectiveResultFromJson(
+            metadata.value(QStringLiteral("availableMeasurements")));
+        auto analysisLoaded = false;
         const auto objectiveId = metadata.value(QStringLiteral("objective")).toString();
         restoredObjective = {};
         restoredObjective.kind = objectiveKind(objectiveId);
@@ -1908,8 +2090,19 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
             restoredObjective.frontToBackAggregation = analysis::OptimizationAggregation::Average;
             restoredObjective.frontToRearAggregation = analysis::OptimizationAggregation::Average;
         }
-        const auto evaluation = analysis::evaluateOptimizationObjective(
-            result, restoredObjective);
+        if (!evaluation && !availableMeasurements) {
+            QFile outputFile(QDir(candidateRecords[index].directory).filePath(
+                QStringLiteral("model.out")));
+            if (outputFile.open(QIODevice::ReadOnly)) {
+                result = analysis::NecOutputParser{}.parse(
+                    outputFile.readAll().toStdString());
+                analysisLoaded = true;
+                evaluation = analysis::evaluateOptimizationObjective(
+                    result, restoredObjective);
+                writeObjectiveResultCache(candidateRecords[index].directory,
+                    evaluation, std::nullopt);
+            }
+        }
         if (evaluation) {
             resultsTable_->setItem(row, ScoreColumn, numericItem(evaluation->score));
             resultsTable_->setItem(row, FrequencyColumn,
@@ -1945,6 +2138,8 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         candidate.feedpoints = std::move(result.feedpoints);
         candidate.radiation = std::move(result.radiation);
         candidate.evaluation = evaluation;
+        candidate.availableMeasurements = availableMeasurements;
+        candidate.analysisLoaded = analysisLoaded;
         candidate.refinementRound = metadata.value(QStringLiteral("refinementRound")).toInt();
         candidate.trialRole = metadata.value(QStringLiteral("trialRole")).toString();
         if (!evaluation && candidateRecords[index].status != QStringLiteral("Completed"))
@@ -1994,6 +2189,7 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
                     .arg(baselineRunId), false);
     }
     historicalSession_ = true;
+    configurationPanel_->hide();
     const auto modelName = session->sourceFile.isEmpty()
         ? tr("Archived model.nec") : QFileInfo(session->sourceFile).fileName();
     historicalBannerTitle_->setText(tr(
@@ -2019,8 +2215,29 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         const auto bestTableRow = tableRowForCandidateIndex(bestRow_);
         if (bestTableRow >= 0) resultsTable_->selectRow(bestTableRow);
     }
+    updateComparisonCandidate();
     updateWorkload();
+    QStringList historicalVariables;
+    for (const auto& variable : activeVariables_) historicalVariables.append(variable.name);
+    QStringList historicalCriteria;
+    const std::array historicalWeights{activeObjective_.swrWeight,
+        activeObjective_.resistanceWeight, activeObjective_.reactanceWeight,
+        activeObjective_.forwardGainWeight, activeObjective_.frontToBackWeight,
+        activeObjective_.frontToRearWeight};
+    const std::array historicalNames{tr("SWR"), tr("R"), tr("X"), tr("Gain"),
+        tr("F/B"), tr("F/R")};
+    for (auto index = std::size_t{}; index < historicalWeights.size(); ++index) {
+        if (historicalWeights[index] > 0.0) historicalCriteria.append(historicalNames[index]);
+    }
+    studySummaryLabel_->setText(tr("Variables: %1 | Frequencies: %2 | Objective: %3")
+        .arg(historicalVariables.isEmpty() ? tr("not recorded")
+                                           : historicalVariables.join(QStringLiteral(", ")))
+        .arg(activeFrequenciesMHz_.size())
+        .arg(historicalCriteria.isEmpty() ? tr("not recorded")
+                                          : historicalCriteria.join(QStringLiteral(" + "))));
     updateReadiness();
+    setUpdatesEnabled(true);
+    update();
     return true;
 }
 
@@ -2028,6 +2245,7 @@ void OptimizationWorkspace::leaveHistoricalSession()
 {
     if (!historicalSession_) return;
     historicalSession_ = false;
+    configurationPanel_->show();
     historicalBanner_->hide();
     if (activeFrequencySelection_) {
         restoreFrequencySelection(*activeFrequencySelection_);
@@ -2949,22 +3167,16 @@ void OptimizationWorkspace::restoreCandidateDetailsWindow()
 
 void OptimizationWorkspace::updateCandidateDetails(int row)
 {
-    constexpr auto directionalTab = 2;
     candidateDetailsTable_->setRowCount(0);
     if (row < 0 || static_cast<std::size_t>(row) >= candidates_.size()) {
         candidateDetailLabel_->setText(
             tr("Candidate details are unavailable."));
-        candidateDirectionalPlots_->setResults({});
-        candidateDetailViews_->setTabVisible(directionalTab, false);
-        candidateDetailViews_->setTabToolTip(directionalTab, tr(
-            "Double-click a completed candidate that evaluated Gain, F/B, or F/R."));
-        if (candidateDetailViews_->currentIndex() == directionalTab)
-            candidateDetailViews_->setCurrentIndex(0);
         updateCandidateActionState();
         return;
     }
 
-    const auto& candidate = candidates_[static_cast<std::size_t>(row)];
+    auto& candidate = candidates_[static_cast<std::size_t>(row)];
+    ensureCandidateAnalysisLoaded(candidate);
     const auto candidateIdentity = tr("Candidate %1 — %2")
         .arg(row + 1)
         .arg(candidateDescription(candidate));
@@ -3129,18 +3341,21 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
     QStringList header{tr("Candidate %1").arg(row + 1), candidateDescription(candidate)};
     if (candidate.evaluation) {
         auto score = tr("score %1").arg(formatDecimal(candidate.evaluation->score));
-        if (baselineCompatibility_.compatible() && baselineResult_) {
-            if (const auto baselineEvaluation = analysis::evaluateOptimizationObjective(
-                    *baselineResult_, activeObjective_)) {
-                score += tr(" vs baseline %1").arg(formatDecimal(baselineEvaluation->score));
-            }
-        }
         header.append(score);
         if (candidate.evaluation->swrSummary) {
             header.append(tr("min SWR %1 @ %2 MHz")
                 .arg(formatDecimal(candidate.evaluation->swrSummary->minimum),
                     formatDecimal(candidate.evaluation->swrSummary->minimumFrequencyMHz)));
         }
+        if (candidate.evaluation->frontToBackDb)
+            header.append(tr("F/B %1 dB")
+                .arg(formatDecimal(*candidate.evaluation->frontToBackDb)));
+        else if (candidate.evaluation->forwardGainDb)
+            header.append(tr("gain %1 dBi")
+                .arg(formatDecimal(*candidate.evaluation->forwardGainDb)));
+        else if (candidate.evaluation->frontToRearDb)
+            header.append(tr("F/R %1 dB")
+                .arg(formatDecimal(*candidate.evaluation->frontToRearDb)));
     }
     auto headerText = header.join(QStringLiteral(" | "));
     if (headerText.size() > 110) headerText = headerText.left(109) + QChar(0x2026);
@@ -3150,22 +3365,6 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
         .arg(candidateIdentity,
             breakdown.isEmpty() ? tr("Objective breakdown unavailable")
                                 : breakdown.join(tr(" · "))));
-    candidateDirectionalPlots_->setResults(evaluation.value_or(
-        analysis::OptimizationObjectiveResult{}));
-    const auto hasDirectionalMetrics = evaluation
-        && std::ranges::any_of(evaluation->frequencyMetrics, [](const auto& metrics) {
-            return metrics.forwardGainDb || metrics.frontToBackDb || metrics.frontToRearDb;
-        });
-    candidateDetailViews_->setTabVisible(directionalTab, hasDirectionalMetrics);
-    candidateDetailViews_->setTabToolTip(directionalTab, hasDirectionalMetrics
-        ? tr("Forward Gain, F/B, and F/R across this candidate's evaluated frequencies.")
-        : tr("Unavailable because this candidate did not evaluate a Gain, F/B, or F/R objective."));
-    if (!hasDirectionalMetrics && candidateDetailViews_->currentIndex() == directionalTab)
-        candidateDetailViews_->setCurrentIndex(0);
-    if (candidate.evaluation && evaluation->evaluatedFrequencyCount == 1) {
-        candidateDirectionalPlots_->setSelectedFrequency(
-            evaluation->evaluationFrequencyMHz);
-    }
     updateCandidateActionState();
 }
 
@@ -3216,18 +3415,11 @@ void OptimizationWorkspace::finishOptimizationBaseline(bool succeeded, QString d
 
 void OptimizationWorkspace::resetCandidateDetails()
 {
-    constexpr auto directionalTab = 2;
     detailCandidateRow_ = -1;
     candidateDetailsTable_->setRowCount(0);
     candidateDetailLabel_->setText(
-        tr("Select a completed candidate to review it against the optimization baseline."));
+        tr("Select a completed candidate to inspect its results."));
     candidateDetailLabel_->setToolTip({});
-    candidateDirectionalPlots_->setResults({});
-    candidateDetailViews_->setTabVisible(directionalTab, false);
-    candidateDetailViews_->setTabToolTip(directionalTab, tr(
-        "Double-click a completed candidate that evaluated Gain, F/B, or F/R."));
-    if (candidateDetailViews_->currentIndex() == directionalTab)
-        candidateDetailViews_->setCurrentIndex(0);
     updateCandidateActionState();
 }
 
@@ -3361,7 +3553,9 @@ void OptimizationWorkspace::updateCandidateRowToolTip(int row)
     const auto& candidate = candidates_[static_cast<std::size_t>(row)];
     const auto tableRow = tableRowForCandidateIndex(row);
     if (tableRow < 0) return;
-    const auto hasDetails = !candidate.feedpoints.empty();
+    const auto hasDetails = candidate.evaluation.has_value()
+        || candidate.availableMeasurements.has_value()
+        || candidate.record.hasImpedance || candidate.record.hasRadiation;
     const auto* statusItem = resultsTable_->item(tableRow, StatusColumn);
     const auto inProgress = statusItem != nullptr
         && (statusItem->text() == tr("Pending") || statusItem->text() == tr("Running"));
@@ -3493,7 +3687,7 @@ void OptimizationWorkspace::updateBaselineState()
     }
     if (baselineRecord_ && baselineResult_) {
         comparePanel_->setBaseline(*baselineResult_,
-            tr("Optimization Baseline — Run %1").arg(baselineRecord_->id));
+            tr("Starting model — Run %1").arg(baselineRecord_->id));
     } else {
         comparePanel_->clearBaseline();
     }
@@ -3508,7 +3702,8 @@ void OptimizationWorkspace::updateComparisonCandidate()
         comparePanel_->clearCandidate();
         return;
     }
-    const auto& candidate = candidates_[static_cast<std::size_t>(candidateIndex)];
+    auto& candidate = candidates_[static_cast<std::size_t>(candidateIndex)];
+    ensureCandidateAnalysisLoaded(candidate);
     if (candidate.feedpoints.empty() && candidate.radiation.empty()) {
         comparePanel_->clearCandidate();
         return;
@@ -3521,6 +3716,8 @@ void OptimizationWorkspace::updateComparisonCandidate()
         .arg(candidateIndex + 1)
         .arg(candidateDescription(candidate));
     auto breakdown = candidateIdentity;
+    QString comparisonBreakdown;
+    std::optional<analysis::OptimizationObjectiveResult> baselineEvaluation;
     if (candidate.evaluation) {
         breakdown += tr("\nObjective score: %1\nEvaluated frequencies: %2")
             .arg(formatDecimal(candidate.evaluation->score))
@@ -3540,12 +3737,17 @@ void OptimizationWorkspace::updateComparisonCandidate()
         if (candidate.evaluation->frontToBackDb)
             breakdown += tr("\nReduced F/B: %1 dB")
                 .arg(formatDecimal(*candidate.evaluation->frontToBackDb));
+        if (candidate.evaluation->frontToBackDb
+            && std::abs(*candidate.evaluation->frontToBackDb) < 0.005) {
+            breakdown += tr(
+                "\nF/B is 0 dB because the tracked forward lobe and its physical opposite have equal gain.");
+        }
         if (candidate.evaluation->frontToRearDb)
             breakdown += tr("\nReduced F/R: %1 dB")
                 .arg(formatDecimal(*candidate.evaluation->frontToRearDb));
 
         if (baselineCompatibility_.compatible() && baselineRecord_ && baselineResult_) {
-            const auto baselineEvaluation = analysis::evaluateOptimizationObjective(
+            baselineEvaluation = analysis::evaluateOptimizationObjective(
                 *baselineResult_, activeObjective_);
             if (baselineEvaluation) {
                 const auto signedDelta = [](double value) {
@@ -3576,9 +3778,7 @@ void OptimizationWorkspace::updateComparisonCandidate()
                     }
                     return tr(" across %1 frequencies").arg(frequencyCount);
                 };
-                breakdown += tr("\n\nCandidate minus baseline %1:")
-                    .arg(baselineRecord_->id);
-                breakdown += tr("\nObjective score Δ %1")
+                comparisonBreakdown += tr("Objective score Δ %1")
                     .arg(signedDelta(candidate.evaluation->score
                         - baselineEvaluation->score));
                 if (activeObjective_.swrWeight > 0.0) {
@@ -3586,7 +3786,7 @@ void OptimizationWorkspace::updateComparisonCandidate()
                         candidate.evaluation->swrSummary, activeObjective_.swrAggregation);
                     const auto baselineFrequency = reducedFrequency(*baselineEvaluation,
                         baselineEvaluation->swrSummary, activeObjective_.swrAggregation);
-                    breakdown += tr("\nSWR Δ %1%2")
+                    comparisonBreakdown += tr("\nSWR Δ %1%2")
                         .arg(signedDelta(candidate.evaluation->swr
                             - baselineEvaluation->swr),
                             frequencyContext(candidateFrequency, baselineFrequency,
@@ -3598,12 +3798,12 @@ void OptimizationWorkspace::updateComparisonCandidate()
                     const auto context = frequencyContext(candidateFrequency,
                         baselineFrequency, candidate.evaluation->evaluatedFrequencyCount);
                     if (activeObjective_.resistanceWeight > 0.0) {
-                        breakdown += tr("\nR Δ %1 Ω%2")
+                        comparisonBreakdown += tr("\nR Δ %1 Ω%2")
                             .arg(signedDelta(candidate.evaluation->feedpoint->impedance.real()
                                 - baselineEvaluation->feedpoint->impedance.real()), context);
                     }
                     if (activeObjective_.reactanceWeight > 0.0) {
-                        breakdown += tr("\nX Δ %1 Ω%2")
+                        comparisonBreakdown += tr("\nX Δ %1 Ω%2")
                             .arg(signedDelta(candidate.evaluation->feedpoint->impedance.imag()
                                 - baselineEvaluation->feedpoint->impedance.imag()), context);
                     }
@@ -3614,7 +3814,7 @@ void OptimizationWorkspace::updateComparisonCandidate()
                                                      const auto& candidateFrequency,
                                                      const auto& baselineFrequency) {
                     if (weight <= 0.0 || !candidateValue || !baselineValue) return;
-                    breakdown += tr("\n%1 Δ %2 dB%3")
+                    comparisonBreakdown += tr("\n%1 Δ %2 dB%3")
                         .arg(name,
                             signedDelta(*candidateValue - *baselineValue),
                             frequencyContext(candidateFrequency, baselineFrequency,
@@ -3633,14 +3833,30 @@ void OptimizationWorkspace::updateComparisonCandidate()
                     candidate.evaluation->frontToRearFrequencyMHz,
                     baselineEvaluation->frontToRearFrequencyMHz);
             } else {
-                breakdown += tr("\n\nBaseline deltas unavailable: the saved baseline cannot be evaluated with the current objective.");
+                comparisonBreakdown = tr(
+                    "Deltas unavailable: the saved starting model cannot be evaluated with the current objective.");
             }
         }
     } else if (!candidate.failureDetail.isEmpty()) {
         breakdown += tr("\nObjective unavailable: %1").arg(candidate.failureDetail);
     }
     comparePanel_->setCandidate(result,
-        candidateIdentity, breakdown);
+        candidateIdentity, breakdown, comparisonBreakdown,
+        candidate.evaluation ? candidate.evaluation : candidate.availableMeasurements,
+        baselineEvaluation);
+}
+
+auto OptimizationWorkspace::ensureCandidateAnalysisLoaded(Candidate& candidate) -> bool
+{
+    if (candidate.analysisLoaded)
+        return !candidate.feedpoints.empty() || !candidate.radiation.empty();
+    candidate.analysisLoaded = true;
+    QFile outputFile(QDir(candidate.record.directory).filePath(QStringLiteral("model.out")));
+    if (!outputFile.open(QIODevice::ReadOnly)) return false;
+    auto result = analysis::NecOutputParser{}.parse(outputFile.readAll().toStdString());
+    candidate.feedpoints = std::move(result.feedpoints);
+    candidate.radiation = std::move(result.radiation);
+    return !candidate.feedpoints.empty() || !candidate.radiation.empty();
 }
 
 void OptimizationWorkspace::requestOptimizationStart()
@@ -4238,6 +4454,7 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
     candidate.record.outputBytes = result.outputBytes;
     candidate.feedpoints = result.analysis.feedpoints;
     candidate.radiation = result.analysis.radiation;
+    candidate.analysisLoaded = true;
     candidate.evaluation.reset();
     candidate.availableMeasurements = result.availableMeasurements;
     candidate.failureDetail.clear();
@@ -4348,6 +4565,8 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
         differentialEvolutionSearch_->record(candidate.values,
             candidate.evaluation
                 ? std::optional<double>{candidate.evaluation->score} : std::nullopt);
+    writeObjectiveResultCache(candidate.record.directory,
+        candidate.evaluation, candidate.availableMeasurements);
     runStore_.save(candidate.record);
     ++candidateIndex_;
     progress_->setValue(static_cast<int>(candidateIndex_));

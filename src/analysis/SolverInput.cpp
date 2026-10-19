@@ -328,6 +328,8 @@ auto prepareDirectionalCutOptimizationInput(std::string_view source,
     double cutAngleDegrees, bool includeOppositeDirection,
     bool includeRearRegion) -> std::string
 {
+    (void)includeOppositeDirection;
+    (void)includeRearRegion;
     if (mode == DirectionalEvaluationMode::SpecifiedDirection
         || !std::isfinite(cutAngleDegrees))
         return prepareImpedanceInput(source);
@@ -362,13 +364,6 @@ auto prepareDirectionalCutOptimizationInput(std::string_view source,
     }
 
     std::vector<model::RadiationPatternRequest> patterns{primary};
-    const auto needsRearCoverage = includeOppositeDirection || includeRearRegion;
-    if (mode == DirectionalEvaluationMode::StrongestInAzimuthCut
-        && needsRearCoverage && std::abs(cutAngleDegrees - 90.0) > 1.0e-6) {
-        auto oppositeRing = primary;
-        oppositeRing.thetaStart = 180.0 - cutAngleDegrees;
-        patterns.push_back(oppositeRing);
-    }
 
     const auto document = nec::NecParser{}.parse(normalizeSolverDeck(source));
     const nec::NecWriter writer;

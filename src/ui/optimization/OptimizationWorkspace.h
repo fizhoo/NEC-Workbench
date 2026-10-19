@@ -38,7 +38,6 @@ class QTabWidget;
 namespace necwb::ui {
 
 class CandidatePlotsView;
-class DirectionalMetricsView;
 class OptimizationComparePanel;
 class SweepPlotsView;
 
@@ -132,6 +131,7 @@ private:
         std::vector<analysis::RadiationSample> radiation;
         std::optional<analysis::OptimizationObjectiveResult> evaluation;
         std::optional<analysis::OptimizationObjectiveResult> availableMeasurements;
+        bool analysisLoaded{};
         int refinementRound{};
         QString trialRole;
         QString failureDetail;
@@ -169,6 +169,7 @@ private:
         -> std::vector<std::pair<QString, double>>;
     void applyCandidate(int row, bool runAfterApply);
     void updateCandidateRowToolTip(int row);
+    auto ensureCandidateAnalysisLoaded(Candidate& candidate) -> bool;
     void updateCandidatePlots();
     void updateComparisonCandidate();
     void updateBaselineState();
@@ -304,6 +305,7 @@ private:
     QProgressBar* progress_{};
     QLabel* statusLabel_{};
     QLabel* bestLabel_{};
+    QWidget* configurationPanel_{};
     QTableWidget* resultsTable_{};
     CandidatePlotsView* candidatePlots_{};
     OptimizationComparePanel* comparePanel_{};
@@ -311,7 +313,6 @@ private:
     QLabel* candidateDetailLabel_{};
     QTableWidget* candidateDetailsTable_{};
     QTabWidget* candidateDetailViews_{};
-    DirectionalMetricsView* candidateDirectionalPlots_{};
     QPushButton* applyCandidateButton_{};
     QPushButton* applyCandidateAndRunButton_{};
     QWidget* historicalBanner_{};

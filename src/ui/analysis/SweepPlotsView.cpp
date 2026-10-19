@@ -997,6 +997,18 @@ void DirectionalMetricsView::setResults(
     setMetrics(metrics);
 }
 
+void DirectionalMetricsView::setReferenceResults(
+    const analysis::OptimizationObjectiveResult& result, QString label)
+{
+    std::vector<DirectionalPlotPoint> metrics;
+    metrics.reserve(result.frequencyMetrics.size());
+    for (const auto& value : result.frequencyMetrics) {
+        metrics.push_back({value.frequencyMHz, value.forwardGainDb,
+            value.frontToBackDb, value.frontToRearDb});
+    }
+    setReferenceMetrics(metrics, std::move(label));
+}
+
 void DirectionalMetricsView::setMetrics(
     const std::vector<DirectionalPlotPoint>& metrics)
 {
@@ -1050,7 +1062,7 @@ void DirectionalMetricsView::refresh()
         &DirectionalPlotPoint::frontToBackDb);
     appendSeries(metrics_, tr("F/R"), tr("dB"), QColor(135, 75, 180), Qt::DashLine, false,
         &DirectionalPlotPoint::frontToRearDb);
-    plot_->setLinearPlot(tr("Directional Performance"), tr("Frequency (MHz)"),
+    plot_->setLinearPlot(tr("Directional vs Frequency"), tr("Frequency (MHz)"),
         tr("Gain / Ratio (dB)"), std::move(series));
 
     QStringList summaries;

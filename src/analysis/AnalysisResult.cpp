@@ -314,8 +314,10 @@ auto radiationTrackedCutFrequencyMetrics(std::span<const RadiationSample> sample
         metric.forwardThetaDegrees = front->thetaDegrees;
         metric.forwardPhiDegrees = front->phiDegrees;
         const auto frontDirection = unitDirection(front->thetaDegrees, front->phiDegrees);
-        const std::array<double, 3> backDirection{
-            -frontDirection[0], -frontDirection[1], -frontDirection[2]};
+        const auto backTheta = mode == DirectionalEvaluationMode::StrongestInAzimuthCut
+            ? front->thetaDegrees : 180.0 - front->thetaDegrees;
+        const auto backPhi = front->phiDegrees + 180.0;
+        const auto backDirection = unitDirection(backTheta, backPhi);
         if (const auto* back = directionalSample(samples, frequencyMHz, backDirection)) {
             const auto backGain = radiationGainDb(*back, component);
             if (std::isfinite(backGain) && backGain > -900.0) {

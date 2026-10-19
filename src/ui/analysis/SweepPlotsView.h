@@ -78,6 +78,8 @@ public:
     explicit DirectionalMetricsView(QWidget* parent = nullptr);
 
     void setResults(const analysis::OptimizationObjectiveResult& result);
+    void setReferenceResults(const analysis::OptimizationObjectiveResult& result,
+        QString label);
     void setMetrics(const std::vector<DirectionalPlotPoint>& metrics);
     void setReferenceMetrics(const std::vector<DirectionalPlotPoint>& metrics, QString label);
     void clearReferenceMetrics();

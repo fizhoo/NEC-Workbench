@@ -21,6 +21,7 @@
 #include "ui/geometry/GeometryView.h"
 #include "ui/geometry/Geometry3DView.h"
 #include "ui/optimization/OptimizationWorkspace.h"
+#include "ui/optimization/OptimizationComparePanel.h"
 #include "ui/model/ParameterEditor.h"
 #include "ui/setup/LoadNetworkEditor.h"
 #include "ui/setup/SetupEditor.h"
@@ -39,6 +40,8 @@
 #include <QFile>
 #include <QImage>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QKeyEvent>
@@ -516,6 +519,13 @@ auto main(int argc, char* argv[]) -> int
     auto* optimizationCandidateReferenceControl = optimizationCandidateDetailsWindow == nullptr
         ? nullptr : optimizationCandidateDetailsWindow->findChild<QCheckBox*>(
             QStringLiteral("sweepShowReference"));
+    auto* optimizationCompareWithStartingModel =
+        optimizationCandidateDetailsWindow == nullptr
+        ? nullptr : optimizationCandidateDetailsWindow->findChild<QCheckBox*>(
+            QStringLiteral("optimizationCompareWithStartingModel"));
+    const auto candidateComparisonDefaultsOff =
+        optimizationCompareWithStartingModel != nullptr
+        && !optimizationCompareWithStartingModel->isChecked();
     auto* optimizationCandidateDirectionalPlots = optimizationCandidateDetailsWindow == nullptr
         ? nullptr : optimizationCandidateDetailsWindow->findChild<QWidget*>(
             QStringLiteral("optimizationCandidateDirectionalPlots"));
@@ -802,6 +812,15 @@ auto main(int argc, char* argv[]) -> int
         && optimization.loadSession(historicalOptimization.id)
         && optimizationFrequencyTable != nullptr
         && optimizationFrequencyTable->count() == 2;
+    QFile cachedCandidateMetadata(QDir(historicalCandidate.directory).filePath(
+        QStringLiteral("optimization.json")));
+    const auto historicalCandidateResultCached = cachedCandidateMetadata.open(
+            QIODevice::ReadOnly)
+        && QJsonDocument::fromJson(cachedCandidateMetadata.readAll()).object().contains(
+            QStringLiteral("objectiveEvaluation"));
+    const auto historicalSetupHidden = historicalFrequencySelectionLoaded
+        && optimizationConfiguration != nullptr
+        && optimizationConfiguration->isHidden();
     auto* workspaceCandidateScorePlot = optimization.findChild<QWidget*>(
         QStringLiteral("optimizationCandidateScorePlot"));
     const auto historicalObjectiveBreakdownLoaded = historicalFrequencySelectionLoaded
@@ -814,10 +833,13 @@ auto main(int argc, char* argv[]) -> int
         && optimizationBaselineStatus != nullptr
         && optimizationBaselineStatus->text().contains(
             QStringLiteral("saved with this optimization session"));
+    if (optimizationCompareWithStartingModel != nullptr)
+        optimizationCompareWithStartingModel->click();
+    application.processEvents();
     const auto historicalBaselineDeltaLoaded = historicalBaselineLoaded
         && optimizationCompareBreakdown != nullptr
         && optimizationCompareBreakdown->text().contains(
-            QStringLiteral("Candidate minus baseline"));
+            QStringLiteral("Comparison with starting model"));
     const auto candidateScoreTooltip = optimizationResultsTable == nullptr
         || optimizationResultsTable->item(0, 1) == nullptr
         ? QString{} : optimizationResultsTable->item(0, 1)->toolTip();
@@ -884,11 +906,13 @@ auto main(int argc, char* argv[]) -> int
         && candidateImpedancePlot->property("seriesCount").toInt() > 0
         && optimizationCandidateReferenceControl != nullptr
         && optimizationCandidateReferenceControl->isHidden()
+        && optimizationCompareWithStartingModel != nullptr
+        && optimizationCompareWithStartingModel->isChecked()
         && optimizationCompareBreakdown != nullptr
         && optimizationCandidateDetailViews->currentIndex() == 0
-        && !optimizationCandidateDetailViews->isTabVisible(2)
-        && optimizationCandidateDetailViews->tabToolTip(2).contains(
-            QStringLiteral("did not evaluate"))
+        && !optimizationCompareTabs->isTabVisible(2)
+        && optimizationCompareTabs->tabToolTip(2).contains(
+            QStringLiteral("no directional objective data"))
         && optimizationApplyCandidate->isEnabled()
         && optimizationApplyCandidateAndRun->isEnabled();
     const auto firstCandidateHeader = optimizationCandidateHeader == nullptr
@@ -1385,6 +1409,41 @@ auto main(int argc, char* argv[]) -> int
         && staleDirectionStatus->text().contains(QStringLiteral("direction is stale"))
         && staleDirectionButton != nullptr
         && staleDirectionButton->text() == QStringLiteral("Update Maximum…");
+    necwb::ui::OptimizationComparePanel directionalComparison;
+    necwb::analysis::AnalysisResult directionalCandidateResult;
+    necwb::analysis::AnalysisResult directionalBaselineResult;
+    necwb::analysis::OptimizationObjectiveResult directionalCandidateEvaluation;
+    directionalCandidateEvaluation.frequencyMetrics = {{
+        .frequencyMHz = 14.0,
+        .forwardGainDb = 7.0,
+        .frontToBackDb = 18.0,
+        .frontToRearDb = 15.0,
+    }};
+    auto directionalBaselineEvaluation = directionalCandidateEvaluation;
+    directionalBaselineEvaluation.frequencyMetrics.front().forwardGainDb = 6.5;
+    directionalComparison.setBaseline(directionalBaselineResult,
+        QStringLiteral("Starting model"));
+    directionalComparison.setBaselineStatus(QStringLiteral("Compatible"), true);
+    directionalComparison.setCandidate(directionalCandidateResult,
+        QStringLiteral("Candidate"), {}, {}, directionalCandidateEvaluation,
+        directionalBaselineEvaluation);
+    auto* directionalComparisonTabs = directionalComparison.findChild<QTabWidget*>(
+        QStringLiteral("optimizationCompareTabs"));
+    auto* directionalComparisonControl = directionalComparison.findChild<QCheckBox*>(
+        QStringLiteral("optimizationCompareWithStartingModel"));
+    auto* directionalComparisonPlot = directionalComparison.findChild<QWidget*>(
+        QStringLiteral("directionalMetricsPlot"));
+    const auto directionalCandidateOnlyVisible = directionalComparisonTabs != nullptr
+        && directionalComparisonTabs->isTabVisible(2)
+        && directionalComparisonTabs->tabText(2)
+            == QStringLiteral("Directional vs Frequency")
+        && directionalComparisonPlot != nullptr
+        && directionalComparisonPlot->property("seriesCount").toInt() == 3;
+    if (directionalComparisonControl != nullptr) directionalComparisonControl->click();
+    application.processEvents();
+    const auto directionalStartingModelOverlay = directionalCandidateOnlyVisible
+        && directionalComparisonControl->isChecked()
+        && directionalComparisonPlot->property("seriesCount").toInt() == 6;
     if (optimizationConfiguration == nullptr
         || optimizationWorkspaceSplitter == nullptr
         || optimizationWorkspaceSplitter->orientation() != Qt::Horizontal
@@ -1407,10 +1466,11 @@ auto main(int argc, char* argv[]) -> int
         || optimizationCandidateDetailsWindow->parentWidget() != nullptr
         || optimizationCandidateDetailsWindow->testAttribute(Qt::WA_QuitOnClose)
         || optimizationCandidateDetailsWindow->isVisible()
-        || optimizationCandidateDetailsWindow->windowTitle() != QStringLiteral("Candidate Review")
+        || optimizationCandidateDetailsWindow->windowTitle() != QStringLiteral("Candidate Results")
         || optimizationCandidateReviewDefaultSize.width() > 640
         || optimizationCandidateReviewDefaultSize.height() > 460
         || !staleDirectionReported
+        || !directionalStartingModelOverlay
         || optimizationCandidateDetails == nullptr
         || optimizationCandidateDetails->columnCount() != 9
         || optimizationCandidateDetails->verticalHeader()->defaultSectionSize() > 24
@@ -1427,16 +1487,11 @@ auto main(int argc, char* argv[]) -> int
         || !optimizationCandidateDetailsWindow->isAncestorOf(
             optimizationCandidateDetails)
         || optimizationCandidateDetailViews == nullptr
-        || optimizationCandidateDetailViews->count() != 3
+        || optimizationCandidateDetailViews->count() != 2
         || optimizationCandidateDetailViews->tabText(0)
-            != QStringLiteral("Candidate vs Baseline")
+            != QStringLiteral("Results")
         || optimizationCandidateDetailViews->tabText(1)
             != QStringLiteral("Frequency Table")
-        || optimizationCandidateDetailViews->tabText(2)
-            != QStringLiteral("Directional Performance")
-        || optimizationCandidateDetailViews->isTabVisible(2)
-        || !optimizationCandidateDetailViews->tabToolTip(2).contains(
-            QStringLiteral("Gain, F/B, or F/R"))
         || optimizationCandidateDetailsWindow->findChild<QWidget*>(
             QStringLiteral("optimizationCandidateDetailPlots")) != nullptr
         || optimizationCandidateDirectionalPlots == nullptr
@@ -1446,10 +1501,15 @@ auto main(int argc, char* argv[]) -> int
         || optimizationApplyCandidateAndRun == nullptr
         || optimizationApplyCandidateAndRun->isEnabled()
         || optimizationApplyCandidateAndRun->toolTip().isEmpty()
-        || optimizationCompareTabs == nullptr || optimizationCompareTabs->count() != 3
+        || optimizationCompareTabs == nullptr || optimizationCompareTabs->count() != 4
+        || optimizationCompareWithStartingModel == nullptr
+        || !candidateComparisonDefaultsOff
         || optimizationCompareTabs->tabText(0) != QStringLiteral("SWR && Impedance")
         || optimizationCompareTabs->tabText(1) != QStringLiteral("2D Pattern")
-        || optimizationCompareTabs->tabText(2) != QStringLiteral("Objective Details")
+        || optimizationCompareTabs->tabText(2)
+            != QStringLiteral("Directional vs Frequency")
+        || optimizationCompareTabs->isTabVisible(2)
+        || optimizationCompareTabs->tabText(3) != QStringLiteral("Objective Details")
         || !candidateReviewSizePersisted
         || optimizationResultsSplitter == nullptr
         || optimizationResultsSplitter->orientation() != Qt::Vertical
@@ -1535,6 +1595,8 @@ auto main(int argc, char* argv[]) -> int
         || !optimizerResultsPreserved
         || !sameModelFrequenciesPreserved
         || !historicalFrequencySelectionLoaded
+        || !historicalCandidateResultCached
+        || !historicalSetupHidden
         || !historicalObjectiveBreakdownLoaded
         || !historicalBaselineLoaded
         || !historicalBaselineDeltaLoaded
@@ -2823,6 +2885,33 @@ auto main(int argc, char* argv[]) -> int
         && reviewActiveModel->text().contains(QStringLiteral("active-model.nec"))
         && reviewSnapshot != nullptr && !reviewSnapshot->isHidden()
         && reviewUnusedInputPage != nullptr && reviewUnusedInputPage->isHidden();
+    auto* priorReviewPage = reviewTabs == nullptr ? nullptr : reviewTabs->currentWidget();
+    necwb::ui::AnalysisRunStore defaultReviewStore;
+    auto reviewOptimizationSession = defaultReviewStore.create(QStringLiteral("nec2"),
+        QStringLiteral("/tmp/test-dipole.nec"), QStringLiteral("optimization-session"));
+    reviewOptimizationSession.status = QStringLiteral("Completed");
+    const auto reviewOptimizationSaved = defaultReviewStore.save(reviewOptimizationSession);
+    QFile reviewOptimizationMetadata(QDir(reviewOptimizationSession.directory).filePath(
+        QStringLiteral("optimization-session.json")));
+    const auto reviewOptimizationMetadataWritten = reviewOptimizationMetadata.open(
+            QIODevice::WriteOnly | QIODevice::Truncate)
+        && reviewOptimizationMetadata.write("{}") == 2;
+    reviewOptimizationMetadata.close();
+    const auto optimizationReviewLoaded = reviewOptimizationSaved
+        && reviewOptimizationMetadataWritten
+        && runReview.showRun(reviewOptimizationSession,
+            QStringLiteral("active-model.nec"));
+    application.processEvents();
+    auto* reviewOptimizationConfiguration = runReview.findChild<QWidget*>(
+        QStringLiteral("optimizationConfigurationPanel"));
+    const auto runReviewSwitchesCleanly = optimizationReviewLoaded
+        && reviewTabs != nullptr && reviewTabs->count() == 1
+        && reviewTabs->tabText(0) == QStringLiteral("Optimization")
+        && priorReviewPage != nullptr && priorReviewPage->isHidden()
+        && reviewOptimizationConfiguration != nullptr
+        && reviewOptimizationConfiguration->isHidden();
+    defaultReviewStore.removeGroup(
+        reviewOptimizationSession.id, reviewOptimizationSession.directory);
     runReview.close();
     auto session = store.create(QStringLiteral("nec2"), QStringLiteral("/tmp/test-dipole.nec"),
         QStringLiteral("optimization-session"));
@@ -2870,6 +2959,7 @@ auto main(int argc, char* argv[]) -> int
         && resultPanelDetached && resultPanelReattached
         && !welcomeImage.isNull() && welcomeStateValid && !examplesOpened && storeValid
         && runReviewValid
+        && runReviewSwitchesCleanly
         && runDeletionSafe
         && !structuredImage.isNull() && invalidEditBlocked && duplicateFrequencyBlocked
         && structuredSelectionWorks && structuredHierarchyValid

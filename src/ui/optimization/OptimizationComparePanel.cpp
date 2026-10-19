@@ -6,6 +6,7 @@
 #include "analysis/OptimizationBaseline.h"
 
 #include <QFrame>
+#include <QCheckBox>
 #include <QLabel>
 #include <QScrollArea>
 #include <QTabWidget>
@@ -27,10 +28,13 @@ OptimizationComparePanel::OptimizationComparePanel(QWidget* parent)
     statusText_ = status_->text();
     status_->setObjectName(QStringLiteral("optimizationBaselineStatus"));
     status_->setWordWrap(true);
-    comparison_ = new QLabel(this);
-    comparison_->setObjectName(QStringLiteral("optimizationComparisonIdentity"));
-    comparison_->setWordWrap(true);
+    compareWithStartingModel_ = new QCheckBox(tr("Compare with starting model"), this);
+    compareWithStartingModel_->setObjectName(
+        QStringLiteral("optimizationCompareWithStartingModel"));
+    compareWithStartingModel_->setToolTip(tr(
+        "Overlay the solver results from the NEC model as it existed before optimization began."));
     tabs_ = new QTabWidget(this);
+    tabs_->setObjectName(QStringLiteral("optimizationCompareTabs"));
     tabs_->setDocumentMode(true);
     tabs_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     sweepPlots_ = new SweepPlotsView(tabs_);
@@ -39,6 +43,8 @@ OptimizationComparePanel::OptimizationComparePanel(QWidget* parent)
     sweepPlots_->configureForCompactReview();
     pattern_ = new RadiationPatternView(tabs_);
     pattern_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    directional_ = new DirectionalMetricsView(tabs_);
+    directional_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     breakdown_ = new QLabel(tabs_);
     breakdown_->setObjectName(QStringLiteral("optimizationCompareBreakdown"));
     breakdown_->setAlignment(Qt::AlignLeft | Qt::AlignTop);
@@ -50,10 +56,15 @@ OptimizationComparePanel::OptimizationComparePanel(QWidget* parent)
     breakdownScroll->setWidget(breakdown_);
     tabs_->addTab(sweepPlots_, tr("SWR && Impedance"));
     tabs_->addTab(pattern_, tr("2D Pattern"));
+    const auto directionalTab = tabs_->addTab(
+        directional_, tr("Directional vs Frequency"));
+    tabs_->setTabVisible(directionalTab, false);
     tabs_->addTab(breakdownScroll, tr("Objective Details"));
+    layout->addWidget(compareWithStartingModel_);
     layout->addWidget(status_);
-    layout->addWidget(comparison_);
     layout->addWidget(tabs_, 1);
+    connect(compareWithStartingModel_, &QCheckBox::toggled,
+        this, [this] { refresh(); });
     clearCandidate();
 }
 
@@ -81,13 +92,16 @@ void OptimizationComparePanel::setBaselineStatus(QString status, bool compatible
 }
 
 void OptimizationComparePanel::setCandidate(const analysis::AnalysisResult& result,
-    QString label, QString breakdown)
+    QString label, QString breakdown, QString comparisonBreakdown,
+    std::optional<analysis::OptimizationObjectiveResult> directionalMetrics,
+    std::optional<analysis::OptimizationObjectiveResult> baselineDirectionalMetrics)
 {
     candidate_ = result;
     candidateLabel_ = std::move(label);
-    breakdown_->setText(breakdown.isEmpty()
-        ? tr("Objective details are unavailable for this candidate.")
-        : std::move(breakdown));
+    candidateBreakdown_ = std::move(breakdown);
+    comparisonBreakdown_ = std::move(comparisonBreakdown);
+    directionalMetrics_ = std::move(directionalMetrics);
+    baselineDirectionalMetrics_ = std::move(baselineDirectionalMetrics);
     refresh();
 }
 
@@ -95,39 +109,69 @@ void OptimizationComparePanel::clearCandidate()
 {
     candidate_.reset();
     candidateLabel_.clear();
-    breakdown_->setText(tr("Select a completed candidate to inspect its results."));
+    candidateBreakdown_.clear();
+    comparisonBreakdown_.clear();
+    directionalMetrics_.reset();
+    baselineDirectionalMetrics_.reset();
     refresh();
 }
 
 void OptimizationComparePanel::refresh()
 {
     constexpr auto patternTab = 1;
-    status_->setText(statusText_);
+    constexpr auto directionalTab = 2;
     if (!candidate_) {
-        comparison_->setText(tr(
-            "No candidate selected. Double-click a completed evaluation to compare it with the optimization baseline."));
+        compareWithStartingModel_->setEnabled(false);
+        compareWithStartingModel_->setChecked(false);
+        status_->setText(statusText_);
+        status_->hide();
+        breakdown_->setText(tr("Select a completed candidate to inspect its results."));
         sweepPlots_->setResults({}, tr("a selected candidate"));
         sweepPlots_->clearReferenceResults();
         pattern_->setResults({}, tr("a selected candidate"));
         pattern_->clearReferenceResults();
+        directional_->setResults({});
+        directional_->clearReferenceMetrics();
         tabs_->setTabEnabled(patternTab, false);
+        tabs_->setTabVisible(directionalTab, false);
         return;
     }
 
-    sweepPlots_->setResults(*candidate_, candidateLabel_);
-    pattern_->setResults(*candidate_, candidateLabel_);
-    const auto compare = baselineCompatible_ && baseline_.has_value();
-    comparison_->setText(compare
-        ? tr("Comparing %1 with %2. Candidate traces are solid; optimization-baseline traces are dashed.")
-              .arg(candidateLabel_, baselineLabel_)
-        : tr("Showing %1 without an optimization-baseline comparison.")
-              .arg(candidateLabel_));
+    sweepPlots_->setResults(*candidate_, tr("Candidate"));
+    pattern_->setResults(*candidate_, tr("Candidate"));
+    directional_->setResults(directionalMetrics_.value_or(
+        analysis::OptimizationObjectiveResult{}));
+    const auto comparisonAvailable = baselineCompatible_ && baseline_.has_value();
+    compareWithStartingModel_->setEnabled(comparisonAvailable);
+    compareWithStartingModel_->setToolTip(comparisonAvailable
+        ? tr("Overlay %1 as dashed traces. Candidate traces remain solid.")
+              .arg(baselineLabel_)
+        : statusText_);
+    const auto compare = comparisonAvailable && compareWithStartingModel_->isChecked();
+    status_->setVisible(compare);
+    status_->setText(compare
+        ? tr("Starting-model traces are dashed; candidate traces are solid.")
+        : statusText_);
+    status_->setToolTip(compare ? statusText_ : QString{});
+    auto details = candidateBreakdown_.isEmpty()
+        ? tr("Objective details are unavailable for this candidate.")
+        : candidateBreakdown_;
+    if (compare && !comparisonBreakdown_.isEmpty())
+        details += tr("\n\nComparison with starting model:\n%1")
+            .arg(comparisonBreakdown_);
+    breakdown_->setText(details);
     if (compare) {
-        sweepPlots_->setReferenceResults(*baseline_, baselineLabel_);
-        pattern_->setReferenceResults(*baseline_, baselineLabel_);
+        sweepPlots_->setReferenceResults(*baseline_, tr("Starting model"));
+        pattern_->setReferenceResults(*baseline_, tr("Starting model"));
+        if (baselineDirectionalMetrics_)
+            directional_->setReferenceResults(
+                *baselineDirectionalMetrics_, tr("Starting model"));
+        else
+            directional_->clearReferenceMetrics();
     } else {
         sweepPlots_->clearReferenceResults();
         pattern_->clearReferenceResults();
+        directional_->clearReferenceMetrics();
     }
     const auto hasPattern = !candidate_->radiation.empty();
     auto hasMatchingPatternGrid = false;
@@ -140,8 +184,8 @@ void OptimizationComparePanel::refresh()
                     != baselineCoverage.radiation.end();
             });
         if (!hasMatchingPatternGrid) {
-            status_->setText(statusText_ + tr(
-                " · 2D overlay unavailable: candidate and baseline use different RP cut grids"));
+            status_->setText(tr(
+                "Starting-model 2D overlay unavailable: the pattern cut grids differ."));
         }
     }
     tabs_->setTabEnabled(patternTab, hasPattern);
@@ -153,6 +197,20 @@ void OptimizationComparePanel::refresh()
                 : tr("Candidate pattern; the baseline is missing or incompatible.")
         : tr("This candidate contains no radiation-pattern samples."));
     if (!hasPattern && tabs_->currentIndex() == patternTab) tabs_->setCurrentIndex(0);
+    const auto hasDirectionalMetrics = directionalMetrics_
+        && std::ranges::any_of(directionalMetrics_->frequencyMetrics,
+            [](const auto& metrics) {
+                return metrics.forwardGainDb || metrics.frontToBackDb
+                    || metrics.frontToRearDb;
+            });
+    tabs_->setTabVisible(directionalTab, hasDirectionalMetrics);
+    tabs_->setTabToolTip(directionalTab, hasDirectionalMetrics
+        ? compare && baselineDirectionalMetrics_
+            ? tr("Candidate gain, F/B, and F/R with the starting model drawn dashed.")
+            : tr("Candidate gain, F/B, and F/R across the evaluated frequencies.")
+        : tr("Unavailable because this candidate has no directional objective data."));
+    if (!hasDirectionalMetrics && tabs_->currentIndex() == directionalTab)
+        tabs_->setCurrentIndex(0);
 }
 
 }

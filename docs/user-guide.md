@@ -407,9 +407,11 @@ for setup, but tracked-cut modes recalculate the strongest direction for every
 candidate rather than locking to that initial peak. NEC theta is measured down from
 the +Z axis, so theta 90 degrees is the horizon and may be a pattern null over ground.
 
-### Baseline and Candidate Comparison
+### Starting Model and Candidate Results
 
-Optimization starts from a solver result for the actual current model. If no
+Optimization starts from a solver result for the actual current model. This is the
+**starting model** shown in Candidate Results and is called the optimization
+baseline internally. If no
 compatible result is available, the run button reads **Build Baseline & Optimize**.
 Workbench first runs only the study frequencies and focused outputs required by the
 enabled objective, then starts the selected search after that baseline succeeds.
@@ -424,27 +426,21 @@ but different authored pattern is not silently substituted. Comment, formatting,
 and temporary request changes do not by themselves stale the model fingerprint. The
 baseline status explains when another run is required.
 
-Double-click one completed row to open **Optimization Candidate Preview**, then select
-**Candidate vs Baseline**. The chosen candidate is the solid series and the optimization baseline—the current model before the search—is a
-faint dashed series. SWR and impedance are shown first; a compatible 2D pattern is
-available when the candidate contains radiation data. The baseline run ID is always
-visible, and saved optimization sessions retain that identity for historical review.
-
-### Candidate Review
-
 The candidate table and objective plot retain the evaluated values and score
 breakdown. The winning row is selected and centered when a study completes.
-Double-click a candidate to inspect its frequency table, SWR/impedance plots, and
-available directional plots in one reusable preview window. This is temporary
-optimization data, not the active model's normal Results, so the preview does not
-show the historical-reference control.
+Double-click a candidate to open **Candidate Results**. Candidate-only
+SWR/impedance plots are shown first. The Results view also contains the 2D pattern,
+**Directional vs Frequency** for Gain/F/B/F/R when available, and Objective Details;
+the numeric frequency table remains beside Results. This is temporary optimization
+data, not the active model's normal Results.
 
-**Candidate vs Baseline** is the single optimization comparison workflow. It compares
-one selected candidate with the one recorded optimization baseline; it is not a
-multi-candidate overlay. Its details
-show candidate-minus-baseline deltas for enabled objective criteria, including the
-reduction frequency when one applies. The main Results workspace remains reserved
-for normal analysis runs and manually selected historical run references.
+Enable **Compare with starting model** only when a comparison is wanted. Candidate
+traces remain solid and starting-model traces are dashed on SWR/impedance, 2D pattern,
+and Directional vs Frequency views; Objective Details then adds
+candidate-minus-starting-model deltas for enabled criteria. This compares one
+candidate with the model recorded before the search, not multiple candidates. The
+main Results workspace remains reserved for normal analysis runs and manually
+selected historical overlays.
 
 The candidate menu can apply a scored candidate directly to the model or apply it
 and start a normal analysis. The existing **Apply Best to Model** action remains the

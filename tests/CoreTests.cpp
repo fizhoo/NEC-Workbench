@@ -1755,6 +1755,8 @@ void testNecOutputParsing()
         " RADIATION PATTERNS\n"
         " 62 0 1.25 -999.99 1.25 0 0 LINEAR\n"
         "\n"
+        " RADIATION PATTERNS\n"
+        "\n"
         " FREQUENCY= 1.4300E+01 MHZ\n"
         " ANTENNA INPUT PARAMETERS\n"
         " 1 6 1.0E+00 0.0E+00 1.1E-02 0.0E+00 4.89630E+01-2.04710E+01 0 0 5.5E-03\n"
@@ -2136,6 +2138,19 @@ void testOptimizationObjectives()
             && trackedCutMetrics.back().frontToBackDb
             && *trackedCutMetrics.back().frontToBackDb == 10.0,
         "tracked azimuth-cut metrics select the strongest sampled lobe per frequency");
+    const std::array elevatedAzimuthCut{
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = 55.0,
+            .phiDegrees = 0.0, .totalGainDb = 6.0},
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = 55.0,
+            .phiDegrees = 180.0, .totalGainDb = -9.0},
+    };
+    const auto elevatedCutMetrics = necwb::analysis::radiationTrackedCutFrequencyMetrics(
+        elevatedAzimuthCut, necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 55.0);
+    expect(elevatedCutMetrics.size() == 1
+            && elevatedCutMetrics.front().frontToBackDb
+            && *elevatedCutMetrics.front().frontToBackDb == 15.0,
+        "tracked azimuth-cut F/B uses the opposite azimuth at the same theta");
     auto trackedObjective = directionalObjective;
     trackedObjective.kind = necwb::analysis::OptimizationObjectiveKind::PerCriterion;
     trackedObjective.directionalEvaluationMode =
@@ -2238,10 +2253,11 @@ void testOptimizationObjectives()
         "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nFR 0 1 0 0 146 0\nEN\n",
         directionalFrequencies,
         necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut,
-        90.0, true, true);
-    expect(azimuthCutDeck.find("RP 0 1 72 1000 90 0 0 5") != std::string::npos
+        55.0, true, true);
+    expect(azimuthCutDeck.find("RP 0 1 72 1000 55 0 0 5") != std::string::npos
+            && azimuthCutDeck.find("RP 0 1 72 1000 125 0 0 5") == std::string::npos
             && std::count(azimuthCutDeck.begin(), azimuthCutDeck.end(), '\n') >= 7,
-        "azimuth tracking requests a complete fixed-theta cut at every frequency");
+        "azimuth tracking uses one complete fixed-theta cut at every frequency");
     const auto azimuthRequirements =
         necwb::analysis::optimizationRadiationRequirements(azimuthCutDeck);
     expect(azimuthRequirements.size() == 2
