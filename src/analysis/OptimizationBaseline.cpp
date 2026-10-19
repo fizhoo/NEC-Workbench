@@ -12,7 +12,9 @@
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <optional>
 #include <sstream>
+#include <unordered_map>
 
 namespace necwb::analysis {
 namespace {
@@ -75,12 +77,15 @@ auto hasFrequency(std::span<const double> available, double required) -> bool
     });
 }
 
-auto hasRadiationCoverage(std::span<const RadiationCoverage> available,
+using RadiationCoverageIndex = std::unordered_multimap<int, const RadiationCoverage*>;
+
+auto hasRadiationCoverage(const RadiationCoverageIndex& available,
     const RadiationCoverage& required) -> bool
 {
-    return std::ranges::any_of(available, [&required](const RadiationCoverage& coverage) {
+    const auto [first, last] = available.equal_range(required.patternIndex);
+    return std::any_of(first, last, [&required](const auto& item) {
+        const auto& coverage = *item.second;
         return nearlyEqual(coverage.frequencyMHz, required.frequencyMHz)
-            && coverage.patternIndex == required.patternIndex
             && coverage.sampleCount == required.sampleCount
             && coverage.directionFingerprint == required.directionFingerprint;
     });
@@ -138,6 +143,67 @@ auto optimizationResultCoverage(const AnalysisResult& result) -> OptimizationRes
     return coverage;
 }
 
+auto optimizationRadiationRequirements(std::string_view solverDeck)
+    -> std::vector<RadiationCoverage>
+{
+    const auto document = nec::NecParser{}.parse(solverDeck);
+    std::optional<double> frequencyMHz;
+    std::vector<std::pair<double, int>> nextPatternIndexes;
+    std::vector<RadiationCoverage> requirements;
+    for (const auto& card : document.cards()) {
+        if (card.kind == nec::NecCardKind::Frequency && card.fields.size() >= 5) {
+            double parsedFrequency{};
+            if (nec::parseNumber(card.fields[4], parsedFrequency)
+                && std::isfinite(parsedFrequency) && parsedFrequency > 0.0) {
+                frequencyMHz = parsedFrequency;
+            }
+            continue;
+        }
+        if (card.kind != nec::NecCardKind::RadiationPattern || !frequencyMHz
+            || card.fields.size() < 8) {
+            continue;
+        }
+
+        int thetaCount{};
+        int phiCount{};
+        double thetaStart{};
+        double phiStart{};
+        double thetaStep{};
+        double phiStep{};
+        if (!nec::parseNumber(card.fields[1], thetaCount)
+            || !nec::parseNumber(card.fields[2], phiCount)
+            || !nec::parseNumber(card.fields[4], thetaStart)
+            || !nec::parseNumber(card.fields[5], phiStart)
+            || !nec::parseNumber(card.fields[6], thetaStep)
+            || !nec::parseNumber(card.fields[7], phiStep)
+            || thetaCount <= 0 || phiCount <= 0) {
+            continue;
+        }
+
+        auto pattern = std::ranges::find_if(nextPatternIndexes,
+            [frequency = *frequencyMHz](const auto& item) {
+                return nearlyEqual(item.first, frequency);
+            });
+        if (pattern == nextPatternIndexes.end()) {
+            nextPatternIndexes.emplace_back(*frequencyMHz, 0);
+            pattern = std::prev(nextPatternIndexes.end());
+        }
+
+        std::vector<std::pair<double, double>> directions;
+        directions.reserve(static_cast<std::size_t>(thetaCount)
+            * static_cast<std::size_t>(phiCount));
+        for (auto thetaIndex = 0; thetaIndex < thetaCount; ++thetaIndex) {
+            for (auto phiIndex = 0; phiIndex < phiCount; ++phiIndex) {
+                directions.emplace_back(thetaStart + thetaIndex * thetaStep,
+                    phiStart + phiIndex * phiStep);
+            }
+        }
+        requirements.push_back({*frequencyMHz, pattern->second++, directions.size(),
+            directionFingerprint(std::move(directions))});
+    }
+    return requirements;
+}
+
 auto evaluateOptimizationBaseline(
     const std::optional<OptimizationBaselineDescriptor>& baseline,
     const OptimizationBaselineRequirements& requirements)
@@ -183,8 +249,12 @@ auto evaluateOptimizationBaseline(
         compatibility.status = OptimizationBaselineStatus::MissingRadiationCoverage;
         return compatibility;
     }
+    RadiationCoverageIndex radiationIndex;
+    radiationIndex.reserve(baseline->coverage.radiation.size());
+    for (const auto& radiation : baseline->coverage.radiation)
+        radiationIndex.emplace(radiation.patternIndex, &radiation);
     for (const auto& radiation : requirements.radiation) {
-        if (!hasRadiationCoverage(baseline->coverage.radiation, radiation))
+        if (!hasRadiationCoverage(radiationIndex, radiation))
             compatibility.missingRadiation.push_back(radiation);
     }
     if (!compatibility.missingRadiation.empty()) {

@@ -10,7 +10,9 @@
 #include "analysis/FrequencyComparison.h"
 #include "analysis/NecOutputParser.h"
 #include "analysis/OptimizationObjective.h"
+#include "analysis/OptimizationPreset.h"
 #include "analysis/SolverCommand.h"
+#include "analysis/SolverInput.h"
 #include "nec/NecParser.h"
 #include "nec/NecSetupConverter.h"
 
@@ -368,6 +370,47 @@ auto objectiveSentence(const QString& name, const QString& unit,
     }
     return QObject::tr("• %1 Relative weight: %2.")
         .arg(sentence, formatDecimal(weight));
+}
+
+auto optimizationPresetName(analysis::OptimizationPresetId id) -> QString
+{
+    switch (id) {
+    case analysis::OptimizationPresetId::SwrLimit: return QObject::tr("Keep SWR Below Limit");
+    case analysis::OptimizationPresetId::FeedpointMatch: return QObject::tr("Match Feedpoint Impedance");
+    case analysis::OptimizationPresetId::PeakGain: return QObject::tr("Maximize Peak Gain in Cut");
+    case analysis::OptimizationPresetId::FrontToBack: return QObject::tr("Maximize Front-to-Back");
+    case analysis::OptimizationPresetId::FrontToRear: return QObject::tr("Maximize Front-to-Rear");
+    case analysis::OptimizationPresetId::SwrAndGain: return QObject::tr("Balance SWR and Gain");
+    case analysis::OptimizationPresetId::Custom: return QObject::tr("Custom");
+    }
+    return {};
+}
+
+auto optimizationPresetSummary(analysis::OptimizationPresetId id,
+    const analysis::OptimizationObjectiveSpec& objective) -> QString
+{
+    switch (id) {
+    case analysis::OptimizationPresetId::SwrLimit:
+        return QObject::tr("Keep SWR at or below %1 across all selected frequencies.")
+            .arg(formatDecimal(objective.swrTarget));
+    case analysis::OptimizationPresetId::FeedpointMatch:
+        return QObject::tr(
+            "Keep feedpoint resistance near %1 Ω and reactance near 0 Ω across the band.")
+            .arg(formatDecimal(objective.referenceImpedance));
+    case analysis::OptimizationPresetId::PeakGain:
+        return QObject::tr("Maximize the lowest peak gain in the selected pattern cut across the band.");
+    case analysis::OptimizationPresetId::FrontToBack:
+        return QObject::tr("Maximize the lowest front-to-back ratio across the band; forward gain is not constrained.");
+    case analysis::OptimizationPresetId::FrontToRear:
+        return QObject::tr("Maximize the lowest front-to-rear ratio across the band; forward gain is not constrained.");
+    case analysis::OptimizationPresetId::SwrAndGain:
+        return QObject::tr(
+            "Keep SWR at or below %1 while maximizing the lowest peak gain in the selected cut.")
+            .arg(formatDecimal(objective.swrTarget));
+    case analysis::OptimizationPresetId::Custom:
+        return {};
+    }
+    return {};
 }
 
 auto frequencyAt(const model::FrequencyDefinition& frequency, int index) -> double
@@ -920,7 +963,6 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
             pointsControl_->setValue(7);
         }
     });
-
     auto* frequencySection = new QGroupBox(tr("Frequencies"), setupContent);
     frequencySection->setObjectName(QStringLiteral("optimizationFrequencySection"));
     auto* frequencyPageLayout = new QVBoxLayout(frequencySection);
@@ -986,6 +1028,21 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     objectiveSettings->setObjectName(QStringLiteral("optimizationObjectiveSettings"));
     auto* objectiveForm = new QFormLayout(objectiveSettings);
     objectiveForm->setContentsMargins(0, 0, 0, 0);
+    objectivePresetControl_ = new QComboBox(objectiveSettings);
+    objectivePresetControl_->setObjectName(QStringLiteral("optimizationObjectivePreset"));
+    for (const auto& definition : analysis::optimizationPresetDefinitions())
+        objectivePresetControl_->addItem(optimizationPresetName(definition.id),
+            static_cast<int>(definition.id));
+    objectivePresetControl_->setCurrentIndex(objectivePresetControl_->findData(
+        static_cast<int>(analysis::OptimizationPresetId::SwrLimit)));
+    objectiveForm->addRow(tr("Goal"), objectivePresetControl_);
+    presetSwrLimitControl_ = new FocusWheelDoubleSpinBox(objectiveSettings);
+    presetSwrLimitControl_->setObjectName(QStringLiteral("optimizationPresetSwrLimit"));
+    presetSwrLimitControl_->setRange(1.0, 1000.0);
+    presetSwrLimitControl_->setDecimals(DisplayDecimalPlaces);
+    presetSwrLimitControl_->setValue(2.0);
+    presetSwrLimitLabel_ = new QLabel(tr("Target SWR"), objectiveSettings);
+    objectiveForm->addRow(presetSwrLimitLabel_, presetSwrLimitControl_);
     targetFrequencyLabel_ = new QLabel(tr("Selected frequency"), objectiveSettings);
     targetFrequencyLabel_->setObjectName(
         QStringLiteral("optimizationTargetFrequencyLabel"));
@@ -1000,40 +1057,47 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     forwardPhiControl_->hide();
     forwardThetaLabel_->hide();
     forwardPhiLabel_->hide();
-    auto* directionSetup = new QWidget(objectiveSettings);
-    auto* directionSetupLayout = new QHBoxLayout(directionSetup);
+    directionSetupPanel_ = new QWidget(objectiveSettings);
+    directionSetupPanel_->setObjectName(QStringLiteral("optimizationDirectionSetupPanel"));
+    auto* directionSetupLayout = new QHBoxLayout(directionSetupPanel_);
     directionSetupLayout->setContentsMargins(0, 0, 0, 0);
-    directionSetupSummaryLabel_ = new QLabel(directionSetup);
+    directionSetupSummaryLabel_ = new QLabel(directionSetupPanel_);
     directionSetupSummaryLabel_->setObjectName(
         QStringLiteral("optimizationDirectionSetupSummary"));
     directionSetupSummaryLabel_->setWordWrap(true);
-    directionSetupButton_ = new QPushButton(tr("Choose…"), directionSetup);
+    directionSetupButton_ = new QPushButton(tr("Choose…"), directionSetupPanel_);
     directionSetupButton_->setObjectName(QStringLiteral("optimizationChooseDirection"));
-    findMaximumGainButton_ = new QPushButton(tr("Find Maximum Gain…"), directionSetup);
+    findMaximumGainButton_ = new QPushButton(tr("Find Maximum Gain…"), directionSetupPanel_);
     findMaximumGainButton_->setObjectName(QStringLiteral("optimizationFindMaximumGain"));
     findMaximumGainButton_->setToolTip(tr(
         "Runs a temporary radiation-pattern calculation to find the model's maximum-gain direction and use it as the default optimization pattern slice. It does not start optimization or modify the NEC model."));
     directionSetupLayout->addWidget(directionSetupSummaryLabel_, 1);
     directionSetupLayout->addWidget(findMaximumGainButton_);
     directionSetupLayout->addWidget(directionSetupButton_);
-    objectiveForm->addRow(tr("Directional setup"), directionSetup);
-    objectiveForm->addRow(tr("Radiation component"), radiationComponentControl_);
-    auto* latestPatternPeak = new QWidget(objectiveSettings);
-    auto* latestPatternPeakLayout = new QHBoxLayout(latestPatternPeak);
+    directionSetupLabel_ = new QLabel(tr("Directional setup"), objectiveSettings);
+    objectiveForm->addRow(directionSetupLabel_, directionSetupPanel_);
+    radiationComponentLabel_ = new QLabel(tr("Radiation component"), objectiveSettings);
+    objectiveForm->addRow(radiationComponentLabel_, radiationComponentControl_);
+    latestPatternPeakPanel_ = new QWidget(objectiveSettings);
+    latestPatternPeakPanel_->setObjectName(
+        QStringLiteral("optimizationLatestPatternPeakPanel"));
+    auto* latestPatternPeakLayout = new QHBoxLayout(latestPatternPeakPanel_);
     latestPatternPeakLayout->setContentsMargins(0, 0, 0, 0);
-    useLatestPatternPeakButton_ = new QPushButton(tr("Use Latest Pattern Peak"), latestPatternPeak);
+    useLatestPatternPeakButton_ = new QPushButton(
+        tr("Use Latest Pattern Peak"), latestPatternPeakPanel_);
     useLatestPatternPeakButton_->setObjectName(
         QStringLiteral("optimizationUseLatestPatternPeak"));
     useLatestPatternPeakButton_->setToolTip(tr(
         "Set the forward theta and phi from the latest active-model radiation pattern."));
     useLatestPatternPeakButton_->hide();
-    latestPatternPeakLabel_ = new QLabel(latestPatternPeak);
+    latestPatternPeakLabel_ = new QLabel(latestPatternPeakPanel_);
     latestPatternPeakLabel_->setObjectName(
         QStringLiteral("optimizationLatestPatternPeakStatus"));
     latestPatternPeakLabel_->setWordWrap(true);
     latestPatternPeakLayout->addWidget(useLatestPatternPeakButton_);
     latestPatternPeakLayout->addWidget(latestPatternPeakLabel_, 1);
-    objectiveForm->addRow(tr("Pattern peak"), latestPatternPeak);
+    latestPatternPeakFieldLabel_ = new QLabel(tr("Pattern peak"), objectiveSettings);
+    objectiveForm->addRow(latestPatternPeakFieldLabel_, latestPatternPeakPanel_);
     directionalFrequencyNote_ = new QLabel(objectiveSettings);
     directionalFrequencyNote_->setObjectName(
         QStringLiteral("optimizationDirectionalFrequencyNote"));
@@ -1127,8 +1191,8 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     resultsTable_->setSelectionMode(QAbstractItemView::SingleSelection);
     resultsTable_->setContextMenuPolicy(Qt::CustomContextMenu);
     resultsTable_->setToolTip(tr(
-        "Double-click a completed candidate to inspect its results. "
-        "Select it to compare against the optimization baseline. Right-click for actions."));
+        "Double-click a completed candidate to inspect it and compare it with the optimization baseline. "
+        "Right-click for apply and run actions."));
     resultsTable_->verticalHeader()->hide();
     resultsTable_->horizontalHeader()->setSortIndicatorShown(false);
     for (auto column = static_cast<int>(ValueColumn);
@@ -1187,7 +1251,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     candidateDetailViews_->addTab(candidateDetailPlots_, tr("SWR & Impedance Plots"));
     const auto directionalTab = candidateDetailViews_->addTab(
         candidateDirectionalPlots_, tr("Directional Plots"));
-    candidateDetailViews_->addTab(comparePanel_, tr("Compare to Baseline"));
+    candidateDetailViews_->addTab(comparePanel_, tr("Candidate vs Baseline"));
     candidateDetailViews_->setTabEnabled(directionalTab, false);
     candidateDetailViews_->setTabToolTip(directionalTab, tr(
         "Available after a completed candidate evaluates a Gain, F/B, or F/R objective."));
@@ -1222,7 +1286,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     resultsLayout->addWidget(statusLabel_);
     resultsLayout->addLayout(resultStatusRow);
     auto* candidateHint = new QLabel(tr(
-        "Double-click a completed candidate to inspect it and compare it with the baseline in a separate window. Right-click to apply or run."),
+        "Double-click one completed candidate to inspect Candidate vs Baseline in a separate window. Right-click to apply or run."),
         resultsPanel);
     candidateHint->setObjectName(QStringLiteral("optimizationCandidateHint"));
     candidateHint->setWordWrap(true);
@@ -1252,6 +1316,20 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     layout->addWidget(workspaceSplitter, 1);
 
     connect(variableControl_, &QComboBox::currentIndexChanged, this, [this] { updateBounds(); });
+    connect(objectivePresetControl_, &QComboBox::currentIndexChanged,
+        this, [this] { applySelectedObjectivePreset(); });
+    connect(presetSwrLimitControl_, &QDoubleSpinBox::valueChanged, this, [this] {
+        const auto preset = selectedObjectivePreset();
+        if (preset == analysis::OptimizationPresetId::SwrLimit
+            || preset == analysis::OptimizationPresetId::SwrAndGain)
+            applySelectedObjectivePreset();
+    });
+    connect(referenceImpedanceControl_, &QDoubleSpinBox::valueChanged, this, [this] {
+        if (selectedObjectivePreset() == analysis::OptimizationPresetId::Custom)
+            updateObjectiveControls();
+        else
+            applySelectedObjectivePreset();
+    });
     connect(directionalEvaluationModeControl_, &QComboBox::currentIndexChanged,
         this, [this] { updateObjectiveControls(); });
     connect(directionalEvaluationModeControl_, qOverload<int>(&QComboBox::activated),
@@ -1259,14 +1337,14 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
             if (static_cast<analysis::DirectionalEvaluationMode>(
                     directionalEvaluationModeControl_->currentData().toInt())
                 != analysis::DirectionalEvaluationMode::SpecifiedDirection)
-                seedDirectionFromLatestPattern();
+                (void)seedDirectionFromLatestPattern();
         });
     for (auto* control : {swrWeightControl_, resistanceWeightControl_,
              reactanceWeightControl_, forwardGainWeightControl_,
              frontToBackWeightControl_,
-             frontToRearWeightControl_,
-             forwardThetaControl_, forwardPhiControl_}) {
+             frontToRearWeightControl_}) {
         connect(control, &QDoubleSpinBox::valueChanged, this, [this] {
+            markObjectiveCustom();
             updateWorkload();
             updateReadiness();
         });
@@ -1278,13 +1356,21 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     }
     for (auto* control : {forwardThetaControl_, forwardPhiControl_}) {
         connect(control, &QDoubleSpinBox::valueChanged,
-            this, [this] { updateObjectiveControls(); });
+            this, [this] {
+                updateObjectiveControls();
+                updateWorkload();
+                updateReadiness();
+            });
     }
     for (auto row = 0; row < 6; ++row) {
         connect(objectiveValueControls_[row], &QDoubleSpinBox::valueChanged,
-            this, [this] { updateObjectiveControls(); });
+            this, [this] {
+                markObjectiveCustom();
+                updateObjectiveControls();
+            });
         connect(objectiveGoalControls_[row], &QComboBox::currentIndexChanged,
             this, [this, row] {
+                markObjectiveCustom();
                 objectiveGoalControls_[row]->setToolTip(
                     objectiveGoalControls_[row]->currentData(Qt::ToolTipRole).toString());
                 configureAggregationControl(objectiveAggregationControls_[row],
@@ -1293,6 +1379,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
             });
         connect(objectiveAggregationControls_[row], &QComboBox::currentIndexChanged,
             this, [this, row] {
+                markObjectiveCustom();
                 objectiveAggregationControls_[row]->setToolTip(
                     objectiveAggregationControls_[row]
                         ->currentData(Qt::ToolTipRole).toString());
@@ -1300,15 +1387,25 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
             });
     }
     connect(resetObjectiveDefaultsButton_, &QPushButton::clicked, this, [this] {
+        if (selectedObjectivePreset() != analysis::OptimizationPresetId::Custom) {
+            applySelectedObjectivePreset();
+            return;
+        }
         auto defaults = analysis::OptimizationObjectiveSpec{};
         defaults.referenceImpedance = referenceImpedanceControl_->value();
         defaults.directionalEvaluationMode =
             analysis::DirectionalEvaluationMode::StrongestInAzimuthCut;
         directionSetupConfigured_ = false;
+        applyingObjectivePreset_ = true;
         restoreObjectiveSetup(defaults);
+        applyingObjectivePreset_ = false;
         updateObjectiveControls();
     });
     connect(radiationComponentControl_, &QComboBox::currentIndexChanged, this, [this] {
+        if (!applyingObjectivePreset_ && directionalPresetRequiresSetup()) {
+            directionSetupReady_ = false;
+            (void)seedDirectionFromLatestPattern();
+        }
         updateLatestPatternPeakControls();
         updateWorkload();
         updateReadiness();
@@ -1424,7 +1521,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     connect(chooseParameterFields, &QPushButton::clicked, this, [this] {
         if (parameterizationHelpCallback_) parameterizationHelpCallback_();
     });
-    updateObjectiveControls();
+    applySelectedObjectivePreset();
     updateFrequencyControls();
     updateSearchMethodControls();
 }
@@ -1460,6 +1557,7 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
         && (maximumGainDirectionStale_ || !latestRadiation_.empty());
     latestRadiation_.clear();
     directionSetupConfigured_ = false;
+    directionSetupReady_ = false;
     const auto resolution = nec::NecSymbolResolver{}.resolve(source_.toStdString());
     populateVariables(resolution);
     if (resolution.ok()) {
@@ -1504,10 +1602,10 @@ void OptimizationWorkspace::setLatestAnalysisResult(
     maximumGainSearchRequested_ = false;
     maximumGainDirectionStale_ = false;
     const auto objective = selectedObjective();
-    if (!directionSetupConfigured_
-        && objective.directionalEvaluationMode
-            != analysis::DirectionalEvaluationMode::SpecifiedDirection)
-        seedDirectionFromLatestPattern();
+    if (!directionSetupReady_ && (directionalPresetRequiresSetup()
+            || (!directionSetupConfigured_ && objective.directionalEvaluationMode
+                != analysis::DirectionalEvaluationMode::SpecifiedDirection)))
+        (void)seedDirectionFromLatestPattern();
     updateObjectiveControls();
 }
 
@@ -1851,9 +1949,9 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
                 baselineCompatibility_.status =
                     analysis::OptimizationBaselineStatus::Compatible;
                 comparePanel_->setBaseline(result,
-                    tr("Baseline run %1").arg(baseline->id));
+                    tr("Optimization Baseline — Run %1").arg(baseline->id));
                 comparePanel_->setBaselineStatus(
-                    tr("Baseline: Run %1 · saved with this optimization session")
+                    tr("Optimization baseline — Run %1 · saved with this optimization session")
                         .arg(baseline->id), true);
             }
         }
@@ -1862,8 +1960,8 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         comparePanel_->clearBaseline();
         comparePanel_->setBaselineStatus(
             baselineRunId.isEmpty()
-                ? tr("Baseline: unavailable · this session did not record one")
-                : tr("Baseline: unavailable · saved run %1 could not be loaded")
+                ? tr("Optimization baseline — unavailable · this session did not record one")
+                : tr("Optimization baseline — unavailable · saved run %1 could not be loaded")
                     .arg(baselineRunId), false);
     }
     historicalSession_ = true;
@@ -2041,6 +2139,101 @@ void OptimizationWorkspace::updateBounds()
     updateReadiness();
 }
 
+auto OptimizationWorkspace::selectedObjectivePreset() const
+    -> analysis::OptimizationPresetId
+{
+    if (objectivePresetControl_ == nullptr || objectivePresetControl_->currentIndex() < 0)
+        return analysis::OptimizationPresetId::Custom;
+    return static_cast<analysis::OptimizationPresetId>(
+        objectivePresetControl_->currentData().toInt());
+}
+
+auto OptimizationWorkspace::directionalPresetRequiresSetup() const -> bool
+{
+    const auto preset = selectedObjectivePreset();
+    if (preset == analysis::OptimizationPresetId::Custom) return false;
+    const auto definitions = analysis::optimizationPresetDefinitions();
+    const auto definition = std::ranges::find(definitions, preset,
+        &analysis::OptimizationPresetDefinition::id);
+    return definition != definitions.end() && definition->requiresDirectionalSetup;
+}
+
+void OptimizationWorkspace::markObjectiveCustom()
+{
+    if (applyingObjectivePreset_
+        || selectedObjectivePreset() == analysis::OptimizationPresetId::Custom)
+        return;
+    const QSignalBlocker blocker(objectivePresetControl_);
+    objectivePresetControl_->setCurrentIndex(objectivePresetControl_->findData(
+        static_cast<int>(analysis::OptimizationPresetId::Custom)));
+}
+
+void OptimizationWorkspace::applySelectedObjectivePreset()
+{
+    if (applyingObjectivePreset_) return;
+    const auto preset = selectedObjectivePreset();
+    if (preset == analysis::OptimizationPresetId::Custom) {
+        updateObjectiveControls();
+        updateWorkload();
+        updateReadiness();
+        return;
+    }
+
+    const auto current = selectedObjective();
+    const auto currentDirectional = current.forwardGainWeight > 0.0
+        || current.frontToBackWeight > 0.0 || current.frontToRearWeight > 0.0;
+    const auto presetObjective = analysis::optimizationPresetObjective(preset,
+        {referenceImpedanceControl_->value(), presetSwrLimitControl_->value()});
+    if (!presetObjective) return;
+    auto objective = *presetObjective;
+    objective.forwardThetaDegrees = current.forwardThetaDegrees;
+    objective.forwardPhiDegrees = current.forwardPhiDegrees;
+    objective.directionalEvaluationMode = current.directionalEvaluationMode;
+    objective.radiationComponent = current.radiationComponent;
+    if (directionalPresetRequiresSetup()
+        && current.directionalEvaluationMode == analysis::DirectionalEvaluationMode::SpecifiedDirection
+        && !directionSetupConfigured_) {
+        objective.directionalEvaluationMode =
+            analysis::DirectionalEvaluationMode::StrongestInAzimuthCut;
+    }
+
+    applyingObjectivePreset_ = true;
+    restoreObjectiveSetup(objective);
+    applyingObjectivePreset_ = false;
+    if (directionalPresetRequiresSetup() && !currentDirectional)
+        directionSetupReady_ = false;
+    updateObjectiveControls();
+    if (directionalPresetRequiresSetup() && !directionSetupReady_)
+        (void)seedDirectionFromLatestPattern();
+    updateDirectionalSeedState();
+    updateWorkload();
+    updateReadiness();
+}
+
+void OptimizationWorkspace::updateObjectivePresetControls()
+{
+    const auto preset = selectedObjectivePreset();
+    const auto custom = preset == analysis::OptimizationPresetId::Custom;
+    const auto swrLimit = preset == analysis::OptimizationPresetId::SwrLimit
+        || preset == analysis::OptimizationPresetId::SwrAndGain;
+    const auto objective = selectedObjective();
+    const auto directional = objective.forwardGainWeight > 0.0
+        || objective.frontToBackWeight > 0.0 || objective.frontToRearWeight > 0.0;
+
+    objectiveCriteriaTable_->setVisible(custom);
+    presetSwrLimitLabel_->setVisible(swrLimit);
+    presetSwrLimitControl_->setVisible(swrLimit);
+    directionSetupLabel_->setVisible(directional);
+    directionSetupPanel_->setVisible(directional);
+    radiationComponentLabel_->setVisible(directional);
+    radiationComponentControl_->setVisible(directional);
+    latestPatternPeakFieldLabel_->setVisible(directional);
+    latestPatternPeakPanel_->setVisible(directional);
+    directionalFrequencyNote_->setVisible(custom);
+    resetObjectiveDefaultsButton_->setText(custom
+        ? tr("Restore Objective Defaults") : tr("Reset Goal"));
+}
+
 void OptimizationWorkspace::updateObjectiveControls()
 {
     const auto objective = selectedObjective();
@@ -2079,20 +2272,22 @@ void OptimizationWorkspace::updateObjectiveControls()
         ? tr("Cut theta (90° = horizon)") : tr("Forward theta"));
     forwardPhiLabel_->setText(!fixedDirection && !azimuthCut
         ? tr("Elevation-cut phi") : tr("Forward phi"));
+    QString directionDescription;
     if (azimuthCut) {
-        directionSetupSummaryLabel_->setText(tr(
-            "Azimuth pattern · strongest gain · elevation %1°")
-            .arg(formatDecimal(90.0 - objective.forwardThetaDegrees)));
+        directionDescription = tr("Azimuth pattern · strongest gain · elevation %1°")
+            .arg(formatDecimal(90.0 - objective.forwardThetaDegrees));
     } else if (!fixedDirection) {
-        directionSetupSummaryLabel_->setText(tr(
-            "Elevation pattern · strongest gain · azimuth %1°")
-            .arg(formatDecimal(objective.forwardPhiDegrees)));
+        directionDescription = tr("Elevation pattern · strongest gain · azimuth %1°")
+            .arg(formatDecimal(objective.forwardPhiDegrees));
     } else {
-        directionSetupSummaryLabel_->setText(tr(
-            "Specific direction · elevation %1°, azimuth %2°")
+        directionDescription = tr("Specific direction · elevation %1°, azimuth %2°")
             .arg(formatDecimal(90.0 - objective.forwardThetaDegrees),
-                formatDecimal(objective.forwardPhiDegrees)));
+                formatDecimal(objective.forwardPhiDegrees));
     }
+    directionSetupSummaryLabel_->setText(directionalPresetRequiresSetup()
+        ? (directionSetupReady_ ? tr("Direction ready · ") : tr("Direction setup required · "))
+            + directionDescription
+        : directionDescription);
     radiationComponentControl_->setEnabled(directional && !isRunning() && !historicalSession_);
     auto* gainCriterion = objectiveCriteriaTable_->item(3, 0);
     gainCriterion->setText(trackedCut
@@ -2105,6 +2300,7 @@ void OptimizationWorkspace::updateObjectiveControls()
     resultsTable_->horizontalHeaderItem(GainColumn)->setToolTip(trackedCut
         ? tr("Highest gain found in the selected cut for this candidate.")
         : tr("Gain at the specified theta, phi, frequency, and radiation component."));
+    updateObjectivePresetControls();
     updateLatestPatternPeakControls();
     updateFrequencyControls();
 }
@@ -2166,6 +2362,14 @@ void OptimizationWorkspace::updateLatestPatternPeakControls()
         latestPatternPeakLabel_->setText(status);
         return;
     }
+    if (directionalPresetRequiresSetup()) {
+        latestPatternPeakLabel_->setText(directionSetupReady_
+            ? tr("Direction is configured. Find Maximum Gain can replace it with a calculated peak.")
+            : maximumGainDirectionStale_
+                ? tr("Direction setup required. The previous maximum is stale; use Find Maximum Gain or Choose.")
+                : tr("Direction setup required. Use Find Maximum Gain or Choose."));
+        return;
+    }
     latestPatternPeakLabel_->setText(maximumGainDirectionStale_
         ? tr("Maximum-gain direction is stale because the model changed. Run again to update it.")
         : latestRadiation_.empty()
@@ -2187,31 +2391,33 @@ void OptimizationWorkspace::updateDirectionalSeedState()
     directionalObjectiveWasEnabled_ = true;
     if (objective.directionalEvaluationMode
         != analysis::DirectionalEvaluationMode::SpecifiedDirection)
-        seedDirectionFromLatestPattern();
+        (void)seedDirectionFromLatestPattern();
 }
 
-void OptimizationWorkspace::seedDirectionFromLatestPattern()
+auto OptimizationWorkspace::seedDirectionFromLatestPattern() -> bool
 {
     const auto setup = currentStudySetup();
-    if (setup.frequenciesMHz.empty()) return;
+    if (setup.frequenciesMHz.empty()) return false;
     const auto component = static_cast<analysis::RadiationComponent>(
         radiationComponentControl_->currentData().toInt());
     const auto peak = analysis::radiationPeakAtNearestFrequency(
         latestRadiation_, component, setup.frequenciesMHz.front());
-    if (!peak || peak->sampleCount <= 1) return;
+    if (!peak || peak->sampleCount <= 1) return false;
     const auto mode = static_cast<analysis::DirectionalEvaluationMode>(
         directionalEvaluationModeControl_->currentData().toInt());
     if (mode != analysis::DirectionalEvaluationMode::StrongestInElevationCut)
         forwardThetaControl_->setValue(peak->metrics.peakThetaDegrees);
     if (mode != analysis::DirectionalEvaluationMode::StrongestInAzimuthCut)
         forwardPhiControl_->setValue(peak->metrics.peakPhiDegrees);
-    updateLatestPatternPeakControls();
+    directionSetupReady_ = true;
+    updateObjectiveControls();
+    return true;
 }
 
 void OptimizationWorkspace::chooseDirectionStrategy()
 {
     const auto wasConfigured = directionSetupConfigured_;
-    if (!directionSetupConfigured_) seedDirectionFromLatestPattern();
+    if (!directionSetupConfigured_) (void)seedDirectionFromLatestPattern();
     const auto setup = currentStudySetup();
     const auto targetFrequencyMHz = setup.frequenciesMHz.empty()
         ? targetFrequencyControl_->value() : setup.frequenciesMHz.front();
@@ -2231,6 +2437,7 @@ void OptimizationWorkspace::chooseDirectionStrategy()
             || !nearlyEqual(dialog.phiDegrees(), originalPhi);
     directionSetupConfigured_ = dialog.usesLatestPatternPeak()
         ? false : changed || wasConfigured;
+    directionSetupReady_ = true;
     const auto modeIndex = directionalEvaluationModeControl_->findData(
         static_cast<int>(dialog.mode()));
     if (modeIndex >= 0) directionalEvaluationModeControl_->setCurrentIndex(modeIndex);
@@ -2241,8 +2448,9 @@ void OptimizationWorkspace::chooseDirectionStrategy()
 
 void OptimizationWorkspace::useLatestPatternPeak()
 {
-    seedDirectionFromLatestPattern();
+    directionSetupReady_ = seedDirectionFromLatestPattern();
     updateObjectiveControls();
+    updateReadiness();
 }
 
 void OptimizationWorkspace::updateFrequencyControls()
@@ -2360,17 +2568,26 @@ void OptimizationWorkspace::updateSetupSummaries()
             .arg(formatDecimal(setup.objective.forwardThetaDegrees))
             .arg(formatDecimal(setup.objective.forwardPhiDegrees));
     }
-    objectiveSummaryLabel_->setText(tr("Reference Z %1 Ω\n%2")
-        .arg(formatDecimal(setup.objective.referenceImpedance))
-        .arg(criteria.isEmpty() ? tr("No enabled criteria") : criteria.join(QLatin1Char('\n')))
-        + (setup.objective.forwardGainWeight > 0.0
-                || setup.objective.frontToBackWeight > 0.0
-                || setup.objective.frontToRearWeight > 0.0
-            ? directionSummary
-            : QString{}));
-    objectiveExplanationLabel_->setText(criteria.isEmpty()
-        ? tr("No criteria are enabled. Set at least one weight above zero.")
-        : criteria.join(QLatin1Char('\n')));
+    const auto preset = selectedObjectivePreset();
+    const auto directional = setup.objective.forwardGainWeight > 0.0
+        || setup.objective.frontToBackWeight > 0.0
+        || setup.objective.frontToRearWeight > 0.0;
+    if (preset != analysis::OptimizationPresetId::Custom) {
+        const auto summary = optimizationPresetSummary(preset, setup.objective);
+        objectiveSummaryLabel_->setText(tr("%1\nReference Z %2 Ω\n%3")
+            .arg(optimizationPresetName(preset))
+            .arg(formatDecimal(setup.objective.referenceImpedance))
+            .arg(summary) + (directional ? directionSummary : QString{}));
+        objectiveExplanationLabel_->setText(summary);
+    } else {
+        objectiveSummaryLabel_->setText(tr("Custom\nReference Z %1 Ω\n%2")
+            .arg(formatDecimal(setup.objective.referenceImpedance))
+            .arg(criteria.isEmpty() ? tr("No enabled criteria") : criteria.join(QLatin1Char('\n')))
+            + (directional ? directionSummary : QString{}));
+        objectiveExplanationLabel_->setText(criteria.isEmpty()
+            ? tr("No criteria are enabled. Set at least one weight above zero.")
+            : criteria.join(QLatin1Char('\n')));
+    }
 }
 
 void OptimizationWorkspace::updateWorkload()
@@ -2623,9 +2840,19 @@ void OptimizationWorkspace::editFrequencySetup()
 void OptimizationWorkspace::editObjectiveSetup()
 {
     const auto original = selectedObjective();
-    if (objectiveDialog_->exec() != QDialog::Accepted)
+    const auto originalPreset = selectedObjectivePreset();
+    const auto originalSwrLimit = presetSwrLimitControl_->value();
+    if (objectiveDialog_->exec() != QDialog::Accepted) {
+        applyingObjectivePreset_ = true;
         restoreObjectiveSetup(original);
+        presetSwrLimitControl_->setValue(originalSwrLimit);
+        objectivePresetControl_->setCurrentIndex(objectivePresetControl_->findData(
+            static_cast<int>(originalPreset)));
+        applyingObjectivePreset_ = false;
+    }
     updateObjectiveControls();
+    updateWorkload();
+    updateReadiness();
 }
 
 void OptimizationWorkspace::restoreObjectiveSetup(
@@ -2709,6 +2936,11 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
     }
 
     const auto& candidate = candidates_[static_cast<std::size_t>(row)];
+    const auto candidateIdentity = tr("Candidate %1 — %2")
+        .arg(row + 1)
+        .arg(candidateDescription(candidate));
+    candidateDetailsWindow_->setWindowTitle(
+        tr("Optimization Candidate Preview — Candidate %1").arg(row + 1));
     auto feedpoints = candidate.feedpoints;
     std::ranges::sort(feedpoints, {}, &analysis::FeedpointResult::frequencyMHz);
     analysis::AnalysisResult candidateAnalysis;
@@ -2871,10 +3103,10 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
             .arg(candidate.availableMeasurements->evaluatedFrequencyCount));
     }
     candidateDetailLabel_->setText(tr(
-        "Optimization Candidate — %1 · %2 frequencies · %3\n%4\n"
+        "%1 · %2 frequencies · %3\n%4\n"
         "Candidate preview from a temporary optimization evaluation; the active model's "
         "normal Results remain separate.")
-        .arg(candidateDescription(candidate))
+        .arg(candidateIdentity)
         .arg(feedpoints.size())
         .arg(candidate.evaluation && evaluation->evaluatedFrequencyCount == 1
                 ? tr("evaluated frequency bold") : tr("per-criterion frequency reductions"))
@@ -2883,7 +3115,7 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
     analysis::AnalysisResult detailResult = std::move(candidateAnalysis);
     detailResult.referenceImpedanceOhms = activeObjective_.referenceImpedance;
     candidateDetailPlots_->setResults(detailResult,
-        tr("candidate %1").arg(candidateDescription(candidate)));
+        candidateIdentity);
     candidateDirectionalPlots_->setResults(evaluation.value_or(
         analysis::OptimizationObjectiveResult{}));
     const auto hasDirectionalMetrics = evaluation
@@ -2934,16 +3166,17 @@ void OptimizationWorkspace::finishOptimizationBaseline(bool succeeded, QString d
     startAfterBaseline_ = succeeded;
     if (!succeeded) {
         statusLabel_->setText(detail.isEmpty()
-            ? tr("Baseline analysis did not complete; optimization was not started.")
-            : tr("Baseline analysis failed: %1").arg(detail));
+            ? tr("The optimization baseline was not created; optimization was not started.")
+            : tr("Optimization baseline failed: %1").arg(detail));
     } else {
         updateBaselineState();
         if (!baselineCompatibility_.compatible()) {
             startAfterBaseline_ = false;
             statusLabel_->setText(tr(
-                "Baseline analysis completed but does not cover the current optimization study."));
+                "The optimization baseline does not cover the current study."));
         } else {
-            statusLabel_->setText(tr("Baseline complete; starting optimization."));
+            statusLabel_->setText(tr(
+                "Optimization baseline created; normal Results remain unchanged. Starting optimization."));
         }
     }
     updateReadiness();
@@ -3169,7 +3402,16 @@ auto OptimizationWorkspace::baselineRequirements(const StudySetup& setup) const
     const auto radiationRequired = setup.objective.forwardGainWeight > 0.0
         || setup.objective.frontToBackWeight > 0.0
         || setup.objective.frontToRearWeight > 0.0;
-    if (radiationRequired) requirements.radiationFrequenciesMHz = std::move(frequencies);
+    if (radiationRequired) {
+        requirements.radiationFrequenciesMHz = frequencies;
+        if (resolution.ok()) {
+            const analysis::FrequencyPlan frequencyPlan{
+                analysis::FrequencyPlanMode::Explicit, frequencies, {}};
+            requirements.radiation = analysis::optimizationRadiationRequirements(
+                analysis::prepareOptimizationInput(
+                    resolution.generatedDeck, frequencyPlan, setup.objective));
+        }
+    }
     return requirements;
 }
 
@@ -3191,34 +3433,36 @@ void OptimizationWorkspace::updateBaselineState()
     QString status;
     switch (baselineCompatibility_.status) {
     case analysis::OptimizationBaselineStatus::Compatible:
-        status = tr("Baseline: %1 · compatible with this optimization study")
+        status = tr("Optimization baseline — Run %1 · compatible with this study")
             .arg(baselineRecord_->id);
         break;
     case analysis::OptimizationBaselineStatus::Missing:
-        status = tr("Baseline: none · the current model must be analyzed before optimization");
+        status = tr("Optimization baseline — none · the current model must be analyzed first");
         break;
     case analysis::OptimizationBaselineStatus::IncompleteMetadata:
-        status = tr("Baseline: unavailable · this older run lacks compatibility metadata");
+        status = tr("Optimization baseline — unavailable · this older run lacks compatibility metadata");
         break;
     case analysis::OptimizationBaselineStatus::ModelChanged:
-        status = tr("Baseline: stale · the model changed after the run");
+        status = tr("Optimization baseline — stale · the model changed after the run");
         break;
     case analysis::OptimizationBaselineStatus::BackendChanged:
-        status = tr("Baseline: incompatible · it used a different solver backend");
+        status = tr("Optimization baseline — incompatible · it used a different solver backend");
         break;
     case analysis::OptimizationBaselineStatus::ReferenceImpedanceChanged:
-        status = tr("Baseline: incompatible · its SWR reference impedance differs");
+        status = tr("Optimization baseline — incompatible · its SWR reference impedance differs");
         break;
     case analysis::OptimizationBaselineStatus::MissingImpedanceCoverage:
-        status = tr("Baseline: incomplete · impedance is missing at required frequencies");
+        status = tr("Optimization baseline — incomplete · impedance is missing at required frequencies");
         break;
     case analysis::OptimizationBaselineStatus::MissingRadiationCoverage:
-        status = tr("Baseline: incomplete · radiation data is missing at required frequencies");
+        status = baselineCompatibility_.missingRadiationFrequenciesMHz.empty()
+            ? tr("Optimization baseline — incompatible · directional cut grid differs from this study")
+            : tr("Optimization baseline — incomplete · radiation data is missing at required frequencies");
         break;
     }
     if (baselineRecord_ && baselineResult_) {
         comparePanel_->setBaseline(*baselineResult_,
-            tr("Baseline %1").arg(baselineRecord_->id));
+            tr("Optimization Baseline — Run %1").arg(baselineRecord_->id));
     } else {
         comparePanel_->clearBaseline();
     }
@@ -3242,7 +3486,10 @@ void OptimizationWorkspace::updateComparisonCandidate()
     result.feedpoints = candidate.feedpoints;
     result.radiation = candidate.radiation;
     result.referenceImpedanceOhms = activeObjective_.referenceImpedance;
-    auto breakdown = tr("Candidate %1").arg(candidateDescription(candidate));
+    const auto candidateIdentity = tr("Candidate %1 — %2")
+        .arg(candidateIndex + 1)
+        .arg(candidateDescription(candidate));
+    auto breakdown = candidateIdentity;
     if (candidate.evaluation) {
         breakdown += tr("\nObjective score: %1\nEvaluated frequencies: %2")
             .arg(formatDecimal(candidate.evaluation->score))
@@ -3362,7 +3609,7 @@ void OptimizationWorkspace::updateComparisonCandidate()
         breakdown += tr("\nObjective unavailable: %1").arg(candidate.failureDetail);
     }
     comparePanel_->setCandidate(result,
-        tr("Candidate %1").arg(candidateDescription(candidate)), breakdown);
+        candidateIdentity, breakdown);
 }
 
 void OptimizationWorkspace::requestOptimizationStart()
@@ -3406,6 +3653,7 @@ void OptimizationWorkspace::updateReadiness()
     const auto directional = setup.objective.forwardGainWeight > 0.0
         || setup.objective.frontToBackWeight > 0.0
         || setup.objective.frontToRearWeight > 0.0;
+    const auto directionReady = !directionalPresetRequiresSetup() || directionSetupReady_;
     const auto hasVariables = !setup.variables.empty()
         && std::ranges::all_of(setup.variables, [](const auto& variable) {
             return std::isfinite(variable.minimum) && std::isfinite(variable.maximum)
@@ -3420,19 +3668,19 @@ void OptimizationWorkspace::updateReadiness()
         || static_cast<bool>(baselineRunCallback_);
     const auto ready = !historicalSession_ && modelValid_ && hasVariables
         && !externalRunActive_
-        && hasFrequencies && hasObjective && hasSearchBudget
+        && hasFrequencies && hasObjective && directionReady && hasSearchBudget
         && baselineReady
         && !isRunning() && analysis::isBackendRunnable(backend_.toStdString())
         && executable.exists() && executable.isFile() && executable.isExecutable();
     runButton_->setEnabled(ready);
     if (!historicalSession_) {
         runButton_->setText(baselineRunInProgress_
-            ? tr("Running Baseline…")
+            ? tr("Building Baseline…")
             : baselineCompatibility_.compatible()
                 ? selectedSearchMethod() == SearchMethod::ParameterSweep
                     ? tr("Run Parameter Sweep")
                     : tr("Run %1").arg(searchMethodName(selectedSearchMethod()))
-                : tr("Run Baseline & Optimize"));
+                : tr("Build Baseline & Optimize"));
     }
     runButton_->setToolTip(!hasVariables
         ? tr("Select at least one parameter and enter valid bounds and tolerance.")
@@ -3441,10 +3689,12 @@ void OptimizationWorkspace::updateReadiness()
                 ? tr("Use a population of at least four and at least one generation.")
                 : tr("Increase Maximum evaluations to at least the selected parameter count plus one.")
         : !hasObjective ? tr("Set at least one objective weight above zero.")
-        : !baselineReady ? tr("A baseline run callback is unavailable.")
+        : !directionReady
+            ? tr("Direction setup required. Use Find Maximum Gain or Choose in the Objective dialog.")
+        : !baselineReady ? tr("An optimization-baseline callback is unavailable.")
         : !baselineCompatibility_.compatible()
-            ? tr("Analyze the actual current model first, then start optimization automatically.")
-        : QString{});
+            ? tr("Runs only the frequencies and outputs required by this optimization study, then starts optimization. Normal Results are not populated.")
+        : tr("Runs this optimization study using the existing compatible baseline. Normal Results remain unchanged."));
     cancelButton_->setEnabled(isRunning());
     resultsTable_->horizontalHeader()->setSectionsClickable(!isRunning());
     applyBestButton_->setEnabled(!historicalSession_ && modelValid_ && !isRunning()

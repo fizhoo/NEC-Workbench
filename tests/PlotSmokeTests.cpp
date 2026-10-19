@@ -513,6 +513,12 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationChooseParameterFields"));
     auto* optimizationObjectiveSettings = optimization.findChild<QWidget*>(
         QStringLiteral("optimizationObjectiveSettings"));
+    auto* optimizationObjectivePreset = optimization.findChild<QComboBox*>(
+        QStringLiteral("optimizationObjectivePreset"));
+    auto* optimizationPresetSwrLimit = optimization.findChild<QDoubleSpinBox*>(
+        QStringLiteral("optimizationPresetSwrLimit"));
+    auto* optimizationDirectionSetupPanel = optimization.findChild<QWidget*>(
+        QStringLiteral("optimizationDirectionSetupPanel"));
     auto* optimizationObjectiveCriteria = optimization.findChild<QTableWidget*>(
         QStringLiteral("optimizationObjectiveCriteria"));
     auto* optimizationSwrWeight = optimization.findChild<QDoubleSpinBox*>(
@@ -904,9 +910,40 @@ auto main(int argc, char* argv[]) -> int
     });
     if (optimizationEditObjective != nullptr) optimizationEditObjective->click();
     const auto objectiveCancelRestored = optimizationSwrGoal != nullptr
-        && optimizationSwrGoal->currentIndex() == 0
+        && optimizationSwrGoal->currentText() == QStringLiteral("Good Enough ≤")
+        && optimizationObjectivePreset != nullptr
+        && optimizationObjectivePreset->currentText()
+            == QStringLiteral("Keep SWR Below Limit")
         && optimizationObjectiveSummary != nullptr
         && optimizationObjectiveSummary->text().contains(QStringLiteral("50.000"));
+    auto directionalPresetReadinessValid = false;
+    auto objectivePresetsValid = optimizationObjectivePreset != nullptr
+        && optimizationObjectivePreset->count() == 7
+        && optimizationPresetSwrLimit != nullptr
+        && optimizationPresetSwrLimit->value() == 2.0
+        && optimizationObjectiveCriteria != nullptr
+        && optimizationObjectiveCriteria->isHidden();
+    if (optimizationObjectivePreset != nullptr) {
+        optimizationObjectivePreset->setCurrentText(QStringLiteral("Maximize Peak Gain in Cut"));
+        application.processEvents();
+        objectivePresetsValid = objectivePresetsValid
+            && optimizationPresetSwrLimit->isHidden()
+            && optimizationDirectionSetupPanel != nullptr
+            && !optimizationDirectionSetupPanel->isHidden()
+            && optimizationObjectiveSummary->text().contains(
+                QStringLiteral("Maximize Peak Gain in Cut"));
+        directionalPresetReadinessValid = optimizationDirectionSetupSummary != nullptr
+            && optimizationDirectionSetupSummary->text().contains(
+                QStringLiteral("Direction setup required"))
+            && optimizationLatestPatternPeakStatus != nullptr
+            && optimizationLatestPatternPeakStatus->text().contains(
+                QStringLiteral("Use Find Maximum Gain or Choose"))
+            && optimizationRun != nullptr && !optimizationRun->isEnabled()
+            && optimizationRun->toolTip().contains(
+                QStringLiteral("Direction setup required"));
+        optimizationObjectivePreset->setCurrentText(QStringLiteral("Keep SWR Below Limit"));
+        application.processEvents();
+    }
     auto goalAwareBandEvaluationValid = false;
     if (optimizationSwrGoal != nullptr && optimizationSwrAggregation != nullptr) {
         optimizationSwrGoal->setCurrentIndex(1);
@@ -976,6 +1013,24 @@ auto main(int argc, char* argv[]) -> int
     const auto automaticDirectionVisible = optimizationDirectionSetupSummary != nullptr
         && optimizationDirectionSetupSummary->text().contains(
             QStringLiteral("strongest gain · elevation 35.000°"));
+    auto directionalPresetAutoSeeded = false;
+    auto directionalPresetReadyText = false;
+    auto directionalPresetPeakAngle = false;
+    if (optimizationObjectivePreset != nullptr) {
+        optimizationObjectivePreset->setCurrentText(QStringLiteral("Maximize Peak Gain in Cut"));
+        application.processEvents();
+        directionalPresetReadyText = optimizationDirectionSetupSummary != nullptr
+            && optimizationDirectionSetupSummary->text().contains(
+                QStringLiteral("Direction ready"));
+        directionalPresetPeakAngle = optimizationForwardTheta != nullptr
+            && optimizationForwardTheta->value() == 55.0;
+        directionalPresetAutoSeeded = directionalPresetReadyText
+            && directionalPresetPeakAngle;
+        optimizationObjectivePreset->setCurrentText(QStringLiteral("Custom"));
+        if (optimizationResetObjectiveDefaults != nullptr)
+            optimizationResetObjectiveDefaults->click();
+        application.processEvents();
+    }
     if (optimizationFrontToBackWeight != nullptr)
         optimizationFrontToBackWeight->setValue(1.0);
     auto directionDialogStructured = false;
@@ -1170,9 +1225,10 @@ auto main(int argc, char* argv[]) -> int
         && optimizationCandidateDetailsWindow != nullptr
         && optimizationCandidateDetailsWindow->isAncestorOf(optimizationComparePanel)
         && optimizationBaselineStatus != nullptr
-        && optimizationBaselineStatus->text().contains(QStringLiteral("Baseline:"))
+        && optimizationBaselineStatus->text().contains(
+            QStringLiteral("Optimization baseline"))
         && optimizationRun != nullptr
-        && optimizationRun->text() == QStringLiteral("Run Baseline & Optimize");
+        && optimizationRun->text() == QStringLiteral("Build Baseline & Optimize");
     necwb::ui::OptimizationWorkspace baselineStartWorkspace;
     auto baselineRequested = false;
     baselineStartWorkspace.setBaselineRunCallback(
@@ -1187,12 +1243,59 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("/bin/true"), 120, true);
     auto* baselineStartButton = baselineStartWorkspace.findChild<QPushButton*>(
         QStringLiteral("optimizationRun"));
+    const auto baselineStartTooltipValid = baselineStartButton != nullptr
+        && baselineStartButton->toolTip().contains(
+            QStringLiteral("Normal Results are not populated"));
     if (baselineStartButton != nullptr) baselineStartButton->click();
     const auto baselineOrchestrationValid = baselineRequested
+        && baselineStartTooltipValid
         && baselineStartButton != nullptr
-        && baselineStartButton->text() == QStringLiteral("Running Baseline…");
+        && baselineStartButton->text() == QStringLiteral("Building Baseline…");
     baselineStartWorkspace.finishOptimizationBaseline(false,
         QStringLiteral("expected smoke-test stop"));
+    necwb::ui::OptimizationWorkspace directionalBaselineWorkspace;
+    directionalBaselineWorkspace.setContext(optimizationSource,
+        QStringLiteral("directional-baseline.nec"), QStringLiteral("nec2"), {}, 120, true);
+    directionalBaselineWorkspace.setLatestAnalysisResult(latestPattern);
+    auto* directionalBaselinePreset = directionalBaselineWorkspace.findChild<QComboBox*>(
+        QStringLiteral("optimizationObjectivePreset"));
+    if (directionalBaselinePreset != nullptr) {
+        directionalBaselinePreset->setCurrentText(
+            QStringLiteral("Maximize Peak Gain in Cut"));
+    }
+    const auto directionalResolution = necwb::nec::NecSymbolResolver{}.resolve(
+        optimizationSource.toStdString());
+    necwb::analysis::AnalysisResult mismatchedDirectionalBaseline;
+    mismatchedDirectionalBaseline.radiation = {
+        {.frequencyMHz = 7.15, .thetaDegrees = 0.0, .phiDegrees = 0.0,
+            .totalGainDb = 1.0, .patternIndex = 0},
+        {.frequencyMHz = 7.15, .thetaDegrees = 5.0, .phiDegrees = 0.0,
+            .totalGainDb = 1.0, .patternIndex = 0},
+    };
+    necwb::ui::AnalysisRunRecord mismatchedDirectionalRecord;
+    mismatchedDirectionalRecord.id = QStringLiteral("mismatched-directional-grid");
+    mismatchedDirectionalRecord.backend = QStringLiteral("nec2");
+    mismatchedDirectionalRecord.modelFingerprint = QString::fromStdString(
+        necwb::analysis::optimizationModelFingerprint(
+            directionalResolution.generatedDeck));
+    mismatchedDirectionalRecord.radiationCoverage =
+        necwb::analysis::optimizationResultCoverage(
+            mismatchedDirectionalBaseline).radiation;
+    directionalBaselineWorkspace.setOptimizationBaseline(
+        mismatchedDirectionalRecord, mismatchedDirectionalBaseline);
+    application.processEvents();
+    auto mismatchedDirectionalGridReported = false;
+    for (auto* window : QApplication::topLevelWidgets()) {
+        if (window->objectName() != QStringLiteral("optimizationCandidateDetailsWindow"))
+            continue;
+        const auto* status = window->findChild<QLabel*>(
+            QStringLiteral("optimizationBaselineStatus"));
+        if (status != nullptr && status->text().contains(
+                QStringLiteral("directional cut grid differs"))) {
+            mismatchedDirectionalGridReported = true;
+            break;
+        }
+    }
     necwb::ui::OptimizationWorkspace staleDirectionWorkspace;
     staleDirectionWorkspace.setContext(optimizationSource,
         QStringLiteral("stale-direction.nec"), QStringLiteral("nec2"), {}, 120, true);
@@ -1253,7 +1356,7 @@ auto main(int argc, char* argv[]) -> int
         || optimizationCandidateDetailViews->tabText(2)
             != QStringLiteral("Directional Plots")
         || optimizationCandidateDetailViews->tabText(3)
-            != QStringLiteral("Compare to Baseline")
+            != QStringLiteral("Candidate vs Baseline")
         || optimizationCandidateDetailViews->isTabEnabled(2)
         || !optimizationCandidateDetailViews->tabToolTip(2).contains(
             QStringLiteral("Gain, F/B, or F/R"))
@@ -1281,6 +1384,9 @@ auto main(int argc, char* argv[]) -> int
         || !differentialEvolutionControlsValid
         || optimizationParameterSettings == nullptr
         || optimizationObjectiveSettings == nullptr
+        || !objectivePresetsValid
+        || !directionalPresetReadinessValid
+        || !directionalPresetAutoSeeded
         || optimizationObjectiveCriteria == nullptr
         || optimizationSwrWeight == nullptr || optimizationSwrWeight->value() != 1.0
         || optimizationResistanceWeight == nullptr || optimizationResistanceWeight->value() != 0.0
@@ -1335,6 +1441,7 @@ auto main(int argc, char* argv[]) -> int
         || !wheelProtected
         || !compactSetupValid
         || !baselineOrchestrationValid
+        || !mismatchedDirectionalGridReported
         || !frequencyControlsStructured
         || !hasDeleteShortcut
         || !hasBackspaceShortcut

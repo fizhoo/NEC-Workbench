@@ -1403,7 +1403,9 @@ void MainWindow::createResultsWorkspace()
     convergenceValidationTabIndex_ = validationWorkspace_->addTab(
         convergenceWorkspace_, tr("Segmentation Convergence"));
     averageGainResultsTabIndex_ = resultsWorkspace_->addTab(validationWorkspace_, tr("Validation"));
-    convergenceWorkspace_->setRunsChangedCallback([this] { loadRunHistory(); });
+    convergenceWorkspace_->setRunsChangedCallback([this] {
+        if (runHistoryLoaded_) loadRunHistory();
+    });
     convergenceWorkspace_->setRunningChangedCallback([this] { synchronizeRunnerState(); });
     convergenceWorkspace_->setSummaryChangedCallback([this](const QString& summary) {
         dashboardPage_->setConvergenceState(summary);
@@ -1491,6 +1493,9 @@ void MainWindow::createResultsWorkspace()
     resultsWorkspace_->setTabIcon(radiationTabIndex, workbenchIcon("radiation-pattern"));
     resultsWorkspace_->setTabIcon(analysisOutputTabIndex_, workbenchIcon("nec-deck"));
     resultsWorkspace_->setTabIcon(analysisRunsTabIndex_, workbenchIcon("analysis"));
+    connect(resultsWorkspace_, &QTabWidget::currentChanged, this, [this](int index) {
+        if (index == analysisRunsTabIndex_ && !runHistoryLoaded_) loadRunHistory();
+    });
     auto* resultsNavigator = new WorkspaceNavigator(
         resultsWorkspace_, QStringLiteral("results"), resultsContent_);
     resultsLayout->addWidget(resultsContextFrame);
@@ -1505,7 +1510,9 @@ void MainWindow::createResultsWorkspace()
 void MainWindow::createOptimizationWorkspace()
 {
     optimizationWorkspace_ = new OptimizationWorkspace(moduleStack_);
-    optimizationWorkspace_->setRunsChangedCallback([this] { loadRunHistory(); });
+    optimizationWorkspace_->setRunsChangedCallback([this] {
+        if (runHistoryLoaded_) loadRunHistory();
+    });
     optimizationWorkspace_->setRunningChangedCallback([this] { synchronizeRunnerState(); });
     optimizationWorkspace_->setParameterizationHelpCallback([this] {
         if (!showModule(modelModuleIndex_)) return;
@@ -4271,6 +4278,7 @@ void MainWindow::loadRunHistory()
     analysisRuns_->setColumnWidth(RunNoteColumn,
         std::clamp(analysisRuns_->columnWidth(RunNoteColumn), 120, 240));
     analysisRuns_->clearSelection();
+    runHistoryLoaded_ = true;
     updateRunSelectionActions();
 }
 
@@ -5660,7 +5668,6 @@ void MainWindow::restoreWorkspaceLayout()
     solverExecutablePath_ = solverExecutablePaths_.value(solverBackendId_);
     analysisSetupEditor_->setSettings(
         solverBackendId_, solverExecutablePaths_, solverTimeoutSeconds_);
-    loadRunHistory();
     updateAnalysisReadiness();
 }
 

@@ -7,6 +7,7 @@
 #include "analysis/NelderMeadSearch.h"
 #include "analysis/OptimizationBaseline.h"
 #include "analysis/OptimizationObjective.h"
+#include "analysis/OptimizationPreset.h"
 #include "analysis/ReferenceRunSelection.h"
 #include "analysis/SegmentationConvergence.h"
 #include "analysis/SolverInput.h"
@@ -188,13 +189,96 @@ void testOptimizationBaselineCompatibility()
         "missing radiation frequency is reported explicitly");
     auto missingPattern = requirements;
     missingPattern.radiation.front().directionFingerprint = "different-grid";
-    expect(necwb::analysis::evaluateOptimizationBaseline(baseline, missingPattern).status
-            == necwb::analysis::OptimizationBaselineStatus::MissingRadiationCoverage,
+    const auto patternCompatibility = necwb::analysis::evaluateOptimizationBaseline(
+        baseline, missingPattern);
+    expect(patternCompatibility.status
+            == necwb::analysis::OptimizationBaselineStatus::MissingRadiationCoverage
+            && patternCompatibility.missingRadiation.size() == 1
+            && patternCompatibility.missingRadiationFrequenciesMHz.empty(),
         "mismatched radiation grid invalidates pattern baseline coverage");
 
     std::ranges::reverse(result.radiation);
     expect(necwb::analysis::optimizationResultCoverage(result).radiation == coverage.radiation,
         "radiation coverage fingerprints are independent of solver sample order");
+}
+
+void testOptimizationPresets()
+{
+    using namespace necwb::analysis;
+
+    const auto definitions = optimizationPresetDefinitions();
+    expect(definitions.size() == 7, "optimization preset catalog includes six goals and Custom");
+    for (auto index = std::size_t{}; index < definitions.size(); ++index) {
+        const auto& definition = definitions[index];
+        expect(!definition.stableId.empty(), "optimization preset has a stable ID");
+        expect(optimizationPresetStableId(definition.id) == definition.stableId,
+            "optimization preset ID resolves to its stable ID");
+        for (auto other = index + 1; other < definitions.size(); ++other)
+            expect(definition.stableId != definitions[other].stableId,
+                "optimization preset stable IDs are unique");
+    }
+    expect(!optimizationPresetObjective(OptimizationPresetId::Custom),
+        "Custom does not replace the current objective");
+
+    const OptimizationPresetParameters parameters{75.0, 1.8};
+    const auto swr = optimizationPresetObjective(OptimizationPresetId::SwrLimit, parameters);
+    expect(swr && swr->referenceImpedance == 75.0 && swr->swrWeight == 1.0
+            && swr->swrGoal == OptimizationGoal::GoodEnough && swr->swrTarget == 1.8
+            && swr->swrGoodEnoughDirection == GoodEnoughDirection::AtMost
+            && swr->swrAggregation == OptimizationAggregation::Maximum
+            && swr->resistanceWeight == 0.0 && swr->forwardGainWeight == 0.0,
+        "SWR limit preset configures only worst-band SWR compliance");
+
+    const auto match = optimizationPresetObjective(
+        OptimizationPresetId::FeedpointMatch, parameters);
+    expect(match && match->swrWeight == 0.0 && match->resistanceWeight == 1.0
+            && match->resistanceGoal == OptimizationGoal::Target
+            && match->resistanceTargetOhms == 75.0
+            && match->resistanceAggregation == OptimizationAggregation::Maximum
+            && match->reactanceWeight == 1.0
+            && match->reactanceGoal == OptimizationGoal::Target
+            && match->reactanceTargetOhms == 0.0
+            && match->reactanceAggregation == OptimizationAggregation::Maximum,
+        "feedpoint match preset targets reference resistance and zero reactance");
+
+    const auto gain = optimizationPresetObjective(OptimizationPresetId::PeakGain, parameters);
+    expect(gain && gain->forwardGainWeight == 1.0
+            && gain->forwardGainGoal == OptimizationGoal::Maximize
+            && gain->forwardGainAggregation == OptimizationAggregation::Minimum
+            && gain->directionalEvaluationMode == DirectionalEvaluationMode::StrongestInAzimuthCut,
+        "peak gain preset maximizes the weakest frequency in a tracked cut");
+
+    const auto frontToBack = optimizationPresetObjective(
+        OptimizationPresetId::FrontToBack, parameters);
+    expect(frontToBack && frontToBack->frontToBackWeight == 1.0
+            && frontToBack->frontToBackGoal == OptimizationGoal::Maximize
+            && frontToBack->frontToBackAggregation == OptimizationAggregation::Minimum,
+        "front-to-back preset maximizes the weakest frequency");
+
+    const auto frontToRear = optimizationPresetObjective(
+        OptimizationPresetId::FrontToRear, parameters);
+    expect(frontToRear && frontToRear->frontToRearWeight == 1.0
+            && frontToRear->frontToRearGoal == OptimizationGoal::Maximize
+            && frontToRear->frontToRearAggregation == OptimizationAggregation::Minimum,
+        "front-to-rear preset maximizes the weakest frequency");
+
+    const auto combined = optimizationPresetObjective(
+        OptimizationPresetId::SwrAndGain, parameters);
+    expect(combined && combined->swrWeight == 1.0
+            && combined->swrGoal == OptimizationGoal::GoodEnough
+            && combined->swrTarget == 1.8 && combined->forwardGainWeight == 1.0
+            && combined->forwardGainGoal == OptimizationGoal::Maximize
+            && combined->forwardGainAggregation == OptimizationAggregation::Minimum,
+        "combined preset balances SWR compliance and weakest-frequency gain");
+
+    for (const auto& definition : definitions) {
+        if (definition.id == OptimizationPresetId::Custom) continue;
+        const auto objective = optimizationPresetObjective(definition.id, parameters);
+        const auto directional = objective && (objective->forwardGainWeight > 0.0
+            || objective->frontToBackWeight > 0.0 || objective->frontToRearWeight > 0.0);
+        expect(directional == definition.requiresDirectionalSetup,
+            "preset directional requirement matches enabled criteria");
+    }
 }
 
 void testUtf8BomParsing()
@@ -2158,6 +2242,17 @@ void testOptimizationObjectives()
     expect(azimuthCutDeck.find("RP 0 1 72 1000 90 0 0 5") != std::string::npos
             && std::count(azimuthCutDeck.begin(), azimuthCutDeck.end(), '\n') >= 7,
         "azimuth tracking requests a complete fixed-theta cut at every frequency");
+    const auto azimuthRequirements =
+        necwb::analysis::optimizationRadiationRequirements(azimuthCutDeck);
+    expect(azimuthRequirements.size() == 2
+            && azimuthRequirements[0].frequencyMHz == 144.0
+            && azimuthRequirements[1].frequencyMHz == 148.0
+            && azimuthRequirements[0].patternIndex == 0
+            && azimuthRequirements[1].patternIndex == 0
+            && azimuthRequirements[0].sampleCount == 72
+            && azimuthRequirements[0].directionFingerprint
+                == azimuthRequirements[1].directionFingerprint,
+        "optimization radiation requirements preserve each generated azimuth cut grid");
     const auto elevationCutDeck = necwb::analysis::prepareDirectionalCutOptimizationInput(
         "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nEN\n",
         directionalFrequencies,
@@ -2165,6 +2260,37 @@ void testOptimizationObjectives()
         30.0, true, true);
     expect(elevationCutDeck.find("RP 0 37 1 1000 -90 30 5 0") != std::string::npos,
         "elevation tracking requests a complete fixed-phi cut");
+    const auto elevationRequirements =
+        necwb::analysis::optimizationRadiationRequirements(elevationCutDeck);
+    expect(elevationRequirements.size() == 2
+            && elevationRequirements[0].sampleCount == 37
+            && elevationRequirements[0].directionFingerprint
+                == elevationRequirements[1].directionFingerprint
+            && elevationRequirements[0].directionFingerprint
+                != azimuthRequirements[0].directionFingerprint,
+        "optimization radiation requirements distinguish elevation and azimuth grids");
+
+    const auto specifiedRearDeck = necwb::analysis::prepareDirectionalOptimizationInput(
+        "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nEN\n",
+        directionalFrequencies, 90.0, 0.0, true, true);
+    const auto specifiedRearRequirements =
+        necwb::analysis::optimizationRadiationRequirements(specifiedRearDeck);
+    expect(specifiedRearRequirements.size() == 76
+            && specifiedRearRequirements[0].frequencyMHz == 144.0
+            && specifiedRearRequirements[0].patternIndex == 0
+            && specifiedRearRequirements[37].patternIndex == 37
+            && specifiedRearRequirements[38].frequencyMHz == 148.0
+            && specifiedRearRequirements[38].patternIndex == 0
+            && std::ranges::all_of(specifiedRearRequirements,
+                [](const auto& requirement) { return requirement.sampleCount == 1; }),
+        "specified-direction F/R requirements retain every rear-region request per frequency");
+    const auto changedGeometryRearDeck =
+        necwb::analysis::prepareDirectionalOptimizationInput(
+            "GW 1 3 0 0 0 2 0 0 .001\nGE 0\nEN\n",
+            directionalFrequencies, 90.0, 0.0, true, true);
+    expect(necwb::analysis::optimizationRadiationRequirements(changedGeometryRearDeck)
+            == specifiedRearRequirements,
+        "candidate geometry changes do not alter the required directional sample grid");
 
     const auto maximumGainDeck = necwb::analysis::prepareMaximumGainSearchInput(
         "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nFR 0 3 0 0 14 .1\n"
@@ -2532,6 +2658,7 @@ auto main() -> int
     testReferenceRunSelection();
     testOptimizationBaselineFingerprint();
     testOptimizationBaselineCompatibility();
+    testOptimizationPresets();
     testRoundTripPreservesSource();
     testUtf8BomParsing();
     testLegacyFreeFormatParsing();

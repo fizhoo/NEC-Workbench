@@ -64,6 +64,8 @@ struct OptimizationBaselineCompatibility {
 [[nodiscard]] auto optimizationModelFingerprint(std::string_view resolvedDeck) -> std::string;
 [[nodiscard]] auto optimizationResultCoverage(const AnalysisResult& result)
     -> OptimizationResultCoverage;
+[[nodiscard]] auto optimizationRadiationRequirements(std::string_view solverDeck)
+    -> std::vector<RadiationCoverage>;
 [[nodiscard]] auto evaluateOptimizationBaseline(
     const std::optional<OptimizationBaselineDescriptor>& baseline,
     const OptimizationBaselineRequirements& requirements)

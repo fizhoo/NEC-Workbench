@@ -410,19 +410,22 @@ the +Z axis, so theta 90 degrees is the horizon and may be a pattern null over g
 ### Baseline and Candidate Comparison
 
 Optimization starts from a solver result for the actual current model. If no
-compatible result is available, the run button reads **Run Baseline & Optimize**.
-Workbench first performs a normal baseline analysis at the study frequencies, using
-the focused requests required by the enabled objective, and starts the selected
-search only after that analysis succeeds. This internal baseline run leaves the
-Optimize workspace in front; ordinary **Run Analysis** continues to open Results.
+compatible result is available, the run button reads **Build Baseline & Optimize**.
+Workbench first runs only the study frequencies and focused outputs required by the
+enabled objective, then starts the selected search after that baseline succeeds.
+This internal optimization run leaves normal Results unchanged and keeps Optimize in
+front. Use **Run Analysis**—or **Apply This Candidate and Run**—to run the authored
+deck requests and populate normal Results.
 
 A baseline is compatible only when its solver-effective model, backend, reference
-impedance, required frequencies, and radiation coverage match the study. Comment,
-formatting, and temporary request changes do not by themselves stale the model
-fingerprint. The baseline status explains when another run is required.
+impedance, required frequencies, and radiation coverage match the study. Directional
+objectives require the same theta/phi cut grid used by their candidates; a broader
+but different authored pattern is not silently substituted. Comment, formatting,
+and temporary request changes do not by themselves stale the model fingerprint. The
+baseline status explains when another run is required.
 
-Double-click a completed row to open **Optimization Candidate Preview**, then select
-**Compare to Baseline**. The candidate is the solid series and the baseline is a
+Double-click one completed row to open **Optimization Candidate Preview**, then select
+**Candidate vs Baseline**. The chosen candidate is the solid series and the optimization baseline—the current model before the search—is a
 faint dashed series. SWR and impedance are shown first; a compatible 2D pattern is
 available when the candidate contains radiation data. The baseline run ID is always
 visible, and saved optimization sessions retain that identity for historical review.
@@ -436,7 +439,9 @@ available directional plots in one reusable preview window. This is temporary
 optimization data, not the active model's normal Results, so the preview does not
 show the historical-reference control.
 
-**Compare to Baseline** is the single optimization comparison workflow. Its details
+**Candidate vs Baseline** is the single optimization comparison workflow. It compares
+one selected candidate with the one recorded optimization baseline; it is not a
+multi-candidate overlay. Its details
 show candidate-minus-baseline deltas for enabled objective criteria, including the
 reduction frequency when one applies. The main Results workspace remains reserved
 for normal analysis runs and manually selected historical run references.

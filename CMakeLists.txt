@@ -24,6 +24,8 @@ add_library(necwb_core
     src/analysis/OptimizationBaseline.cpp
     src/analysis/OptimizationBaseline.h
     src/analysis/OptimizationObjective.cpp
+    src/analysis/OptimizationPreset.cpp
+    src/analysis/OptimizationPreset.h
     src/analysis/ReferenceRunSelection.cpp
     src/analysis/ReferenceRunSelection.h
     src/analysis/SegmentationConvergence.cpp

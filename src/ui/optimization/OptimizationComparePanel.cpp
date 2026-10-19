@@ -21,10 +21,14 @@ OptimizationComparePanel::OptimizationComparePanel(QWidget* parent)
     setObjectName(QStringLiteral("optimizationComparePanel"));
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    status_ = new QLabel(tr("Run an optimization baseline to compare candidates."), this);
+    status_ = new QLabel(tr(
+        "Run an optimization baseline before comparing a completed candidate."), this);
     statusText_ = status_->text();
     status_->setObjectName(QStringLiteral("optimizationBaselineStatus"));
     status_->setWordWrap(true);
+    comparison_ = new QLabel(this);
+    comparison_->setObjectName(QStringLiteral("optimizationComparisonIdentity"));
+    comparison_->setWordWrap(true);
     tabs_ = new QTabWidget(this);
     tabs_->setDocumentMode(true);
     sweepPlots_ = new SweepPlotsView(tabs_);
@@ -43,6 +47,7 @@ OptimizationComparePanel::OptimizationComparePanel(QWidget* parent)
     tabs_->addTab(pattern_, tr("2D Pattern"));
     tabs_->addTab(breakdownScroll, tr("Candidate Details"));
     layout->addWidget(status_);
+    layout->addWidget(comparison_);
     layout->addWidget(tabs_, 1);
     clearCandidate();
 }
@@ -94,6 +99,8 @@ void OptimizationComparePanel::refresh()
     constexpr auto patternTab = 1;
     status_->setText(statusText_);
     if (!candidate_) {
+        comparison_->setText(tr(
+            "No candidate selected. Double-click a completed evaluation to compare it with the optimization baseline."));
         sweepPlots_->setResults({}, tr("a selected candidate"));
         sweepPlots_->clearReferenceResults();
         pattern_->setResults({}, tr("a selected candidate"));
@@ -105,6 +112,11 @@ void OptimizationComparePanel::refresh()
     sweepPlots_->setResults(*candidate_, candidateLabel_);
     pattern_->setResults(*candidate_, candidateLabel_);
     const auto compare = baselineCompatible_ && baseline_.has_value();
+    comparison_->setText(compare
+        ? tr("Comparing %1 with %2. Candidate traces are solid; optimization-baseline traces are dashed.")
+              .arg(candidateLabel_, baselineLabel_)
+        : tr("Showing %1 without an optimization-baseline comparison.")
+              .arg(candidateLabel_));
     if (compare) {
         sweepPlots_->setReferenceResults(*baseline_, baselineLabel_);
         pattern_->setReferenceResults(*baseline_, baselineLabel_);

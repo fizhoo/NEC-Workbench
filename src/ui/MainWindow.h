@@ -453,6 +453,7 @@ private:
     bool modelChecked_{};
     bool hasNecModel_{};
     bool resultsAvailable_{};
+    bool runHistoryLoaded_{};
     bool resultsDetached_{};
     bool runMonitorPinnedOpen_{};
     bool suppressSourceHistoryRecording_{};

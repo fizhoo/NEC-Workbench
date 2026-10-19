@@ -186,7 +186,13 @@ optimizer candidate. Baseline identity and coverage are modeled independently fr
 the Results workspace's optional historical overlay so those two comparisons cannot
 silently replace one another. When the current study lacks a compatible baseline,
 the optimization workspace requests one through the ordinary MainWindow analysis
-pipeline, then begins candidate evaluation only after the run is parsed and indexed.
+pipeline with an optimization-specific generated deck containing only the study
+frequencies and objective-required outputs. It then begins candidate evaluation only
+after the run is parsed and indexed. This internal run is archived but does not
+replace the active normal Results state.
+Directional baseline compatibility compares the exact generated theta/phi request
+grid, not only the presence of radiation data at a frequency. This keeps candidate
+overlays and directional objective reductions on the same sampled cut.
 The optimization session stores the baseline run ID; historical session review loads
 that archived result without replacing the active model's Results state.
 

@@ -30,6 +30,7 @@ private:
     void refresh();
 
     QLabel* status_{};
+    QLabel* comparison_{};
     QLabel* breakdown_{};
     QTabWidget* tabs_{};
     SweepPlotsView* sweepPlots_{};

@@ -68,10 +68,12 @@ documented, reproducible cases.
 ### Optimization Confidence
 
 - Finalist sensitivity and construction-tolerance analysis
+- Revisit a compact, non-blocking warning when a parameter's current value falls
+  outside its optimization bounds; avoid adding a persistent action bar
 - Optional per-frequency or per-band importance and explicit pass/fail constraints
 - Two-variable grid sweeps and objective heat maps
-- Refine baseline/candidate comparison ergonomics from field testing before adding
-  broader multi-run overlays
+- Refine the one-candidate/one-baseline comparison from field testing; broader
+  multi-candidate overlays remain deferred unless they demonstrate clear value
 - Continue validating objective calculations and search stopping reasons with tests
 
 Additional search algorithms should be added only when they offer a clear advantage

@@ -6,6 +6,7 @@
 #include "analysis/NelderMeadSearch.h"
 #include "analysis/OptimizationBaseline.h"
 #include "analysis/OptimizationObjective.h"
+#include "analysis/OptimizationPreset.h"
 #include "model/ModelSetup.h"
 #include "nec/NecSymbolResolver.h"
 #include "ui/analysis/AnalysisRunStore.h"
@@ -142,9 +143,13 @@ private:
     [[nodiscard]] auto candidateDescription(const Candidate& candidate) const -> QString;
     void updateBounds();
     void updateObjectiveControls();
+    void applySelectedObjectivePreset();
+    void updateObjectivePresetControls();
+    void markObjectiveCustom();
     void updateLatestPatternPeakControls();
     void updateDirectionalSeedState();
-    void seedDirectionFromLatestPattern();
+    [[nodiscard]] auto seedDirectionFromLatestPattern() -> bool;
+    [[nodiscard]] auto directionalPresetRequiresSetup() const -> bool;
     void chooseDirectionStrategy();
     void useLatestPatternPeak();
     void updateFrequencyControls();
@@ -195,6 +200,7 @@ private:
     auto writeCandidateMetadata(const Candidate& candidate) -> bool;
     void setCandidateStatus(int row, const QString& status);
     [[nodiscard]] auto selectedObjective() const -> analysis::OptimizationObjectiveSpec;
+    [[nodiscard]] auto selectedObjectivePreset() const -> analysis::OptimizationPresetId;
     [[nodiscard]] auto selectedFrequencyMode() const -> FrequencyMode;
     [[nodiscard]] auto selectedSearchMethod() const -> SearchMethod;
     [[nodiscard]] auto selectedFrequencyPlan() const -> analysis::FrequencyPlan;
@@ -217,6 +223,9 @@ private:
     QLabel* maximumLabel_{};
     QComboBox* variableControl_{};
     QComboBox* objectiveControl_{};
+    QComboBox* objectivePresetControl_{};
+    QDoubleSpinBox* presetSwrLimitControl_{};
+    QLabel* presetSwrLimitLabel_{};
     QDoubleSpinBox* targetFrequencyControl_{};
     QTableWidget* objectiveCriteriaTable_{};
     QDoubleSpinBox* swrWeightControl_{};
@@ -237,11 +246,16 @@ private:
     QLabel* forwardThetaLabel_{};
     QLabel* forwardPhiLabel_{};
     QLabel* directionSetupSummaryLabel_{};
+    QWidget* directionSetupPanel_{};
+    QLabel* directionSetupLabel_{};
     QPushButton* directionSetupButton_{};
     QPushButton* findMaximumGainButton_{};
     QComboBox* radiationComponentControl_{};
     QPushButton* useLatestPatternPeakButton_{};
     QLabel* latestPatternPeakLabel_{};
+    QWidget* latestPatternPeakPanel_{};
+    QLabel* latestPatternPeakFieldLabel_{};
+    QLabel* radiationComponentLabel_{};
     QComboBox* frequencyModeControl_{};
     QWidget* explicitFrequencyPanel_{};
     QWidget* continuousFrequencyPanel_{};
@@ -322,8 +336,10 @@ private:
     std::vector<analysis::RadiationSample> latestRadiation_;
     bool directionalObjectiveWasEnabled_{};
     bool directionSetupConfigured_{};
+    bool directionSetupReady_{};
     bool maximumGainSearchRequested_{};
     bool maximumGainDirectionStale_{};
+    bool applyingObjectivePreset_{};
     std::vector<double> activeFrequenciesMHz_;
     std::optional<AnalysisRunRecord> sessionRecord_;
     std::optional<AnalysisRunRecord> baselineRecord_;
