@@ -162,37 +162,8 @@ void CandidateEvaluator::start(CandidateEvaluationRequest request)
         return;
     }
 
-    auto frequencyPlan = request_.frequencyPlan;
-    if (request_.objective.kind == analysis::OptimizationObjectiveKind::SwrAtFrequency) {
-        frequencyPlan = {analysis::FrequencyPlanMode::Explicit,
-            {request_.objective.targetFrequencyMHz}, {}};
-    }
-    const auto frequenciesMHz = analysis::frequencyPlanPoints(frequencyPlan);
-    const auto directionalObjective = request_.objective.forwardGainWeight > 0.0
-        || request_.objective.frontToBackWeight > 0.0
-        || request_.objective.frontToRearWeight > 0.0;
-    const auto solverDeck = directionalObjective
-        ? request_.objective.directionalEvaluationMode
-                == analysis::DirectionalEvaluationMode::SpecifiedDirection
-            ? analysis::prepareDirectionalOptimizationInput(resolution.generatedDeck,
-                  frequenciesMHz,
-                  request_.objective.forwardThetaDegrees,
-                  request_.objective.forwardPhiDegrees,
-                  request_.objective.frontToBackWeight > 0.0,
-                  request_.objective.frontToRearWeight > 0.0)
-            : analysis::prepareDirectionalCutOptimizationInput(
-                  resolution.generatedDeck, frequenciesMHz,
-                  request_.objective.directionalEvaluationMode,
-                  request_.objective.directionalEvaluationMode
-                          == analysis::DirectionalEvaluationMode::StrongestInAzimuthCut
-                      ? request_.objective.forwardThetaDegrees
-                      : request_.objective.forwardPhiDegrees,
-                  request_.objective.frontToBackWeight > 0.0,
-                  request_.objective.frontToRearWeight > 0.0)
-        : frequencyPlan.mode == analysis::FrequencyPlanMode::Explicit
-            ? analysis::prepareExplicitFrequencyInput(
-                  resolution.generatedDeck, frequenciesMHz)
-            : analysis::prepareImpedanceInput(resolution.generatedDeck);
+    const auto solverDeck = analysis::prepareOptimizationInput(
+        resolution.generatedDeck, request_.frequencyPlan, request_.objective);
     if (!writeFile(directory.filePath(QStringLiteral("model.nec")),
             QByteArray::fromStdString(solverDeck))) {
         finishLater(CandidateEvaluationStatus::FileError,

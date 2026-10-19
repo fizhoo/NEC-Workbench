@@ -407,6 +407,26 @@ for setup, but tracked-cut modes recalculate the strongest direction for every
 candidate rather than locking to that initial peak. NEC theta is measured down from
 the +Z axis, so theta 90 degrees is the horizon and may be a pattern null over ground.
 
+### Baseline and Candidate Comparison
+
+Optimization starts from a solver result for the actual current model. If no
+compatible result is available, the run button reads **Run Baseline & Optimize**.
+Workbench first performs a normal baseline analysis at the study frequencies, using
+the focused requests required by the enabled objective, and starts the selected
+search only after that analysis succeeds. This internal baseline run leaves the
+Optimize workspace in front; ordinary **Run Analysis** continues to open Results.
+
+A baseline is compatible only when its solver-effective model, backend, reference
+impedance, required frequencies, and radiation coverage match the study. Comment,
+formatting, and temporary request changes do not by themselves stale the model
+fingerprint. The baseline status explains when another run is required.
+
+Double-click a completed row to open **Optimization Candidate Preview**, then select
+**Compare to Baseline**. The candidate is the solid series and the baseline is a
+faint dashed series. SWR and impedance are shown first; a compatible 2D pattern is
+available when the candidate contains radiation data. The baseline run ID is always
+visible, and saved optimization sessions retain that identity for historical review.
+
 ### Candidate Review
 
 The candidate table and objective plot retain the evaluated values and score
@@ -414,14 +434,15 @@ breakdown. The winning row is selected and centered when a study completes.
 Double-click a candidate to inspect its frequency table, SWR/impedance plots, and
 available directional plots in one reusable preview window. This is temporary
 optimization data, not the active model's normal Results, so the preview does not
-show the historical-reference control. Right-click any completed candidate and
-choose **Compare Candidate with Last Analysis Run**, or use the same button in the
-candidate preview, to show it as a dashed overlay behind the most recently displayed
-normal analysis. Run or load a normal analysis first so there is a primary result to
-compare against. This comparison does not edit the model or run the solver, and
-Results clearly labels the optimization candidate overlay.
-The same menu can apply a scored candidate directly to the model or apply it and
-start a normal analysis. The existing **Apply Best to Model** action remains the
+show the historical-reference control.
+
+**Compare to Baseline** is the single optimization comparison workflow. Its details
+show candidate-minus-baseline deltas for enabled objective criteria, including the
+reduction frequency when one applies. The main Results workspace remains reserved
+for normal analysis runs and manually selected historical run references.
+
+The candidate menu can apply a scored candidate directly to the model or apply it
+and start a normal analysis. The existing **Apply Best to Model** action remains the
 shortcut for the winning row. After evaluation stops, click any numeric column heading from
 Value through F/R to sort the table; Status and Run remain informational. Gain,
 F/B, and F/R initially sort highest-first, while the other numeric columns sort

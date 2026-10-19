@@ -118,6 +118,15 @@ timeout. Every run receives a unique durable directory containing source,
 generated input, output, logs, and versioned metadata. Startup discovery rebuilds
 Run History from those directories and marks interrupted records appropriately.
 
+Completed runs also index the metadata needed for optimization baselines: a
+normalized solver-model fingerprint, backend, reference impedance, impedance
+frequencies, and exact radiation sample-grid fingerprints. The model fingerprint
+ignores comments, formatting, and temporary `FR`/`RP`/`XQ` requests while retaining
+solver-effective model values. Core compatibility logic distinguishes model,
+backend, impedance, frequency, and radiation-coverage mismatches; the optimization
+workflow can therefore reject stale or incomplete baselines without relying on a
+filename or whichever historical result happens to be displayed.
+
 ## Requests and Frequency Plans
 
 The authored model may contain an ordinary `FR` sweep and one or more result
@@ -171,6 +180,23 @@ the ranking remains inspectable rather than a black box.
 Broad model radiation requests are omitted from ordinary impedance-only candidates.
 Directional objectives generate focused samples at each study frequency, reducing
 solver work while preserving the stated metric definition.
+
+An optimization baseline is a durable analysis of the actual current model, not an
+optimizer candidate. Baseline identity and coverage are modeled independently from
+the Results workspace's optional historical overlay so those two comparisons cannot
+silently replace one another. When the current study lacks a compatible baseline,
+the optimization workspace requests one through the ordinary MainWindow analysis
+pipeline, then begins candidate evaluation only after the run is parsed and indexed.
+The optimization session stores the baseline run ID; historical session review loads
+that archived result without replacing the active model's Results state.
+
+Candidate comparison is owned by a focused panel inside the reusable detached
+candidate-preview window, leaving the main evaluation table and search-progress plot
+uncompressed. It reuses the normal SWR/impedance and 2D-pattern views, placing the
+compatible baseline behind the selected candidate as a labeled dashed series. The
+core fingerprint and coverage evaluator is Qt-free; widgets only present its status
+and data. Optimization candidates are not injected into the main Results workspace;
+that workspace's reference controller remains exclusively run-to-run comparison.
 
 Applying a candidate is an explicit source edit to active `SY` definitions. It is
 undoable and does not mutate archived candidate artifacts. Applying and running

@@ -88,7 +88,8 @@ private:
     enum class SolverRunPurpose {
         Analysis,
         AverageGainTest,
-        OptimizationPeakSearch
+        OptimizationPeakSearch,
+        OptimizationBaseline
     };
 
     enum class EditorDestination {
@@ -238,8 +239,6 @@ private:
     void editSelectedRunNote();
     void clearResultReference();
     void updateResultReference();
-    auto setCandidateComparisonOverlay(
-        const analysis::AnalysisResult& result, QString label) -> bool;
     [[nodiscard]] auto selectedRunRecord() const -> std::optional<AnalysisRunRecord>;
     void updateRunSelectionActions();
     void displayRunArtifacts(const QString& directory, const QString& context);
@@ -420,8 +419,6 @@ private:
     QString activeModelResultsContext_;
     AnalysisRunStore runStore_;
     ResultReferenceController resultReferenceController_{runStore_};
-    std::optional<analysis::AnalysisResult> candidateComparisonOverlay_;
-    QString candidateComparisonLabel_;
     std::optional<AnalysisRunRecord> currentRunRecord_;
     SolverRunPurpose currentRunPurpose_{SolverRunPurpose::Analysis};
     analysis::AverageGainEnvironment currentAverageGainEnvironment_{

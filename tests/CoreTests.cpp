@@ -5,6 +5,7 @@
 #include "analysis/FrequencyPlan.h"
 #include "analysis/NecOutputParser.h"
 #include "analysis/NelderMeadSearch.h"
+#include "analysis/OptimizationBaseline.h"
 #include "analysis/OptimizationObjective.h"
 #include "analysis/ReferenceRunSelection.h"
 #include "analysis/SegmentationConvergence.h"
@@ -80,6 +81,120 @@ void testReferenceRunSelection()
     expect(!necwb::analysis::selectPreviousReferenceRun(
         candidates, "active", "/models/missing.nec"),
         "reference selection does not cross model identities");
+}
+
+void testOptimizationBaselineFingerprint()
+{
+    const std::string first =
+        "CM first formatting\n"
+        "GW 1 11 0 0 0 1.0 0 0 .001\n"
+        "GE 0\n"
+        "EX 0 1 6 0 1 0\n"
+        "FR 0 3 0 0 7.0 .1\n"
+        "RP 0 1 1 1000 90 0 0 0\n"
+        "EN\n";
+    const std::string reformatted =
+        "CM different comment\n"
+        "GW,1,11,0,0,0,1e0,0,0,1e-3\n"
+        "GE 0\n"
+        "EX 0 1 6 0 1 0\n"
+        "FR 0 1 0 0 14.2 0\n"
+        "XQ 0\n"
+        "EN\n";
+    const std::string changed =
+        "GW 1 11 0 0 0 1.1 0 0 .001\n"
+        "GE 0\n"
+        "EX 0 1 6 0 1 0\n"
+        "EN\n";
+    const auto fingerprint = necwb::analysis::optimizationModelFingerprint(first);
+    expect(!fingerprint.empty() && fingerprint.size() == 32,
+        "optimization model fingerprints are stable identifiers");
+    expect(fingerprint == necwb::analysis::optimizationModelFingerprint(reformatted),
+        "optimization fingerprints ignore comments, formatting, and execution requests");
+    expect(fingerprint != necwb::analysis::optimizationModelFingerprint(changed),
+        "optimization fingerprints change with solver-effective model values");
+
+    const auto firstResolution = necwb::nec::NecSymbolResolver{}.resolve(
+        "SY length=1\nGW 1 11 0 0 0 length 0 0 .001\nGE 0\nEN\n");
+    const auto secondResolution = necwb::nec::NecSymbolResolver{}.resolve(
+        "SY length=1.1\nGW 1 11 0 0 0 length 0 0 .001\nGE 0\nEN\n");
+    expect(firstResolution.ok() && secondResolution.ok()
+            && necwb::analysis::optimizationModelFingerprint(firstResolution.generatedDeck)
+                != necwb::analysis::optimizationModelFingerprint(secondResolution.generatedDeck),
+        "optimization fingerprints include resolved SY values");
+}
+
+void testOptimizationBaselineCompatibility()
+{
+    necwb::analysis::AnalysisResult result;
+    result.referenceImpedanceOhms = 50.0;
+    result.feedpoints = {
+        {.frequencyMHz = 14.0},
+        {.frequencyMHz = 14.2},
+    };
+    result.radiation = {
+        {.frequencyMHz = 14.0, .thetaDegrees = 90.0, .phiDegrees = 0.0,
+            .patternIndex = 1},
+        {.frequencyMHz = 14.0, .thetaDegrees = 90.0, .phiDegrees = 5.0,
+            .patternIndex = 1},
+    };
+    const auto coverage = necwb::analysis::optimizationResultCoverage(result);
+    expect(coverage.impedanceFrequenciesMHz.size() == 2
+            && coverage.radiation.size() == 1
+            && coverage.radiation.front().sampleCount == 2,
+        "optimization result coverage indexes impedance and radiation grids");
+
+    const necwb::analysis::OptimizationBaselineDescriptor baseline{
+        "model-a", "nec2c", coverage};
+    const necwb::analysis::OptimizationBaselineRequirements requirements{
+        "model-a", "nec2c", 50.0, {14.0, 14.2}, {14.0}, coverage.radiation};
+    expect(necwb::analysis::evaluateOptimizationBaseline(baseline, requirements).compatible(),
+        "matching optimization baseline metadata is compatible");
+    expect(necwb::analysis::evaluateOptimizationBaseline(std::nullopt, requirements).status
+            == necwb::analysis::OptimizationBaselineStatus::Missing,
+        "missing optimization baseline is reported");
+
+    auto changedModel = requirements;
+    changedModel.modelFingerprint = "model-b";
+    expect(necwb::analysis::evaluateOptimizationBaseline(baseline, changedModel).status
+            == necwb::analysis::OptimizationBaselineStatus::ModelChanged,
+        "changed model invalidates an optimization baseline");
+    auto changedBackend = requirements;
+    changedBackend.backend = "opennec";
+    expect(necwb::analysis::evaluateOptimizationBaseline(baseline, changedBackend).status
+            == necwb::analysis::OptimizationBaselineStatus::BackendChanged,
+        "changed solver backend invalidates an optimization baseline");
+    auto changedImpedance = requirements;
+    changedImpedance.referenceImpedanceOhms = 75.0;
+    expect(necwb::analysis::evaluateOptimizationBaseline(baseline, changedImpedance).status
+            == necwb::analysis::OptimizationBaselineStatus::ReferenceImpedanceChanged,
+        "changed reference impedance invalidates SWR baseline coverage");
+    auto missingFrequency = requirements;
+    missingFrequency.impedanceFrequenciesMHz.push_back(14.3);
+    const auto frequencyCompatibility = necwb::analysis::evaluateOptimizationBaseline(
+        baseline, missingFrequency);
+    expect(frequencyCompatibility.status
+            == necwb::analysis::OptimizationBaselineStatus::MissingImpedanceCoverage
+            && frequencyCompatibility.missingImpedanceFrequenciesMHz.size() == 1,
+        "missing impedance frequency is reported explicitly");
+    auto missingRadiationFrequency = requirements;
+    missingRadiationFrequency.radiationFrequenciesMHz.push_back(14.2);
+    const auto radiationFrequencyCompatibility =
+        necwb::analysis::evaluateOptimizationBaseline(
+            baseline, missingRadiationFrequency);
+    expect(radiationFrequencyCompatibility.status
+            == necwb::analysis::OptimizationBaselineStatus::MissingRadiationCoverage
+            && radiationFrequencyCompatibility.missingRadiationFrequenciesMHz.size() == 1,
+        "missing radiation frequency is reported explicitly");
+    auto missingPattern = requirements;
+    missingPattern.radiation.front().directionFingerprint = "different-grid";
+    expect(necwb::analysis::evaluateOptimizationBaseline(baseline, missingPattern).status
+            == necwb::analysis::OptimizationBaselineStatus::MissingRadiationCoverage,
+        "mismatched radiation grid invalidates pattern baseline coverage");
+
+    std::ranges::reverse(result.radiation);
+    expect(necwb::analysis::optimizationResultCoverage(result).radiation == coverage.radiation,
+        "radiation coverage fingerprints are independent of solver sample order");
 }
 
 void testUtf8BomParsing()
@@ -2415,6 +2530,8 @@ void testSegmentationConvergencePreparation()
 auto main() -> int
 {
     testReferenceRunSelection();
+    testOptimizationBaselineFingerprint();
+    testOptimizationBaselineCompatibility();
     testRoundTripPreservesSource();
     testUtf8BomParsing();
     testLegacyFreeFormatParsing();

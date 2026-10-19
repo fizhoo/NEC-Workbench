@@ -2,6 +2,7 @@
 
 #include "analysis/AnalysisResult.h"
 #include "analysis/FrequencyPlan.h"
+#include "analysis/OptimizationObjective.h"
 #include "model/ModelSetup.h"
 
 #include <span>
@@ -30,6 +31,10 @@ enum class RadiationSweepMode {
 
 [[nodiscard]] auto prepareExplicitFrequencyInput(std::string_view source,
     std::span<const double> frequenciesMHz) -> std::string;
+
+[[nodiscard]] auto prepareOptimizationInput(std::string_view source,
+    const FrequencyPlan& frequencyPlan,
+    const OptimizationObjectiveSpec& objective) -> std::string;
 
 [[nodiscard]] auto prepareDirectionalOptimizationInput(std::string_view source,
     double frequencyMHz, double thetaDegrees, double phiDegrees,

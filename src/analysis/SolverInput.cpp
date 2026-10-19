@@ -400,6 +400,40 @@ auto prepareDirectionalCutOptimizationInput(std::string_view source,
     return joinLines(lines);
 }
 
+auto prepareOptimizationInput(std::string_view source,
+    const FrequencyPlan& requestedFrequencyPlan,
+    const OptimizationObjectiveSpec& objective) -> std::string
+{
+    auto frequencyPlan = requestedFrequencyPlan;
+    if (objective.kind == OptimizationObjectiveKind::SwrAtFrequency) {
+        frequencyPlan = {FrequencyPlanMode::Explicit,
+            {objective.targetFrequencyMHz}, {}};
+    }
+    const auto frequenciesMHz = frequencyPlanPoints(frequencyPlan);
+    const auto directional = objective.forwardGainWeight > 0.0
+        || objective.frontToBackWeight > 0.0
+        || objective.frontToRearWeight > 0.0;
+    if (directional) {
+        if (objective.directionalEvaluationMode
+            == DirectionalEvaluationMode::SpecifiedDirection) {
+            return prepareDirectionalOptimizationInput(source, frequenciesMHz,
+                objective.forwardThetaDegrees, objective.forwardPhiDegrees,
+                objective.frontToBackWeight > 0.0,
+                objective.frontToRearWeight > 0.0);
+        }
+        return prepareDirectionalCutOptimizationInput(source, frequenciesMHz,
+            objective.directionalEvaluationMode,
+            objective.directionalEvaluationMode
+                    == DirectionalEvaluationMode::StrongestInAzimuthCut
+                ? objective.forwardThetaDegrees : objective.forwardPhiDegrees,
+            objective.frontToBackWeight > 0.0,
+            objective.frontToRearWeight > 0.0);
+    }
+    return frequencyPlan.mode == FrequencyPlanMode::Explicit
+        ? prepareExplicitFrequencyInput(source, frequenciesMHz)
+        : prepareImpedanceInput(source);
+}
+
 auto prepareMaximumGainSearchInput(std::string_view source,
     double frequencyMHz, bool aboveGroundOnly) -> std::string
 {

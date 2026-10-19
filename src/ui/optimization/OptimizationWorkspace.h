@@ -4,6 +4,7 @@
 #include "analysis/AdaptiveSearch.h"
 #include "analysis/DifferentialEvolutionSearch.h"
 #include "analysis/NelderMeadSearch.h"
+#include "analysis/OptimizationBaseline.h"
 #include "analysis/OptimizationObjective.h"
 #include "model/ModelSetup.h"
 #include "nec/NecSymbolResolver.h"
@@ -37,6 +38,7 @@ namespace necwb::ui {
 
 class CandidatePlotsView;
 class DirectionalMetricsView;
+class OptimizationComparePanel;
 class SweepPlotsView;
 
 class OptimizationWorkspace final : public QWidget {
@@ -56,11 +58,14 @@ public:
         std::function<bool(std::vector<std::pair<QString, double>>)> callback);
     void setApplyAndRunCallback(
         std::function<bool(std::vector<std::pair<QString, double>>)> callback);
-    void setCompareCandidateCallback(
-        std::function<bool(const analysis::AnalysisResult&, QString)> callback);
-    void setActiveResultsAvailable(bool available);
+    void setBaselineRunCallback(std::function<bool(
+        const analysis::FrequencyPlan&, const analysis::OptimizationObjectiveSpec&)> callback);
+    void setCancelBaselineRunCallback(std::function<void()> callback);
     void setFindMaximumGainCallback(std::function<bool(double)> callback);
     void setLatestAnalysisResult(const analysis::AnalysisResult& result);
+    void setOptimizationBaseline(const AnalysisRunRecord& record,
+        const analysis::AnalysisResult& result);
+    void finishOptimizationBaseline(bool succeeded, QString detail = {});
     auto loadSession(const QString& sessionId) -> bool;
     void leaveHistoricalSession();
     [[nodiscard]] auto isRunning() const noexcept -> bool;
@@ -151,7 +156,6 @@ private:
     void resetCandidateDetails();
     void updateCandidateActionState();
     void showCandidateContextMenu(const QPoint& position);
-    void compareCandidateWithActiveResults(int candidateIndex);
     void sortCandidateTable(int column);
     void applyCandidateSort();
     [[nodiscard]] auto candidateIndexAtTableRow(int row) const -> int;
@@ -161,6 +165,11 @@ private:
     void applyCandidate(int row, bool runAfterApply);
     void updateCandidateRowToolTip(int row);
     void updateCandidatePlots();
+    void updateComparisonCandidate();
+    void updateBaselineState();
+    void requestOptimizationStart();
+    [[nodiscard]] auto baselineRequirements(const StudySetup& setup) const
+        -> analysis::OptimizationBaselineRequirements;
     void updateReadiness();
     void populateModelFrequencies(const model::FrequencyDefinition& frequency);
     void setExplicitFrequencies(const std::vector<double>& frequenciesMHz);
@@ -283,13 +292,13 @@ private:
     QLabel* bestLabel_{};
     QTableWidget* resultsTable_{};
     CandidatePlotsView* candidatePlots_{};
+    OptimizationComparePanel* comparePanel_{};
     QDialog* candidateDetailsWindow_{};
     QLabel* candidateDetailLabel_{};
     QTableWidget* candidateDetailsTable_{};
     QTabWidget* candidateDetailViews_{};
     SweepPlotsView* candidateDetailPlots_{};
     DirectionalMetricsView* candidateDirectionalPlots_{};
-    QPushButton* compareCandidateButton_{};
     QPushButton* applyCandidateButton_{};
     QPushButton* applyCandidateAndRunButton_{};
     QWidget* historicalBanner_{};
@@ -303,7 +312,9 @@ private:
     std::function<void()> parameterizationHelpCallback_;
     std::function<bool(std::vector<std::pair<QString, double>>)> applyParameterCallback_;
     std::function<bool(std::vector<std::pair<QString, double>>)> applyAndRunCallback_;
-    std::function<bool(const analysis::AnalysisResult&, QString)> compareCandidateCallback_;
+    std::function<bool(const analysis::FrequencyPlan&,
+        const analysis::OptimizationObjectiveSpec&)> baselineRunCallback_;
+    std::function<void()> cancelBaselineRunCallback_;
     std::function<bool(double)> findMaximumGainCallback_;
     std::vector<nec::SymbolDefinition> definitions_;
     std::vector<Candidate> candidates_;
@@ -313,9 +324,11 @@ private:
     bool directionSetupConfigured_{};
     bool maximumGainSearchRequested_{};
     bool maximumGainDirectionStale_{};
-    bool activeResultsAvailable_{};
     std::vector<double> activeFrequenciesMHz_;
     std::optional<AnalysisRunRecord> sessionRecord_;
+    std::optional<AnalysisRunRecord> baselineRecord_;
+    std::optional<analysis::AnalysisResult> baselineResult_;
+    analysis::OptimizationBaselineCompatibility baselineCompatibility_;
     std::optional<FrequencySelectionState> activeFrequencySelection_;
     QString source_;
     QString sourceFile_;
@@ -343,6 +356,8 @@ private:
     bool historicalSession_{};
     bool contextInitialized_{};
     bool preserveStudyOnNextContextUpdate_{};
+    bool baselineRunInProgress_{};
+    bool startAfterBaseline_{};
 };
 
 }

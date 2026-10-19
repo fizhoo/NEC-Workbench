@@ -5,6 +5,7 @@
 #include "ui/WorkspaceNavigator.h"
 
 #include "analysis/FrequencyComparison.h"
+#include "analysis/OptimizationBaseline.h"
 #include "analysis/SolverCommand.h"
 #include "analysis/NecOutputParser.h"
 #include "analysis/SolverInput.h"
@@ -265,6 +266,10 @@ void setRunResultMetadata(AnalysisRunRecord& record, const analysis::AnalysisRes
     record.hasImpedance = !result.feedpoints.empty();
     record.hasCurrents = !result.currents.empty();
     record.hasRadiation = !result.radiation.empty();
+    const auto coverage = analysis::optimizationResultCoverage(result);
+    record.referenceImpedanceOhms = coverage.referenceImpedanceOhms;
+    record.impedanceFrequenciesMHz = coverage.impedanceFrequenciesMHz;
+    record.radiationCoverage = coverage.radiation;
     std::vector<double> frequencies;
     const auto addFrequency = [&frequencies](double frequencyMHz) {
         if (std::ranges::find_if(frequencies, [frequencyMHz](double existing) {
@@ -1539,10 +1544,26 @@ void MainWindow::createOptimizationWorkspace()
             startAnalysis();
             return solverRunner_->isRunning();
         });
-    optimizationWorkspace_->setCompareCandidateCallback(
-        [this](const analysis::AnalysisResult& result, QString label) {
-            return setCandidateComparisonOverlay(result, std::move(label));
+    optimizationWorkspace_->setBaselineRunCallback(
+        [this](const analysis::FrequencyPlan& frequencyPlan,
+            const analysis::OptimizationObjectiveSpec& objective) {
+            if (solverRunner_->isRunning() || convergenceWorkspace_->isRunning()) return false;
+            checkModel();
+            const auto& cache = activeSource();
+            const auto& resolution = cache.resolution();
+            if (modelErrorCount_ != 0 || !resolution.ok()) return false;
+            const auto solverInput = analysis::prepareOptimizationInput(
+                resolution.generatedDeck, frequencyPlan, objective);
+            startAnalysisRun(std::string(cache.source()), solverInput,
+                QStringLiteral("optimization-baseline"),
+                tr("Optimization baseline · %1 frequencies")
+                    .arg(analysis::frequencyPlanPoints(frequencyPlan).size()),
+                tr("Running optimization baseline"),
+                SolverRunPurpose::OptimizationBaseline);
+            return solverRunner_->isRunning();
         });
+    optimizationWorkspace_->setCancelBaselineRunCallback(
+        [this] { cancelAnalysis(); });
     optimizationWorkspace_->setFindMaximumGainCallback(
         [this](double frequencyMHz) {
             return startOptimizationPeakSearch(frequencyMHz);
@@ -3709,6 +3730,8 @@ void MainWindow::startAnalysisRun(const std::string& authoredSource,
     currentRunRecord_ = runStore_.create(solverBackendId_, currentFile_.isEmpty()
         ? QStringLiteral("Untitled model.nec") : currentFile_, runType);
     currentRunRecord_->summary = summary;
+    currentRunRecord_->modelFingerprint = QString::fromStdString(
+        analysis::optimizationModelFingerprint(solverInput));
     runStore_.save(*currentRunRecord_);
     currentRunDirectory_ = currentRunRecord_->directory;
     if (!QFileInfo::exists(currentRunDirectory_)) {
@@ -3903,7 +3926,10 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
     cancelRunButton_->setEnabled(true);
     openRunFolderButton_->setEnabled(true);
     runAction_->setEnabled(false);
-    showModule(resultsModuleIndex_);
+    if (currentRunPurpose_ == SolverRunPurpose::Analysis
+        || currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
+        showModule(resultsModuleIndex_);
+    }
     if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
         averageGainResultsView_->setRunning(currentAverageGainFrequencyMHz_,
             currentAverageGainEnvironment_, runContext(*currentRunRecord_));
@@ -4006,6 +4032,7 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
 
     auto averageGainParsed = false;
     auto peakGainParsed = false;
+    auto optimizationBaselineParsed = false;
     auto analysisResultsAvailable = false;
     QFile outputFile(currentRunOutputPath_);
     if (processSucceeded && outputFile.open(QIODevice::ReadOnly)) {
@@ -4101,6 +4128,12 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             showActiveResultsContext(context);
             analysisResultsAvailable = !result.feedpoints.empty() || !result.currents.empty()
                 || !result.radiation.empty();
+            if (analysisResultsAvailable && currentRunRecord_)
+                optimizationWorkspace_->setOptimizationBaseline(*currentRunRecord_, result);
+        } else if (currentRunPurpose_ == SolverRunPurpose::OptimizationBaseline) {
+            optimizationBaselineParsed = !result.feedpoints.empty() || !result.radiation.empty();
+            if (optimizationBaselineParsed && currentRunRecord_)
+                optimizationWorkspace_->setOptimizationBaseline(*currentRunRecord_, result);
         } else if (currentRunPurpose_ == SolverRunPurpose::OptimizationPeakSearch) {
             const auto peak = analysis::radiationPeakAtNearestFrequency(
                 result.radiation, analysis::RadiationComponent::Total,
@@ -4145,7 +4178,9 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
 
     const auto runCompleted = processSucceeded
         && (currentRunPurpose_ != SolverRunPurpose::AverageGainTest || averageGainParsed)
-        && (currentRunPurpose_ != SolverRunPurpose::OptimizationPeakSearch || peakGainParsed);
+        && (currentRunPurpose_ != SolverRunPurpose::OptimizationPeakSearch || peakGainParsed)
+        && (currentRunPurpose_ != SolverRunPurpose::OptimizationBaseline
+            || optimizationBaselineParsed);
     QString status;
     if (processResult.status == SolverProcessStatus::TimedOut) {
         status = tr("Timed out");
@@ -4159,6 +4194,9 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     } else if (currentRunPurpose_ == SolverRunPurpose::OptimizationPeakSearch
         && processSucceeded) {
         status = tr("Failed (maximum gain missing)");
+    } else if (currentRunPurpose_ == SolverRunPurpose::OptimizationBaseline
+        && processSucceeded) {
+        status = tr("Failed (baseline results missing)");
     } else if (processResult.status == SolverProcessStatus::FailedToStart) {
         status = tr("Failed to start");
     } else {
@@ -4179,10 +4217,12 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     }
     if (currentRunPurpose_ == SolverRunPurpose::Analysis && runCompleted
         && currentRunRecord_) {
-        candidateComparisonOverlay_.reset();
-        candidateComparisonLabel_.clear();
         resultReferenceController_.selectAutomatic(*currentRunRecord_);
         updateResultReference();
+    }
+    if (currentRunPurpose_ == SolverRunPurpose::OptimizationBaseline) {
+        optimizationWorkspace_->finishOptimizationBaseline(runCompleted,
+            runCompleted ? QString{} : status);
     }
     appendSolverOutput(tr("\n\nRun status: %1\nElapsed: %2 seconds\n")
         .arg(status).arg(formatDecimal(processResult.durationSeconds)));
@@ -4190,6 +4230,8 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
         ? tr("Average Gain Test")
         : currentRunPurpose_ == SolverRunPurpose::OptimizationPeakSearch
             ? tr("Maximum-gain search")
+        : currentRunPurpose_ == SolverRunPurpose::OptimizationBaseline
+            ? tr("Optimization baseline")
         : currentRunRecord_ && currentRunRecord_->runType == QStringLiteral("quick-sweep")
             ? tr("Quick sweep") : tr("Analysis");
     statusBar()->showMessage(tr("%1 %2. Artifacts: %3")
@@ -4448,8 +4490,6 @@ void MainWindow::pinSelectedRunReference()
 {
     const auto record = selectedRunRecord();
     if (!record) return;
-    candidateComparisonOverlay_.reset();
-    candidateComparisonLabel_.clear();
     resultReferenceController_.pin(*record);
     updateResultReference();
     statusBar()->showMessage(tr("Pinned reference run: %1")
@@ -4479,8 +4519,6 @@ void MainWindow::chooseResultReference()
         action->setChecked(selectedReference != nullptr
             && selectedReference->id == record.id);
         connect(action, &QAction::triggered, this, [this, record] {
-            candidateComparisonOverlay_.reset();
-            candidateComparisonLabel_.clear();
             resultReferenceController_.pin(record);
             updateResultReference();
         });
@@ -4526,35 +4564,8 @@ void MainWindow::editSelectedRunNote()
 
 void MainWindow::clearResultReference()
 {
-    candidateComparisonOverlay_.reset();
-    candidateComparisonLabel_.clear();
     resultReferenceController_.clear();
     updateResultReference();
-}
-
-auto MainWindow::setCandidateComparisonOverlay(
-    const analysis::AnalysisResult& result, QString label) -> bool
-{
-    if (!resultsAvailable_ || (displayedResults_.feedpoints.empty()
-            && displayedResults_.radiation.empty())) {
-        statusBar()->showMessage(
-            tr("Run or load a normal analysis before comparing an optimization candidate with the last analysis run."),
-            5000);
-        return false;
-    }
-    if (result.feedpoints.empty() && result.radiation.empty()) {
-        statusBar()->showMessage(
-            tr("This optimization candidate has no plottable results to compare."), 5000);
-        return false;
-    }
-    resultReferenceController_.clear();
-    candidateComparisonOverlay_ = result;
-    candidateComparisonLabel_ = std::move(label);
-    updateResultReference();
-    showModule(resultsModuleIndex_);
-    statusBar()->showMessage(
-        tr("Comparing the candidate with the last analysis run in Results."), 5000);
-    return true;
 }
 
 void MainWindow::updateResultReference()
@@ -4562,29 +4573,21 @@ void MainWindow::updateResultReference()
     if (resultReferenceLabel_ == nullptr || clearResultReferenceButton_ == nullptr
         || changeResultReferenceButton_ == nullptr
         || visualizePlotsView_ == nullptr) return;
-    const auto* reference = candidateComparisonOverlay_
-        ? &*candidateComparisonOverlay_ : resultReferenceController_.result();
+    const auto* reference = resultReferenceController_.result();
     const auto hasReference = reference != nullptr;
-    const auto hasCandidateOverlay = candidateComparisonOverlay_.has_value();
-    resultReferenceLabel_->setText(hasCandidateOverlay
-        ? tr("Comparison Overlay: %1").arg(candidateComparisonLabel_)
-        : hasReference
-            ? tr("Reference Run: %1").arg(resultReferenceController_.label())
+    resultReferenceLabel_->setText(hasReference
+        ? tr("Reference Run: %1").arg(resultReferenceController_.label())
         : resultReferenceController_.hasReference()
             ? tr("Reference Run unavailable: archived output could not be read")
             : tr("Reference Run: None"));
-    clearResultReferenceButton_->setText(
-        hasCandidateOverlay ? tr("Clear Overlay") : tr("Clear Reference"));
-    clearResultReferenceButton_->setEnabled(
-        hasCandidateOverlay || resultReferenceController_.hasReference());
+    clearResultReferenceButton_->setText(tr("Clear Reference"));
+    clearResultReferenceButton_->setEnabled(resultReferenceController_.hasReference());
     changeResultReferenceButton_->setEnabled(!solverRunner_->isRunning()
         && !optimizationWorkspace_->isRunning() && !convergenceWorkspace_->isRunning());
     if (hasReference) {
         const auto* record = resultReferenceController_.record();
-        const auto plotLabel = hasCandidateOverlay
-            ? candidateComparisonLabel_
-            : record->userNote.trimmed().isEmpty()
-                ? record->id : record->userNote.simplified();
+        const auto plotLabel = record->userNote.trimmed().isEmpty()
+            ? record->id : record->userNote.simplified();
         visualizePlotsView_->setReferenceResults(
             *reference, plotLabel);
         radiationPatternView_->setReferenceResults(*reference, plotLabel);
@@ -4750,11 +4753,6 @@ void MainWindow::setDisplayedResults(const analysis::AnalysisResult& result)
     const auto previousFrequency = resultsFrequencyControl_->currentIndex() >= 0
         ? std::optional{resultsFrequencyControl_->currentData().toDouble()} : std::nullopt;
     displayedResults_ = result;
-    if (optimizationWorkspace_ != nullptr) {
-        optimizationWorkspace_->setActiveResultsAvailable(
-            !result.feedpoints.empty() || !result.currents.empty()
-            || !result.radiation.empty());
-    }
     std::vector<double> frequencies;
     const auto addFrequency = [&frequencies](double frequencyMHz) {
         if (std::ranges::find_if(frequencies, [frequencyMHz](double value) {
@@ -4876,8 +4874,6 @@ void MainWindow::findInRawOutput()
 
 void MainWindow::clearDisplayedResults()
 {
-    candidateComparisonOverlay_.reset();
-    candidateComparisonLabel_.clear();
     updateResultReference();
     const analysis::AnalysisResult empty;
     const auto context = tr("No analysis run");
@@ -5576,8 +5572,7 @@ void MainWindow::setCurrentFile(QString path)
 {
     const auto modelChanged = currentFile_ != path;
     currentFile_ = std::move(path);
-    if (modelChanged && (resultReferenceController_.hasReference()
-            || candidateComparisonOverlay_)) clearResultReference();
+    if (modelChanged && resultReferenceController_.hasReference()) clearResultReference();
     if (!currentFile_.isEmpty()) rememberRecentFile(currentFile_);
     const auto name = currentFile_.isEmpty() ? tr("Untitled") : QFileInfo(currentFile_).fileName();
     setWindowTitle(tr("%1[*] — NEC Workbench").arg(name));

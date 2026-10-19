@@ -1,5 +1,7 @@
 #pragma once
 
+#include "analysis/OptimizationBaseline.h"
+
 #include <QDateTime>
 #include <QString>
 
@@ -25,6 +27,10 @@ struct AnalysisRunRecord {
     bool hasImpedance{};
     bool hasCurrents{};
     bool hasRadiation{};
+    QString modelFingerprint;
+    double referenceImpedanceOhms{50.0};
+    std::vector<double> impedanceFrequenciesMHz;
+    std::vector<analysis::RadiationCoverage> radiationCoverage;
 };
 
 class AnalysisRunStore final {

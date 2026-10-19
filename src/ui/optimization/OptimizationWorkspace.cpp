@@ -4,6 +4,7 @@
 #include "ui/FileIo.h"
 #include "ui/analysis/SweepPlotsView.h"
 #include "ui/optimization/DirectionStrategyDialog.h"
+#include "ui/optimization/OptimizationComparePanel.h"
 
 #include "analysis/AnalysisResult.h"
 #include "analysis/FrequencyComparison.h"
@@ -1090,6 +1091,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
 
     auto* buttons = new QHBoxLayout;
     runButton_ = new QPushButton(tr("Run Parameter Sweep"), this);
+    runButton_->setObjectName(QStringLiteral("optimizationRun"));
     cancelButton_ = new QPushButton(tr("Stop"), this);
     cancelButton_->setEnabled(false);
     applyBestButton_ = new QPushButton(tr("Apply Best to Model"), this);
@@ -1126,7 +1128,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     resultsTable_->setContextMenuPolicy(Qt::CustomContextMenu);
     resultsTable_->setToolTip(tr(
         "Double-click a completed candidate to inspect its results. "
-        "Right-click it to compare with the last analysis run, apply it, or apply and run."));
+        "Select it to compare against the optimization baseline. Right-click for actions."));
     resultsTable_->verticalHeader()->hide();
     resultsTable_->horizontalHeader()->setSortIndicatorShown(false);
     for (auto column = static_cast<int>(ValueColumn);
@@ -1148,7 +1150,6 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         resultsTable_->selectRow(row);
         showCandidateDetails(candidateIndex);
     });
-
     candidateDetailsWindow_ = new QDialog(nullptr, Qt::Window);
     candidateDetailsWindow_->setObjectName(
         QStringLiteral("optimizationCandidateDetailsWindow"));
@@ -1177,6 +1178,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         QStringLiteral("optimizationCandidateDetailPlots"));
     candidateDetailPlots_->setReferenceControlVisible(false);
     candidateDirectionalPlots_ = new DirectionalMetricsView(candidateDetailsWindow_);
+    comparePanel_ = new OptimizationComparePanel(candidateDetailsWindow_);
     candidateDetailViews_ = new QTabWidget(candidateDetailsWindow_);
     candidateDetailViews_->setObjectName(
         QStringLiteral("optimizationCandidateDetailViews"));
@@ -1185,14 +1187,10 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     candidateDetailViews_->addTab(candidateDetailPlots_, tr("SWR & Impedance Plots"));
     const auto directionalTab = candidateDetailViews_->addTab(
         candidateDirectionalPlots_, tr("Directional Plots"));
+    candidateDetailViews_->addTab(comparePanel_, tr("Compare to Baseline"));
     candidateDetailViews_->setTabEnabled(directionalTab, false);
     candidateDetailViews_->setTabToolTip(directionalTab, tr(
         "Available after a completed candidate evaluates a Gain, F/B, or F/R objective."));
-    compareCandidateButton_ = new QPushButton(tr("Compare with Last Analysis Run"),
-        candidateDetailsWindow_);
-    compareCandidateButton_->setObjectName(QStringLiteral("optimizationCompareCandidate"));
-    compareCandidateButton_->setToolTip(tr(
-        "Show this temporary candidate as a dashed overlay on the normal results from the last analysis run. The model is not changed and the solver is not run again."));
     applyCandidateButton_ = new QPushButton(tr("Apply This Candidate to Model"),
         candidateDetailsWindow_);
     applyCandidateButton_->setObjectName(QStringLiteral("optimizationApplyCandidate"));
@@ -1206,7 +1204,6 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         "Update the active model's optimized SY values, then start a normal analysis using the model's current requests."));
     auto* candidateActionRow = new QHBoxLayout;
     candidateActionRow->addStretch();
-    candidateActionRow->addWidget(compareCandidateButton_);
     candidateActionRow->addWidget(applyCandidateButton_);
     candidateActionRow->addWidget(applyCandidateAndRunButton_);
     detailLayout->addWidget(candidateDetailLabel_);
@@ -1225,7 +1222,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     resultsLayout->addWidget(statusLabel_);
     resultsLayout->addLayout(resultStatusRow);
     auto* candidateHint = new QLabel(tr(
-        "Double-click to preview a candidate; right-click to compare it with the last analysis run, apply it, or apply and run."),
+        "Double-click a completed candidate to inspect it and compare it with the baseline in a separate window. Right-click to apply or run."),
         resultsPanel);
     candidateHint->setObjectName(QStringLiteral("optimizationCandidateHint"));
     candidateHint->setWordWrap(true);
@@ -1235,9 +1232,9 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     resultsSplitter->addWidget(resultsTable_);
     resultsSplitter->addWidget(candidatePlots_);
     resultsSplitter->setChildrenCollapsible(false);
-    resultsSplitter->setStretchFactor(0, 3);
-    resultsSplitter->setStretchFactor(1, 2);
-    resultsSplitter->setSizes({360, 280});
+    resultsSplitter->setStretchFactor(0, 4);
+    resultsSplitter->setStretchFactor(1, 1);
+    resultsSplitter->setSizes({500, 160});
     resultsLayout->addWidget(resultsSplitter, 1);
     resultsPanel->setMinimumWidth(420);
 
@@ -1395,6 +1392,8 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         });
     connect(resultsTable_, &QTableWidget::customContextMenuRequested,
         this, [this](const QPoint& position) { showCandidateContextMenu(position); });
+    connect(resultsTable_, &QTableWidget::currentCellChanged, this,
+        [this](int, int, int, int) { updateComparisonCandidate(); });
     connect(resultsTable_->horizontalHeader(), &QHeaderView::sectionClicked,
         this, [this](int column) { sortCandidateTable(column); });
     connect(variablesTable_, &QTableWidget::cellClicked, this, [this](int row, int) {
@@ -1406,13 +1405,11 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         updateWorkload();
         updateReadiness();
     });
-    connect(runButton_, &QPushButton::clicked, this, [this] { startSweep(); });
+    connect(runButton_, &QPushButton::clicked, this, [this] { requestOptimizationStart(); });
     connect(cancelButton_, &QPushButton::clicked, this, [this] { cancelSweep(); });
     connect(applyBestButton_, &QPushButton::clicked, this, [this] {
         applyCandidate(bestRow_, false);
     });
-    connect(compareCandidateButton_, &QPushButton::clicked,
-        this, [this] { compareCandidateWithActiveResults(detailCandidateRow_); });
     connect(applyCandidateButton_, &QPushButton::clicked,
         this, [this] { applyCandidate(detailCandidateRow_, false); });
     connect(applyCandidateAndRunButton_, &QPushButton::clicked,
@@ -1454,6 +1451,7 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
     modelValid_ = modelValid;
     contextInitialized_ = true;
     if (sourceUnchanged) {
+        updateBaselineState();
         updateWorkload();
         updateReadiness();
         return;
@@ -1489,9 +1487,11 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
         bestRow_ = -1;
         resultsTable_->setRowCount(0);
         candidatePlots_->clear();
+        comparePanel_->clearCandidate();
         bestLabel_->setText(tr("No optimization results yet."));
         resetCandidateDetails();
     }
+    updateBaselineState();
     updateWorkload();
     updateReadiness();
 }
@@ -1515,8 +1515,12 @@ void OptimizationWorkspace::setExternalRunActive(bool active)
 {
     externalRunActive_ = active;
     if (!active) maximumGainSearchRequested_ = false;
+    const auto startOptimization = !active && startAfterBaseline_;
+    if (startOptimization) startAfterBaseline_ = false;
+    updateBaselineState();
     updateReadiness();
     updateLatestPatternPeakControls();
+    if (startOptimization) QTimer::singleShot(0, this, [this] { startSweep(); });
 }
 
 void OptimizationWorkspace::setModelValid(bool valid)
@@ -1569,7 +1573,8 @@ void OptimizationWorkspace::setFindMaximumGainCallback(
 
 auto OptimizationWorkspace::isRunning() const noexcept -> bool
 {
-    return evaluator_->isRunning() || candidateIndex_ < candidates_.size();
+    return baselineRunInProgress_ || evaluator_->isRunning()
+        || candidateIndex_ < candidates_.size();
 }
 
 auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
@@ -1826,6 +1831,41 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         setCandidateStatus(row, candidateRecords[index].status);
         updateCandidateRowToolTip(row);
     }
+    baselineRecord_.reset();
+    baselineResult_.reset();
+    const auto baselineRunId = sessionMetadata.value(
+        QStringLiteral("baselineRunId")).toString();
+    if (!baselineRunId.isEmpty()) {
+        const auto baseline = std::ranges::find(records, baselineRunId,
+            &AnalysisRunRecord::id);
+        if (baseline != records.end()) {
+            QFile outputFile(QDir(baseline->directory).filePath(
+                QStringLiteral("model.out")));
+            if (outputFile.open(QIODevice::ReadOnly)) {
+                auto result = analysis::NecOutputParser{}.parse(
+                    outputFile.readAll().toStdString());
+                result.referenceImpedanceOhms = baseline->referenceImpedanceOhms;
+                baselineRecord_ = *baseline;
+                baselineResult_ = result;
+                baselineCompatibility_ = {};
+                baselineCompatibility_.status =
+                    analysis::OptimizationBaselineStatus::Compatible;
+                comparePanel_->setBaseline(result,
+                    tr("Baseline run %1").arg(baseline->id));
+                comparePanel_->setBaselineStatus(
+                    tr("Baseline: Run %1 · saved with this optimization session")
+                        .arg(baseline->id), true);
+            }
+        }
+    }
+    if (!baselineResult_) {
+        comparePanel_->clearBaseline();
+        comparePanel_->setBaselineStatus(
+            baselineRunId.isEmpty()
+                ? tr("Baseline: unavailable · this session did not record one")
+                : tr("Baseline: unavailable · saved run %1 could not be loaded")
+                    .arg(baselineRunId), false);
+    }
     historicalSession_ = true;
     const auto modelName = session->sourceFile.isEmpty()
         ? tr("Archived model.nec") : QFileInfo(session->sourceFile).fileName();
@@ -1873,6 +1913,7 @@ void OptimizationWorkspace::leaveHistoricalSession()
 void OptimizationWorkspace::cancelAndWait()
 {
     cancelRequested_ = true;
+    if (baselineRunInProgress_ && cancelBaselineRunCallback_) cancelBaselineRunCallback_();
     evaluator_->cancelAndWait();
 }
 
@@ -2864,17 +2905,48 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
     updateCandidateActionState();
 }
 
-void OptimizationWorkspace::setCompareCandidateCallback(
-    std::function<bool(const analysis::AnalysisResult&, QString)> callback)
+void OptimizationWorkspace::setBaselineRunCallback(std::function<bool(
+    const analysis::FrequencyPlan&, const analysis::OptimizationObjectiveSpec&)> callback)
 {
-    compareCandidateCallback_ = std::move(callback);
-    updateCandidateActionState();
+    baselineRunCallback_ = std::move(callback);
+    updateReadiness();
 }
 
-void OptimizationWorkspace::setActiveResultsAvailable(bool available)
+void OptimizationWorkspace::setCancelBaselineRunCallback(std::function<void()> callback)
 {
-    activeResultsAvailable_ = available;
-    updateCandidateActionState();
+    cancelBaselineRunCallback_ = std::move(callback);
+}
+
+void OptimizationWorkspace::setOptimizationBaseline(const AnalysisRunRecord& record,
+    const analysis::AnalysisResult& result)
+{
+    if (historicalSession_) return;
+    baselineRecord_ = record;
+    baselineResult_ = result;
+    updateBaselineState();
+    updateComparisonCandidate();
+    updateReadiness();
+}
+
+void OptimizationWorkspace::finishOptimizationBaseline(bool succeeded, QString detail)
+{
+    baselineRunInProgress_ = false;
+    startAfterBaseline_ = succeeded;
+    if (!succeeded) {
+        statusLabel_->setText(detail.isEmpty()
+            ? tr("Baseline analysis did not complete; optimization was not started.")
+            : tr("Baseline analysis failed: %1").arg(detail));
+    } else {
+        updateBaselineState();
+        if (!baselineCompatibility_.compatible()) {
+            startAfterBaseline_ = false;
+            statusLabel_->setText(tr(
+                "Baseline analysis completed but does not cover the current optimization study."));
+        } else {
+            statusLabel_->setText(tr("Baseline complete; starting optimization."));
+        }
+    }
+    updateReadiness();
 }
 
 void OptimizationWorkspace::resetCandidateDetails()
@@ -2902,11 +2974,7 @@ void OptimizationWorkspace::updateCandidateActionState()
     const auto* candidate = candidateIndexValid
         ? &candidates_[static_cast<std::size_t>(detailCandidateRow_)] : nullptr;
     const auto validCandidate = candidate != nullptr && candidate->evaluation.has_value();
-    const auto comparable = candidate != nullptr
-        && (!candidate->feedpoints.empty() || !candidate->radiation.empty());
     const auto editable = validCandidate && !historicalSession_ && modelValid_ && !isRunning();
-    compareCandidateButton_->setEnabled(comparable && activeResultsAvailable_
-        && static_cast<bool>(compareCandidateCallback_));
     applyCandidateButton_->setEnabled(editable && static_cast<bool>(applyParameterCallback_));
     applyCandidateAndRunButton_->setEnabled(editable && static_cast<bool>(applyAndRunCallback_));
 }
@@ -2931,12 +2999,6 @@ void OptimizationWorkspace::showCandidateContextMenu(const QPoint& position)
     menu.setToolTipsVisible(true);
     auto* inspectAction = menu.addAction(tr("Open Candidate Results"));
     inspectAction->setEnabled(hasDetails);
-    auto* compareAction = menu.addAction(tr("Compare Candidate with Last Analysis Run"));
-    compareAction->setEnabled(hasDetails && activeResultsAvailable_
-        && static_cast<bool>(compareCandidateCallback_));
-    compareAction->setToolTip(activeResultsAvailable_
-        ? tr("Show this candidate as a dashed comparison overlay on the normal Results from the last analysis run.")
-        : tr("Run or load a normal analysis before comparing this candidate."));
     menu.addSeparator();
     auto* applyAction = menu.addAction(tr("Apply Candidate to Model"));
     applyAction->setEnabled(editable && static_cast<bool>(applyParameterCallback_));
@@ -2945,27 +3007,8 @@ void OptimizationWorkspace::showCandidateContextMenu(const QPoint& position)
 
     const auto* selected = menu.exec(resultsTable_->viewport()->mapToGlobal(position));
     if (selected == inspectAction) showCandidateDetails(candidateIndex);
-    else if (selected == compareAction) compareCandidateWithActiveResults(candidateIndex);
     else if (selected == applyAction) applyCandidate(candidateIndex, false);
     else if (selected == applyAndRunAction) applyCandidate(candidateIndex, true);
-}
-
-void OptimizationWorkspace::compareCandidateWithActiveResults(int candidateIndex)
-{
-    if (!activeResultsAvailable_ || !compareCandidateCallback_
-        || candidateIndex < 0
-        || static_cast<std::size_t>(candidateIndex) >= candidates_.size()) return;
-    const auto& candidate = candidates_[static_cast<std::size_t>(candidateIndex)];
-    if (candidate.feedpoints.empty() && candidate.radiation.empty()) return;
-    analysis::AnalysisResult result;
-    result.feedpoints = candidate.feedpoints;
-    result.radiation = candidate.radiation;
-    result.referenceImpedanceOhms = activeObjective_.referenceImpedance;
-    const auto label = tr("Optimization Candidate — %1").arg(candidateDescription(candidate));
-    if (compareCandidateCallback_(result, label)) {
-        statusLabel_->setText(tr(
-            "Candidate comparison opened in Results; the last analysis run remains the primary result."));
-    }
 }
 
 void OptimizationWorkspace::sortCandidateTable(int column)
@@ -3105,9 +3148,256 @@ void OptimizationWorkspace::updateCandidatePlots()
         multivariable ? QString{} : selectedValueSuffix_, points, bestRow_);
 }
 
+auto OptimizationWorkspace::baselineRequirements(const StudySetup& setup) const
+    -> analysis::OptimizationBaselineRequirements
+{
+    analysis::OptimizationBaselineRequirements requirements;
+    const auto resolution = nec::NecSymbolResolver{}.resolve(source_.toStdString());
+    if (resolution.ok()) {
+        requirements.modelFingerprint = analysis::optimizationModelFingerprint(
+            resolution.generatedDeck);
+    }
+    requirements.backend = backend_.toStdString();
+    requirements.referenceImpedanceOhms = setup.objective.referenceImpedance;
+    auto frequencies = setup.frequenciesMHz;
+    if (setup.objective.kind == analysis::OptimizationObjectiveKind::SwrAtFrequency)
+        frequencies = {setup.objective.targetFrequencyMHz};
+    const auto impedanceRequired = setup.objective.swrWeight > 0.0
+        || setup.objective.resistanceWeight > 0.0
+        || setup.objective.reactanceWeight > 0.0;
+    if (impedanceRequired) requirements.impedanceFrequenciesMHz = frequencies;
+    const auto radiationRequired = setup.objective.forwardGainWeight > 0.0
+        || setup.objective.frontToBackWeight > 0.0
+        || setup.objective.frontToRearWeight > 0.0;
+    if (radiationRequired) requirements.radiationFrequenciesMHz = std::move(frequencies);
+    return requirements;
+}
+
+void OptimizationWorkspace::updateBaselineState()
+{
+    std::optional<analysis::OptimizationBaselineDescriptor> descriptor;
+    if (baselineRecord_ && baselineResult_) {
+        analysis::OptimizationResultCoverage coverage;
+        coverage.referenceImpedanceOhms = baselineRecord_->referenceImpedanceOhms;
+        coverage.impedanceFrequenciesMHz = baselineRecord_->impedanceFrequenciesMHz;
+        coverage.radiation = baselineRecord_->radiationCoverage;
+        descriptor = analysis::OptimizationBaselineDescriptor{
+            baselineRecord_->modelFingerprint.toStdString(),
+            baselineRecord_->backend.toStdString(), std::move(coverage)};
+    }
+    baselineCompatibility_ = analysis::evaluateOptimizationBaseline(
+        descriptor, baselineRequirements(currentStudySetup()));
+
+    QString status;
+    switch (baselineCompatibility_.status) {
+    case analysis::OptimizationBaselineStatus::Compatible:
+        status = tr("Baseline: %1 · compatible with this optimization study")
+            .arg(baselineRecord_->id);
+        break;
+    case analysis::OptimizationBaselineStatus::Missing:
+        status = tr("Baseline: none · the current model must be analyzed before optimization");
+        break;
+    case analysis::OptimizationBaselineStatus::IncompleteMetadata:
+        status = tr("Baseline: unavailable · this older run lacks compatibility metadata");
+        break;
+    case analysis::OptimizationBaselineStatus::ModelChanged:
+        status = tr("Baseline: stale · the model changed after the run");
+        break;
+    case analysis::OptimizationBaselineStatus::BackendChanged:
+        status = tr("Baseline: incompatible · it used a different solver backend");
+        break;
+    case analysis::OptimizationBaselineStatus::ReferenceImpedanceChanged:
+        status = tr("Baseline: incompatible · its SWR reference impedance differs");
+        break;
+    case analysis::OptimizationBaselineStatus::MissingImpedanceCoverage:
+        status = tr("Baseline: incomplete · impedance is missing at required frequencies");
+        break;
+    case analysis::OptimizationBaselineStatus::MissingRadiationCoverage:
+        status = tr("Baseline: incomplete · radiation data is missing at required frequencies");
+        break;
+    }
+    if (baselineRecord_ && baselineResult_) {
+        comparePanel_->setBaseline(*baselineResult_,
+            tr("Baseline %1").arg(baselineRecord_->id));
+    } else {
+        comparePanel_->clearBaseline();
+    }
+    comparePanel_->setBaselineStatus(status, baselineCompatibility_.compatible());
+}
+
+void OptimizationWorkspace::updateComparisonCandidate()
+{
+    const auto candidateIndex = candidateIndexAtTableRow(resultsTable_->currentRow());
+    if (candidateIndex < 0
+        || static_cast<std::size_t>(candidateIndex) >= candidates_.size()) {
+        comparePanel_->clearCandidate();
+        return;
+    }
+    const auto& candidate = candidates_[static_cast<std::size_t>(candidateIndex)];
+    if (candidate.feedpoints.empty() && candidate.radiation.empty()) {
+        comparePanel_->clearCandidate();
+        return;
+    }
+    analysis::AnalysisResult result;
+    result.feedpoints = candidate.feedpoints;
+    result.radiation = candidate.radiation;
+    result.referenceImpedanceOhms = activeObjective_.referenceImpedance;
+    auto breakdown = tr("Candidate %1").arg(candidateDescription(candidate));
+    if (candidate.evaluation) {
+        breakdown += tr("\nObjective score: %1\nEvaluated frequencies: %2")
+            .arg(formatDecimal(candidate.evaluation->score))
+            .arg(candidate.evaluation->evaluatedFrequencyCount);
+        if (candidate.evaluation->feedpoint) {
+            breakdown += tr("\nReduced SWR: %1\nReduced impedance: %2 %3 j%4 Ω")
+                .arg(formatDecimal(candidate.evaluation->swr))
+                .arg(formatDecimal(candidate.evaluation->feedpoint->impedance.real()))
+                .arg(candidate.evaluation->feedpoint->impedance.imag() < 0.0
+                    ? QStringLiteral("−") : QStringLiteral("+"))
+                .arg(formatDecimal(std::abs(
+                    candidate.evaluation->feedpoint->impedance.imag())));
+        }
+        if (candidate.evaluation->forwardGainDb)
+            breakdown += tr("\nReduced gain: %1 dBi")
+                .arg(formatDecimal(*candidate.evaluation->forwardGainDb));
+        if (candidate.evaluation->frontToBackDb)
+            breakdown += tr("\nReduced F/B: %1 dB")
+                .arg(formatDecimal(*candidate.evaluation->frontToBackDb));
+        if (candidate.evaluation->frontToRearDb)
+            breakdown += tr("\nReduced F/R: %1 dB")
+                .arg(formatDecimal(*candidate.evaluation->frontToRearDb));
+
+        if (baselineCompatibility_.compatible() && baselineRecord_ && baselineResult_) {
+            const auto baselineEvaluation = analysis::evaluateOptimizationObjective(
+                *baselineResult_, activeObjective_);
+            if (baselineEvaluation) {
+                const auto signedDelta = [](double value) {
+                    return QStringLiteral("%1%2")
+                        .arg(value >= 0.0 ? QStringLiteral("+") : QString{})
+                        .arg(formatDecimal(value));
+                };
+                const auto reducedFrequency = [](const auto& evaluation,
+                                                  const auto& summary,
+                                                  analysis::OptimizationAggregation aggregation)
+                    -> std::optional<double> {
+                    if (evaluation.evaluatedFrequencyCount == 1)
+                        return evaluation.evaluationFrequencyMHz;
+                    if (!summary || aggregation == analysis::OptimizationAggregation::Average)
+                        return std::nullopt;
+                    return aggregation == analysis::OptimizationAggregation::Minimum
+                        ? summary->minimumFrequencyMHz : summary->maximumFrequencyMHz;
+                };
+                const auto frequencyContext = [](std::optional<double> candidateFrequency,
+                                                  std::optional<double> baselineFrequency,
+                                                  std::size_t frequencyCount) {
+                    if (candidateFrequency && baselineFrequency) {
+                        if (nearlyEqual(*candidateFrequency, *baselineFrequency))
+                            return tr(" at %1 MHz").arg(formatDecimal(*candidateFrequency));
+                        return tr(" · candidate %1 MHz, baseline %2 MHz")
+                            .arg(formatDecimal(*candidateFrequency),
+                                formatDecimal(*baselineFrequency));
+                    }
+                    return tr(" across %1 frequencies").arg(frequencyCount);
+                };
+                breakdown += tr("\n\nCandidate minus baseline %1:")
+                    .arg(baselineRecord_->id);
+                breakdown += tr("\nObjective score Δ %1")
+                    .arg(signedDelta(candidate.evaluation->score
+                        - baselineEvaluation->score));
+                if (activeObjective_.swrWeight > 0.0) {
+                    const auto candidateFrequency = reducedFrequency(*candidate.evaluation,
+                        candidate.evaluation->swrSummary, activeObjective_.swrAggregation);
+                    const auto baselineFrequency = reducedFrequency(*baselineEvaluation,
+                        baselineEvaluation->swrSummary, activeObjective_.swrAggregation);
+                    breakdown += tr("\nSWR Δ %1%2")
+                        .arg(signedDelta(candidate.evaluation->swr
+                            - baselineEvaluation->swr),
+                            frequencyContext(candidateFrequency, baselineFrequency,
+                                candidate.evaluation->evaluatedFrequencyCount));
+                }
+                if (candidate.evaluation->feedpoint && baselineEvaluation->feedpoint) {
+                    const auto candidateFrequency = candidate.evaluation->feedpoint->frequencyMHz;
+                    const auto baselineFrequency = baselineEvaluation->feedpoint->frequencyMHz;
+                    const auto context = frequencyContext(candidateFrequency,
+                        baselineFrequency, candidate.evaluation->evaluatedFrequencyCount);
+                    if (activeObjective_.resistanceWeight > 0.0) {
+                        breakdown += tr("\nR Δ %1 Ω%2")
+                            .arg(signedDelta(candidate.evaluation->feedpoint->impedance.real()
+                                - baselineEvaluation->feedpoint->impedance.real()), context);
+                    }
+                    if (activeObjective_.reactanceWeight > 0.0) {
+                        breakdown += tr("\nX Δ %1 Ω%2")
+                            .arg(signedDelta(candidate.evaluation->feedpoint->impedance.imag()
+                                - baselineEvaluation->feedpoint->impedance.imag()), context);
+                    }
+                }
+                const auto addDirectionalDelta = [&](const QString& name, double weight,
+                                                     const auto& candidateValue,
+                                                     const auto& baselineValue,
+                                                     const auto& candidateFrequency,
+                                                     const auto& baselineFrequency) {
+                    if (weight <= 0.0 || !candidateValue || !baselineValue) return;
+                    breakdown += tr("\n%1 Δ %2 dB%3")
+                        .arg(name,
+                            signedDelta(*candidateValue - *baselineValue),
+                            frequencyContext(candidateFrequency, baselineFrequency,
+                                candidate.evaluation->evaluatedFrequencyCount));
+                };
+                addDirectionalDelta(tr("Gain"), activeObjective_.forwardGainWeight,
+                    candidate.evaluation->forwardGainDb, baselineEvaluation->forwardGainDb,
+                    candidate.evaluation->forwardGainFrequencyMHz,
+                    baselineEvaluation->forwardGainFrequencyMHz);
+                addDirectionalDelta(tr("F/B"), activeObjective_.frontToBackWeight,
+                    candidate.evaluation->frontToBackDb, baselineEvaluation->frontToBackDb,
+                    candidate.evaluation->frontToBackFrequencyMHz,
+                    baselineEvaluation->frontToBackFrequencyMHz);
+                addDirectionalDelta(tr("F/R"), activeObjective_.frontToRearWeight,
+                    candidate.evaluation->frontToRearDb, baselineEvaluation->frontToRearDb,
+                    candidate.evaluation->frontToRearFrequencyMHz,
+                    baselineEvaluation->frontToRearFrequencyMHz);
+            } else {
+                breakdown += tr("\n\nBaseline deltas unavailable: the saved baseline cannot be evaluated with the current objective.");
+            }
+        }
+    } else if (!candidate.failureDetail.isEmpty()) {
+        breakdown += tr("\nObjective unavailable: %1").arg(candidate.failureDetail);
+    }
+    comparePanel_->setCandidate(result,
+        tr("Candidate %1").arg(candidateDescription(candidate)), breakdown);
+}
+
+void OptimizationWorkspace::requestOptimizationStart()
+{
+    if (!runButton_->isEnabled()) {
+        statusLabel_->setText(tr("Select valid parameter bounds, frequencies, and an objective."));
+        return;
+    }
+    updateBaselineState();
+    if (baselineCompatibility_.compatible()) {
+        startSweep();
+        return;
+    }
+    if (!baselineRunCallback_) {
+        statusLabel_->setText(tr("A compatible baseline is required before optimization."));
+        return;
+    }
+    const auto setup = currentStudySetup();
+    baselineRunInProgress_ = true;
+    startAfterBaseline_ = false;
+    statusLabel_->setText(tr("Running the current model as the optimization baseline…"));
+    updateReadiness();
+    const analysis::FrequencyPlan frequencyPlan{
+        analysis::FrequencyPlanMode::Explicit, setup.frequenciesMHz, {}};
+    if (!baselineRunCallback_(frequencyPlan, setup.objective)) {
+        baselineRunInProgress_ = false;
+        statusLabel_->setText(tr("The baseline analysis could not be started."));
+        updateReadiness();
+    }
+}
+
 void OptimizationWorkspace::updateReadiness()
 {
     const auto setup = currentStudySetup();
+    if (!historicalSession_) updateBaselineState();
     const auto executable = QFileInfo(executable_);
     const auto hasFrequencies = !setup.frequenciesMHz.empty();
     const auto hasObjective = setup.objective.swrWeight + setup.objective.resistanceWeight
@@ -3126,12 +3416,24 @@ void OptimizationWorkspace::updateReadiness()
         ? setup.populationSize >= 4 && setup.maximumGenerations >= 1
         : !isMultivariable(setup.searchMethod)
             || setup.candidateLimit >= static_cast<int>(setup.variables.size()) + 1;
+    const auto baselineReady = baselineCompatibility_.compatible()
+        || static_cast<bool>(baselineRunCallback_);
     const auto ready = !historicalSession_ && modelValid_ && hasVariables
         && !externalRunActive_
         && hasFrequencies && hasObjective && hasSearchBudget
+        && baselineReady
         && !isRunning() && analysis::isBackendRunnable(backend_.toStdString())
         && executable.exists() && executable.isFile() && executable.isExecutable();
     runButton_->setEnabled(ready);
+    if (!historicalSession_) {
+        runButton_->setText(baselineRunInProgress_
+            ? tr("Running Baseline…")
+            : baselineCompatibility_.compatible()
+                ? selectedSearchMethod() == SearchMethod::ParameterSweep
+                    ? tr("Run Parameter Sweep")
+                    : tr("Run %1").arg(searchMethodName(selectedSearchMethod()))
+                : tr("Run Baseline & Optimize"));
+    }
     runButton_->setToolTip(!hasVariables
         ? tr("Select at least one parameter and enter valid bounds and tolerance.")
         : !hasSearchBudget
@@ -3139,6 +3441,9 @@ void OptimizationWorkspace::updateReadiness()
                 ? tr("Use a population of at least four and at least one generation.")
                 : tr("Increase Maximum evaluations to at least the selected parameter count plus one.")
         : !hasObjective ? tr("Set at least one objective weight above zero.")
+        : !baselineReady ? tr("A baseline run callback is unavailable.")
+        : !baselineCompatibility_.compatible()
+            ? tr("Analyze the actual current model first, then start optimization automatically.")
         : QString{});
     cancelButton_->setEnabled(isRunning());
     resultsTable_->horizontalHeader()->setSectionsClickable(!isRunning());
@@ -3246,8 +3551,8 @@ void OptimizationWorkspace::startSweep()
             {QStringLiteral("tolerance"), variable.tolerance},
         });
     }
-    const auto sessionMetadata = QJsonObject{
-        {QStringLiteral("version"), 11},
+    auto sessionMetadata = QJsonObject{
+        {QStringLiteral("version"), 12},
         {QStringLiteral("variable"), selectedSymbol_},
         {QStringLiteral("minimum"), setup.minimum},
         {QStringLiteral("maximum"), setup.maximum},
@@ -3323,6 +3628,11 @@ void OptimizationWorkspace::startSweep()
         {QStringLiteral("continuousStopMHz"), setup.frequencySelection.continuousStopMHz},
         {QStringLiteral("continuousStepMHz"), setup.frequencySelection.continuousStepMHz},
     };
+    if (baselineRecord_) {
+        sessionMetadata.insert(QStringLiteral("baselineRunId"), baselineRecord_->id);
+        sessionMetadata.insert(QStringLiteral("baselineModelFingerprint"),
+            baselineRecord_->modelFingerprint);
+    }
     writeFile(QDir(sessionRecord_->directory).filePath(QStringLiteral("optimization-session.json")),
         QJsonDocument(sessionMetadata).toJson(QJsonDocument::Indented));
     candidates_.clear();
@@ -3416,6 +3726,11 @@ void OptimizationWorkspace::cancelSweep()
 {
     cancelRequested_ = true;
     cancelButton_->setEnabled(false);
+    if (baselineRunInProgress_) {
+        startAfterBaseline_ = false;
+        if (cancelBaselineRunCallback_) cancelBaselineRunCallback_();
+        return;
+    }
     evaluator_->cancel();
 }
 
@@ -3648,6 +3963,10 @@ void OptimizationWorkspace::finishCurrentCandidate(CandidateEvaluationResult res
     candidate.record.frequencyCount = result.frequencyCount;
     candidate.record.hasImpedance = !candidate.feedpoints.empty();
     candidate.record.hasRadiation = !candidate.radiation.empty();
+    const auto coverage = analysis::optimizationResultCoverage(result.analysis);
+    candidate.record.referenceImpedanceOhms = coverage.referenceImpedanceOhms;
+    candidate.record.impedanceFrequenciesMHz = coverage.impedanceFrequenciesMHz;
+    candidate.record.radiationCoverage = coverage.radiation;
 
     if (result.status == CandidateEvaluationStatus::Completed && result.objective) {
         const auto& evaluation = *result.objective;

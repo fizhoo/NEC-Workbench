@@ -471,8 +471,16 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationResultsSplitter"));
     auto* optimizationCandidatePlots = optimization.findChild<QWidget*>(
         QStringLiteral("optimizationCandidatePlots"));
+    auto* optimizationRun = optimization.findChild<QPushButton*>(
+        QStringLiteral("optimizationRun"));
     auto* optimizationCandidateDetailsWindow = topLevelDialog(
         QStringLiteral("optimizationCandidateDetailsWindow"));
+    auto* optimizationComparePanel = optimizationCandidateDetailsWindow == nullptr
+        ? nullptr : optimizationCandidateDetailsWindow->findChild<QWidget*>(
+            QStringLiteral("optimizationComparePanel"));
+    auto* optimizationBaselineStatus = optimizationCandidateDetailsWindow == nullptr
+        ? nullptr : optimizationCandidateDetailsWindow->findChild<QLabel*>(
+            QStringLiteral("optimizationBaselineStatus"));
     auto* optimizationCandidateDetails = optimizationCandidateDetailsWindow == nullptr
         ? nullptr : optimizationCandidateDetailsWindow->findChild<QTableWidget*>(
             QStringLiteral("optimizationCandidateDetails"));
@@ -491,9 +499,9 @@ auto main(int argc, char* argv[]) -> int
     auto* optimizationApplyCandidate = optimizationCandidateDetailsWindow == nullptr
         ? nullptr : optimizationCandidateDetailsWindow->findChild<QPushButton*>(
             QStringLiteral("optimizationApplyCandidate"));
-    auto* optimizationCompareCandidate = optimizationCandidateDetailsWindow == nullptr
-        ? nullptr : optimizationCandidateDetailsWindow->findChild<QPushButton*>(
-            QStringLiteral("optimizationCompareCandidate"));
+    auto* optimizationCompareBreakdown = optimizationCandidateDetailsWindow == nullptr
+        ? nullptr : optimizationCandidateDetailsWindow->findChild<QLabel*>(
+            QStringLiteral("optimizationCompareBreakdown"));
     auto* optimizationApplyCandidateAndRun = optimizationCandidateDetailsWindow == nullptr
         ? nullptr : optimizationCandidateDetailsWindow->findChild<QPushButton*>(
             QStringLiteral("optimizationApplyCandidateAndRun"));
@@ -677,6 +685,10 @@ auto main(int argc, char* argv[]) -> int
             == selectedFrequencies.at(row);
     }
     necwb::ui::AnalysisRunStore optimizationRunStore;
+    auto optimizationBaseline = optimizationRunStore.create(QStringLiteral("nec2"),
+        QStringLiteral("historical.nec"), QStringLiteral("optimization-baseline"));
+    optimizationBaseline.status = QStringLiteral("Completed");
+    optimizationRunStore.save(optimizationBaseline);
     auto historicalOptimization = optimizationRunStore.create(QStringLiteral("nec2"),
         QStringLiteral("historical.nec"), QStringLiteral("optimization-session"));
     historicalOptimization.status = QStringLiteral("Completed");
@@ -690,12 +702,13 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimization-session.json")));
     const auto historicalMetadataWritten = historicalMetadata.open(
             QIODevice::WriteOnly | QIODevice::Truncate)
-        && historicalMetadata.write(
+        && historicalMetadata.write(QStringLiteral(
             "{\"frequencyMode\":\"explicit\",\"frequenciesMHz\":[7,14],"
             "\"variable\":\"LONG_FT\",\"variables\":[{\"name\":\"LONG_FT\","
             "\"resolvedValue\":95,\"minimum\":80,\"maximum\":110,"
             "\"tolerance\":0.01},{\"name\":\"FT\",\"resolvedValue\":0.3048,"
-            "\"minimum\":0.25,\"maximum\":0.35,\"tolerance\":0.001}]}") > 0;
+            "\"minimum\":0.25,\"maximum\":0.35,\"tolerance\":0.001}],"
+            "\"baselineRunId\":\"%1\"}").arg(optimizationBaseline.id).toUtf8()) > 0;
     historicalMetadata.close();
     QFile candidateMetadata(QDir(historicalCandidate.directory).filePath(
         QStringLiteral("optimization.json")));
@@ -721,8 +734,14 @@ auto main(int argc, char* argv[]) -> int
             QIODevice::WriteOnly | QIODevice::Truncate)
         && candidateOutputFile.write(candidateOutput) == candidateOutput.size();
     candidateOutputFile.close();
+    QFile baselineOutputFile(QDir(optimizationBaseline.directory).filePath(
+        QStringLiteral("model.out")));
+    const auto baselineOutputWritten = baselineOutputFile.open(
+            QIODevice::WriteOnly | QIODevice::Truncate)
+        && baselineOutputFile.write(candidateOutput) == candidateOutput.size();
+    baselineOutputFile.close();
     const auto historicalFrequencySelectionLoaded = historicalMetadataWritten
-        && candidateMetadataWritten && candidateOutputWritten
+        && candidateMetadataWritten && candidateOutputWritten && baselineOutputWritten
         && optimization.loadSession(historicalOptimization.id)
         && optimizationFrequencyTable != nullptr
         && optimizationFrequencyTable->count() == 2;
@@ -734,6 +753,14 @@ auto main(int argc, char* argv[]) -> int
         && workspaceCandidateScorePlot->property("seriesCount").toInt() == 3
         && workspaceCandidateScorePlot->property("xAxisLabel").toString()
             == QStringLiteral("Evaluation Number");
+    const auto historicalBaselineLoaded = historicalFrequencySelectionLoaded
+        && optimizationBaselineStatus != nullptr
+        && optimizationBaselineStatus->text().contains(
+            QStringLiteral("saved with this optimization session"));
+    const auto historicalBaselineDeltaLoaded = historicalBaselineLoaded
+        && optimizationCompareBreakdown != nullptr
+        && optimizationCompareBreakdown->text().contains(
+            QStringLiteral("Candidate minus baseline"));
     const auto candidateScoreTooltip = optimizationResultsTable == nullptr
         || optimizationResultsTable->item(0, 1) == nullptr
         ? QString{} : optimizationResultsTable->item(0, 1)->toolTip();
@@ -778,38 +805,8 @@ auto main(int argc, char* argv[]) -> int
             return true;
         });
     optimization.setApplyAndRunCallback([](const auto&) { return true; });
-    auto candidateComparedWithActiveResults = false;
-    optimization.setCompareCandidateCallback(
-        [&candidateComparedWithActiveResults](const auto& result, const QString& label) {
-            candidateComparedWithActiveResults = result.feedpoints.size() == 2
-                && label.contains(QStringLiteral("Optimization Candidate"));
-            return candidateComparedWithActiveResults;
-        });
-    optimization.setActiveResultsAvailable(true);
     optimization.setContext(refreshedOptimizationSource,
         QStringLiteral("symbol-units.nec"), QStringLiteral("nec2"), {}, 120, true);
-    QTimer::singleShot(0, &optimization, [] {
-        auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
-        if (menu == nullptr) return;
-        const auto actions = menu->actions();
-        const auto found = std::ranges::find_if(actions, [](const auto* action) {
-            return action->text() == QStringLiteral(
-                "Compare Candidate with Last Analysis Run");
-        });
-        if (found == actions.end()) {
-            menu->close();
-            return;
-        }
-        menu->setActiveAction(*found);
-        QKeyEvent press(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
-        QKeyEvent release(QEvent::KeyRelease, Qt::Key_Return, Qt::NoModifier);
-        QApplication::sendEvent(menu, &press);
-        QApplication::sendEvent(menu, &release);
-    });
-    optimizationResultsTable->customContextMenuRequested(
-        optimizationResultsTable->visualItemRect(
-            optimizationResultsTable->item(0, 0)).center());
-    application.processEvents();
     optimizationResultsTable->cellDoubleClicked(0, 0);
     application.processEvents();
     auto* candidateImpedancePlot = optimizationCandidateDetailPlots->findChild<QWidget*>(
@@ -825,8 +822,7 @@ auto main(int argc, char* argv[]) -> int
         && candidatePlotHasResults()
         && optimizationCandidateReferenceControl != nullptr
         && optimizationCandidateReferenceControl->isHidden()
-        && optimizationCompareCandidate != nullptr
-        && optimizationCompareCandidate->isEnabled()
+        && optimizationCompareBreakdown != nullptr
         && !optimizationCandidateDetailViews->isTabEnabled(2)
         && optimizationCandidateDetailViews->tabToolTip(2).contains(
             QStringLiteral("did not evaluate"))
@@ -1169,7 +1165,34 @@ auto main(int argc, char* argv[]) -> int
         && optimization.findChild<QTabWidget*>(
             QStringLiteral("optimizationConfigurationTabs")) == nullptr
         && optimization.findChild<QTabWidget*>(
-            QStringLiteral("optimizationResultViews")) == nullptr;
+            QStringLiteral("optimizationResultViews")) == nullptr
+        && optimizationComparePanel != nullptr
+        && optimizationCandidateDetailsWindow != nullptr
+        && optimizationCandidateDetailsWindow->isAncestorOf(optimizationComparePanel)
+        && optimizationBaselineStatus != nullptr
+        && optimizationBaselineStatus->text().contains(QStringLiteral("Baseline:"))
+        && optimizationRun != nullptr
+        && optimizationRun->text() == QStringLiteral("Run Baseline & Optimize");
+    necwb::ui::OptimizationWorkspace baselineStartWorkspace;
+    auto baselineRequested = false;
+    baselineStartWorkspace.setBaselineRunCallback(
+        [&baselineRequested](const necwb::analysis::FrequencyPlan& plan,
+            const necwb::analysis::OptimizationObjectiveSpec& objective) {
+            baselineRequested = necwb::analysis::frequencyPlanPoints(plan).size() == 1
+                && objective.swrWeight > 0.0;
+            return true;
+        });
+    baselineStartWorkspace.setContext(optimizationSource,
+        QStringLiteral("baseline-start.nec"), QStringLiteral("nec2"),
+        QStringLiteral("/bin/true"), 120, true);
+    auto* baselineStartButton = baselineStartWorkspace.findChild<QPushButton*>(
+        QStringLiteral("optimizationRun"));
+    if (baselineStartButton != nullptr) baselineStartButton->click();
+    const auto baselineOrchestrationValid = baselineRequested
+        && baselineStartButton != nullptr
+        && baselineStartButton->text() == QStringLiteral("Running Baseline…");
+    baselineStartWorkspace.finishOptimizationBaseline(false,
+        QStringLiteral("expected smoke-test stop"));
     necwb::ui::OptimizationWorkspace staleDirectionWorkspace;
     staleDirectionWorkspace.setContext(optimizationSource,
         QStringLiteral("stale-direction.nec"), QStringLiteral("nec2"), {}, 120, true);
@@ -1200,7 +1223,8 @@ auto main(int argc, char* argv[]) -> int
         || optimizationResultsTable->contextMenuPolicy() != Qt::CustomContextMenu
         || !optimizationResultsTable->toolTip().contains(QStringLiteral("Right-click"))
         || optimizationCandidateHint == nullptr
-        || !optimizationCandidateHint->text().contains(QStringLiteral("right-click"))
+        || !optimizationCandidateHint->text().contains(
+            QStringLiteral("right-click"), Qt::CaseInsensitive)
         || optimizationCandidatePlots == nullptr
         || optimizationCandidateDetailsWindow == nullptr
         || optimizationCandidateDetailsWindow->parentWidget() != nullptr
@@ -1222,12 +1246,14 @@ auto main(int argc, char* argv[]) -> int
         || !optimizationCandidateDetailsWindow->isAncestorOf(
             optimizationCandidateDetails)
         || optimizationCandidateDetailViews == nullptr
-        || optimizationCandidateDetailViews->count() != 3
+        || optimizationCandidateDetailViews->count() != 4
         || optimizationCandidateDetailViews->tabText(0) != QStringLiteral("Frequency Table")
         || optimizationCandidateDetailViews->tabText(1)
             != QStringLiteral("SWR & Impedance Plots")
         || optimizationCandidateDetailViews->tabText(2)
             != QStringLiteral("Directional Plots")
+        || optimizationCandidateDetailViews->tabText(3)
+            != QStringLiteral("Compare to Baseline")
         || optimizationCandidateDetailViews->isTabEnabled(2)
         || !optimizationCandidateDetailViews->tabToolTip(2).contains(
             QStringLiteral("Gain, F/B, or F/R"))
@@ -1238,8 +1264,6 @@ auto main(int argc, char* argv[]) -> int
         || !optimizationCandidateDetailsWindow->isAncestorOf(
             optimizationCandidateDirectionalPlots)
         || optimizationApplyCandidate == nullptr || optimizationApplyCandidate->isEnabled()
-        || optimizationCompareCandidate == nullptr
-        || optimizationCompareCandidate->isEnabled()
         || optimizationApplyCandidateAndRun == nullptr
         || optimizationApplyCandidateAndRun->isEnabled()
         || optimizationApplyCandidateAndRun->toolTip().isEmpty()
@@ -1310,6 +1334,7 @@ auto main(int argc, char* argv[]) -> int
         || !sweepControlsValid
         || !wheelProtected
         || !compactSetupValid
+        || !baselineOrchestrationValid
         || !frequencyControlsStructured
         || !hasDeleteShortcut
         || !hasBackspaceShortcut
@@ -1323,11 +1348,12 @@ auto main(int argc, char* argv[]) -> int
         || !sameModelFrequenciesPreserved
         || !historicalFrequencySelectionLoaded
         || !historicalObjectiveBreakdownLoaded
+        || !historicalBaselineLoaded
+        || !historicalBaselineDeltaLoaded
         || !numericCandidateSortingEnabled
         || !informationalCandidateColumnsStayUnsorted
         || !historicalInputInitiallyHidden || !authoredInputShown || !generatedInputShown
         || !activeFrequenciesRestored
-        || !candidateComparedWithActiveResults
         || !candidateApplyPreservesDetails
         || !hiddenCandidateDetailsRestored
         || !minimizedCandidateDetailsRestored
@@ -2562,6 +2588,10 @@ auto main(int argc, char* argv[]) -> int
     run.hasImpedance = true;
     run.hasCurrents = true;
     run.hasRadiation = true;
+    run.modelFingerprint = QStringLiteral("baseline-model-fingerprint");
+    run.referenceImpedanceOhms = 75.0;
+    run.impedanceFrequenciesMHz = {7.0, 14.0, 21.0};
+    run.radiationCoverage = {{14.0, 1, 73, "radiation-grid-fingerprint"}};
     if (!store.save(run)) {
         return NECWB_SMOKE_FAILURE("analysis run storage");
     }
@@ -2628,6 +2658,15 @@ auto main(int argc, char* argv[]) -> int
         && loadedRun->durationSeconds == 1.25 && loadedRun->outputBytes == 8192
         && loadedRun->frequencyCount == 3 && loadedRun->hasImpedance
         && loadedRun->hasCurrents && loadedRun->hasRadiation
+        && loadedRun->modelFingerprint == QStringLiteral("baseline-model-fingerprint")
+        && loadedRun->referenceImpedanceOhms == 75.0
+        && loadedRun->impedanceFrequenciesMHz == std::vector<double>({7.0, 14.0, 21.0})
+        && loadedRun->radiationCoverage.size() == 1
+        && loadedRun->radiationCoverage.front().frequencyMHz == 14.0
+        && loadedRun->radiationCoverage.front().patternIndex == 1
+        && loadedRun->radiationCoverage.front().sampleCount == 73
+        && loadedRun->radiationCoverage.front().directionFingerprint
+            == "radiation-grid-fingerprint"
         && loadedSession != loaded.end()
         && loadedSession->runType == QStringLiteral("optimization-session")
         && loadedSession->candidateCount == 2

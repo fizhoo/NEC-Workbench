@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QStandardPaths>
 #include <QUuid>
@@ -11,6 +12,56 @@
 #include <algorithm>
 
 namespace necwb::ui {
+namespace {
+
+auto frequenciesToJson(const std::vector<double>& frequencies) -> QJsonArray
+{
+    QJsonArray result;
+    for (const auto frequency : frequencies) result.append(frequency);
+    return result;
+}
+
+auto frequenciesFromJson(const QJsonValue& value) -> std::vector<double>
+{
+    std::vector<double> result;
+    for (const auto frequency : value.toArray()) result.push_back(frequency.toDouble());
+    return result;
+}
+
+auto radiationCoverageToJson(
+    const std::vector<analysis::RadiationCoverage>& coverage) -> QJsonArray
+{
+    QJsonArray result;
+    for (const auto& item : coverage) {
+        result.append(QJsonObject{
+            {QStringLiteral("frequencyMHz"), item.frequencyMHz},
+            {QStringLiteral("patternIndex"), item.patternIndex},
+            {QStringLiteral("sampleCount"), static_cast<qint64>(item.sampleCount)},
+            {QStringLiteral("directionFingerprint"),
+                QString::fromStdString(item.directionFingerprint)},
+        });
+    }
+    return result;
+}
+
+auto radiationCoverageFromJson(const QJsonValue& value)
+    -> std::vector<analysis::RadiationCoverage>
+{
+    std::vector<analysis::RadiationCoverage> result;
+    for (const auto entry : value.toArray()) {
+        const auto object = entry.toObject();
+        result.push_back({
+            object.value(QStringLiteral("frequencyMHz")).toDouble(),
+            object.value(QStringLiteral("patternIndex")).toInt(),
+            static_cast<std::size_t>(
+                object.value(QStringLiteral("sampleCount")).toInteger()),
+            object.value(QStringLiteral("directionFingerprint")).toString().toStdString(),
+        });
+    }
+    return result;
+}
+
+}
 
 AnalysisRunStore::AnalysisRunStore(QString rootDirectory)
     : rootDirectory_(std::move(rootDirectory))
@@ -71,7 +122,7 @@ auto AnalysisRunStore::save(const AnalysisRunRecord& record) const -> bool
         return false;
     }
     const QJsonObject object{
-        {QStringLiteral("version"), 5},
+        {QStringLiteral("version"), 6},
         {QStringLiteral("id"), record.id},
         {QStringLiteral("started"), record.started.toString(Qt::ISODateWithMs)},
         {QStringLiteral("sourceFile"), record.sourceFile},
@@ -88,6 +139,12 @@ auto AnalysisRunStore::save(const AnalysisRunRecord& record) const -> bool
         {QStringLiteral("hasImpedance"), record.hasImpedance},
         {QStringLiteral("hasCurrents"), record.hasCurrents},
         {QStringLiteral("hasRadiation"), record.hasRadiation},
+        {QStringLiteral("modelFingerprint"), record.modelFingerprint},
+        {QStringLiteral("referenceImpedanceOhms"), record.referenceImpedanceOhms},
+        {QStringLiteral("impedanceFrequenciesMHz"),
+            frequenciesToJson(record.impedanceFrequenciesMHz)},
+        {QStringLiteral("radiationCoverage"),
+            radiationCoverageToJson(record.radiationCoverage)},
     };
     return file.write(QJsonDocument(object).toJson(QJsonDocument::Indented)) >= 0;
 }
@@ -146,6 +203,13 @@ auto AnalysisRunStore::readRecord(const QString& directory) const -> AnalysisRun
     record.hasImpedance = object.value(QStringLiteral("hasImpedance")).toBool();
     record.hasCurrents = object.value(QStringLiteral("hasCurrents")).toBool();
     record.hasRadiation = object.value(QStringLiteral("hasRadiation")).toBool();
+    record.modelFingerprint = object.value(QStringLiteral("modelFingerprint")).toString();
+    record.referenceImpedanceOhms = object.contains(QStringLiteral("referenceImpedanceOhms"))
+        ? object.value(QStringLiteral("referenceImpedanceOhms")).toDouble() : 50.0;
+    record.impedanceFrequenciesMHz = frequenciesFromJson(
+        object.value(QStringLiteral("impedanceFrequenciesMHz")));
+    record.radiationCoverage = radiationCoverageFromJson(
+        object.value(QStringLiteral("radiationCoverage")));
     return record;
 }
 

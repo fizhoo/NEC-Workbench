@@ -32,6 +32,8 @@ Workbench remains solver-independent and does not bundle external NEC engines.
 - Shared frequency plans and weighted SWR, resistance, reactance, gain, F/B, and F/R objectives
 - Per-criterion goal and band reduction, retained candidate details, and explicit
   undoable application of a selected result
+- Automatic compatible baseline runs with detached candidate comparison for
+  impedance, SWR, and available 2D radiation patterns
 
 ### Delivery
 
@@ -68,7 +70,8 @@ documented, reproducible cases.
 - Finalist sensitivity and construction-tolerance analysis
 - Optional per-frequency or per-band importance and explicit pass/fail constraints
 - Two-variable grid sweeps and objective heat maps
-- Clearer comparison of baseline, finalist, and applied-model results
+- Refine baseline/candidate comparison ergonomics from field testing before adding
+  broader multi-run overlays
 - Continue validating objective calculations and search stopping reasons with tests
 
 Additional search algorithms should be added only when they offer a clear advantage

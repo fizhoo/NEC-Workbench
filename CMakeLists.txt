@@ -21,6 +21,8 @@ add_library(necwb_core
     src/analysis/NecOutputParser.cpp
     src/analysis/NelderMeadSearch.cpp
     src/analysis/NelderMeadSearch.h
+    src/analysis/OptimizationBaseline.cpp
+    src/analysis/OptimizationBaseline.h
     src/analysis/OptimizationObjective.cpp
     src/analysis/ReferenceRunSelection.cpp
     src/analysis/ReferenceRunSelection.h
@@ -131,6 +133,8 @@ if(NECWB_BUILD_GUI)
         src/ui/geometry/WirePropertiesDialog.h
         src/ui/optimization/OptimizationWorkspace.cpp
         src/ui/optimization/OptimizationWorkspace.h
+        src/ui/optimization/OptimizationComparePanel.cpp
+        src/ui/optimization/OptimizationComparePanel.h
         src/ui/optimization/CandidateEvaluator.cpp
         src/ui/optimization/CandidateEvaluator.h
         src/ui/optimization/DirectionStrategyDialog.cpp
