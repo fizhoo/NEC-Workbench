@@ -162,13 +162,18 @@ auto main(int argc, char* argv[]) -> int
         return NECWB_SMOKE_FAILURE("unified source undo history");
     }
     if (necwb::ui::formatDecimal(1.2) != QStringLiteral("1.200")
-        || necwb::ui::formatDecimal(0.0004) != QStringLiteral("4.000e-04")) {
+        || necwb::ui::formatDecimal(0.0004) != QStringLiteral("4.000e-04")
+        || necwb::ui::formatAxisTick(13.8, 0.1) != QStringLiteral("13.8")
+        || necwb::ui::formatAxisTick(14.3, 0.1) != QStringLiteral("14.3")
+        || necwb::ui::formatAxisTick(4.6, 0.14) != QStringLiteral("4.6")
+        || necwb::ui::formatAxisTick(5.3, 0.14) != QStringLiteral("5.3")) {
         return NECWB_SMOKE_FAILURE("display formatting");
     }
     QSettings{}.remove(QStringLiteral("workspaceNavigation/smoke/collapsed"));
     auto* navigationPages = new QTabWidget;
     navigationPages->addTab(new QWidget(navigationPages), QStringLiteral("First"));
-    navigationPages->addTab(new QWidget(navigationPages), QStringLiteral("Second"));
+    navigationPages->addTab(new QWidget(navigationPages),
+        QStringLiteral("Loads && Transmission Lines"));
     necwb::ui::WorkspaceNavigator workspaceNavigator(
         navigationPages, QStringLiteral("smoke"));
     workspaceNavigator.resize(600, 400);
@@ -180,7 +185,9 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("smokeWorkspaceCollapseButton"));
     const auto navigatorInitialState = workspaceNavigation != nullptr
         && workspaceCollapse != nullptr && navigationPages->tabBar()->isHidden()
-        && workspaceNavigation->count() == 2 && workspaceNavigation->currentRow() == 0;
+        && workspaceNavigation->count() == 2 && workspaceNavigation->currentRow() == 0
+        && workspaceNavigation->item(1)->text()
+            == QStringLiteral("Loads & Transmission Lines");
     if (workspaceNavigation != nullptr) workspaceNavigation->setCurrentRow(1);
     const auto navigatorSelectsPage = navigationPages->currentIndex() == 1;
     navigationPages->setCurrentIndex(0);
@@ -235,7 +242,8 @@ auto main(int argc, char* argv[]) -> int
     auto referenceResult = result;
     for (auto& feedpoint : referenceResult.feedpoints)
         feedpoint.impedance += std::complex<double>{3.0, -2.0};
-    view.setReferenceResults(referenceResult, QStringLiteral("reference-run"));
+    view.setReferenceResults(referenceResult,
+        QStringLiteral("20261019-123456-789-very-long-reference-run-identity"));
     view.setSelectedFrequency(14.2);
     view.show();
     application.processEvents();
@@ -250,6 +258,11 @@ auto main(int argc, char* argv[]) -> int
     auto* swrScaleControl = view.findChild<QComboBox*>(QStringLiteral("swrScaleControl"));
     auto* sweepShowReference = view.findChild<QCheckBox*>(
         QStringLiteral("sweepShowReference"));
+    const auto frequencyTickLabels = impedanceSweepPlot == nullptr
+        ? QStringList{} : impedanceSweepPlot->property("xAxisTickLabels").toStringList();
+    const auto frequencyTicksDistinct = frequencyTickLabels.size() > 1
+        && std::adjacent_find(frequencyTickLabels.begin(), frequencyTickLabels.end())
+            == frequencyTickLabels.end();
     const auto engineeringAxes = impedanceSweepPlot != nullptr && swrSweepPlot != nullptr
         && impedanceSweepPlot->property("dualAxes").toBool()
         && impedanceSweepPlot->property("leftAxisScale").toInt() == 1
@@ -268,7 +281,16 @@ auto main(int argc, char* argv[]) -> int
         && swrSweepPlot->property("leftAxisMinimum").toDouble() == 1.0
         && swrSweepPlot->property("referenceSeriesCount").toInt() == 1
         && swrSweepPlot->property("referenceSeriesAreGhosted").toBool()
-        && swrSweepPlot->property("leftAxisTickCount").toInt() >= 3;
+        && frequencyTicksDistinct
+        && swrSweepPlot->property("leftAxisTickCount").toInt() >= 3
+        && impedanceSweepPlot->property("legendFits").toBool()
+        && swrSweepPlot->property("legendFits").toBool()
+        && std::ranges::none_of(
+            impedanceSweepPlot->property("legendLabels").toStringList(),
+            [](const QString& label) { return label.contains(QStringLiteral("20261019")); })
+        && std::ranges::none_of(
+            swrSweepPlot->property("legendLabels").toStringList(),
+            [](const QString& label) { return label.contains(QStringLiteral("20261019")); });
     if (sweepShowReference != nullptr) sweepShowReference->setChecked(false);
     application.processEvents();
     const auto sweepReferenceCanHide = impedanceSweepPlot != nullptr
@@ -1228,7 +1250,7 @@ auto main(int argc, char* argv[]) -> int
         && optimizationBaselineStatus->text().contains(
             QStringLiteral("Optimization baseline"))
         && optimizationRun != nullptr
-        && optimizationRun->text() == QStringLiteral("Build Baseline & Optimize");
+        && optimizationRun->text() == QStringLiteral("Build Baseline && Optimize");
     necwb::ui::OptimizationWorkspace baselineStartWorkspace;
     auto baselineRequested = false;
     baselineStartWorkspace.setBaselineRunCallback(
@@ -1352,7 +1374,7 @@ auto main(int argc, char* argv[]) -> int
         || optimizationCandidateDetailViews->count() != 4
         || optimizationCandidateDetailViews->tabText(0) != QStringLiteral("Frequency Table")
         || optimizationCandidateDetailViews->tabText(1)
-            != QStringLiteral("SWR & Impedance Plots")
+            != QStringLiteral("SWR && Impedance Plots")
         || optimizationCandidateDetailViews->tabText(2)
             != QStringLiteral("Directional Plots")
         || optimizationCandidateDetailViews->tabText(3)

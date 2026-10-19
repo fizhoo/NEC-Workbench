@@ -5431,9 +5431,9 @@ void MainWindow::updateProjectTree(const model::AntennaModel& antennaModel, cons
     auto* parameters = new QTreeWidgetItem(root, {tr("Parameters")});
     parameters->setData(0, ItemKindRole, QStringLiteral("parameters"));
     auto* environment = new QTreeWidgetItem(root, {tr("Environment")});
-    auto* frequencySources = new QTreeWidgetItem(root, {tr("Frequency && Sources")});
-    auto* attachments = new QTreeWidgetItem(root, {tr("Loads && Networks")});
-    auto* requests = new QTreeWidgetItem(root, {tr("Requests && Execution")});
+    auto* frequencySources = new QTreeWidgetItem(root, {tr("Frequency & Sources")});
+    auto* attachments = new QTreeWidgetItem(root, {tr("Loads & Networks")});
+    auto* requests = new QTreeWidgetItem(root, {tr("Requests & Execution")});
     auto* comments = new QTreeWidgetItem(root, {tr("Comments")});
     auto* other = new QTreeWidgetItem(root, {tr("Other Cards")});
     auto* allCards = new QTreeWidgetItem(root, {tr("All Cards")});
@@ -5520,9 +5520,9 @@ void MainWindow::updateProjectTree(const model::AntennaModel& antennaModel, cons
     labelCategory(geometry, tr("Geometry"));
     labelCategory(parameters, tr("Parameters"));
     labelCategory(environment, tr("Environment"));
-    labelCategory(frequencySources, tr("Frequency && Sources"));
-    labelCategory(attachments, tr("Loads && Networks"));
-    labelCategory(requests, tr("Requests && Execution"));
+    labelCategory(frequencySources, tr("Frequency & Sources"));
+    labelCategory(attachments, tr("Loads & Networks"));
+    labelCategory(requests, tr("Requests & Execution"));
     labelCategory(comments, tr("Comments"));
     labelCategory(other, tr("Other Cards"));
     allCards->setText(0, tr("All Cards (%1)").arg(cardCount));

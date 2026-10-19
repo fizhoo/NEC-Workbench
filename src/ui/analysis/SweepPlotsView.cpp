@@ -85,15 +85,6 @@ struct PlotAxis {
     bool valid{};
 };
 
-auto formatAxisValue(double value) -> QString
-{
-    if (std::abs(value) >= 10000.0 || (std::abs(value) > 0.0 && std::abs(value) < 0.01))
-        return QString::number(value, 'g', 3);
-    if (std::abs(value - std::round(value)) < 1.0e-9)
-        return QString::number(static_cast<qlonglong>(std::llround(value)));
-    return QString::number(value, 'f', std::abs(value) < 2.0 ? 1 : 0);
-}
-
 auto transformed(double value, AxisScale scale) -> double
 {
     if (scale == AxisScale::Linear) return value;
@@ -502,17 +493,30 @@ private:
 
     void drawLegend(QPainter& painter)
     {
-        auto legendX = plotRect_.left();
+        if (series_.empty()) {
+            setProperty("legendFits", true);
+            setProperty("legendLabels", QStringList{});
+            return;
+        }
         const auto legendY = 48.0;
-        for (const auto& series : series_) {
+        const auto entryWidth = plotRect_.width() / static_cast<double>(series_.size());
+        QStringList visibleLabels;
+        for (auto index = std::size_t{}; index < series_.size(); ++index) {
+            const auto& series = series_[index];
+            const auto legendX = plotRect_.left() + entryWidth * static_cast<double>(index);
             painter.setPen(QPen(series.color, 2, series.lineStyle));
             painter.drawLine(QPointF(legendX, legendY), QPointF(legendX + 18, legendY));
             painter.setPen(palette().color(QPalette::Text));
-            const auto textWidth = painter.fontMetrics().horizontalAdvance(series.name) + 30;
-            painter.drawText(QRectF(legendX + 23, legendY - 9, textWidth, 18),
-                Qt::AlignLeft | Qt::AlignVCenter, series.name);
-            legendX += textWidth + 30;
+            const auto labelWidth = std::max(1, static_cast<int>(entryWidth) - 27);
+            const auto label = painter.fontMetrics().elidedText(
+                series.name, Qt::ElideRight, labelWidth);
+            painter.drawText(QRectF(legendX + 23, legendY - 9,
+                std::max(1.0, entryWidth - 27.0), 18),
+                Qt::AlignLeft | Qt::AlignVCenter, label);
+            visibleLabels.push_back(label);
         }
+        setProperty("legendFits", true);
+        setProperty("legendLabels", visibleLabels);
     }
 
     void drawAxes(QPainter& painter)
@@ -532,13 +536,18 @@ private:
 
         painter.setPen(palette().color(QPalette::Text));
         painter.drawRect(plotRect_);
+        const auto xTickStep = (xMaximum_ - xMinimum_) / xTickCount;
+        QStringList xTickLabels;
         for (auto tick = 0; tick <= xTickCount; ++tick) {
             const auto fraction = static_cast<double>(tick) / xTickCount;
             const auto xValue = xMinimum_ + fraction * (xMaximum_ - xMinimum_);
             const auto x = plotRect_.left() + fraction * plotRect_.width();
+            const auto label = formatAxisTick(xValue, xTickStep);
+            xTickLabels.push_back(label);
             painter.drawText(QRectF(x - 42, plotRect_.bottom() + 5, 84, 20),
-                Qt::AlignHCenter | Qt::AlignTop, formatAxisValue(xValue));
+                Qt::AlignHCenter | Qt::AlignTop, label);
         }
+        setProperty("xAxisTickLabels", xTickLabels);
         drawYAxis(painter, leftAxis_, AxisSide::Left);
         if (plotKind_ == PlotKind::Impedance)
             drawYAxis(painter, rightAxis_, AxisSide::Right);
@@ -557,7 +566,7 @@ private:
                 : QRectF(plotRect_.right() + 9, y - 10, width() - plotRect_.right() - 30, 20);
             painter.drawText(labelRect,
                 (side == AxisSide::Left ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignVCenter,
-                formatAxisValue(tick.value));
+                formatAxisTick(tick.value, 0.0));
         }
         painter.save();
         if (side == AxisSide::Left) {
@@ -873,13 +882,13 @@ void SweepPlotsView::refreshPlots()
             referenceResistanceColor.setAlpha(105);
             referenceReactanceColor.setAlpha(105);
             PlotSeries referenceResistance{
-                tr("Reference — %1 · R W%2:S%3").arg(referenceLabel_).arg(source.first).arg(source.second), tr("Ω"), referenceResistanceColor,
+                tr("Reference R W%1:S%2").arg(source.first).arg(source.second), tr("Ω"), referenceResistanceColor,
                 AxisSide::Left, {}, Qt::DashLine, false, true};
             PlotSeries referenceReactance{
-                tr("Reference — %1 · X W%2:S%3").arg(referenceLabel_).arg(source.first).arg(source.second), tr("Ω"), referenceReactanceColor,
+                tr("Reference X W%1:S%2").arg(source.first).arg(source.second), tr("Ω"), referenceReactanceColor,
                 AxisSide::Right, {}, Qt::DashLine, false, true};
             PlotSeries referenceSwr{
-                tr("Reference — %1 · SWR W%2:S%3").arg(referenceLabel_).arg(source.first).arg(source.second), {}, referenceResistanceColor,
+                tr("Reference SWR W%1:S%2").arg(source.first).arg(source.second), {}, referenceResistanceColor,
                 AxisSide::Left, {}, Qt::DashLine, false, true};
             for (const auto& referencePoint : referenceResult_->feedpoints) {
                 if (referencePoint.wireTag != source.first

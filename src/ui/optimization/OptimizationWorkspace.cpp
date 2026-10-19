@@ -1248,7 +1248,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         QStringLiteral("optimizationCandidateDetailViews"));
     candidateDetailViews_->setDocumentMode(true);
     candidateDetailViews_->addTab(candidateDetailsTable_, tr("Frequency Table"));
-    candidateDetailViews_->addTab(candidateDetailPlots_, tr("SWR & Impedance Plots"));
+    candidateDetailViews_->addTab(candidateDetailPlots_, tr("SWR && Impedance Plots"));
     const auto directionalTab = candidateDetailViews_->addTab(
         candidateDirectionalPlots_, tr("Directional Plots"));
     candidateDetailViews_->addTab(comparePanel_, tr("Candidate vs Baseline"));
@@ -3680,7 +3680,7 @@ void OptimizationWorkspace::updateReadiness()
                 ? selectedSearchMethod() == SearchMethod::ParameterSweep
                     ? tr("Run Parameter Sweep")
                     : tr("Run %1").arg(searchMethodName(selectedSearchMethod()))
-                : tr("Build Baseline & Optimize"));
+                : tr("Build Baseline && Optimize"));
     }
     runButton_->setToolTip(!hasVariables
         ? tr("Select at least one parameter and enter valid bounds and tolerance.")

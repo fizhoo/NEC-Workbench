@@ -43,7 +43,7 @@ OptimizationComparePanel::OptimizationComparePanel(QWidget* parent)
     breakdownScroll->setWidgetResizable(true);
     breakdownScroll->setFrameShape(QFrame::NoFrame);
     breakdownScroll->setWidget(breakdown_);
-    tabs_->addTab(sweepPlots_, tr("SWR & Impedance"));
+    tabs_->addTab(sweepPlots_, tr("SWR && Impedance"));
     tabs_->addTab(pattern_, tr("2D Pattern"));
     tabs_->addTab(breakdownScroll, tr("Candidate Details"));
     layout->addWidget(status_);
