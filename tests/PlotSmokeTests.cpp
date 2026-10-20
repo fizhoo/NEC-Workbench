@@ -233,13 +233,28 @@ auto main(int argc, char* argv[]) -> int
         auto* modelWorkspace = mainWindow.findChild<QTabWidget*>(QStringLiteral("modelWorkspace"));
         auto* setupModuleAction = mainWindow.findChild<QAction*>(
             QStringLiteral("setupModuleAction"));
+        auto* validateMenu = mainWindow.findChild<QMenu*>(QStringLiteral("validateMenu"));
+        auto* runMenu = mainWindow.findChild<QMenu*>(QStringLiteral("runMenu"));
+        auto* validationWorkspace = mainWindow.findChild<QTabWidget*>(
+            QStringLiteral("validationWorkspace"));
+        auto* validationSummary = mainWindow.findChild<QLabel*>(
+            QStringLiteral("validationOverviewSummary"));
+        auto* openValidation = mainWindow.findChild<QAction*>(
+            QStringLiteral("openValidationResultsAction"));
+        auto* reviewRuns = mainWindow.findChild<QAction*>(
+            QStringLiteral("reviewRunHistoryAction"));
         consolidatedSetupNavigation = setupModuleAction != nullptr
             && setupModuleAction->text() == QStringLiteral("&Setup")
             && tabNames(modelWorkspace) == QStringList{QStringLiteral("Geometry"),
                 QStringLiteral("Parameters"), QStringLiteral("NEC Deck")}
             && tabNames(setupWorkspace) == QStringList{QStringLiteral("Frequency"),
                 QStringLiteral("Sources"), QStringLiteral("Loads && Transmission Lines"),
-                QStringLiteral("Environment"), QStringLiteral("Requests"), QStringLiteral("Solver")};
+                QStringLiteral("Environment"), QStringLiteral("Requests"), QStringLiteral("Solver")}
+            && tabNames(validationWorkspace) == QStringList{QStringLiteral("Static Check"),
+                QStringLiteral("Average Gain Test"), QStringLiteral("Segmentation Convergence")}
+            && validateMenu != nullptr && runMenu != nullptr && validationSummary != nullptr
+            && openValidation != nullptr && validateMenu->actions().contains(openValidation)
+            && reviewRuns != nullptr && runMenu->actions().contains(reviewRuns);
     }
     if (!consolidatedSetupNavigation)
         return NECWB_SMOKE_FAILURE("consolidated setup navigation");

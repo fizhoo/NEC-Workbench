@@ -1407,7 +1407,51 @@ void MainWindow::createResultsWorkspace()
     resultsSummaryView_ = new ResultsSummaryView(resultsWorkspace_);
     resultsSummaryTabIndex_ = resultsWorkspace_->addTab(resultsSummaryView_, tr("Summary"));
     validationWorkspace_ = new QTabWidget(resultsWorkspace_);
+    validationWorkspace_->setObjectName(QStringLiteral("validationWorkspace"));
     validationWorkspace_->setDocumentMode(true);
+    auto* validationOverview = new QWidget(validationWorkspace_);
+    validationOverview->setObjectName(QStringLiteral("validationOverview"));
+    auto* validationOverviewLayout = new QVBoxLayout(validationOverview);
+    validationOverviewLayout->setContentsMargins(8, 8, 8, 8);
+    validationOverviewLayout->setSpacing(6);
+    auto* validationOverviewHeading = new QLabel(tr("Static Model Check"), validationOverview);
+    auto validationOverviewFont = validationOverviewHeading->font();
+    validationOverviewFont.setBold(true);
+    validationOverviewHeading->setFont(validationOverviewFont);
+    validationOverviewSummary_ = new QLabel(
+        tr("Run Check Model to evaluate the current source."), validationOverview);
+    validationOverviewSummary_->setObjectName(QStringLiteral("validationOverviewSummary"));
+    validationOverviewScope_ = new QLabel(tr(
+        "Checks NEC syntax, backend compatibility, references, geometry, and model adequacy. "
+        "Average Gain Test and convergence are separate solver-backed studies."),
+        validationOverview);
+    validationOverviewScope_->setObjectName(QStringLiteral("validationOverviewScope"));
+    validationOverviewScope_->setWordWrap(true);
+    auto* validationOverviewButtons = new QHBoxLayout;
+    auto* checkFromValidationButton = new QPushButton(tr("Check Model…"), validationOverview);
+    checkFromValidationButton->setObjectName(QStringLiteral("checkModelFromValidationButton"));
+    auto* openModelCheckButton = new QPushButton(tr("Open Current Report"), validationOverview);
+    openModelCheckButton->setObjectName(QStringLiteral("openModelCheckReportButton"));
+    auto* changeValidationSolverButton = new QPushButton(tr("Change Solver…"), validationOverview);
+    changeValidationSolverButton->setObjectName(QStringLiteral("changeValidationSolverButton"));
+    validationOverviewButtons->addWidget(checkFromValidationButton);
+    validationOverviewButtons->addWidget(openModelCheckButton);
+    validationOverviewButtons->addStretch();
+    validationOverviewButtons->addWidget(changeValidationSolverButton);
+    validationOverviewLayout->addWidget(validationOverviewHeading);
+    validationOverviewLayout->addWidget(validationOverviewSummary_);
+    validationOverviewLayout->addWidget(validationOverviewScope_);
+    validationOverviewLayout->addLayout(validationOverviewButtons);
+    validationOverviewLayout->addStretch();
+    connect(checkFromValidationButton, &QPushButton::clicked,
+        this, [this] { checkModel(true); });
+    connect(openModelCheckButton, &QPushButton::clicked, modelCheckWindowAction_, &QAction::trigger);
+    connect(changeValidationSolverButton, &QPushButton::clicked, this, [this] {
+        if (!showModule(analysisModuleIndex_)) return;
+        analysisWorkspace_->setCurrentIndex(analysisSolverTabIndex_);
+    });
+    validationOverviewTabIndex_ = validationWorkspace_->addTab(
+        validationOverview, tr("Static Check"));
     averageGainResultsView_ = new AverageGainResultsView(validationWorkspace_);
     averageGainResultsView_->setRunAction(averageGainAction_);
     averageGainValidationTabIndex_ = validationWorkspace_->addTab(
@@ -2260,19 +2304,38 @@ void MainWindow::createMenusAndToolbar()
 
     auto* modelMenu = menuBar()->addMenu(tr("&Model"));
     modelMenu->setObjectName(QStringLiteral("modelMenu"));
-    modelMenu->addAction(checkAction_);
     modelMenu->addAction(autoSegmentationAction_);
     modelMenu->addSeparator();
-    modelMenu->addAction(averageGainAction_);
-    modelMenu->addAction(convergenceAction_);
-    modelMenu->addSeparator();
     modelMenu->addAction(geometrySettingsAction_);
+
+    auto* validateMenu = menuBar()->addMenu(tr("&Validate"));
+    validateMenu->setObjectName(QStringLiteral("validateMenu"));
+    validateMenu->addAction(checkAction_);
+    validateMenu->addSeparator();
+    validateMenu->addAction(averageGainAction_);
+    validateMenu->addAction(convergenceAction_);
+    validateMenu->addSeparator();
+    auto* openValidationAction = validateMenu->addAction(tr("Open Validation Results"));
+    openValidationAction->setObjectName(QStringLiteral("openValidationResultsAction"));
+    connect(openValidationAction, &QAction::triggered, this, [this] {
+        if (!showModule(resultsModuleIndex_)) return;
+        resultsWorkspace_->setCurrentIndex(averageGainResultsTabIndex_);
+        validationWorkspace_->setCurrentIndex(validationOverviewTabIndex_);
+    });
 
     auto* runMenu = menuBar()->addMenu(tr("&Run"));
     runMenu->setObjectName(QStringLiteral("runMenu"));
     runMenu->addAction(runAction_);
     runMenu->addAction(quickSweepAction_);
     runMenu->addAction(stopAction_);
+    runMenu->addSeparator();
+    auto* reviewRunsAction = runMenu->addAction(tr("Review Run History"));
+    reviewRunsAction->setObjectName(QStringLiteral("reviewRunHistoryAction"));
+    connect(reviewRunsAction, &QAction::triggered, this, [this] {
+        if (!showModule(resultsModuleIndex_)) return;
+        resultsWorkspace_->setCurrentIndex(analysisRunsTabIndex_);
+    });
+    runMenu->addAction(runMonitorWindowAction_);
 
     auto* helpMenu = menuBar()->addMenu(tr("&Help"));
     helpMenu->setObjectName(QStringLiteral("helpMenu"));
@@ -2705,6 +2768,10 @@ void MainWindow::checkModel(bool presentReport)
                     .arg(compatibilityName)
                     .arg(static_cast<qulonglong>(result.informationCount())));
     }
+    validationOverviewSummary_->setText(validationSummary_->text());
+    validationOverviewScope_->setText(tr(
+        "Validation target: %1. Open the report for individual findings; use the other tabs "
+        "for solver-backed Average Gain Test and convergence studies.").arg(compatibilityName));
 
     editor_->setDiagnostics(result.diagnostics);
     updateDeckUnitControls(deckUnitInfo);

@@ -376,6 +376,8 @@ private:
     QDialog* runMonitorWindow_{};
     QLabel* validationSummary_{};
     QLabel* validationScope_{};
+    QLabel* validationOverviewSummary_{};
+    QLabel* validationOverviewScope_{};
     QLabel* runMonitorContextLabel_{};
     QLabel* runMonitorStatusLabel_{};
     QProgressBar* runMonitorProgress_{};
@@ -446,6 +448,7 @@ private:
     int analysisRunsTabIndex_{};
     int resultsSummaryTabIndex_{};
     int averageGainResultsTabIndex_{};
+    int validationOverviewTabIndex_{};
     int averageGainValidationTabIndex_{};
     int convergenceValidationTabIndex_{};
     int analysisOutputTabIndex_{};

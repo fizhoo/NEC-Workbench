@@ -78,6 +78,12 @@ syntax, field, ordering, expression, or reference errors prevent analysis and
 optimization. Adequacy findings are warnings because their importance depends on
 the model and engineering purpose.
 
+Validation commands are grouped in the **Validate** menu. Static findings remain
+in a reusable non-modal report, while **Results → Validation** owns the compact
+overview, Average Gain Test result, and segmentation-convergence workspace. The
+Run Monitor remains execution UI rather than a validation result; durable runs are
+reviewed under **Results → Runs**.
+
 The static checker covers geometry/control-card ordering, segment length,
 thin-wire ratios, source placement, adjoining segmentation, and large junctions.
 Average Gain Test and segmentation convergence are solver-backed studies with

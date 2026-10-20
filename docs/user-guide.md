@@ -121,6 +121,12 @@ window layout, and historical review are not model edits.
 reports errors and warnings. Errors block analysis and optimization. Warnings
 identify conditions requiring engineering judgment.
 
+The **Validate** menu groups the static Model Check, Average Gain Test, and
+segmentation convergence commands. **Results → Validation** provides a compact
+status overview and keeps the two solver-backed studies together. The full static
+report remains a separate non-modal window so findings can stay visible while the
+model is edited.
+
 Static checks include card ordering, geometry completeness, field types, references,
 segment length, thin-wire ratios, source placement, adjoining segment consistency,
 and large junctions. Static checks do not prove model accuracy.
@@ -180,6 +186,10 @@ rewriting the authored `FR` card.
 Select the backend protocol and executable. Each backend remembers its own path.
 The backend selection controls command-line or standard-input behavior; Workbench
 does not infer protocol from the executable filename.
+
+The **Run** menu provides direct access to the reusable Run Monitor and archived
+run history. The monitor is transient execution feedback; durable inputs, outputs,
+notes, and review remain under **Results → Runs**.
 
 ### Model Check
 
