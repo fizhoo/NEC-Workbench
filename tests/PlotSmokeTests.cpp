@@ -1038,10 +1038,13 @@ auto main(int argc, char* argv[]) -> int
     const auto minimizedCandidateDetailsRestored = optimizationCandidateDetailsWindow->isVisible()
         && !optimizationCandidateDetailsWindow->isMinimized();
     optimizationCandidateDetailsWindow->resize(700, 500);
+    application.processEvents();
+    const auto resizedCandidateReviewSize = optimizationCandidateDetailsWindow->size();
     optimizationCandidateDetailsWindow->close();
     application.processEvents();
     const auto candidateReviewSizePersisted = QSettings{}.value(
-        QStringLiteral("optimization/candidateReviewSizeV1")).toSize() == QSize(700, 500);
+        QStringLiteral("optimization/candidateReviewSizeV1")).toSize()
+        == resizedCandidateReviewSize;
     optimizationCandidateDetailsWindow->hide();
     optimization.setContext(refreshedOptimizationSource,
         QStringLiteral("symbol-units.nec"), QStringLiteral("nec2"), {}, 120, false);
@@ -1555,6 +1558,14 @@ auto main(int argc, char* argv[]) -> int
     const auto directionalStartingModelOverlay = directionalCandidateOnlyVisible
         && directionalComparisonControl->isChecked()
         && directionalComparisonPlot->property("seriesCount").toInt() == 6;
+    if (!hiddenCandidateDetailsRestored)
+        return NECWB_SMOKE_FAILURE("hidden candidate review restore");
+    if (!minimizedCandidateDetailsRestored)
+        return NECWB_SMOKE_FAILURE("minimized candidate review restore");
+    if (!candidateReviewSizePersisted)
+        return NECWB_SMOKE_FAILURE("candidate review size persistence");
+    if (optimizationCandidateReviewDefaultSize != expectedCandidateReviewSize)
+        return NECWB_SMOKE_FAILURE("candidate review responsive default size");
     if (optimizationConfiguration == nullptr
         || optimizationWorkspaceSplitter == nullptr
         || optimizationWorkspaceSplitter->orientation() != Qt::Horizontal
@@ -1578,7 +1589,6 @@ auto main(int argc, char* argv[]) -> int
         || optimizationCandidateDetailsWindow->testAttribute(Qt::WA_QuitOnClose)
         || optimizationCandidateDetailsWindow->isVisible()
         || optimizationCandidateDetailsWindow->windowTitle() != QStringLiteral("Candidate Results")
-        || optimizationCandidateReviewDefaultSize != expectedCandidateReviewSize
         || optimizationMargins.left() > 4 || optimizationMargins.top() > 4
         || optimizationMargins.right() > 4 || optimizationMargins.bottom() > 4
         || candidateReviewMargins.left() > 4 || candidateReviewMargins.top() > 4
@@ -1625,7 +1635,6 @@ auto main(int argc, char* argv[]) -> int
             != QStringLiteral("Directional vs Frequency")
         || optimizationCompareTabs->isTabVisible(2)
         || optimizationCompareTabs->tabText(3) != QStringLiteral("Objective Details")
-        || !candidateReviewSizePersisted
         || optimizationResultsSplitter == nullptr
         || optimizationResultsSplitter->orientation() != Qt::Vertical
         || optimizationResultsSplitter->count() != 2
@@ -1720,8 +1729,6 @@ auto main(int argc, char* argv[]) -> int
         || !historicalInputInitiallyHidden || !authoredInputShown || !generatedInputShown
         || !activeFrequenciesRestored
         || !candidateApplyPreservesDetails
-        || !hiddenCandidateDetailsRestored
-        || !minimizedCandidateDetailsRestored
         || !frequencyCancelRestored
         || !objectiveCancelRestored
         || !perCriterionDirectionalObjectiveValid
