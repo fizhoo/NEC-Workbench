@@ -76,6 +76,11 @@ auto candidateReviewSizeKey() -> QString
     return QStringLiteral("optimization/candidateReviewSizeV1");
 }
 
+auto candidateReviewGeometryKey() -> QString
+{
+    return QStringLiteral("optimization/candidateReviewGeometryV1");
+}
+
 auto candidateReviewInitialSize(const QSize& savedSize) -> QSize
 {
     constexpr QSize oldDefault{640, 460};
@@ -90,6 +95,13 @@ auto candidateReviewInitialSize(const QSize& savedSize) -> QSize
     return requested.boundedTo(maximum);
 }
 
+void saveCandidateReviewGeometry(const QDialog& dialog)
+{
+    QSettings settings;
+    settings.setValue(candidateReviewGeometryKey(), dialog.saveGeometry());
+    settings.setValue(candidateReviewSizeKey(), dialog.size());
+}
+
 class CandidateReviewDialog final : public QDialog {
 public:
     using QDialog::QDialog;
@@ -97,7 +109,7 @@ public:
 protected:
     void closeEvent(QCloseEvent* event) override
     {
-        QSettings{}.setValue(candidateReviewSizeKey(), size());
+        saveCandidateReviewGeometry(*this);
         QDialog::closeEvent(event);
     }
 };
@@ -1448,8 +1460,13 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     candidateDetailsWindow_->setWindowTitle(tr("Candidate Results"));
     candidateDetailsWindow_->setModal(false);
     candidateDetailsWindow_->setAttribute(Qt::WA_QuitOnClose, false);
-    const auto savedReviewSize = QSettings{}.value(candidateReviewSizeKey()).toSize();
-    candidateDetailsWindow_->resize(candidateReviewInitialSize(savedReviewSize));
+    QSettings candidateReviewSettings;
+    const auto geometryRestored = candidateDetailsWindow_->restoreGeometry(
+        candidateReviewSettings.value(candidateReviewGeometryKey()).toByteArray());
+    if (!geometryRestored) {
+        candidateDetailsWindow_->resize(candidateReviewInitialSize(
+            candidateReviewSettings.value(candidateReviewSizeKey()).toSize()));
+    }
     auto* detailLayout = new QVBoxLayout(candidateDetailsWindow_);
     detailLayout->setContentsMargins(4, 4, 4, 4);
     detailLayout->setSpacing(4);
@@ -1766,8 +1783,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
 
 OptimizationWorkspace::~OptimizationWorkspace()
 {
-    QSettings{}.setValue(candidateReviewSizeKey(),
-        candidateDetailsWindow_->size());
+    saveCandidateReviewGeometry(*candidateDetailsWindow_);
     delete candidateDetailsWindow_;
 }
 

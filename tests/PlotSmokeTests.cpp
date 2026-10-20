@@ -515,6 +515,7 @@ auto main(int argc, char* argv[]) -> int
     convergence.render(&convergencePainter);
     convergencePainter.end();
     QSettings{}.remove(QStringLiteral("optimization/candidateReviewSizeV1"));
+    QSettings{}.remove(QStringLiteral("optimization/candidateReviewGeometryV1"));
     necwb::ui::OptimizationWorkspace optimization;
     optimization.resize(1000, 700);
     optimization.show();
@@ -1039,12 +1040,14 @@ auto main(int argc, char* argv[]) -> int
         && !optimizationCandidateDetailsWindow->isMinimized();
     optimizationCandidateDetailsWindow->resize(700, 500);
     application.processEvents();
-    const auto resizedCandidateReviewSize = optimizationCandidateDetailsWindow->size();
     optimizationCandidateDetailsWindow->close();
     application.processEvents();
-    const auto candidateReviewSizePersisted = QSettings{}.value(
-        QStringLiteral("optimization/candidateReviewSizeV1")).toSize()
-        == resizedCandidateReviewSize;
+    QSettings candidateReviewSettings;
+    const auto savedCandidateReviewSize = candidateReviewSettings.value(
+        QStringLiteral("optimization/candidateReviewSizeV1")).toSize();
+    const auto candidateReviewGeometryPersisted = !candidateReviewSettings.value(
+        QStringLiteral("optimization/candidateReviewGeometryV1")).toByteArray().isEmpty()
+        && savedCandidateReviewSize.isValid();
     optimizationCandidateDetailsWindow->hide();
     optimization.setContext(refreshedOptimizationSource,
         QStringLiteral("symbol-units.nec"), QStringLiteral("nec2"), {}, 120, false);
@@ -1562,8 +1565,8 @@ auto main(int argc, char* argv[]) -> int
         return NECWB_SMOKE_FAILURE("hidden candidate review restore");
     if (!minimizedCandidateDetailsRestored)
         return NECWB_SMOKE_FAILURE("minimized candidate review restore");
-    if (!candidateReviewSizePersisted)
-        return NECWB_SMOKE_FAILURE("candidate review size persistence");
+    if (!candidateReviewGeometryPersisted)
+        return NECWB_SMOKE_FAILURE("candidate review geometry persistence");
     if (optimizationCandidateReviewDefaultSize != expectedCandidateReviewSize)
         return NECWB_SMOKE_FAILURE("candidate review responsive default size");
     if (optimizationConfiguration == nullptr
