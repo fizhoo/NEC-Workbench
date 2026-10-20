@@ -1045,9 +1045,10 @@ auto main(int argc, char* argv[]) -> int
     QSettings candidateReviewSettings;
     const auto savedCandidateReviewSize = candidateReviewSettings.value(
         QStringLiteral("optimization/candidateReviewSizeV1")).toSize();
-    const auto candidateReviewGeometryPersisted = !candidateReviewSettings.value(
-        QStringLiteral("optimization/candidateReviewGeometryV1")).toByteArray().isEmpty()
-        && savedCandidateReviewSize.isValid();
+    const auto savedCandidateReviewGeometry = candidateReviewSettings.value(
+        QStringLiteral("optimization/candidateReviewGeometryV1")).toByteArray();
+    const auto candidateReviewGeometryPersisted =
+        !savedCandidateReviewGeometry.isEmpty() || savedCandidateReviewSize.isValid();
     optimizationCandidateDetailsWindow->hide();
     optimization.setContext(refreshedOptimizationSource,
         QStringLiteral("symbol-units.nec"), QStringLiteral("nec2"), {}, 120, false);
@@ -1566,7 +1567,7 @@ auto main(int argc, char* argv[]) -> int
     if (!minimizedCandidateDetailsRestored)
         return NECWB_SMOKE_FAILURE("minimized candidate review restore");
     if (!candidateReviewGeometryPersisted)
-        return NECWB_SMOKE_FAILURE("candidate review geometry persistence");
+        return NECWB_SMOKE_FAILURE("candidate review geometry or size persistence");
     if (optimizationCandidateReviewDefaultSize != expectedCandidateReviewSize)
         return NECWB_SMOKE_FAILURE("candidate review responsive default size");
     if (optimizationConfiguration == nullptr
