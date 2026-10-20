@@ -9,6 +9,7 @@
 namespace necwb::analysis {
 
 enum class OptimizationPresetId {
+    MinimizeSwr,
     SwrLimit,
     FeedpointMatch,
     PeakGain,

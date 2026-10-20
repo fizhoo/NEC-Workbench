@@ -566,6 +566,8 @@ auto objectiveSentence(const QString& name, const QString& unit,
 auto optimizationPresetName(analysis::OptimizationPresetId id) -> QString
 {
     switch (id) {
+    case analysis::OptimizationPresetId::MinimizeSwr:
+        return QObject::tr("Minimize Worst-Case SWR");
     case analysis::OptimizationPresetId::SwrLimit: return QObject::tr("Keep SWR Below Limit");
     case analysis::OptimizationPresetId::FeedpointMatch: return QObject::tr("Match Feedpoint Impedance");
     case analysis::OptimizationPresetId::PeakGain: return QObject::tr("Maximize Peak Gain in Cut");
@@ -581,8 +583,10 @@ auto optimizationPresetSummary(analysis::OptimizationPresetId id,
     const analysis::OptimizationObjectiveSpec& objective) -> QString
 {
     switch (id) {
+    case analysis::OptimizationPresetId::MinimizeSwr:
+        return QObject::tr("Minimize the highest SWR across all selected frequencies.");
     case analysis::OptimizationPresetId::SwrLimit:
-        return QObject::tr("Keep SWR at or below %1 across all selected frequencies.")
+        return QObject::tr("Accept any candidate whose maximum SWR is at or below %1.")
             .arg(formatDecimal(objective.swrTarget));
     case analysis::OptimizationPresetId::FeedpointMatch:
         return QObject::tr(
@@ -1225,7 +1229,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         objectivePresetControl_->addItem(optimizationPresetName(definition.id),
             static_cast<int>(definition.id));
     objectivePresetControl_->setCurrentIndex(objectivePresetControl_->findData(
-        static_cast<int>(analysis::OptimizationPresetId::SwrLimit)));
+        static_cast<int>(analysis::OptimizationPresetId::MinimizeSwr)));
     objectiveForm->addRow(tr("Goal"), objectivePresetControl_);
     presetSwrLimitControl_ = new FocusWheelDoubleSpinBox(objectiveSettings);
     presetSwrLimitControl_->setObjectName(QStringLiteral("optimizationPresetSwrLimit"));
@@ -1745,6 +1749,14 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
     const auto preserveStudy = std::exchange(preserveStudyOnNextContextUpdate_, false);
     const auto sourceUnchanged = source_ == source && sourceFile_ == sourceFile;
     const auto preserveFrequencySelection = contextInitialized_ && sourceFile_ == sourceFile;
+    const auto directionMode = static_cast<analysis::DirectionalEvaluationMode>(
+        directionalEvaluationModeControl_->currentData().toInt());
+    const auto preserveDirectionalSetup = preserveStudy && directionSetupReady_
+        && (directionSetupConfigured_
+            || directionMode != analysis::DirectionalEvaluationMode::SpecifiedDirection);
+    const auto patternDerivedFixedDirection = preserveStudy && directionSetupReady_
+        && !directionSetupConfigured_
+        && directionMode == analysis::DirectionalEvaluationMode::SpecifiedDirection;
     const auto frequencySelection = preserveFrequencySelection
         ? std::optional{captureFrequencySelection()} : std::nullopt;
     source_ = std::move(source);
@@ -1760,11 +1772,14 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
         updateReadiness();
         return;
     }
-    maximumGainDirectionStale_ = preserveFrequencySelection
-        && (maximumGainDirectionStale_ || !latestRadiation_.empty());
+    maximumGainDirectionStale_ = patternDerivedFixedDirection
+        || (!preserveStudy && preserveFrequencySelection
+            && (maximumGainDirectionStale_ || !latestRadiation_.empty()));
     latestRadiation_.clear();
-    directionSetupConfigured_ = false;
-    directionSetupReady_ = false;
+    if (!preserveDirectionalSetup) {
+        directionSetupConfigured_ = false;
+        directionSetupReady_ = false;
+    }
     const auto resolution = nec::NecSymbolResolver{}.resolve(source_.toStdString());
     populateVariables(resolution);
     if (resolution.ok()) {
@@ -3541,9 +3556,16 @@ void OptimizationWorkspace::applyCandidate(int row, bool runAfterApply)
     const auto applied = applyParameterCallback_ && applyParameterCallback_(values);
     preserveStudyOnNextContextUpdate_ = false;
     if (applied) {
-        statusLabel_->setText(row == bestRow_
+        const auto appliedText = row == bestRow_
             ? tr("Applied the best parameter values to the active model.")
-            : tr("Applied the selected candidate values to the active model."));
+            : tr("Applied the selected candidate values to the active model.");
+        statusLabel_->setText(directionSetupReady_
+            ? tr("%1 The model changed; the optimization baseline will be rebuilt before the next optimization.")
+                .arg(appliedText)
+            : maximumGainDirectionStale_
+                ? tr("%1 The fixed direction came from the previous pattern; update maximum gain or choose a direction before optimizing again.")
+                    .arg(appliedText)
+                : appliedText);
     }
 }
 
@@ -3927,7 +3949,9 @@ void OptimizationWorkspace::updateReadiness()
                 ? selectedSearchMethod() == SearchMethod::ParameterSweep
                     ? tr("Run Parameter Sweep")
                     : tr("Run %1").arg(searchMethodName(selectedSearchMethod()))
-                : tr("Build Baseline && Optimize"));
+                : baselineRecord_.has_value()
+                    ? tr("Rebuild Baseline && Optimize")
+                    : tr("Build Baseline && Optimize"));
     }
     runButton_->setToolTip(!hasVariables
         ? tr("Select at least one parameter and enter valid bounds and tolerance.")

@@ -7,6 +7,7 @@ namespace necwb::analysis {
 namespace {
 
 constexpr std::array Presets{
+    OptimizationPresetDefinition{OptimizationPresetId::MinimizeSwr, "minimize-swr", false},
     OptimizationPresetDefinition{OptimizationPresetId::SwrLimit, "swr-limit", false},
     OptimizationPresetDefinition{OptimizationPresetId::FeedpointMatch, "feedpoint-match", false},
     OptimizationPresetDefinition{OptimizationPresetId::PeakGain, "peak-gain", true},
@@ -32,6 +33,13 @@ void configureSwrLimit(OptimizationObjectiveSpec& objective,
     objective.swrGoal = OptimizationGoal::GoodEnough;
     objective.swrTarget = parameters.swrLimit;
     objective.swrGoodEnoughDirection = GoodEnoughDirection::AtMost;
+    objective.swrAggregation = OptimizationAggregation::Maximum;
+}
+
+void configureMinimizeSwr(OptimizationObjectiveSpec& objective)
+{
+    objective.swrWeight = 1.0;
+    objective.swrGoal = OptimizationGoal::Minimize;
     objective.swrAggregation = OptimizationAggregation::Maximum;
 }
 
@@ -62,6 +70,9 @@ auto optimizationPresetObjective(OptimizationPresetId id,
 
     auto objective = emptyObjective(parameters);
     switch (id) {
+    case OptimizationPresetId::MinimizeSwr:
+        configureMinimizeSwr(objective);
+        break;
     case OptimizationPresetId::SwrLimit:
         configureSwrLimit(objective, parameters);
         break;

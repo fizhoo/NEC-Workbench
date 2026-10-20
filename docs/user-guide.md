@@ -364,6 +364,11 @@ The Objective Summary translates the configured rows into plain-language bullets
 Lower combined scores are always better. Contributions are normalized before
 weighting so ohms and decibels are not combined as raw, incompatible numbers.
 
+Use **Minimize Worst-Case SWR** when every reduction in the highest SWR should
+improve the score. Use **Keep SWR Below Limit** when meeting the limit is sufficient;
+all candidates at or below that limit receive zero SWR penalty, allowing other
+enabled criteria to decide among them.
+
 Examples:
 
 - Minimize SWR with Worst Point protects the highest SWR in the plan.

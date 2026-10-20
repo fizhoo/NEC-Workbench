@@ -880,12 +880,14 @@ auto main(int argc, char* argv[]) -> int
             appliedSource.replace(QStringLiteral("LONG_FT=95"), QStringLiteral("LONG_FT=90"));
             appliedSource.replace(QStringLiteral("FT=0.3048"), QStringLiteral("FT=0.3"));
             optimization.setContext(appliedSource, QStringLiteral("symbol-units.nec"),
-                QStringLiteral("nec2"), {}, 120, false);
+                QStringLiteral("nec2"), QStringLiteral("/bin/true"), 120, true);
             return true;
         });
     optimization.setApplyAndRunCallback([](const auto&) { return true; });
+    optimization.setBaselineRunCallback([](const auto&, const auto&) { return true; });
     optimization.setContext(refreshedOptimizationSource,
-        QStringLiteral("symbol-units.nec"), QStringLiteral("nec2"), {}, 120, true);
+        QStringLiteral("symbol-units.nec"), QStringLiteral("nec2"),
+        QStringLiteral("/bin/true"), 120, true);
     const auto candidateRowWithValue = [optimizationResultsTable](QString value) {
         if (optimizationResultsTable == nullptr) return -1;
         for (auto row = 0; row < optimizationResultsTable->rowCount(); ++row) {
@@ -926,13 +928,42 @@ auto main(int argc, char* argv[]) -> int
     if (firstCandidateRow >= 0)
         optimizationResultsTable->setCurrentCell(firstCandidateRow, 0);
     application.processEvents();
+    if (optimizationObjectivePreset != nullptr)
+        optimizationObjectivePreset->setCurrentText(
+            QStringLiteral("Maximize Peak Gain in Cut"));
+    necwb::analysis::AnalysisResult candidateDirectionPattern;
+    candidateDirectionPattern.radiation = {
+        {.frequencyMHz = 7.15, .thetaDegrees = 55.0, .phiDegrees = 0.0,
+            .totalGainDb = 6.2},
+        {.frequencyMHz = 7.15, .thetaDegrees = 90.0, .phiDegrees = 0.0,
+            .totalGainDb = -999.99},
+    };
+    optimization.setLatestAnalysisResult(candidateDirectionPattern);
+    application.processEvents();
     optimizationApplyCandidate->click();
     application.processEvents();
+    const auto candidateApplyStatusReported = std::ranges::any_of(
+        optimization.findChildren<QLabel*>(), [](const auto* label) {
+            return label->text().contains(
+                QStringLiteral("baseline will be rebuilt"));
+        });
+    const auto candidateApplyPreservesDirection = optimizationRun != nullptr
+        && optimizationRun->isEnabled()
+        && optimizationRun->text() == QStringLiteral("Rebuild Baseline && Optimize")
+        && !optimizationRun->toolTip().contains(
+            QStringLiteral("Direction setup required"))
+        && candidateApplyStatusReported;
     const auto candidateApplyPreservesDetails = candidateDetailsLoaded
         && visibleReviewTracksSelection && appliedCandidateValues
         && optimizationResultsTable->rowCount() == 2
         && optimizationCandidateDetails->rowCount() == 2
         && candidateImpedancePlot->property("seriesCount").toInt() > 0;
+    if (!candidateApplyPreservesDirection)
+        return NECWB_SMOKE_FAILURE("candidate apply preserves direction");
+    if (optimizationObjectivePreset != nullptr)
+        optimizationObjectivePreset->setCurrentText(
+            QStringLiteral("Keep SWR Below Limit"));
+    application.processEvents();
     optimizationCandidateDetailsWindow->hide();
     optimization.restoreCandidateDetailsWindow();
     application.processEvents();
@@ -1016,12 +1047,29 @@ auto main(int argc, char* argv[]) -> int
         && optimizationObjectiveSummary->text().contains(QStringLiteral("50.000"));
     auto directionalPresetReadinessValid = false;
     auto objectivePresetsValid = optimizationObjectivePreset != nullptr
-        && optimizationObjectivePreset->count() == 7
+        && optimizationObjectivePreset->count() == 8
         && optimizationPresetSwrLimit != nullptr
         && optimizationPresetSwrLimit->value() == 2.0
         && optimizationObjectiveCriteria != nullptr
         && optimizationObjectiveCriteria->isHidden();
     if (optimizationObjectivePreset != nullptr) {
+        optimizationObjectivePreset->setCurrentText(
+            QStringLiteral("Minimize Worst-Case SWR"));
+        application.processEvents();
+        objectivePresetsValid = objectivePresetsValid
+            && optimizationSwrGoal != nullptr
+            && optimizationSwrGoal->currentText() == QStringLiteral("Minimize")
+            && optimizationSwrAggregation != nullptr
+            && optimizationSwrAggregation->currentText() == QStringLiteral("Worst Point")
+            && optimizationPresetSwrLimit->isHidden()
+            && optimizationObjectiveSummary->text().contains(
+                QStringLiteral("Minimize the highest SWR"));
+        optimizationObjectivePreset->setCurrentText(
+            QStringLiteral("Keep SWR Below Limit"));
+        application.processEvents();
+        objectivePresetsValid = objectivePresetsValid
+            && optimizationObjectiveSummary->text().contains(
+                QStringLiteral("Accept any candidate"));
         optimizationObjectivePreset->setCurrentText(QStringLiteral("Maximize Peak Gain in Cut"));
         application.processEvents();
         objectivePresetsValid = objectivePresetsValid
@@ -1326,7 +1374,7 @@ auto main(int argc, char* argv[]) -> int
         && optimizationBaselineStatus->text().contains(
             QStringLiteral("Optimization baseline"))
         && optimizationRun != nullptr
-        && optimizationRun->text() == QStringLiteral("Build Baseline && Optimize");
+        && optimizationRun->text() == QStringLiteral("Rebuild Baseline && Optimize");
     necwb::ui::OptimizationWorkspace baselineStartWorkspace;
     auto baselineRequested = false;
     baselineStartWorkspace.setBaselineRunCallback(

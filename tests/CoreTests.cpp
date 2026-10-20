@@ -207,7 +207,7 @@ void testOptimizationPresets()
     using namespace necwb::analysis;
 
     const auto definitions = optimizationPresetDefinitions();
-    expect(definitions.size() == 7, "optimization preset catalog includes six goals and Custom");
+    expect(definitions.size() == 8, "optimization preset catalog includes seven goals and Custom");
     for (auto index = std::size_t{}; index < definitions.size(); ++index) {
         const auto& definition = definitions[index];
         expect(!definition.stableId.empty(), "optimization preset has a stable ID");
@@ -221,6 +221,16 @@ void testOptimizationPresets()
         "Custom does not replace the current objective");
 
     const OptimizationPresetParameters parameters{75.0, 1.8};
+    const auto minimizeSwr = optimizationPresetObjective(
+        OptimizationPresetId::MinimizeSwr, parameters);
+    expect(minimizeSwr && minimizeSwr->referenceImpedance == 75.0
+            && minimizeSwr->swrWeight == 1.0
+            && minimizeSwr->swrGoal == OptimizationGoal::Minimize
+            && minimizeSwr->swrAggregation == OptimizationAggregation::Maximum
+            && minimizeSwr->resistanceWeight == 0.0
+            && minimizeSwr->forwardGainWeight == 0.0,
+        "minimize SWR preset continuously rewards lower worst-band SWR");
+
     const auto swr = optimizationPresetObjective(OptimizationPresetId::SwrLimit, parameters);
     expect(swr && swr->referenceImpedance == 75.0 && swr->swrWeight == 1.0
             && swr->swrGoal == OptimizationGoal::GoodEnough && swr->swrTarget == 1.8
