@@ -63,7 +63,7 @@ artifacts from a successful run on the repository's **Actions** page:
 - `NEC-Workbench-Windows-x64`
 
 Artifacts include the required Qt runtime files but not an NEC solver. Configure
-a separately installed solver under **Analysis → Solver**.
+a separately installed solver under **Setup → Solver**.
 
 ## Design Boundary
 

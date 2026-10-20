@@ -105,8 +105,8 @@ auto groundName(const std::optional<model::GroundDefinition>& ground) -> QString
 DashboardPage::DashboardPage(QTextDocument* document, QWidget* parent) : QWidget(parent)
 {
     auto* layout = new QGridLayout(this);
-    layout->setContentsMargins(12, 12, 12, 12);
-    layout->setSpacing(10);
+    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setSpacing(6);
 
     auto* headingPanel = new QWidget(this);
     auto* headingLayout = new QHBoxLayout(headingPanel);

@@ -34,7 +34,7 @@ auto classificationName(analysis::AverageGainClassification classification) -> Q
 AverageGainResultsView::AverageGainResultsView(QWidget* parent) : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(16, 16, 16, 16);
+    layout->setContentsMargins(8, 8, 8, 8);
     auto* heading = new QLabel(tr("Average Gain Test"), this);
     auto headingFont = heading->font();
     headingFont.setBold(true);

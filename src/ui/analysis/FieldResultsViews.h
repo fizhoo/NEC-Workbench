@@ -56,6 +56,8 @@ public:
     void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
     void setReferenceResults(const analysis::AnalysisResult& result, QString label);
     void clearReferenceResults();
+    void setReferenceVisible(bool visible);
+    void setReferenceControlVisible(bool visible);
     void setSelectedFrequency(double frequencyMHz);
     void setDisplaySettings(const analysis::RadiationDisplaySettings& settings);
     void setComponent(analysis::RadiationComponent component);
@@ -108,6 +110,7 @@ public:
     void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
     void setReferenceResults(const analysis::AnalysisResult& result, QString label);
     void clearReferenceResults();
+    void setReferenceVisible(bool visible);
     void setModel(const model::AntennaModel& model);
     void setSelectedFrequency(double frequencyMHz);
     void setDisplaySettings(const analysis::RadiationDisplaySettings& settings);
@@ -152,6 +155,7 @@ public:
     void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
     void setReferenceResults(const analysis::AnalysisResult& result, QString label);
     void clearReferenceResults();
+    void setReferenceVisible(bool visible);
     void setSelectedFrequency(double frequencyMHz);
     void setComponent(analysis::RadiationComponent component);
     void setComponentChangedCallback(ComponentChangedCallback callback);

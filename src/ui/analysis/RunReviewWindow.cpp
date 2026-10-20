@@ -74,6 +74,8 @@ RunReviewWindow::RunReviewWindow(QWidget* parent)
     setWindowFlag(Qt::WindowMinimizeButtonHint, true);
     setWindowFlag(Qt::WindowMaximizeButtonHint, true);
     auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(6, 6, 6, 6);
+    layout->setSpacing(4);
     auto* headingRow = new QHBoxLayout;
     identityLabel_ = new QLabel(this);
     identityLabel_->setObjectName(QStringLiteral("runReviewIdentity"));

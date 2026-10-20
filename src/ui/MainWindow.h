@@ -30,6 +30,7 @@ class QDockWidget;
 class QDialog;
 class QComboBox;
 class QDoubleSpinBox;
+class QEvent;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
@@ -83,6 +84,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    auto eventFilter(QObject* watched, QEvent* event) -> bool override;
 
 private:
     enum class SolverRunPurpose {
@@ -238,6 +240,7 @@ private:
     void chooseResultReference();
     void editSelectedRunNote();
     void clearResultReference();
+    void setResultReferenceVisible(bool visible);
     void updateResultReference();
     [[nodiscard]] auto selectedRunRecord() const -> std::optional<AnalysisRunRecord>;
     void updateRunSelectionActions();
@@ -439,6 +442,7 @@ private:
     int analysisModuleIndex_{};
     int analysisSolverTabIndex_{};
     int analysisFrequencyTabIndex_{};
+    int analysisRequestsTabIndex_{};
     int analysisRunsTabIndex_{};
     int resultsSummaryTabIndex_{};
     int averageGainResultsTabIndex_{};

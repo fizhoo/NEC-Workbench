@@ -760,7 +760,7 @@ SweepPlotsView::SweepPlotsView(QWidget* parent)
     : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setContentsMargins(8, 8, 8, 8);
     auto* headingLabel = new QLabel(tr("Frequency Sweep Plots"), this);
     auto font = headingLabel->font();
     font.setBold(true);
@@ -771,7 +771,7 @@ SweepPlotsView::SweepPlotsView(QWidget* parent)
     heading->addStretch();
     referenceControl_ = new QCheckBox(tr("Show Reference Overlay"), this);
     referenceControl_->setObjectName(QStringLiteral("sweepShowReference"));
-    referenceControl_->setChecked(true);
+    referenceControl_->setChecked(false);
     referenceControl_->setEnabled(false);
     heading->addWidget(referenceControl_);
     summary_ = new QLabel(tr("Run an analysis to populate sweep plots."), this);
@@ -843,6 +843,11 @@ void SweepPlotsView::clearReferenceResults()
     refreshPlots();
 }
 
+void SweepPlotsView::setReferenceVisible(bool visible)
+{
+    referenceControl_->setChecked(visible);
+}
+
 void SweepPlotsView::setReferenceControlVisible(bool visible)
 {
     referenceControl_->setVisible(visible);
@@ -850,6 +855,7 @@ void SweepPlotsView::setReferenceControlVisible(bool visible)
 
 void SweepPlotsView::configureForCompactReview()
 {
+    setReferenceVisible(true);
     layout()->setContentsMargins(4, 4, 4, 4);
     layout()->setSpacing(4);
     impedancePlot_->setMinimumHeight(120);
@@ -973,7 +979,7 @@ DirectionalMetricsView::DirectionalMetricsView(QWidget* parent)
 {
     setObjectName(QStringLiteral("optimizationCandidateDirectionalPlots"));
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setContentsMargins(8, 8, 8, 8);
     summary_ = new QLabel(tr("No directional objective data are available."), this);
     summary_->setWordWrap(true);
     plot_ = new SweepPlotWidget(this);

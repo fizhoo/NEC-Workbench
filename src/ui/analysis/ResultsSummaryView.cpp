@@ -37,7 +37,7 @@ ResultsSummaryView::ResultsSummaryView(QWidget* parent)
 
     auto* summaryPanel = new QWidget(splitter);
     auto* summaryLayout = new QVBoxLayout(summaryPanel);
-    summaryLayout->setContentsMargins(20, 20, 20, 20);
+    summaryLayout->setContentsMargins(10, 10, 10, 10);
     auto* heading = new QLabel(tr("Result Summary"), summaryPanel);
     auto font = heading->font();
     font.setBold(true);
@@ -57,14 +57,14 @@ ResultsSummaryView::ResultsSummaryView(QWidget* parent)
     form->addRow(tr("Available data:"), availabilityLabel_);
     summaryLayout->addWidget(heading);
     summaryLayout->addWidget(contextLabel_);
-    summaryLayout->addSpacing(12);
+    summaryLayout->addSpacing(6);
     summaryLayout->addLayout(form);
     summaryLayout->addStretch();
 
     inputSnapshotPanel_ = new QWidget(splitter);
     inputSnapshotPanel_->setObjectName(QStringLiteral("historicalInputSnapshotPanel"));
     auto* snapshotLayout = new QVBoxLayout(inputSnapshotPanel_);
-    snapshotLayout->setContentsMargins(12, 12, 12, 12);
+    snapshotLayout->setContentsMargins(8, 8, 8, 8);
     auto* snapshotHeading = new QLabel(tr("Input Snapshot"), inputSnapshotPanel_);
     auto snapshotFont = snapshotHeading->font();
     snapshotFont.setBold(true);

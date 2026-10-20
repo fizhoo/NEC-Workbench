@@ -51,7 +51,7 @@ WireCardEditor::WireCardEditor(QWidget* parent)
     : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setContentsMargins(6, 6, 6, 6);
     layout->setSpacing(6);
 
     auto* heading = new QLabel(tr("Wires (GW)"), this);

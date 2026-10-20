@@ -2,6 +2,7 @@
 #include "analysis/FrequencyComparison.h"
 #include "ui/DisplayFormat.h"
 #include "ui/DetachablePanel.h"
+#include "ui/MainWindow.h"
 #include "ui/WorkspaceNavigator.h"
 #include "ui/analysis/SweepPlotsView.h"
 #include "ui/analysis/AnalysisSetupEditor.h"
@@ -46,6 +47,7 @@
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLayout>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QListView>
@@ -69,6 +71,7 @@
 #include <QShortcut>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QScreen>
 #include <QSettings>
 #include <QSplitter>
 #include <QStandardPaths>
@@ -117,7 +120,15 @@ auto main(int argc, char* argv[]) -> int
     }
     QStandardPaths::setTestModeEnabled(true);
     QApplication application(argc, argv);
+    const auto hasCompactMargins = [](const QWidget& widget, int maximum) {
+        const auto* layout = widget.layout();
+        if (layout == nullptr) return false;
+        const auto margins = layout->contentsMargins();
+        return margins.left() <= maximum && margins.top() <= maximum
+            && margins.right() <= maximum && margins.bottom() <= maximum;
+    };
     necwb::ui::AnalysisSetupEditor solverSetup;
+    const auto solverSetupCompact = hasCompactMargins(solverSetup, 12);
     auto* solverBackend = solverSetup.findChild<QComboBox*>(
         QStringLiteral("analysisBackendControl"));
     auto* solverExecutable = solverSetup.findChild<QLineEdit*>(
@@ -208,6 +219,30 @@ auto main(int argc, char* argv[]) -> int
         || !navigatorCollapses || !navigatorExpands) {
         return NECWB_SMOKE_FAILURE("compact workspace navigation");
     }
+    const auto tabNames = [](const QTabWidget* tabs) {
+        QStringList names;
+        if (tabs == nullptr) return names;
+        for (auto index = 0; index < tabs->count(); ++index)
+            names.push_back(tabs->tabText(index));
+        return names;
+    };
+    auto consolidatedSetupNavigation = false;
+    {
+        necwb::ui::MainWindow mainWindow;
+        auto* setupWorkspace = mainWindow.findChild<QTabWidget*>(QStringLiteral("setupWorkspace"));
+        auto* modelWorkspace = mainWindow.findChild<QTabWidget*>(QStringLiteral("modelWorkspace"));
+        auto* setupModuleAction = mainWindow.findChild<QAction*>(
+            QStringLiteral("setupModuleAction"));
+        consolidatedSetupNavigation = setupModuleAction != nullptr
+            && setupModuleAction->text() == QStringLiteral("&Setup")
+            && tabNames(modelWorkspace) == QStringList{QStringLiteral("Geometry"),
+                QStringLiteral("Parameters"), QStringLiteral("NEC Deck")}
+            && tabNames(setupWorkspace) == QStringList{QStringLiteral("Frequency"),
+                QStringLiteral("Sources"), QStringLiteral("Loads && Transmission Lines"),
+                QStringLiteral("Environment"), QStringLiteral("Requests"), QStringLiteral("Solver")};
+    }
+    if (!consolidatedSetupNavigation)
+        return NECWB_SMOKE_FAILURE("consolidated setup navigation");
     necwb::analysis::AnalysisResult result;
     result.feedpoints = {
         {14.0, 1, 6, {1.0, 0.0}, {0.01, 0.0}, {40.0, -12.0}, 0.005},
@@ -261,6 +296,10 @@ auto main(int argc, char* argv[]) -> int
     auto* swrScaleControl = view.findChild<QComboBox*>(QStringLiteral("swrScaleControl"));
     auto* sweepShowReference = view.findChild<QCheckBox*>(
         QStringLiteral("sweepShowReference"));
+    const auto sweepReferenceDefaultsHidden = sweepShowReference != nullptr
+        && !sweepShowReference->isChecked();
+    if (sweepShowReference != nullptr) sweepShowReference->setChecked(true);
+    application.processEvents();
     const auto frequencyTickLabels = impedanceSweepPlot == nullptr
         ? QStringList{} : impedanceSweepPlot->property("xAxisTickLabels").toStringList();
     const auto frequencyTicksDistinct = frequencyTickLabels.size() > 1
@@ -308,7 +347,7 @@ auto main(int argc, char* argv[]) -> int
         || swrSweepPlot->property("referenceSeriesCount").toInt() != 0) {
         return NECWB_SMOKE_FAILURE("reference plots with differing Z0");
     }
-    if (sweepShowReference == nullptr || !sweepReferenceCanHide
+    if (sweepShowReference == nullptr || !sweepReferenceDefaultsHidden || !sweepReferenceCanHide
         || swrScaleControl == nullptr || swrScaleControl->count() != 4
         || swrScaleControl->currentText() != QStringLiteral("Logarithmic")) {
         return NECWB_SMOKE_FAILURE("SWR scale control initialization");
@@ -504,6 +543,15 @@ auto main(int argc, char* argv[]) -> int
     const auto optimizationCandidateReviewDefaultSize =
         optimizationCandidateDetailsWindow == nullptr
         ? QSize{} : optimizationCandidateDetailsWindow->size();
+    const auto availableScreenSize = QApplication::primaryScreen() == nullptr
+        ? QSize{860, 620}
+        : QApplication::primaryScreen()->availableGeometry().size();
+    const auto expectedCandidateReviewSize = QSize{860, 620}.boundedTo(
+        QSize{qMax(1, qRound(availableScreenSize.width() * 0.90)),
+            qMax(1, qRound(availableScreenSize.height() * 0.88))});
+    const auto optimizationMargins = optimization.layout()->contentsMargins();
+    const auto candidateReviewMargins = optimizationCandidateDetailsWindow == nullptr
+        ? QMargins{} : optimizationCandidateDetailsWindow->layout()->contentsMargins();
     auto* optimizationComparePanel = optimizationCandidateDetailsWindow == nullptr
         ? nullptr : optimizationCandidateDetailsWindow->findChild<QWidget*>(
             QStringLiteral("optimizationComparePanel"));
@@ -1515,13 +1563,17 @@ auto main(int argc, char* argv[]) -> int
         || optimizationCandidateDetailsWindow->testAttribute(Qt::WA_QuitOnClose)
         || optimizationCandidateDetailsWindow->isVisible()
         || optimizationCandidateDetailsWindow->windowTitle() != QStringLiteral("Candidate Results")
-        || optimizationCandidateReviewDefaultSize.width() > 640
-        || optimizationCandidateReviewDefaultSize.height() > 460
+        || optimizationCandidateReviewDefaultSize != expectedCandidateReviewSize
+        || optimizationMargins.left() > 4 || optimizationMargins.top() > 4
+        || optimizationMargins.right() > 4 || optimizationMargins.bottom() > 4
+        || candidateReviewMargins.left() > 4 || candidateReviewMargins.top() > 4
+        || candidateReviewMargins.right() > 4 || candidateReviewMargins.bottom() > 4
         || !staleDirectionReported
         || !directionalStartingModelOverlay
         || optimizationCandidateDetails == nullptr
         || optimizationCandidateDetails->columnCount() != 9
         || optimizationCandidateDetails->verticalHeader()->defaultSectionSize() > 24
+        || optimizationResultsTable->verticalHeader()->defaultSectionSize() > 22
         || optimizationDirectionMode == nullptr
         || optimizationDirectionMode->count() != 3
         || optimizationDirectionMode->currentText()
@@ -1748,8 +1800,7 @@ auto main(int argc, char* argv[]) -> int
         || !radiationPolarPlot->property("ringLabelBackground").toBool()
         || radiationPolarPlot->property("hoverSampleMode").toString()
             != QStringLiteral("nearest-nec-sample")
-        || !radiationPolarPlot->property("referenceVisible").toBool()
-        || radiationPolarPlot->property("referenceSampleCount").toInt() <= 0
+        || radiationPolarPlot->property("referenceVisible").toBool()
         || !necwb::ui::radiationAnglesCoverCircle(fullCircle)
         || necwb::ui::radiationAnglesCoverCircle(partialCircle)) {
         return NECWB_SMOKE_FAILURE("radiation cut analysis");
@@ -1760,6 +1811,7 @@ auto main(int argc, char* argv[]) -> int
             && sample.patternIndex == 0 && necwb::nearlyEqual(sample.phiDegrees, 0.0)
             && necwb::nearlyEqual(sample.thetaDegrees, 15.0);
     });
+    radiation2D.setReferenceVisible(true);
     radiation2D.setReferenceResults(
         incompatibleRadiationReference, QStringLiteral("Different grid"));
     application.processEvents();
@@ -1771,6 +1823,7 @@ auto main(int argc, char* argv[]) -> int
         return NECWB_SMOKE_FAILURE("incompatible radiation reference grid");
     }
     radiation2D.setReferenceResults(radiationReference, QStringLiteral("Original dipole"));
+    radiation2D.setReferenceVisible(false);
     necwb::model::AntennaModel antenna;
     antenna.addWire({1, {0.0, 0.0, -0.5}, {0.0, 0.0, 0.5}, 11, 0.001, 1});
     radiation3D.setModel(antenna);
@@ -1852,6 +1905,12 @@ auto main(int argc, char* argv[]) -> int
         || radiation2DExportImage == nullptr || radiation2DExportData == nullptr
         || radiation3DExportImage == nullptr || radiation3DExportData == nullptr)
         return NECWB_SMOKE_FAILURE("radiation result controls");
+    const auto radiationReferencesDefaultHidden = !radiation2DShowReference->isChecked()
+        && !radiation3DShowReference->isChecked()
+        && !radiationPerformanceShowReference->isChecked();
+    radiation2DShowReference->setChecked(true);
+    radiation3DShowReference->setChecked(true);
+    radiationPerformanceShowReference->setChecked(true);
     application.processEvents();
     const auto radiation2DReferenceVisible = radiationPolarPlot->property(
         "referenceVisible").toBool();
@@ -1872,7 +1931,8 @@ auto main(int argc, char* argv[]) -> int
     radiation2DShowReference->setChecked(true);
     radiation3DShowReference->setChecked(true);
     radiationPerformanceShowReference->setChecked(true);
-    if (!radiationReferencesVisible || !radiationReferencesCanHide)
+    if (!radiationReferencesDefaultHidden || !radiationReferencesVisible
+        || !radiationReferencesCanHide)
         return NECWB_SMOKE_FAILURE("radiation reference visibility controls");
     const auto spaceChangesCutWithoutPriorFocus = std::ranges::any_of(
         radiation2DShortcuts, [](const QShortcut* shortcut) {
@@ -2063,6 +2123,7 @@ auto main(int argc, char* argv[]) -> int
     radiation3D.render(&currentPainter); currentPainter.end();
     QTextDocument sourceDocument(QStringLiteral("CM dashboard test\nCE\nGW 1 11 0 0 -0.5 0 0 0.5 0.001\nGE 0\nEN\n"));
     necwb::ui::DashboardPage dashboard(&sourceDocument);
+    const auto dashboardCompact = hasCompactMargins(dashboard, 8);
     dashboard.resize(1000, 700);
     necwb::model::ModelSetup setup;
     dashboard.setModel(antenna, setup, QStringLiteral("nec2"), true, 0, 0);
@@ -2194,6 +2255,7 @@ auto main(int argc, char* argv[]) -> int
     const auto welcomeStateValid = recentList->count() == 2
         && recentOpened == QStringLiteral("/tmp/second.nec") && recentCleared;
     necwb::ui::StructuredCardEditor structuredCards;
+    const auto structuredCardsCompact = hasCompactMargins(structuredCards, 6);
     structuredCards.resize(900, 500);
     structuredCards.setDocument(necwb::nec::NecParser{}.parse(
         "GW 1 11 0 0 -0.5 0 0 0.5 0.001\nEX 0 1 6 0 1 0\nFR 0 1 0 0 14.1 0\nEN\n"));
@@ -2449,6 +2511,7 @@ auto main(int argc, char* argv[]) -> int
         setupEditor.environmentPage())
         && std::abs(groundConductivity->value() - 0.005) < 1.0e-12;
     necwb::ui::ParameterEditor parameterEditor;
+    const auto parameterEditorCompact = hasCompactMargins(parameterEditor, 8);
     parameterEditor.setResolution(necwb::nec::NecSymbolResolver{}.resolve(
         "SY LENGTH=10, HALF=LENGTH/2\nGW 1 11 -HALF 0 0 HALF 0 0 .001\nGE 0\nEN\n"));
     parameterEditor.resize(760, 520);
@@ -2523,6 +2586,7 @@ auto main(int argc, char* argv[]) -> int
         {37, 36, 0.0, 0.0, 5.0, 10.0, 5},
         {1, 360, 62.0, 0.0, 0.0, 1.0, 6}};
     necwb::ui::AnalysisRequestEditor requestEditor;
+    const auto requestEditorCompact = hasCompactMargins(requestEditor, 12);
     requestEditor.setData(requestSetup);
     requestEditor.resize(900, 760);
     requestEditor.show();
@@ -2910,6 +2974,7 @@ auto main(int argc, char* argv[]) -> int
     reviewSourceFile.close();
     reviewDeckFile.close();
     necwb::ui::RunReviewWindow runReview;
+    const auto runReviewCompact = hasCompactMargins(runReview, 6);
     const auto reviewLoaded = reviewArtifactsWritten
         && runReview.showRun(run, QStringLiteral("active-model.nec"));
     application.processEvents();
@@ -3008,6 +3073,8 @@ auto main(int argc, char* argv[]) -> int
         && !welcomeImage.isNull() && welcomeStateValid && !examplesOpened && storeValid
         && runReviewValid
         && runReviewSwitchesCleanly
+        && solverSetupCompact && dashboardCompact && structuredCardsCompact
+        && parameterEditorCompact && requestEditorCompact && runReviewCompact
         && runDeletionSafe
         && !structuredImage.isNull() && invalidEditBlocked && duplicateFrequencyBlocked
         && structuredSelectionWorks && structuredHierarchyValid

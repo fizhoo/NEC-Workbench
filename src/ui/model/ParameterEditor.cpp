@@ -39,7 +39,7 @@ ParameterEditor::ParameterEditor(QWidget* parent)
     : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setContentsMargins(8, 8, 8, 8);
     auto* group = new QGroupBox(tr("Model Parameters (SY)"), this);
     auto* groupLayout = new QVBoxLayout(group);
 

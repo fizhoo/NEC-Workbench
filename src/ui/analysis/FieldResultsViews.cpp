@@ -1179,7 +1179,7 @@ RadiationPatternView::RadiationPatternView(QWidget* parent) : QWidget(parent)
     exportDataButton_->setObjectName(QStringLiteral("radiation2DExportData"));
     referenceControl_ = new QCheckBox(tr("Show Reference Overlay"), this);
     referenceControl_->setObjectName(QStringLiteral("radiation2DShowReference"));
-    referenceControl_->setChecked(true);
+    referenceControl_->setChecked(false);
     referenceControl_->setEnabled(false);
     navigation->addWidget(previous); navigation->addWidget(orientationButton_); navigation->addWidget(next);
     navigation->addWidget(maxGainCutButton_);
@@ -1248,6 +1248,14 @@ void RadiationPatternView::clearReferenceResults()
     referenceLabel_.clear();
     referenceControl_->setEnabled(false);
     refresh();
+}
+void RadiationPatternView::setReferenceVisible(bool visible)
+{
+    referenceControl_->setChecked(visible);
+}
+void RadiationPatternView::setReferenceControlVisible(bool visible)
+{
+    referenceControl_->setVisible(visible);
 }
 void RadiationPatternView::setSelectedFrequency(double frequencyMHz)
 {
@@ -1577,7 +1585,7 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
     radiationControl_ = new QCheckBox(tr("Radiation Surface"), this); radiationControl_->setChecked(true);
     referenceControl_ = new QCheckBox(tr("Show Reference Overlay"), this);
     referenceControl_->setObjectName(QStringLiteral("radiation3DShowReference"));
-    referenceControl_->setChecked(true);
+    referenceControl_->setChecked(false);
     referenceControl_->setEnabled(false);
     auto* resetView = new QPushButton(tr("Reset View"), this);
     exportImageButton_ = new QPushButton(tr("Export Image…"), this);
@@ -1646,6 +1654,10 @@ void Radiation3DView::clearReferenceResults()
     referenceLabel_.clear();
     referenceControl_->setEnabled(false);
     refresh();
+}
+void Radiation3DView::setReferenceVisible(bool visible)
+{
+    referenceControl_->setChecked(visible);
 }
 void Radiation3DView::setModel(const model::AntennaModel& model)
 { model_ = model; surface_->setModel(model_); }
@@ -1819,7 +1831,7 @@ RadiationPerformanceView::RadiationPerformanceView(QWidget* parent)
     controls->addStretch();
     referenceControl_ = new QCheckBox(tr("Show Reference Overlay"), this);
     referenceControl_->setObjectName(QStringLiteral("radiationPerformanceShowReference"));
-    referenceControl_->setChecked(true);
+    referenceControl_->setChecked(false);
     referenceControl_->setEnabled(false);
     controls->addWidget(referenceControl_);
     summary_ = new QLabel(tr(
@@ -1866,6 +1878,10 @@ void RadiationPerformanceView::clearReferenceResults()
     referenceLabel_.clear();
     referenceControl_->setEnabled(false);
     refresh();
+}
+void RadiationPerformanceView::setReferenceVisible(bool visible)
+{
+    referenceControl_->setChecked(visible);
 }
 
 void RadiationPerformanceView::setSelectedFrequency(double frequencyMHz)

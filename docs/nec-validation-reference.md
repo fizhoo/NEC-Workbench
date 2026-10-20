@@ -18,7 +18,7 @@ authoritative for numerical execution.
 | `LD 6` LC trap | Error: not original NEC-2 | Recognized, but currently blocked because Workbench does not perform the full 4nec2 conversion | Accepted |
 | Unknown extension card | Preserved with warning | Preserved with warning | Preserved with warning |
 
-The profile follows **Analysis → Solver**. Backend-specific diagnostics identify the
+The profile follows **Setup → Solver**. Backend-specific diagnostics identify the
 selected target by name and the Model Check report links back to Solver settings.
 
 The following known extension families are not yet classified by dedicated rules:

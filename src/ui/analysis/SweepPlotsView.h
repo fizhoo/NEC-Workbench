@@ -53,6 +53,7 @@ public:
     void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
     void setReferenceResults(const analysis::AnalysisResult& result, QString label);
     void clearReferenceResults();
+    void setReferenceVisible(bool visible);
     void setReferenceControlVisible(bool visible);
     void setSelectedFrequency(double frequencyMHz);
     void configureForCompactReview();

@@ -78,8 +78,8 @@ auto rangeSummary(double start, int count, double step) -> QString
 AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(24, 24, 24, 24);
-    layout->setSpacing(12);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(8);
     auto* heading = new QLabel(tr("Requested Results"), this);
     auto headingFont = heading->font();
     headingFont.setBold(true);

@@ -438,7 +438,7 @@ public:
 StructuredCardEditor::StructuredCardEditor(QWidget* parent) : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setContentsMargins(6, 6, 6, 6);
     description_ = new QLabel(this);
     description_->setWordWrap(true);
     auto* actions = new QHBoxLayout;

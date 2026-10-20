@@ -28,6 +28,7 @@
 #include <QFrame>
 #include <QFormLayout>
 #include <QGridLayout>
+#include <QGuiApplication>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QHBoxLayout>
@@ -44,6 +45,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollArea>
+#include <QScreen>
 #include <QSettings>
 #include <QSizePolicy>
 #include <QSignalBlocker>
@@ -71,6 +73,20 @@ namespace {
 auto candidateReviewSizeKey() -> QString
 {
     return QStringLiteral("optimization/candidateReviewSizeV1");
+}
+
+auto candidateReviewInitialSize(const QSize& savedSize) -> QSize
+{
+    constexpr QSize oldDefault{640, 460};
+    constexpr QSize preferred{860, 620};
+    const auto requested = savedSize.isValid() && savedSize != oldDefault
+        ? savedSize : preferred;
+    const auto* screen = QGuiApplication::primaryScreen();
+    if (screen == nullptr) return requested;
+    const auto available = screen->availableGeometry().size();
+    const QSize maximum{qMax(1, qRound(available.width() * 0.90)),
+        qMax(1, qRound(available.height() * 0.88))};
+    return requested.boundedTo(maximum);
 }
 
 enum ResultColumn {
@@ -629,6 +645,8 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
 {
     evaluator_ = new CandidateEvaluator(this);
     auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(4, 4, 4, 4);
+    layout->setSpacing(4);
     historicalBanner_ = new QFrame(this);
     historicalBanner_->setObjectName(QStringLiteral("optimizationHistoricalBanner"));
     static_cast<QFrame*>(historicalBanner_)->setFrameShape(QFrame::StyledPanel);
@@ -1031,21 +1049,22 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     auto* setupContent = new QWidget(this);
     setupContent->setObjectName(QStringLiteral("optimizationSetupContent"));
     auto* setupLayout = new QVBoxLayout(setupContent);
-    setupLayout->setContentsMargins(6, 6, 6, 6);
-    setupLayout->setSpacing(6);
+    setupLayout->setContentsMargins(4, 4, 4, 4);
+    setupLayout->setSpacing(4);
 
     auto* variableSection = new QGroupBox(tr("Variable"), setupContent);
     variableSection->setObjectName(QStringLiteral("optimizationVariableSection"));
     parameterSettings_ = new QWidget(variableSection);
     parameterSettings_->setObjectName(QStringLiteral("optimizationParameterSettings"));
     auto* variableSectionLayout = new QVBoxLayout(variableSection);
-    variableSectionLayout->setContentsMargins(6, 8, 6, 6);
+    variableSectionLayout->setContentsMargins(5, 7, 5, 5);
+    variableSectionLayout->setSpacing(4);
     variableSectionLayout->addWidget(parameterSettings_);
     auto* parameterizationBar = new QWidget(variableSection);
     parameterizationBar->setObjectName(QStringLiteral("optimizationParameterizationHint"));
     auto* parameterizationLayout = new QHBoxLayout(parameterizationBar);
     parameterizationLayout->setContentsMargins(0, 0, 0, 0);
-    parameterizationLayout->setSpacing(6);
+    parameterizationLayout->setSpacing(4);
     auto* parameterizationHint = new QLabel(tr(
         "Need another variable? Parameterize a numeric NEC field in Structured Cards."),
         parameterizationBar);
@@ -1161,7 +1180,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     auto* frequencySection = new QGroupBox(tr("Frequencies"), setupContent);
     frequencySection->setObjectName(QStringLiteral("optimizationFrequencySection"));
     auto* frequencyPageLayout = new QVBoxLayout(frequencySection);
-    frequencyPageLayout->setContentsMargins(6, 8, 6, 6);
+    frequencyPageLayout->setContentsMargins(5, 7, 5, 5);
     frequencyPageLayout->setSpacing(4);
     frequencySummaryLabel_ = new QLabel(frequencySection);
     frequencySummaryLabel_->setObjectName(
@@ -1199,7 +1218,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     auto* objectiveSection = new QGroupBox(tr("Objective"), setupContent);
     objectiveSection->setObjectName(QStringLiteral("optimizationObjectiveSection"));
     auto* objectiveLayout = new QVBoxLayout(objectiveSection);
-    objectiveLayout->setContentsMargins(6, 8, 6, 6);
+    objectiveLayout->setContentsMargins(5, 7, 5, 5);
     objectiveLayout->setSpacing(4);
     objectiveSummaryLabel_ = new QLabel(objectiveSection);
     objectiveSummaryLabel_->setObjectName(
@@ -1345,7 +1364,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     auto* configurationLayout = new QVBoxLayout(configurationPanel_);
     configurationLayout->setContentsMargins(0, 0, 0, 0);
     configurationLayout->addWidget(configurationScrollArea, 1);
-    configurationPanel_->setMinimumWidth(280);
+    configurationPanel_->setMinimumWidth(260);
     configurationPanel_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
 
     auto* buttons = new QHBoxLayout;
@@ -1389,6 +1408,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         "Double-click a completed candidate to inspect it and compare it with the optimization baseline. "
         "Right-click for apply and run actions."));
     resultsTable_->verticalHeader()->hide();
+    resultsTable_->verticalHeader()->setDefaultSectionSize(21);
     resultsTable_->horizontalHeader()->setSortIndicatorShown(false);
     for (auto column = static_cast<int>(ValueColumn);
          column <= static_cast<int>(FrontToRearColumn); ++column) {
@@ -1416,11 +1436,10 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     candidateDetailsWindow_->setModal(false);
     candidateDetailsWindow_->setAttribute(Qt::WA_QuitOnClose, false);
     const auto savedReviewSize = QSettings{}.value(candidateReviewSizeKey()).toSize();
-    candidateDetailsWindow_->resize(savedReviewSize.isValid()
-        ? savedReviewSize : QSize{640, 460});
+    candidateDetailsWindow_->resize(candidateReviewInitialSize(savedReviewSize));
     auto* detailLayout = new QVBoxLayout(candidateDetailsWindow_);
-    detailLayout->setContentsMargins(6, 6, 6, 6);
-    detailLayout->setSpacing(6);
+    detailLayout->setContentsMargins(4, 4, 4, 4);
+    detailLayout->setSpacing(4);
     candidateDetailLabel_ = new QLabel(candidateDetailsWindow_);
     candidateDetailLabel_->setObjectName(QStringLiteral("optimizationCandidateDetailLabel"));
     candidateDetailLabel_->setWordWrap(false);
@@ -1477,6 +1496,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     resultsPanel->setObjectName(QStringLiteral("optimizationResultsPanel"));
     auto* resultsLayout = new QVBoxLayout(resultsPanel);
     resultsLayout->setContentsMargins(0, 0, 0, 0);
+    resultsLayout->setSpacing(4);
     auto* resultStatusRow = new QHBoxLayout;
     resultStatusRow->addWidget(bestLabel_, 1);
     resultStatusRow->addWidget(applyBestButton_);
@@ -1498,7 +1518,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     resultsSplitter->setStretchFactor(1, 1);
     resultsSplitter->setSizes({500, 160});
     resultsLayout->addWidget(resultsSplitter, 1);
-    resultsPanel->setMinimumWidth(420);
+    resultsPanel->setMinimumWidth(400);
 
     auto* workspaceSplitter = new QSplitter(Qt::Horizontal, this);
     workspaceSplitter->setObjectName(QStringLiteral("optimizationWorkspaceSplitter"));
@@ -1507,7 +1527,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     workspaceSplitter->setChildrenCollapsible(false);
     workspaceSplitter->setStretchFactor(0, 0);
     workspaceSplitter->setStretchFactor(1, 1);
-    workspaceSplitter->setSizes({320, 760});
+    workspaceSplitter->setSizes({300, 780});
 
     layout->addWidget(historicalBanner_);
     layout->addLayout(buttons);

@@ -53,11 +53,12 @@ same definitions.
 
 ## Workspaces
 
-The top-level workspaces are Home, Model, Analysis, Results, and Optimize.
+The top-level workspaces are Home, Model, Setup, Results, and Optimize.
 
 - **Home** summarizes the active model, recent results, and model quality.
-- **Model** owns geometry, parameters, sources, loads/networks, environment, and NEC source.
-- **Analysis** owns frequency, solver configuration, and output requests.
+- **Model** owns geometry, parameters, and NEC source.
+- **Setup** owns frequency, sources, loads/networks, environment, solver configuration,
+  and output requests.
 - **Results** owns current or historical parsed output.
 - **Optimize** owns parameter studies and candidate review.
 

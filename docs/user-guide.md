@@ -1,6 +1,6 @@
 # NEC Workbench User Guide
 
-NEC Workbench organizes work into **Home**, **Model**, **Analysis**, **Results**,
+NEC Workbench organizes work into **Home**, **Model**, **Setup**, **Results**,
 and **Optimize**. Controls provide tooltips; this guide focuses on workflow and
 behavior that is not obvious from an individual control.
 
@@ -8,13 +8,13 @@ behavior that is not obvious from an individual control.
 
 1. Create or open a `.nec` model from Home or the File menu.
 2. Edit geometry and electrical cards under Model.
-3. Configure frequency, solver, and requests under Analysis.
+3. Configure frequency, sources, loads, environment, requests, and solver under Setup.
 4. Run **Check Model** (`F7`) and resolve blocking errors.
 5. Select **Run Analysis**.
 6. Review impedance, currents, radiation, raw output, and run history under Results.
 
 NEC Workbench does not include an NEC solver. Configure a separately installed
-`nec2c`, OpenNEC, or 4nec2 NEC2dXS executable under **Analysis → Solver**.
+`nec2c`, OpenNEC, or 4nec2 NEC2dXS executable under **Setup → Solver**.
 
 The selected backend also controls compatibility validation. **NEC-2 / nec2c**
 uses strict original NEC-2 card rules, while **OpenNEC** accepts the verified
@@ -31,7 +31,7 @@ remain blocked until equivalent Workbench conversion is available.
 ## Application Layout
 
 The top workspace bar changes the main task. A compact navigator inside Model,
-Analysis, and Results selects a page within that workspace. Collapse the navigator
+Setup, and Results selects a page within that workspace. Collapse the navigator
 to icons when screen space is limited.
 
 The menu bar holds less-frequent commands. Important global actions include:
@@ -91,15 +91,6 @@ negative numeric field creates a positive parameter magnitude and preserves the 
 sign in the reference. Linking an existing parameter similarly preserves an equal or
 opposite current value, which supports symmetric geometry such as `-half_length` and
 `half_length` without changing the model.
-
-### Sources, Loads, Networks, and Environment
-
-These pages provide structured editing for supported `EX`, `LD`, `TL`, `GN`, and
-related model setup. Draft rows do not change the source until Apply is selected.
-An emphasized Apply button indicates pending changes.
-
-References are validated against available wire tags and segments. Units shown in
-the interface are converted to the NEC values stored in source.
 
 ### NEC Deck
 
@@ -165,7 +156,16 @@ Convergence runs progressively refined versions of the same model and compares
 successive impedance and available gain results. Tolerances describe numerical
 stability between levels, not universal model correctness.
 
-## Analysis
+## Setup
+
+### Sources, Loads, Networks, and Environment
+
+These pages provide structured editing for supported `EX`, `LD`, `TL`, `GN`, and
+related model setup. Draft rows do not change the source until Apply is selected.
+An emphasized Apply button indicates pending changes.
+
+References are validated against available wire tags and segments. Units shown in
+the interface are converted to the NEC values stored in source.
 
 ### Frequency
 
@@ -245,13 +245,13 @@ Summary identifies model, run, backend, and reference impedance. Numerical views
 show feedpoint impedance, SWR, current data, and available directional metrics by
 frequency. Plot hover readouts expose exact sampled values.
 
-After a completed analysis, Workbench automatically uses the previous completed run
-of the same saved model as a reference. Impedance and SWR plots draw matching
-feedpoint/frequency data as faint dashed curves behind the active result. Use each
-plot's **Show Reference Overlay** checkbox to hide or restore that comparison without
-losing the selected Reference Run. The Results banner always names the Reference Run;
-use **Change Reference…** to choose another completed run or **Clear Reference** to
-remove it. Reference SWR is unavailable when the runs use different reference impedances.
+After a completed analysis, Workbench automatically selects the previous completed run
+of the same saved model as a reference, but overlays start hidden. Use each plot's
+**Show Reference Overlay** checkbox to draw matching reference data as faint dashed
+curves without losing the selected Reference Run. The Results banner always names
+the Reference Run; use **Change Reference…** to choose another completed run or
+**Clear Reference** to remove it. Reference SWR is unavailable when the runs use
+different reference impedances.
 
 ### Radiation
 
@@ -280,7 +280,7 @@ Run History is discovered from durable run directories. Double-clicking a row op
 one reusable read-only Run Review window. It does not replace the active editor.
 
 Use **Set as Reference** to keep a selected completed analysis or quick sweep as the
-comparison baseline for the current session. References are explicit, remain labeled,
+comparison baseline for the current session and show its overlays. References remain labeled,
 and do not turn a historical run into the active result or model.
 
 The ordinary Results workspace compares one reference at a time. Comparing several

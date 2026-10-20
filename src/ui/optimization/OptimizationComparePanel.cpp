@@ -43,6 +43,8 @@ OptimizationComparePanel::OptimizationComparePanel(QWidget* parent)
     sweepPlots_->configureForCompactReview();
     pattern_ = new RadiationPatternView(tabs_);
     pattern_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    pattern_->setReferenceVisible(true);
+    pattern_->setReferenceControlVisible(false);
     directional_ = new DirectionalMetricsView(tabs_);
     directional_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     breakdown_ = new QLabel(tabs_);
