@@ -943,14 +943,14 @@ auto main(int argc, char* argv[]) -> int
             appliedSource.replace(QStringLiteral("LONG_FT=95"), QStringLiteral("LONG_FT=90"));
             appliedSource.replace(QStringLiteral("FT=0.3048"), QStringLiteral("FT=0.3"));
             optimization.setContext(appliedSource, QStringLiteral("symbol-units.nec"),
-                QStringLiteral("nec2"), QStringLiteral("/bin/true"), 120, true);
+                QStringLiteral("nec2"), QCoreApplication::applicationFilePath(), 120, true);
             return true;
         });
     optimization.setApplyAndRunCallback([](const auto&) { return true; });
     optimization.setBaselineRunCallback([](const auto&, const auto&) { return true; });
     optimization.setContext(refreshedOptimizationSource,
         QStringLiteral("symbol-units.nec"), QStringLiteral("nec2"),
-        QStringLiteral("/bin/true"), 120, true);
+        QCoreApplication::applicationFilePath(), 120, true);
     const auto candidateRowWithValue = [optimizationResultsTable](QString value) {
         if (optimizationResultsTable == nullptr) return -1;
         for (auto row = 0; row < optimizationResultsTable->rowCount(); ++row) {
@@ -1449,7 +1449,7 @@ auto main(int argc, char* argv[]) -> int
         });
     baselineStartWorkspace.setContext(optimizationSource,
         QStringLiteral("baseline-start.nec"), QStringLiteral("nec2"),
-        QStringLiteral("/bin/true"), 120, true);
+        QCoreApplication::applicationFilePath(), 120, true);
     auto* baselineStartButton = baselineStartWorkspace.findChild<QPushButton*>(
         QStringLiteral("optimizationRun"));
     const auto baselineStartTooltipValid = baselineStartButton != nullptr
