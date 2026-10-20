@@ -32,6 +32,7 @@
 #include <QGuiApplication>
 #include <QGroupBox>
 #include <QHeaderView>
+#include <QHideEvent>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QJsonArray>
@@ -111,6 +112,12 @@ protected:
     {
         saveCandidateReviewGeometry(*this);
         QDialog::closeEvent(event);
+    }
+
+    void hideEvent(QHideEvent* event) override
+    {
+        saveCandidateReviewGeometry(*this);
+        QDialog::hideEvent(event);
     }
 };
 
