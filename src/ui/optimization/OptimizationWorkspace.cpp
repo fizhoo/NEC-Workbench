@@ -18,6 +18,7 @@
 
 #include <QAbstractItemView>
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -88,6 +89,18 @@ auto candidateReviewInitialSize(const QSize& savedSize) -> QSize
         qMax(1, qRound(available.height() * 0.88))};
     return requested.boundedTo(maximum);
 }
+
+class CandidateReviewDialog final : public QDialog {
+public:
+    using QDialog::QDialog;
+
+protected:
+    void closeEvent(QCloseEvent* event) override
+    {
+        QSettings{}.setValue(candidateReviewSizeKey(), size());
+        QDialog::closeEvent(event);
+    }
+};
 
 enum ResultColumn {
     ValueColumn,
@@ -1429,7 +1442,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         resultsTable_->selectRow(row);
         showCandidateDetails(candidateIndex);
     });
-    candidateDetailsWindow_ = new QDialog(nullptr, Qt::Window);
+    candidateDetailsWindow_ = new CandidateReviewDialog(nullptr, Qt::Window);
     candidateDetailsWindow_->setObjectName(
         QStringLiteral("optimizationCandidateDetailsWindow"));
     candidateDetailsWindow_->setWindowTitle(tr("Candidate Results"));
@@ -1486,10 +1499,6 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     detailLayout->addWidget(candidateDetailLabel_);
     detailLayout->addWidget(candidateDetailViews_, 1);
     detailLayout->addLayout(candidateActionRow);
-    connect(candidateDetailsWindow_, &QDialog::finished, this, [this] {
-        QSettings{}.setValue(candidateReviewSizeKey(),
-            candidateDetailsWindow_->size());
-    });
     resetCandidateDetails();
 
     auto* resultsPanel = new QWidget(this);
