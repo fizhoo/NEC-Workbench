@@ -101,6 +101,7 @@ void saveCandidateReviewGeometry(const QDialog& dialog)
     QSettings settings;
     settings.setValue(candidateReviewGeometryKey(), dialog.saveGeometry());
     settings.setValue(candidateReviewSizeKey(), dialog.size());
+    settings.sync();
 }
 
 class CandidateReviewDialog final : public QDialog {

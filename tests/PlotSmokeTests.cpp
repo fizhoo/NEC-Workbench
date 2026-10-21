@@ -120,6 +120,8 @@ auto main(int argc, char* argv[]) -> int
     }
     QStandardPaths::setTestModeEnabled(true);
     QApplication application(argc, argv);
+    QApplication::setApplicationName(QStringLiteral("NEC Workbench Tests"));
+    QApplication::setOrganizationName(QStringLiteral("NEC Workbench"));
     const auto hasCompactMargins = [](const QWidget& widget, int maximum) {
         const auto* layout = widget.layout();
         if (layout == nullptr) return false;
@@ -1049,12 +1051,14 @@ auto main(int argc, char* argv[]) -> int
         necwb::ui::OptimizationWorkspace persistenceWorkspace;
     }
     QSettings candidateReviewSettings;
+    candidateReviewSettings.sync();
     const auto savedCandidateReviewSize = candidateReviewSettings.value(
         QStringLiteral("optimization/candidateReviewSizeV1")).toSize();
     const auto savedCandidateReviewGeometry = candidateReviewSettings.value(
         QStringLiteral("optimization/candidateReviewGeometryV1")).toByteArray();
     const auto candidateReviewGeometryPersisted =
-        !savedCandidateReviewGeometry.isEmpty() || savedCandidateReviewSize.isValid();
+        candidateReviewSettings.status() == QSettings::NoError
+        && (!savedCandidateReviewGeometry.isEmpty() || savedCandidateReviewSize.isValid());
     optimization.setContext(refreshedOptimizationSource,
         QStringLiteral("symbol-units.nec"), QStringLiteral("nec2"), {}, 120, false);
     optimizationRunStore.removeGroup(
