@@ -1042,6 +1042,12 @@ auto main(int argc, char* argv[]) -> int
     application.processEvents();
     optimizationCandidateDetailsWindow->close();
     application.processEvents();
+    optimizationCandidateDetailsWindow->hide();
+    QSettings{}.remove(QStringLiteral("optimization/candidateReviewSizeV1"));
+    QSettings{}.remove(QStringLiteral("optimization/candidateReviewGeometryV1"));
+    {
+        necwb::ui::OptimizationWorkspace persistenceWorkspace;
+    }
     QSettings candidateReviewSettings;
     const auto savedCandidateReviewSize = candidateReviewSettings.value(
         QStringLiteral("optimization/candidateReviewSizeV1")).toSize();
@@ -1049,7 +1055,6 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimization/candidateReviewGeometryV1")).toByteArray();
     const auto candidateReviewGeometryPersisted =
         !savedCandidateReviewGeometry.isEmpty() || savedCandidateReviewSize.isValid();
-    optimizationCandidateDetailsWindow->hide();
     optimization.setContext(refreshedOptimizationSource,
         QStringLiteral("symbol-units.nec"), QStringLiteral("nec2"), {}, 120, false);
     optimizationRunStore.removeGroup(
