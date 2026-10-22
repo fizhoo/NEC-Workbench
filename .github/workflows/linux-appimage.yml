@@ -2,7 +2,7 @@ name: Linux AppImage
 
 on:
   push:
-    branches: [main, feature/baseline-reference]
+    branches: [main, feature/baseline-reference, feature/compact-workspace]
   pull_request:
   workflow_dispatch:
 

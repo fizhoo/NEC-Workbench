@@ -113,7 +113,7 @@ auto ResultReferenceController::label() const -> QString
         ? QString{} : QStringLiteral(" — “%1”").arg(reference_->userNote.trimmed());
     return QStringLiteral("%1 — %2 — %3%4%5")
         .arg(modelName, started, reference_->backend, note,
-            pinned_ ? QStringLiteral(" — pinned") : QString{});
+            pinned_ ? QStringLiteral(" — selected manually") : QString{});
 }
 
 auto ResultReferenceController::modelIdentity(const QString& sourceFile) -> QString

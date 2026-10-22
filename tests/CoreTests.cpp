@@ -3,6 +3,7 @@
 #include "analysis/AverageGainTest.h"
 #include "analysis/DifferentialEvolutionSearch.h"
 #include "analysis/FrequencyPlan.h"
+#include "analysis/HistoricalOverlayCompatibility.h"
 #include "analysis/NecOutputParser.h"
 #include "analysis/NelderMeadSearch.h"
 #include "analysis/OptimizationBaseline.h"
@@ -82,6 +83,59 @@ void testReferenceRunSelection()
     expect(!necwb::analysis::selectPreviousReferenceRun(
         candidates, "active", "/models/missing.nec"),
         "reference selection does not cross model identities");
+}
+
+void testHistoricalOverlayCompatibility()
+{
+    using necwb::analysis::AnalysisResult;
+    using necwb::analysis::FeedpointResult;
+    using necwb::analysis::HistoricalOverlayStatus;
+    using necwb::analysis::RadiationSample;
+
+    AnalysisResult current;
+    current.feedpoints = {
+        FeedpointResult{14.0, 1, 6},
+        FeedpointResult{14.1, 1, 6},
+    };
+    current.radiation = {
+        RadiationSample{14.0, 90.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 1},
+        RadiationSample{14.0, 90.0, 180.0, 0.0, 0.0, -5.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 1},
+        RadiationSample{14.1, 90.0, 0.0, 0.0, 0.0, 5.1, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 2},
+        RadiationSample{14.1, 90.0, 180.0, 0.0, 0.0, -5.1, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 2},
+    };
+    auto historical = current;
+    auto compatibility = necwb::analysis::evaluateHistoricalOverlayCompatibility(
+        current, historical);
+    expect(compatibility.impedance == HistoricalOverlayStatus::Compatible
+            && compatibility.radiation == HistoricalOverlayStatus::Compatible,
+        "historical overlay recognizes fully compatible results");
+
+    historical.feedpoints.pop_back();
+    historical.radiation.resize(2);
+    compatibility = necwb::analysis::evaluateHistoricalOverlayCompatibility(
+        current, historical);
+    expect(compatibility.impedance == HistoricalOverlayStatus::Partial
+            && compatibility.radiation == HistoricalOverlayStatus::Partial,
+        "historical overlay recognizes partial result coverage");
+
+    historical = current;
+    historical.referenceImpedanceOhms = 75.0;
+    compatibility = necwb::analysis::evaluateHistoricalOverlayCompatibility(
+        current, historical);
+    expect(compatibility.impedance == HistoricalOverlayStatus::Partial,
+        "historical overlay reports differing reference impedance as partial");
+
+    for (auto& sample : historical.feedpoints) sample.frequencyMHz += 10.0;
+    for (auto& sample : historical.radiation) sample.frequencyMHz += 10.0;
+    compatibility = necwb::analysis::evaluateHistoricalOverlayCompatibility(
+        current, historical);
+    expect(compatibility.impedance == HistoricalOverlayStatus::NoMatchingData
+            && compatibility.radiation == HistoricalOverlayStatus::NoMatchingData,
+        "historical overlay rejects unrelated result grids");
 }
 
 void testOptimizationBaselineFingerprint()
@@ -2682,6 +2736,7 @@ void testSegmentationConvergencePreparation()
 auto main() -> int
 {
     testReferenceRunSelection();
+    testHistoricalOverlayCompatibility();
     testOptimizationBaselineFingerprint();
     testOptimizationBaselineCompatibility();
     testOptimizationPresets();

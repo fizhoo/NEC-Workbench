@@ -5,6 +5,7 @@
 #include "ui/WorkspaceNavigator.h"
 
 #include "analysis/FrequencyComparison.h"
+#include "analysis/HistoricalOverlayCompatibility.h"
 #include "analysis/OptimizationBaseline.h"
 #include "analysis/SolverCommand.h"
 #include "analysis/NecOutputParser.h"
@@ -34,6 +35,7 @@
 #include "ui/analysis/RunReviewWindow.h"
 #include "ui/analysis/SweepPlotsView.h"
 #include "ui/analysis/FieldResultsViews.h"
+#include "ui/analysis/HistoricalOverlayControl.h"
 #include "ui/editor/NecEditor.h"
 #include "ui/editor/NecHighlighter.h"
 #include "ui/geometry/EngineeringSpinBox.h"
@@ -148,6 +150,19 @@ auto workbenchIcon(const char* name) -> QIcon
 {
     return QIcon(QStringLiteral(":/icons/")
         + QString::fromLatin1(name) + QStringLiteral(".svg"));
+}
+
+auto historicalOverlayStatusText(analysis::HistoricalOverlayStatus status) -> QString
+{
+    switch (status) {
+    case analysis::HistoricalOverlayStatus::Compatible:
+        return QObject::tr("Compatible");
+    case analysis::HistoricalOverlayStatus::Partial:
+        return QObject::tr("Partial");
+    case analysis::HistoricalOverlayStatus::NoMatchingData:
+        return QObject::tr("No matching data");
+    }
+    return {};
 }
 
 void invokeFocusedEditCommand(const char* command)
@@ -787,8 +802,8 @@ void MainWindow::createActions()
     connect(modelModuleAction_, &QAction::triggered, this, [this] { showModule(modelModuleIndex_); });
     connect(analysisModuleAction_, &QAction::triggered, this, [this] { showModule(analysisModuleIndex_); });
     connect(resultsModuleAction_, &QAction::triggered, this, [this] {
-        showModule(resultsModuleIndex_);
-        if (!resultsAvailable_) resultsWorkspace_->setCurrentIndex(analysisRunsTabIndex_);
+        if (resultsAvailable_) showModule(resultsModuleIndex_);
+        else showRunHistory();
     });
     connect(optimizeModuleAction_, &QAction::triggered,
         this, [this] { showModule(optimizeModuleIndex_); });
@@ -833,7 +848,7 @@ void MainWindow::createWorkspace()
         [this] { openExample(); }, [this] { clearRecentFiles(); }, dashboardStack_);
     welcomePage_->setRecentFiles(recentFiles());
     dashboardStack_->addWidget(welcomePage_);
-    dashboardPage_ = new DashboardPage(editor_->document(), dashboardStack_);
+    dashboardPage_ = new DashboardPage(dashboardStack_);
     dashboardPage_->setQuickActions(checkAction_, runAction_);
     dashboardPage_->setAverageGainAction(averageGainAction_);
     dashboardPage_->setConvergenceAction(convergenceAction_);
@@ -848,8 +863,38 @@ void MainWindow::createWorkspace()
         }
     });
     dashboardPage_->setOpenRunHistoryCallback([this] {
-        if (!showModule(resultsModuleIndex_)) return;
-        resultsWorkspace_->setCurrentIndex(analysisRunsTabIndex_);
+        showRunHistory();
+    });
+    dashboardPage_->setOpenWorkspaceCallback([this](DashboardPage::Workspace destination) {
+        switch (destination) {
+        case DashboardPage::Workspace::Model:
+            showModule(modelModuleIndex_);
+            break;
+        case DashboardPage::Workspace::Setup:
+            showModule(analysisModuleIndex_);
+            break;
+        case DashboardPage::Workspace::Antenna:
+            if (showModule(modelModuleIndex_)) {
+                modelWorkspace_->setCurrentIndex(modelGeometryWorkspaceIndex_);
+                workspace_->setCurrentIndex(geometry3DTabIndex_);
+            }
+            break;
+        case DashboardPage::Workspace::Impedance:
+            resultWindowCoordinator_->showImpedance();
+            break;
+        case DashboardPage::Workspace::Currents:
+            resultWindowCoordinator_->showCurrents();
+            break;
+        case DashboardPage::Workspace::Radiation:
+            resultWindowCoordinator_->showRadiation();
+            break;
+        case DashboardPage::Workspace::Runs:
+            showRunHistory();
+            break;
+        case DashboardPage::Workspace::Optimize:
+            showModule(optimizeModuleIndex_);
+            break;
+        }
     });
     dashboardStack_->addWidget(dashboardPage_);
     QTimer::singleShot(0, this, [this] { refreshDashboardRuns(); });
@@ -1079,9 +1124,9 @@ void MainWindow::createWorkspace()
     connect(fit3DButton, &QToolButton::clicked, geometry3DView_, &Geometry3DView::fitToView);
     connect(isometricButton, &QToolButton::clicked, geometry3DView_, &Geometry3DView::setIsometricView);
     connectAttachments(geometry3DView_);
-    const auto geometry3DTabIndex = workspace_->addTab(geometry3DPage, tr("3D Geometry"));
+    geometry3DTabIndex_ = workspace_->addTab(geometry3DPage, tr("3D Geometry"));
     workspace_->setTabIcon(geometryTabIndex_, workbenchIcon("geometry"));
-    workspace_->setTabIcon(geometry3DTabIndex, workbenchIcon("3d-view"));
+    workspace_->setTabIcon(geometry3DTabIndex_, workbenchIcon("3d-view"));
     modelGeometryWorkspaceIndex_ = modelWorkspace_->addTab(workspace_, tr("Geometry"));
 
     parameterEditor_ = new ParameterEditor(modelWorkspace_);
@@ -1244,19 +1289,19 @@ void MainWindow::createWorkspace()
     analysisWorkspace_->setTabIcon(analysisFrequencyTabIndex_, workbenchIcon("frequency-sweep"));
     analysisWorkspace_->setTabIcon(analysisRequestsTabIndex_, workbenchIcon("radiation-pattern"));
 
-    runsPage_ = new QWidget(moduleStack_);
-    auto* runsLayout = new QVBoxLayout(runsPage_);
+    auto* runsPage = new QWidget(moduleStack_);
+    auto* runsLayout = new QVBoxLayout(runsPage);
     runsLayout->setContentsMargins(10, 10, 10, 10);
-    auto* runsHeading = new QLabel(tr("Runs"), runsPage_);
+    auto* runsHeading = new QLabel(tr("Runs"), runsPage);
     auto runsHeadingFont = runsHeading->font();
     runsHeadingFont.setBold(true);
     runsHeadingFont.setPointSize(runsHeadingFont.pointSize() + 3);
     runsHeading->setFont(runsHeadingFont);
     auto* runsDescription = new QLabel(tr(
         "Analysis runs appear individually. Optimization candidates are grouped under one session row. "
-        "Open or double-click a row to inspect it in the separate, reusable Run Review window."), runsPage_);
+        "Open or double-click a row to inspect it in the separate, reusable Run Review window."), runsPage);
     runsDescription->setWordWrap(true);
-    analysisRuns_ = new QTableWidget(0, RunColumnCount, runsPage_);
+    analysisRuns_ = new QTableWidget(0, RunColumnCount, runsPage);
     analysisRuns_->setObjectName(QStringLiteral("analysisRunsTable"));
     analysisRuns_->setHorizontalHeaderLabels({tr("Started"), tr("Model"), tr("Note"), tr("Type"),
         tr("Results"), tr("Output"), tr("Backend"), tr("Status"), tr("Duration"), tr("Run Folder")});
@@ -1267,26 +1312,26 @@ void MainWindow::createWorkspace()
     analysisRuns_->horizontalHeader()->setStretchLastSection(true);
     auto* runViewButtons = new QHBoxLayout;
     auto* runManagementButtons = new QHBoxLayout;
-    cancelRunButton_ = new QPushButton(tr("Cancel Active Run"), runsPage_);
+    cancelRunButton_ = new QPushButton(tr("Cancel Active Run"), runsPage);
     cancelRunButton_->setEnabled(false);
-    openRunResultsButton_ = new QPushButton(tr("Open Run Review"), runsPage_);
+    openRunResultsButton_ = new QPushButton(tr("Open Run Review"), runsPage);
     openRunResultsButton_->setObjectName(QStringLiteral("openRunResultsButton"));
     openRunResultsButton_->setEnabled(false);
-    inspectRunInputButton_ = new QPushButton(tr("Inspect Input Snapshot"), runsPage_);
+    inspectRunInputButton_ = new QPushButton(tr("Inspect Input Snapshot"), runsPage);
     inspectRunInputButton_->setObjectName(QStringLiteral("inspectRunInputButton"));
     inspectRunInputButton_->setEnabled(false);
-    openRunSnapshotButton_ = new QPushButton(tr("Open Snapshot as New Model"), runsPage_);
+    openRunSnapshotButton_ = new QPushButton(tr("Open Snapshot as New Model"), runsPage);
     openRunSnapshotButton_->setObjectName(QStringLiteral("openRunSnapshotButton"));
     openRunSnapshotButton_->setEnabled(false);
-    openRunFolderButton_ = new QPushButton(tr("Open Run Folder"), runsPage_);
+    openRunFolderButton_ = new QPushButton(tr("Open Run Folder"), runsPage);
     openRunFolderButton_->setEnabled(false);
-    pinRunReferenceButton_ = new QPushButton(tr("Set as Reference"), runsPage_);
+    pinRunReferenceButton_ = new QPushButton(tr("Use as Historical Overlay"), runsPage);
     pinRunReferenceButton_->setObjectName(QStringLiteral("pinRunReferenceButton"));
     pinRunReferenceButton_->setEnabled(false);
-    editRunNoteButton_ = new QPushButton(tr("Edit Run Note…"), runsPage_);
+    editRunNoteButton_ = new QPushButton(tr("Edit Run Note…"), runsPage);
     editRunNoteButton_->setObjectName(QStringLiteral("editRunNoteButton"));
     editRunNoteButton_->setEnabled(false);
-    deleteRunButton_ = new QPushButton(tr("Delete Run…"), runsPage_);
+    deleteRunButton_ = new QPushButton(tr("Delete Run…"), runsPage);
     deleteRunButton_->setObjectName(QStringLiteral("deleteRunButton"));
     deleteRunButton_->setEnabled(false);
     runViewButtons->addWidget(openRunResultsButton_);
@@ -1329,6 +1374,15 @@ void MainWindow::createWorkspace()
             if (column == RunNoteColumn) editSelectedRunNote();
             else loadSelectedRun();
         });
+    runHistoryPanel_ = new DetachablePanel(QStringLiteral("run-history"),
+        tr("Run History"), moduleStack_, QStringLiteral("workspaceWindows"),
+        QStringLiteral("runHistoryWindow"));
+    runHistoryPanel_->setStatusText(tr("Saved analysis and study runs"));
+    runHistoryPanel_->setContent(runsPage);
+    moduleStack_->addWidget(runHistoryPanel_);
+    QTimer::singleShot(0, this, [this] {
+        if (runHistoryPanel_->isWindowVisible() && !runHistoryLoaded_) loadRunHistory();
+    });
 
     auto* analysisNavigator = new WorkspaceNavigator(
         analysisWorkspace_, QStringLiteral("analysis"), moduleStack_);
@@ -1397,12 +1451,12 @@ void MainWindow::createResultsWorkspace()
     activeModelResultsLabel_ = new QLabel(tr("Active Model: None"), resultsContextFrame);
     activeModelResultsLabel_->setObjectName(QStringLiteral("activeModelResultsLabel"));
     auto* referenceRow = new QHBoxLayout;
-    resultReferenceLabel_ = new QLabel(tr("Reference Run: None"), resultsContextFrame);
+    resultReferenceLabel_ = new QLabel(tr("Historical Overlay: None"), resultsContextFrame);
     resultReferenceLabel_->setObjectName(QStringLiteral("resultReferenceLabel"));
-    clearResultReferenceButton_ = new QPushButton(tr("Clear Reference"), resultsContextFrame);
+    clearResultReferenceButton_ = new QPushButton(tr("Clear Overlay"), resultsContextFrame);
     clearResultReferenceButton_->setObjectName(QStringLiteral("clearResultReferenceButton"));
     clearResultReferenceButton_->setEnabled(false);
-    changeResultReferenceButton_ = new QPushButton(tr("Change Reference…"), resultsContextFrame);
+    changeResultReferenceButton_ = new QPushButton(tr("Choose Overlay…"), resultsContextFrame);
     changeResultReferenceButton_->setObjectName(QStringLiteral("changeResultReferenceButton"));
     referenceRow->addWidget(resultReferenceLabel_, 1);
     referenceRow->addWidget(changeResultReferenceButton_);
@@ -1432,6 +1486,7 @@ void MainWindow::createResultsWorkspace()
     frequencyBar->addSpacing(12);
     frequencyBar->addWidget(resultsAvailabilityLabel_, 1);
     resultsWorkspace_ = new QTabWidget(resultsContent_);
+    resultsWorkspace_->setObjectName(QStringLiteral("resultsWorkspace"));
     resultsWorkspace_->setDocumentMode(true);
     resultsSummaryView_ = new ResultsSummaryView(resultsWorkspace_);
     resultsSummaryTabIndex_ = resultsWorkspace_->addTab(resultsSummaryView_, tr("Summary"));
@@ -1500,15 +1555,30 @@ void MainWindow::createResultsWorkspace()
         resultsStatusLabel_->setText(tr("Model validation — %1").arg(summary));
     });
 
-    auto* impedanceTabs = new QTabWidget(resultsWorkspace_);
+    auto* impedanceContent = new QWidget(resultsWorkspace_);
+    auto* impedanceLayout = new QVBoxLayout(impedanceContent);
+    impedanceLayout->setContentsMargins(0, 0, 0, 0);
+    impedanceLayout->setSpacing(2);
+    impedanceOverlayControl_ = new HistoricalOverlayControl(
+        QStringLiteral("impedance"), impedanceContent);
+    auto* impedanceTabs = new QTabWidget(impedanceContent);
     impedanceTabs->setDocumentMode(true);
     analysisResultsView_ = new ImpedanceResultsView(impedanceTabs);
     impedanceTabs->addTab(analysisResultsView_, tr("Table"));
     visualizePlotsView_ = new SweepPlotsView(impedanceTabs);
     impedanceTabs->addTab(visualizePlotsView_, tr("Plots"));
+    visualizePlotsView_->setReferenceControlVisible(false);
+    impedanceOverlayControl_->setVisibilityChangedCallback([this](bool visible) {
+        visualizePlotsView_->setReferenceVisible(visible);
+    });
+    impedanceOverlayControl_->setChooseRequestedCallback([this](QWidget* anchor) {
+        chooseResultReference(anchor);
+    });
+    impedanceLayout->addWidget(impedanceOverlayControl_);
+    impedanceLayout->addWidget(impedanceTabs, 1);
     impedancePanel_ = new DetachablePanel(
         QStringLiteral("impedance"), tr("Impedance Results"), resultsWorkspace_);
-    impedancePanel_->setContent(impedanceTabs);
+    impedancePanel_->setContent(impedanceContent);
     const auto impedanceTabIndex = resultsWorkspace_->addTab(impedancePanel_, tr("Impedance"));
 
     currentsPanel_ = new DetachablePanel(
@@ -1517,7 +1587,13 @@ void MainWindow::createResultsWorkspace()
     currentsPanel_->setContent(currentResultsView_);
     const auto currentsTabIndex = resultsWorkspace_->addTab(currentsPanel_, tr("Currents"));
 
-    auto* radiationTabs = new QTabWidget(resultsWorkspace_);
+    auto* radiationContent = new QWidget(resultsWorkspace_);
+    auto* radiationLayout = new QVBoxLayout(radiationContent);
+    radiationLayout->setContentsMargins(0, 0, 0, 0);
+    radiationLayout->setSpacing(2);
+    radiationOverlayControl_ = new HistoricalOverlayControl(
+        QStringLiteral("radiation"), radiationContent);
+    auto* radiationTabs = new QTabWidget(radiationContent);
     radiationTabs->setDocumentMode(true);
     radiationPatternView_ = new RadiationPatternView(radiationTabs);
     radiationTabs->addTab(radiationPatternView_, tr("2D Pattern"));
@@ -1525,9 +1601,22 @@ void MainWindow::createResultsWorkspace()
     radiationTabs->addTab(radiation3DView_, tr("3D Pattern"));
     radiationPerformanceView_ = new RadiationPerformanceView(radiationTabs);
     radiationTabs->addTab(radiationPerformanceView_, tr("Performance vs Frequency"));
+    radiationPatternView_->setReferenceControlVisible(false);
+    radiation3DView_->setReferenceControlVisible(false);
+    radiationPerformanceView_->setReferenceControlVisible(false);
+    radiationOverlayControl_->setVisibilityChangedCallback([this](bool visible) {
+        radiationPatternView_->setReferenceVisible(visible);
+        radiation3DView_->setReferenceVisible(visible);
+        radiationPerformanceView_->setReferenceVisible(visible);
+    });
+    radiationOverlayControl_->setChooseRequestedCallback([this](QWidget* anchor) {
+        chooseResultReference(anchor);
+    });
+    radiationLayout->addWidget(radiationOverlayControl_);
+    radiationLayout->addWidget(radiationTabs, 1);
     radiationPanel_ = new DetachablePanel(
         QStringLiteral("radiation"), tr("Radiation Results"), resultsWorkspace_);
-    radiationPanel_->setContent(radiationTabs);
+    radiationPanel_->setContent(radiationContent);
     const auto radiationTabIndex = resultsWorkspace_->addTab(radiationPanel_, tr("Radiation"));
     radiationPatternView_->setSettingsChangedCallback([this](const auto& settings) {
         radiation3DView_->setDisplaySettings(settings);
@@ -1572,17 +1661,12 @@ void MainWindow::createResultsWorkspace()
     connect(findOutputButton, &QPushButton::clicked, this, [this] { findInRawOutput(); });
     connect(rawOutputFindControl_, &QLineEdit::returnPressed, this, [this] { findInRawOutput(); });
     analysisOutputTabIndex_ = resultsWorkspace_->addTab(rawOutputPage, tr("Raw Output"));
-    analysisRunsTabIndex_ = resultsWorkspace_->addTab(runsPage_, tr("Runs"));
     resultsWorkspace_->setTabIcon(resultsSummaryTabIndex_, workbenchIcon("results"));
     resultsWorkspace_->setTabIcon(averageGainResultsTabIndex_, workbenchIcon("validate"));
     resultsWorkspace_->setTabIcon(impedanceTabIndex, workbenchIcon("frequency-sweep"));
     resultsWorkspace_->setTabIcon(currentsTabIndex, workbenchIcon("sources"));
     resultsWorkspace_->setTabIcon(radiationTabIndex, workbenchIcon("radiation-pattern"));
     resultsWorkspace_->setTabIcon(analysisOutputTabIndex_, workbenchIcon("nec-deck"));
-    resultsWorkspace_->setTabIcon(analysisRunsTabIndex_, workbenchIcon("analysis"));
-    connect(resultsWorkspace_, &QTabWidget::currentChanged, this, [this](int index) {
-        if (index == analysisRunsTabIndex_ && !runHistoryLoaded_) loadRunHistory();
-    });
     auto* resultsNavigator = new WorkspaceNavigator(
         resultsWorkspace_, QStringLiteral("results"), resultsContent_);
     resultsLayout->addWidget(resultsContextFrame);
@@ -2392,8 +2476,7 @@ void MainWindow::createMenusAndToolbar()
     showRunHistoryAction->setObjectName(QStringLiteral("showRunHistoryAction"));
     showRunHistoryAction->setStatusTip(tr("Open the saved analysis-run history"));
     connect(showRunHistoryAction, &QAction::triggered, this, [this] {
-        if (!showModule(resultsModuleIndex_)) return;
-        resultsWorkspace_->setCurrentIndex(analysisRunsTabIndex_);
+        showRunHistory();
     });
     if (auto* moduleNavigation = findChild<QToolBar*>(QStringLiteral("moduleNavigationToolbar"));
         moduleNavigation != nullptr) {
@@ -2453,8 +2536,7 @@ void MainWindow::createMenusAndToolbar()
     auto* reviewRunsAction = runMenu->addAction(tr("Review Run History"));
     reviewRunsAction->setObjectName(QStringLiteral("reviewRunHistoryAction"));
     connect(reviewRunsAction, &QAction::triggered, this, [this] {
-        if (!showModule(resultsModuleIndex_)) return;
-        resultsWorkspace_->setCurrentIndex(analysisRunsTabIndex_);
+        showRunHistory();
     });
     runMenu->addAction(runMonitorWindowAction_);
 
@@ -4516,6 +4598,12 @@ void MainWindow::loadRunHistory()
     updateRunSelectionActions();
 }
 
+void MainWindow::showRunHistory()
+{
+    if (!runHistoryLoaded_) loadRunHistory();
+    runHistoryPanel_->showWindow();
+}
+
 void MainWindow::refreshDashboardRuns()
 {
     if (dashboardPage_ != nullptr) dashboardPage_->setRecentRuns(runStore_.loadRecent(100));
@@ -4738,18 +4826,23 @@ void MainWindow::pinSelectedRunReference()
     const auto record = selectedRunRecord();
     if (!record) return;
     resultReferenceController_.pin(*record);
-    setResultReferenceVisible(true);
     updateResultReference();
-    statusBar()->showMessage(tr("Pinned reference run: %1")
-        .arg(resultReferenceController_.label()), 5000);
+    statusBar()->showMessage(tr(
+        "Historical overlay selected: %1. Turn it on in an Impedance or Radiation window.")
+        .arg(resultReferenceController_.label()), 7000);
 }
 
-void MainWindow::chooseResultReference()
+void MainWindow::chooseResultReference(QWidget* anchor)
 {
     if (changeResultReferenceButton_ == nullptr) return;
     QMenu menu(this);
     auto eligibleCount = 0;
     const auto* selectedReference = resultReferenceController_.record();
+    if (selectedReference != nullptr) {
+        auto* clearAction = menu.addAction(tr("Clear Historical Overlay"));
+        connect(clearAction, &QAction::triggered, this, [this] { clearResultReference(); });
+        menu.addSeparator();
+    }
     for (const auto& record : runStore_.load()) {
         if (record.directory == displayedRunDirectory_
             || record.status != QStringLiteral("Completed")
@@ -4768,8 +4861,10 @@ void MainWindow::chooseResultReference()
             && selectedReference->id == record.id);
         connect(action, &QAction::triggered, this, [this, record] {
             resultReferenceController_.pin(record);
-            setResultReferenceVisible(true);
             updateResultReference();
+            statusBar()->showMessage(tr(
+                "Historical overlay selected. Use Show Historical Overlay in either result window."),
+                6000);
         });
         ++eligibleCount;
     }
@@ -4777,8 +4872,11 @@ void MainWindow::chooseResultReference()
         auto* empty = menu.addAction(tr("No completed runs available"));
         empty->setEnabled(false);
     }
-    menu.exec(changeResultReferenceButton_->mapToGlobal(
-        QPoint(0, changeResultReferenceButton_->height())));
+    menu.addSeparator();
+    auto* historyAction = menu.addAction(tr("Open Run History…"));
+    connect(historyAction, &QAction::triggered, this, [this] { showRunHistory(); });
+    auto* menuAnchor = anchor != nullptr ? anchor : changeResultReferenceButton_;
+    menu.exec(menuAnchor->mapToGlobal(QPoint(0, menuAnchor->height())));
 }
 
 void MainWindow::editSelectedRunNote()
@@ -4821,42 +4919,65 @@ void MainWindow::clearResultReference()
 
 void MainWindow::setResultReferenceVisible(bool visible)
 {
-    visualizePlotsView_->setReferenceVisible(visible);
-    radiationPatternView_->setReferenceVisible(visible);
-    radiation3DView_->setReferenceVisible(visible);
-    radiationPerformanceView_->setReferenceVisible(visible);
+    if (impedanceOverlayControl_ != nullptr) impedanceOverlayControl_->setChecked(visible);
+    else if (visualizePlotsView_ != nullptr) visualizePlotsView_->setReferenceVisible(visible);
+    if (radiationOverlayControl_ != nullptr) radiationOverlayControl_->setChecked(visible);
+    else {
+        radiationPatternView_->setReferenceVisible(visible);
+        radiation3DView_->setReferenceVisible(visible);
+        radiationPerformanceView_->setReferenceVisible(visible);
+    }
 }
 
 void MainWindow::updateResultReference()
 {
     if (resultReferenceLabel_ == nullptr || clearResultReferenceButton_ == nullptr
         || changeResultReferenceButton_ == nullptr
-        || visualizePlotsView_ == nullptr) return;
+        || visualizePlotsView_ == nullptr || impedanceOverlayControl_ == nullptr
+        || radiationOverlayControl_ == nullptr) return;
     const auto* reference = resultReferenceController_.result();
     const auto hasReference = reference != nullptr;
     resultReferenceLabel_->setText(hasReference
-        ? tr("Reference Run: %1").arg(resultReferenceController_.label())
+        ? tr("Historical Overlay: %1").arg(resultReferenceController_.label())
         : resultReferenceController_.hasReference()
-            ? tr("Reference Run unavailable: archived output could not be read")
-            : tr("Reference Run: None"));
-    clearResultReferenceButton_->setText(tr("Clear Reference"));
+            ? tr("Historical Overlay unavailable: archived output could not be read")
+            : tr("Historical Overlay: None"));
+    clearResultReferenceButton_->setText(tr("Clear Overlay"));
     clearResultReferenceButton_->setEnabled(resultReferenceController_.hasReference());
     changeResultReferenceButton_->setEnabled(!solverRunner_->isRunning()
         && !optimizationWorkspace_->isRunning() && !convergenceWorkspace_->isRunning());
     if (hasReference) {
         const auto* record = resultReferenceController_.record();
-        const auto plotLabel = record->userNote.trimmed().isEmpty()
-            ? record->id : record->userNote.simplified();
+        const auto modelName = record->sourceFile.isEmpty()
+            ? tr("Archived model.nec") : QFileInfo(record->sourceFile).fileName();
+        const auto note = record->userNote.simplified();
+        const auto plotLabel = note.isEmpty()
+            ? tr("%1 — %2").arg(modelName,
+                record->started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")))
+            : tr("%1 — “%2”").arg(modelName, note);
         visualizePlotsView_->setReferenceResults(
             *reference, plotLabel);
         radiationPatternView_->setReferenceResults(*reference, plotLabel);
         radiation3DView_->setReferenceResults(*reference, plotLabel);
         radiationPerformanceView_->setReferenceResults(*reference, plotLabel);
+        const auto compatibility = analysis::evaluateHistoricalOverlayCompatibility(
+            displayedResults_, *reference);
+        impedanceOverlayControl_->setSelection(
+            plotLabel, historicalOverlayStatusText(compatibility.impedance));
+        radiationOverlayControl_->setSelection(
+            plotLabel, historicalOverlayStatusText(compatibility.radiation));
+        visualizePlotsView_->setReferenceVisible(impedanceOverlayControl_->isChecked());
+        const auto radiationVisible = radiationOverlayControl_->isChecked();
+        radiationPatternView_->setReferenceVisible(radiationVisible);
+        radiation3DView_->setReferenceVisible(radiationVisible);
+        radiationPerformanceView_->setReferenceVisible(radiationVisible);
     } else {
         visualizePlotsView_->clearReferenceResults();
         radiationPatternView_->clearReferenceResults();
         radiation3DView_->clearReferenceResults();
         radiationPerformanceView_->clearReferenceResults();
+        impedanceOverlayControl_->clearSelection();
+        radiationOverlayControl_->clearSelection();
     }
     updateRunSelectionActions();
 }
@@ -4918,8 +5039,7 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
             .arg(context);
         resultsStatusLabel_->setText(message);
         analysisOutput_->setPlainText(tr("Solver output unavailable: %1").arg(outputFile.fileName()));
-        showModule(resultsModuleIndex_);
-        resultsWorkspace_->setCurrentIndex(analysisRunsTabIndex_);
+        showRunHistory();
         statusBar()->showMessage(message, 7000);
         return;
     }
@@ -5061,6 +5181,7 @@ void MainWindow::setDisplayedResults(const analysis::AnalysisResult& result)
     } else {
         resultsAvailabilityLabel_->setText(tr("No parsed frequency results are available."));
     }
+    updateResultReference();
 }
 
 void MainWindow::applyResultFrequency(double frequencyMHz)

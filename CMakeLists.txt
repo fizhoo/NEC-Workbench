@@ -18,6 +18,8 @@ add_library(necwb_core
     src/analysis/DifferentialEvolutionSearch.h
     src/analysis/FrequencyPlan.cpp
     src/analysis/FrequencyComparison.h
+    src/analysis/HistoricalOverlayCompatibility.cpp
+    src/analysis/HistoricalOverlayCompatibility.h
     src/analysis/NecOutputParser.cpp
     src/analysis/NelderMeadSearch.cpp
     src/analysis/NelderMeadSearch.h
@@ -92,6 +94,8 @@ if(NECWB_BUILD_GUI)
         src/ui/analysis/AverageGainResultsView.h
         src/ui/analysis/ConvergenceWorkspace.cpp
         src/ui/analysis/ConvergenceWorkspace.h
+        src/ui/analysis/HistoricalOverlayControl.cpp
+        src/ui/analysis/HistoricalOverlayControl.h
         src/ui/analysis/ImpedanceResultsView.cpp
         src/ui/analysis/ImpedanceResultsView.h
         src/ui/analysis/QuickSweepDialog.cpp

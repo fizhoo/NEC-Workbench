@@ -73,6 +73,7 @@ class OptimizationWorkspace;
 class ParameterEditor;
 class DetachablePanel;
 class ResultWindowCoordinator;
+class HistoricalOverlayControl;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -232,6 +233,7 @@ private:
     void finishAnalysis(SolverProcessResult result);
     void setCurrentRunStatus(const QString& status);
     void loadRunHistory();
+    void showRunHistory();
     void refreshDashboardRuns();
     void addRunRecord(const AnalysisRunRecord& record, bool prepend);
     void loadSelectedRun();
@@ -241,7 +243,7 @@ private:
         const QString& runContext) -> bool;
     void deleteSelectedRun();
     void pinSelectedRunReference();
-    void chooseResultReference();
+    void chooseResultReference(QWidget* anchor = nullptr);
     void editSelectedRunNote();
     void clearResultReference();
     void setResultReferenceVisible(bool visible);
@@ -331,6 +333,7 @@ private:
     DetachablePanel* impedancePanel_{};
     DetachablePanel* currentsPanel_{};
     DetachablePanel* radiationPanel_{};
+    DetachablePanel* runHistoryPanel_{};
     DetachablePanel* modelPanel_{};
     DetachablePanel* setupPanel_{};
     DetachablePanel* optimizationPanel_{};
@@ -360,6 +363,8 @@ private:
     RadiationPatternView* radiationPatternView_{};
     Radiation3DView* radiation3DView_{};
     RadiationPerformanceView* radiationPerformanceView_{};
+    HistoricalOverlayControl* impedanceOverlayControl_{};
+    HistoricalOverlayControl* radiationOverlayControl_{};
     OptimizationWorkspace* optimizationWorkspace_{};
     ParameterEditor* parameterEditor_{};
     QTabWidget* analysisWorkspace_{};
@@ -368,7 +373,6 @@ private:
     bool restoringWorkspaceTab_{};
     QTabWidget* validationWorkspace_{};
     QTableWidget* analysisRuns_{};
-    QWidget* runsPage_{};
     QPlainTextEdit* analysisOutput_{};
     QPushButton* cancelRunButton_{};
     QPushButton* openRunFolderButton_{};
@@ -443,6 +447,7 @@ private:
     double currentPeakSearchFrequencyMHz_{};
     int currentRunRow_{-1};
     int geometryTabIndex_{};
+    int geometry3DTabIndex_{};
     int structuredSourceTabIndex_{1};
     int loadNetworkTabIndex_{};
     int homeModuleIndex_{};
@@ -456,7 +461,6 @@ private:
     int analysisSolverTabIndex_{};
     int analysisFrequencyTabIndex_{};
     int analysisRequestsTabIndex_{};
-    int analysisRunsTabIndex_{};
     int resultsSummaryTabIndex_{};
     int averageGainResultsTabIndex_{};
     int validationOverviewTabIndex_{};

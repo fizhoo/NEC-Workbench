@@ -2,23 +2,21 @@
 
 #include "ui/DisplayFormat.h"
 
-#include "ui/analysis/FieldResultsViews.h"
-#include "ui/editor/NecEditor.h"
-
 #include <QAction>
 #include <QFileInfo>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHeaderView>
+#include <QHBoxLayout>
 #include <QLabel>
-#include <QResizeEvent>
+#include <QSizePolicy>
 #include <QTableWidget>
-#include <QTextDocument>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QPushButton>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <ranges>
 #include <utility>
@@ -26,55 +24,12 @@
 namespace necwb::ui {
 namespace {
 
-class HeaderActionGroupBox final : public QGroupBox {
-public:
-    HeaderActionGroupBox(const QString& title, QWidget* actions, QWidget* parent)
-        : QGroupBox(title, parent), actions_(actions)
-    {
-        actions_->setParent(this);
-        actions_->raise();
-    }
-
-    void refreshHeaderActions()
-    {
-        actions_->adjustSize();
-        const auto hint = actions_->sizeHint();
-        actions_->resize(hint);
-        actions_->move(std::max(8, width() - hint.width() - 8), 0);
-        if (auto* groupLayout = layout()) {
-            const auto margins = groupLayout->contentsMargins();
-            groupLayout->setContentsMargins(
-                margins.left(), std::max(10, hint.height()), margins.right(), margins.bottom());
-        }
-        actions_->raise();
-    }
-
-protected:
-    void resizeEvent(QResizeEvent* event) override
-    {
-        QGroupBox::resizeEvent(event);
-        refreshHeaderActions();
-    }
-
-private:
-    QWidget* actions_{};
-};
-
 auto panel(const QString& title, QWidget* content, QWidget* parent) -> QGroupBox*
 {
     auto* group = new QGroupBox(title, parent);
     auto* layout = new QVBoxLayout(group);
-    layout->setContentsMargins(8, 10, 8, 8);
-    layout->addWidget(content);
-    return group;
-}
-
-auto actionPanel(const QString& title, QWidget* content, QWidget* actions,
-    QWidget* parent) -> HeaderActionGroupBox*
-{
-    auto* group = new HeaderActionGroupBox(title, actions, parent);
-    auto* layout = new QVBoxLayout(group);
-    layout->setContentsMargins(8, 10, 8, 8);
+    layout->setContentsMargins(6, 8, 6, 6);
+    layout->setSpacing(4);
     layout->addWidget(content);
     return group;
 }
@@ -84,6 +39,8 @@ auto summaryTable(const QStringList& labels, QWidget* parent) -> QTableWidget*
     auto* table = new QTableWidget(labels.size(), 2, parent);
     table->setHorizontalHeaderLabels({QObject::tr("Item"), QObject::tr("Value")});
     table->verticalHeader()->hide();
+    table->verticalHeader()->setDefaultSectionSize(21);
+    table->horizontalHeader()->setFixedHeight(23);
     table->horizontalHeader()->setStretchLastSection(true);
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table->setSelectionMode(QAbstractItemView::NoSelection);
@@ -105,50 +62,85 @@ auto groundName(const std::optional<model::GroundDefinition>& ground) -> QString
 
 }
 
-DashboardPage::DashboardPage(QTextDocument* document, QWidget* parent) : QWidget(parent)
+DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
 {
-    auto* layout = new QGridLayout(this);
-    layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(6);
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(6, 6, 6, 6);
+    layout->setSpacing(5);
 
     auto* headingPanel = new QWidget(this);
     auto* headingLayout = new QHBoxLayout(headingPanel);
-    headingLayout->setContentsMargins(4, 2, 4, 2);
-    auto* headingText = new QVBoxLayout;
+    headingLayout->setContentsMargins(2, 0, 2, 0);
+    headingLayout->setSpacing(8);
     auto* heading = new QLabel(tr("Project Dashboard"), headingPanel);
+    heading->setObjectName(QStringLiteral("dashboardHeading"));
     auto headingFont = heading->font();
     headingFont.setBold(true);
-    headingFont.setPointSize(headingFont.pointSize()+5);
+    headingFont.setPointSize(headingFont.pointSize() + 2);
     heading->setFont(headingFont);
     fileState_ = new QLabel(tr("Untitled model · Saved"), headingPanel);
     fileState_->setObjectName(QStringLiteral("dashboardFileState"));
     fileState_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    headingText->addWidget(heading);
-    headingText->addWidget(fileState_);
-    headingLayout->addLayout(headingText);
-    headingLayout->addStretch();
+    headingLayout->addWidget(heading);
+    headingLayout->addWidget(fileState_, 1);
+    headingPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
-    editor_ = new NecEditor(this);
-    editor_->setDocument(document);
-    editor_->setMinimumSize(360, 240);
-    auto* quickActionsWidget = new QWidget(this);
+    auto* commandPanel = new QGroupBox(tr("Workbench"), this);
+    commandPanel->setObjectName(QStringLiteral("dashboardWorkbenchPanel"));
+    auto* commandLayout = new QVBoxLayout(commandPanel);
+    commandLayout->setContentsMargins(6, 8, 6, 6);
+    commandLayout->setSpacing(4);
+    auto* quickActionsWidget = new QWidget(commandPanel);
     quickActionsWidget->setObjectName(QStringLiteral("dashboardQuickActionsContainer"));
     quickActions_ = new QHBoxLayout(quickActionsWidget);
     quickActions_->setContentsMargins(0, 0, 0, 0);
-    quickActions_->setSpacing(6);
+    quickActions_->setSpacing(4);
+    commandLayout->addWidget(quickActionsWidget);
+    auto* launcherLayout = new QGridLayout;
+    launcherLayout->setContentsMargins(0, 0, 0, 0);
+    launcherLayout->setHorizontalSpacing(4);
+    launcherLayout->setVerticalSpacing(3);
+    const std::array launchers{
+        std::pair{tr("Model"), Workspace::Model},
+        std::pair{tr("Setup"), Workspace::Setup},
+        std::pair{tr("Antenna View"), Workspace::Antenna},
+        std::pair{tr("Impedance / SWR"), Workspace::Impedance},
+        std::pair{tr("Currents"), Workspace::Currents},
+        std::pair{tr("Radiation"), Workspace::Radiation},
+        std::pair{tr("Runs"), Workspace::Runs},
+        std::pair{tr("Optimize"), Workspace::Optimize},
+    };
+    for (auto index = std::size_t{}; index < launchers.size(); ++index) {
+        auto* button = new QToolButton(commandPanel);
+        button->setObjectName(QStringLiteral("dashboardWorkspaceLauncher%1").arg(index));
+        button->setText(launchers[index].first);
+        button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        connect(button, &QToolButton::clicked, this, [this, destination = launchers[index].second] {
+            if (openWorkspace_) openWorkspace_(destination);
+        });
+        launcherLayout->addWidget(button, static_cast<int>(index / 4),
+            static_cast<int>(index % 4));
+    }
+    commandLayout->addLayout(launcherLayout);
 
-    view3D_ = new Radiation3DView(this);
-    view3D_->setOverviewMode(true);
-    view3D_->setMinimumSize(420, 300);
+    auto* statePanel = new QWidget(this);
+    statePanel->setObjectName(QStringLiteral("dashboardStatusFooter"));
+    auto* stateLayout = new QGridLayout(statePanel);
+    stateLayout->setContentsMargins(4, 0, 4, 0);
+    stateLayout->setHorizontalSpacing(12);
+    stateLayout->addWidget(new QLabel(tr("Model:"), statePanel), 0, 0);
+    stateLayout->addWidget(new QLabel(tr("Results:"), statePanel), 0, 2);
 
     auto* modelPanel = new QWidget(this);
     auto* modelLayout = new QVBoxLayout(modelPanel);
     modelLayout->setContentsMargins(0, 0, 0, 0);
-    modelState_ = new QLabel(tr("No model loaded"), modelPanel);
+    modelState_ = new QLabel(tr("No model loaded"), statePanel);
+    modelState_->setObjectName(QStringLiteral("dashboardModelState"));
     modelState_->setWordWrap(true);
     modelSummary_ = summaryTable({tr("Wires"), tr("Segments"), tr("Sources"), tr("Loads"),
         tr("TLs"), tr("Solver"), tr("Ground"), tr("Frequency"), tr("SWR Reference")}, modelPanel);
-    modelLayout->addWidget(modelState_);
+    modelSummary_->setObjectName(QStringLiteral("dashboardModelSummary"));
     modelLayout->addWidget(modelSummary_, 1);
     auto* averageGainHeading = new QLabel(tr("Model Quality"), modelPanel);
     auto averageGainFont = averageGainHeading->font();
@@ -182,21 +174,22 @@ DashboardPage::DashboardPage(QTextDocument* document, QWidget* parent) : QWidget
     auto* resultPanel = new QWidget(this);
     auto* resultLayout = new QVBoxLayout(resultPanel);
     resultLayout->setContentsMargins(0, 0, 0, 0);
-    resultState_ = new QLabel(tr("No analysis results"), resultPanel);
+    resultState_ = new QLabel(tr("No analysis results"), statePanel);
+    resultState_->setObjectName(QStringLiteral("dashboardResultState"));
     resultState_->setWordWrap(true);
     quickResults_ = summaryTable({tr("Frequency"), tr("Rin"), tr("Xin"), tr("SWR (50 Ω)"),
         tr("Gain"), tr("Efficiency"), tr("F/B")}, resultPanel);
-    resultLayout->addWidget(resultState_);
+    quickResults_->setObjectName(QStringLiteral("dashboardQuickResults"));
     resultLayout->addWidget(quickResults_, 1);
 
     auto* recentRunsPanel = new QWidget(this);
     auto* recentRunsLayout = new QVBoxLayout(recentRunsPanel);
     recentRunsLayout->setContentsMargins(0, 0, 0, 0);
     recentRunsLayout->setSpacing(4);
-    recentRuns_ = new QTableWidget(0, 5, recentRunsPanel);
+    recentRuns_ = new QTableWidget(0, 4, recentRunsPanel);
     recentRuns_->setObjectName(QStringLiteral("dashboardRecentRuns"));
     recentRuns_->setHorizontalHeaderLabels(
-        {tr("Started"), tr("Model"), tr("Backend"), tr("Status"), tr("Summary")});
+        {tr("Started"), tr("Model"), tr("Status"), tr("Note / Result")});
     recentRuns_->verticalHeader()->hide();
     recentRuns_->verticalHeader()->setDefaultSectionSize(22);
     recentRuns_->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -204,7 +197,7 @@ DashboardPage::DashboardPage(QTextDocument* document, QWidget* parent) : QWidget
     recentRuns_->setSelectionMode(QAbstractItemView::SingleSelection);
     recentRuns_->setAlternatingRowColors(true);
     recentRuns_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    recentRuns_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
+    recentRuns_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
     recentRuns_->setMinimumHeight(92);
     recentRuns_->setMaximumHeight(148);
     auto* runButtons = new QHBoxLayout;
@@ -223,21 +216,21 @@ DashboardPage::DashboardPage(QTextDocument* document, QWidget* parent) : QWidget
         if (openRunHistory_) openRunHistory_();
     });
 
-    layout->addWidget(headingPanel, 0, 0, 1, 2);
-    auto* sourcePanel = actionPanel(tr("NEC Source"), editor_, quickActionsWidget, this);
-    sourcePanel->setObjectName(QStringLiteral("dashboardNecSourcePanel"));
-    auto* overviewPanel = panel(tr("3D Overview"), view3D_, this);
-    overviewPanel->setObjectName(QStringLiteral("dashboard3DOverviewPanel"));
-    layout->addWidget(sourcePanel, 1, 0);
-    layout->addWidget(overviewPanel, 1, 1);
-    layout->addWidget(panel(tr("Model Summary"), modelPanel, this), 2, 0);
-    layout->addWidget(panel(tr("Quick Results"), resultPanel, this), 2, 1);
-    layout->addWidget(panel(tr("Recent Runs"), recentRunsPanel, this), 3, 0, 1, 2);
-    layout->setRowStretch(1, 3);
-    layout->setRowStretch(2, 2);
-    layout->setRowStretch(3, 0);
-    layout->setColumnStretch(0, 1);
-    layout->setColumnStretch(1, 1);
+    stateLayout->addWidget(modelState_, 0, 1);
+    stateLayout->addWidget(resultState_, 0, 3);
+    stateLayout->setColumnStretch(1, 1);
+    stateLayout->setColumnStretch(3, 1);
+    auto* summaries = new QWidget(this);
+    auto* summariesLayout = new QHBoxLayout(summaries);
+    summariesLayout->setContentsMargins(0, 0, 0, 0);
+    summariesLayout->setSpacing(5);
+    summariesLayout->addWidget(panel(tr("Model Summary"), modelPanel, summaries), 1);
+    summariesLayout->addWidget(panel(tr("Quick Results"), resultPanel, summaries), 1);
+    layout->addWidget(headingPanel);
+    layout->addWidget(commandPanel);
+    layout->addWidget(summaries, 1);
+    layout->addWidget(panel(tr("Recent Runs"), recentRunsPanel, this));
+    layout->addWidget(statePanel);
 }
 
 void DashboardPage::setRecentRuns(const std::vector<AnalysisRunRecord>& runs)
@@ -253,7 +246,6 @@ void DashboardPage::setRecentRuns(const std::vector<AnalysisRunRecord>& runs)
             run.started.toString(QStringLiteral("MM-dd HH:mm")),
             run.sourceFile.isEmpty() ? tr("Archived model.nec")
                                      : QFileInfo(run.sourceFile).fileName(),
-            run.backend,
             run.status,
             run.userNote.trimmed().isEmpty()
                 ? (run.summary.trimmed().isEmpty() ? tr("—") : run.summary.simplified())
@@ -262,7 +254,7 @@ void DashboardPage::setRecentRuns(const std::vector<AnalysisRunRecord>& runs)
         for (auto column = 0; column < values.size(); ++column) {
             auto* item = new QTableWidgetItem(values[column]);
             item->setData(Qt::UserRole, run.id);
-            if (column == 4) item->setToolTip(values[column]);
+            if (column == 3) item->setToolTip(values[column]);
             recentRuns_->setItem(row, column, item);
         }
     }
@@ -277,6 +269,11 @@ void DashboardPage::setOpenRecentRunCallback(
 void DashboardPage::setOpenRunHistoryCallback(std::function<void()> callback)
 {
     openRunHistory_ = std::move(callback);
+}
+
+void DashboardPage::setOpenWorkspaceCallback(std::function<void(Workspace)> callback)
+{
+    openWorkspace_ = std::move(callback);
 }
 
 void DashboardPage::setAverageGainAction(QAction* action)
@@ -305,11 +302,7 @@ void DashboardPage::setQuickActions(QAction* check, QAction* run)
         button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         quickActions_->addWidget(button);
     }
-    if (auto* actions = quickActions_->parentWidget()) {
-        actions->adjustSize();
-        if (auto* group = dynamic_cast<HeaderActionGroupBox*>(actions->parentWidget()))
-            group->refreshHeaderActions();
-    }
+    quickActions_->addStretch();
 }
 
 void DashboardPage::setDocumentState(const QString& fileName, bool modified)
@@ -326,7 +319,6 @@ void DashboardPage::setValue(QTableWidget* table, int row, const QString& value)
 void DashboardPage::setModel(const model::AntennaModel& model, const model::ModelSetup& setup,
     const QString& solver, bool checked, std::size_t errors, std::size_t warnings)
 {
-    if (!hasResults_ || !resultsStale_) view3D_->setModel(model);
     auto segments = 0;
     for (const auto& wire : model.wires()) segments += wire.segments;
     setValue(modelSummary_, 0, QString::number(model.wireCount()));
@@ -356,7 +348,6 @@ void DashboardPage::setResults(const analysis::AnalysisResult& result,
     hasResults_ = !result.feedpoints.empty() || !result.currents.empty() || !result.radiation.empty();
     resultsStale_ = stale;
     resultContext_ = context;
-    view3D_->setResults(result, context);
     quickResults_->item(3, 0)->setText(
         tr("SWR (%1 Ω)").arg(formatDecimal(result.referenceImpedanceOhms)));
     for (auto row = 0; row < quickResults_->rowCount(); ++row) setValue(quickResults_, row, QStringLiteral("—"));

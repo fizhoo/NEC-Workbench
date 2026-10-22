@@ -769,7 +769,7 @@ SweepPlotsView::SweepPlotsView(QWidget* parent)
     auto* heading = new QHBoxLayout;
     heading->addWidget(headingLabel);
     heading->addStretch();
-    referenceControl_ = new QCheckBox(tr("Show Reference Overlay"), this);
+    referenceControl_ = new QCheckBox(tr("Show Historical Overlay"), this);
     referenceControl_->setObjectName(QStringLiteral("sweepShowReference"));
     referenceControl_->setChecked(false);
     referenceControl_->setEnabled(false);
@@ -898,13 +898,13 @@ void SweepPlotsView::refreshPlots()
             referenceResistanceColor.setAlpha(105);
             referenceReactanceColor.setAlpha(105);
             PlotSeries referenceResistance{
-                tr("Reference R W%1:S%2").arg(source.first).arg(source.second), tr("Ω"), referenceResistanceColor,
+                tr("Overlay R W%1:S%2").arg(source.first).arg(source.second), tr("Ω"), referenceResistanceColor,
                 AxisSide::Left, {}, Qt::DashLine, false, true};
             PlotSeries referenceReactance{
-                tr("Reference X W%1:S%2").arg(source.first).arg(source.second), tr("Ω"), referenceReactanceColor,
+                tr("Overlay X W%1:S%2").arg(source.first).arg(source.second), tr("Ω"), referenceReactanceColor,
                 AxisSide::Right, {}, Qt::DashLine, false, true};
             PlotSeries referenceSwr{
-                tr("Reference SWR W%1:S%2").arg(source.first).arg(source.second), {}, referenceResistanceColor,
+                tr("Overlay SWR W%1:S%2").arg(source.first).arg(source.second), {}, referenceResistanceColor,
                 AxisSide::Left, {}, Qt::DashLine, false, true};
             for (const auto& referencePoint : referenceResult_->feedpoints) {
                 if (referencePoint.wireTag != source.first
@@ -958,8 +958,8 @@ void SweepPlotsView::refreshPlots()
     const auto referenceNote = referenceResult_ && referenceControl_->isChecked()
         ? nearlyEqual(result_->referenceImpedanceOhms,
                 referenceResult_->referenceImpedanceOhms)
-            ? tr(" Reference overlay %1 is shown dashed.").arg(referenceLabel_)
-            : tr(" Reference overlay %1 shows dashed R/X; its SWR is unavailable because Z0 differs.")
+            ? tr(" Historical overlay %1 is shown dashed.").arg(referenceLabel_)
+            : tr(" Historical overlay %1 shows dashed R/X; its SWR is unavailable because Z0 differs.")
                 .arg(referenceLabel_)
         : QString{};
     summary_->setText(result_->feedpoints.empty()
@@ -1052,13 +1052,13 @@ void DirectionalMetricsView::refresh()
         if (!item.points.empty()) series.push_back(std::move(item));
     };
     if (!referenceMetrics_.empty()) {
-        appendSeries(referenceMetrics_, tr("Reference Gain — %1").arg(referenceLabel_),
+        appendSeries(referenceMetrics_, tr("Overlay Gain — %1").arg(referenceLabel_),
             tr("dBi"), QColor(35, 150, 85, 110), Qt::DashLine, true,
             &DirectionalPlotPoint::forwardGainDb);
-        appendSeries(referenceMetrics_, tr("Reference F/B — %1").arg(referenceLabel_),
+        appendSeries(referenceMetrics_, tr("Overlay F/B — %1").arg(referenceLabel_),
             tr("dB"), QColor(220, 50, 45, 110), Qt::DashLine, true,
             &DirectionalPlotPoint::frontToBackDb);
-        appendSeries(referenceMetrics_, tr("Reference F/R — %1").arg(referenceLabel_),
+        appendSeries(referenceMetrics_, tr("Overlay F/R — %1").arg(referenceLabel_),
             tr("dB"), QColor(135, 75, 180, 110), Qt::DashLine, true,
             &DirectionalPlotPoint::frontToRearDb);
     }
@@ -1103,7 +1103,7 @@ void DirectionalMetricsView::refresh()
         ? tr("No directional objective data are available for this candidate.")
         : summaries.join(QStringLiteral("\n"));
     if (!referenceMetrics_.empty())
-        summary += tr("\nReference overlay %1 is shown dashed.").arg(referenceLabel_);
+        summary += tr("\nHistorical overlay %1 is shown dashed.").arg(referenceLabel_);
     summary_->setText(summary);
 }
 

@@ -13,19 +13,26 @@
 
 class QLabel;
 class QTableWidget;
-class QTextDocument;
 class QAction;
 class QHBoxLayout;
 class QToolButton;
 
 namespace necwb::ui {
 
-class NecEditor;
-class Radiation3DView;
-
 class DashboardPage final : public QWidget {
 public:
-    explicit DashboardPage(QTextDocument* document, QWidget* parent = nullptr);
+    enum class Workspace {
+        Model,
+        Setup,
+        Antenna,
+        Impedance,
+        Currents,
+        Radiation,
+        Runs,
+        Optimize
+    };
+
+    explicit DashboardPage(QWidget* parent = nullptr);
 
     void setQuickActions(QAction* check, QAction* run);
     void setAverageGainAction(QAction* action);
@@ -48,12 +55,11 @@ public:
     void setRecentRuns(const std::vector<AnalysisRunRecord>& runs);
     void setOpenRecentRunCallback(std::function<void(const QString&)> callback);
     void setOpenRunHistoryCallback(std::function<void()> callback);
+    void setOpenWorkspaceCallback(std::function<void(Workspace)> callback);
 
 private:
     void setValue(QTableWidget* table, int row, const QString& value);
 
-    NecEditor* editor_{};
-    Radiation3DView* view3D_{};
     QTableWidget* modelSummary_{};
     QTableWidget* quickResults_{};
     QLabel* modelState_{};
@@ -67,6 +73,7 @@ private:
     QTableWidget* recentRuns_{};
     std::function<void(const QString&)> openRecentRun_;
     std::function<void()> openRunHistory_;
+    std::function<void(Workspace)> openWorkspace_;
     QString resultContext_;
     bool hasResults_{};
     bool resultsStale_{};

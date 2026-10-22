@@ -636,7 +636,7 @@ protected:
             .arg(formatDecimal(maxGain)));
         if (!referenceSamples_.empty()) {
             const auto label = painter.fontMetrics().elidedText(
-                tr("Reference — %1").arg(referenceLabel_), Qt::ElideRight,
+                tr("Overlay — %1").arg(referenceLabel_), Qt::ElideRight,
                 std::max(80, width() / 2));
             const auto left = width() - painter.fontMetrics().horizontalAdvance(label) - 34;
             painter.setPen(QPen(QColor(65, 105, 165, 175), 2, Qt::DashLine));
@@ -816,7 +816,7 @@ protected:
             if (hasRadiation) status += tr(" · %1 peak %2 dBi")
                 .arg(componentName(settings_.component), formatDecimal(maxGain));
             if (referenceMaximum)
-                status += tr(" · Reference overlay %1 shown dashed").arg(referenceLabel_);
+                status += tr(" · Historical overlay %1 shown dashed").arg(referenceLabel_);
             painter.drawText(10, 22, status + tr(" · Shift/middle-drag to pan"));
         }
         if (hasRadiation && showOverlay_) {
@@ -1177,7 +1177,7 @@ RadiationPatternView::RadiationPatternView(QWidget* parent) : QWidget(parent)
     exportImageButton_->setObjectName(QStringLiteral("radiation2DExportImage"));
     exportDataButton_ = new QPushButton(tr("Export CSV…"), this);
     exportDataButton_->setObjectName(QStringLiteral("radiation2DExportData"));
-    referenceControl_ = new QCheckBox(tr("Show Reference Overlay"), this);
+    referenceControl_ = new QCheckBox(tr("Show Historical Overlay"), this);
     referenceControl_->setObjectName(QStringLiteral("radiation2DShowReference"));
     referenceControl_->setChecked(false);
     referenceControl_->setEnabled(false);
@@ -1398,8 +1398,8 @@ void RadiationPatternView::refresh()
     }
     const auto referenceText = !referenceResult_ || !referenceControl_->isChecked() ? QString{}
         : !referenceValues.empty()
-            ? tr(" · Reference overlay %1 shown dashed").arg(referenceLabel_)
-            : tr(" · Reference overlay %1 unavailable: exact frequency/cut grid differs")
+            ? tr(" · Historical overlay %1 shown dashed").arg(referenceLabel_)
+            : tr(" · Historical overlay %1 unavailable: exact frequency/cut grid differs")
                 .arg(referenceLabel_);
     const auto metrics = analysis::radiationCutMetrics(cutSamples, radiationAnglesCoverCircle(values));
     if (metrics.valid) {
@@ -1583,7 +1583,7 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
     antennaControl_ = new QCheckBox(tr("Antenna"), this); antennaControl_->setChecked(true);
     currentControl_ = new QCheckBox(tr("Current Overlay"), this); currentControl_->setChecked(true);
     radiationControl_ = new QCheckBox(tr("Radiation Surface"), this); radiationControl_->setChecked(true);
-    referenceControl_ = new QCheckBox(tr("Show Reference Overlay"), this);
+    referenceControl_ = new QCheckBox(tr("Show Historical Overlay"), this);
     referenceControl_->setObjectName(QStringLiteral("radiation3DShowReference"));
     referenceControl_->setChecked(false);
     referenceControl_->setEnabled(false);
@@ -1658,6 +1658,10 @@ void Radiation3DView::clearReferenceResults()
 void Radiation3DView::setReferenceVisible(bool visible)
 {
     referenceControl_->setChecked(visible);
+}
+void Radiation3DView::setReferenceControlVisible(bool visible)
+{
+    referenceControl_->setVisible(visible);
 }
 void Radiation3DView::setModel(const model::AntennaModel& model)
 { model_ = model; surface_->setModel(model_); }
@@ -1741,9 +1745,9 @@ void Radiation3DView::refresh()
             text += tr(" · Partial coverage; request Full 3D Pattern for a complete surface.");
         if (referenceResult_ && referenceControl_->isChecked())
             text += referenceRadiation.empty()
-                ? tr(" · Reference overlay %1 unavailable: exact frequency/grid differs")
+                ? tr(" · Historical overlay %1 unavailable: exact frequency/grid differs")
                       .arg(referenceLabel_)
-                : tr(" · Reference overlay %1 shown dashed").arg(referenceLabel_);
+                : tr(" · Historical overlay %1 shown dashed").arg(referenceLabel_);
         summary_->setText(text);
     } else {
         summary_->setText(tr("%1 MHz · %2 · No %3 radiation samples · %4 current segment(s)")
@@ -1834,7 +1838,7 @@ RadiationPerformanceView::RadiationPerformanceView(QWidget* parent)
     controls->addWidget(forwardAzimuth_);
     controls->addWidget(usePatternPeak_);
     controls->addStretch();
-    referenceControl_ = new QCheckBox(tr("Show Reference Overlay"), this);
+    referenceControl_ = new QCheckBox(tr("Show Historical Overlay"), this);
     referenceControl_->setObjectName(QStringLiteral("radiationPerformanceShowReference"));
     referenceControl_->setChecked(false);
     referenceControl_->setEnabled(false);
@@ -1897,6 +1901,11 @@ void RadiationPerformanceView::clearReferenceResults()
 void RadiationPerformanceView::setReferenceVisible(bool visible)
 {
     referenceControl_->setChecked(visible);
+}
+
+void RadiationPerformanceView::setReferenceControlVisible(bool visible)
+{
+    referenceControl_->setVisible(visible);
 }
 
 void RadiationPerformanceView::setSelectedFrequency(double frequencyMHz)

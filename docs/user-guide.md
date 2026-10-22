@@ -52,11 +52,12 @@ the model. Selecting their workspace restores an existing hidden or minimized wi
 ## Home
 
 With no model open, Home provides New, Open, recent files, and documentation.
-With a model open, it becomes a dashboard containing source, 3D overview, model
-summary, quality status, and quick results.
-
-Home shares the active source and result objects with the other workspaces; it is
-not a second copy of the model.
+With a model open, it becomes a compact operations dashboard. **Check Model** and
+**Run Analysis** remain prominent, while launchers open or raise Model, Setup,
+Antenna View, Impedance/SWR, Currents, Radiation, Runs, and Optimize. Model and
+quick-result summaries, quality status, and recent runs remain visible without
+duplicating the full editor, antenna view, or result plots on Home. The footer
+shows whether the model is ready and whether displayed results are current or stale.
 
 ## Model
 
@@ -256,12 +257,13 @@ show feedpoint impedance, SWR, current data, and available directional metrics b
 frequency. Plot hover readouts expose exact sampled values.
 
 After a completed analysis, Workbench automatically selects the previous completed run
-of the same saved model as a reference, but overlays start hidden. Use each plot's
-**Show Reference Overlay** checkbox to draw matching reference data as faint dashed
-curves without losing the selected Reference Run. The Results banner always names
-the Reference Run; use **Change Reference…** to choose another completed run or
-**Clear Reference** to remove it. Reference SWR is unavailable when the runs use
-different reference impedances.
+of the same saved model as a historical overlay, but overlays start hidden. The
+Impedance and Radiation windows each have an independent **Show Historical Overlay**
+checkbox and **Choose Overlay…** menu. The selected run is shared, while visibility
+is local to each window. **Compatible**, **Partial**, or **No matching data** indicates
+whether that window can compare all, some, or none of its current data. Manual choices
+may come from another antenna; Workbench only draws genuinely matching frequencies,
+feedpoints, cuts, and sample grids. Use **Clear Overlay** to remove the selection.
 
 ### Radiation
 
@@ -269,16 +271,16 @@ The radiation frequency selector includes only frequencies with pattern data.
 
 - **2D Pattern** selects vertical or horizontal cuts, cycles available angles,
   reports peak and interpolated 3 dB beamwidth when computable, and probes nearby
-  samples under the pointer. A compatible reference run is drawn as a muted dashed
+  samples under the pointer. A compatible historical overlay is drawn as a muted dashed
   trace. Workbench requires the same frequency, cut orientation/plane, and angular
-  sample grid; it reports the reference as unavailable rather than interpolating.
+  sample grid; it reports the historical overlay as unavailable rather than interpolating.
   Normalized mode normalizes each trace to its own peak for shape comparison;
   Absolute mode places both traces on the same dBi scale.
 - **3D Pattern** renders the available theta/phi mesh with antenna and current
-  overlays. A compatible reference grid appears as a muted dashed wireframe. It
+  overlays. A compatible historical grid appears as a muted dashed wireframe. It
   does not invent missing angular coverage.
 - **Performance vs Frequency** shows available forward gain, F/B, and F/R metrics,
-  with compatible reference curves shown dashed.
+  with compatible historical curves shown dashed.
 
 F/B requires the physical direction 180° opposite the selected front direction.
 If that sample is absent, F/B is unavailable rather than substituted with minimum
@@ -289,16 +291,16 @@ gain. F/R uses the documented rear azimuth cut and is not a full rear-hemisphere
 Run History is discovered from durable run directories. Double-clicking a row opens
 one reusable read-only Run Review window. It does not replace the active editor.
 
-Use **Set as Reference** to keep a selected completed analysis or quick sweep as the
-comparison baseline for the current session and show its overlays. References remain labeled,
-and do not turn a historical run into the active result or model.
+Use **Use as Historical Overlay** to select a completed analysis or quick sweep for
+comparison. Then enable it in the Impedance or Radiation result window where it is
+useful. The overlay remains labeled and never becomes the active result or model.
 
-The ordinary Results workspace compares one reference at a time. Comparing several
+The ordinary Results workspace compares one historical overlay at a time. Comparing several
 runs belongs in a separate comparison workflow and is not performed implicitly.
 
 Use **Edit Run Note…**, or double-click the Note cell, to record what changed or why
 a run matters. Notes are stored only in run metadata; they do not alter archived NEC
-input or solver output. Reference labels use the note when one is available.
+input or solver output. Overlay labels use the note when one is available.
 
 Run Review can display the authored source and generated solver deck. Use **Open
 Snapshot as New Model** only when you intentionally want an archived deck in the editor.
