@@ -6,6 +6,7 @@
 #include "ui/editor/NecEditor.h"
 
 #include <QAction>
+#include <QFileInfo>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHeaderView>
@@ -15,10 +16,12 @@
 #include <QTextDocument>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QPushButton>
 
 #include <algorithm>
 #include <cmath>
 #include <ranges>
+#include <utility>
 
 namespace necwb::ui {
 namespace {
@@ -186,6 +189,40 @@ DashboardPage::DashboardPage(QTextDocument* document, QWidget* parent) : QWidget
     resultLayout->addWidget(resultState_);
     resultLayout->addWidget(quickResults_, 1);
 
+    auto* recentRunsPanel = new QWidget(this);
+    auto* recentRunsLayout = new QVBoxLayout(recentRunsPanel);
+    recentRunsLayout->setContentsMargins(0, 0, 0, 0);
+    recentRunsLayout->setSpacing(4);
+    recentRuns_ = new QTableWidget(0, 5, recentRunsPanel);
+    recentRuns_->setObjectName(QStringLiteral("dashboardRecentRuns"));
+    recentRuns_->setHorizontalHeaderLabels(
+        {tr("Started"), tr("Model"), tr("Backend"), tr("Status"), tr("Summary")});
+    recentRuns_->verticalHeader()->hide();
+    recentRuns_->verticalHeader()->setDefaultSectionSize(22);
+    recentRuns_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    recentRuns_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    recentRuns_->setSelectionMode(QAbstractItemView::SingleSelection);
+    recentRuns_->setAlternatingRowColors(true);
+    recentRuns_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    recentRuns_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
+    recentRuns_->setMinimumHeight(92);
+    recentRuns_->setMaximumHeight(148);
+    auto* runButtons = new QHBoxLayout;
+    runButtons->setContentsMargins(0, 0, 0, 0);
+    runButtons->addStretch();
+    auto* openHistory = new QPushButton(tr("Open Run History…"), recentRunsPanel);
+    openHistory->setObjectName(QStringLiteral("dashboardOpenRunHistoryButton"));
+    runButtons->addWidget(openHistory);
+    recentRunsLayout->addWidget(recentRuns_);
+    recentRunsLayout->addLayout(runButtons);
+    connect(recentRuns_, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
+        const auto* item = recentRuns_->item(row, 0);
+        if (item != nullptr && openRecentRun_) openRecentRun_(item->data(Qt::UserRole).toString());
+    });
+    connect(openHistory, &QPushButton::clicked, this, [this] {
+        if (openRunHistory_) openRunHistory_();
+    });
+
     layout->addWidget(headingPanel, 0, 0, 1, 2);
     auto* sourcePanel = actionPanel(tr("NEC Source"), editor_, quickActionsWidget, this);
     sourcePanel->setObjectName(QStringLiteral("dashboardNecSourcePanel"));
@@ -195,10 +232,51 @@ DashboardPage::DashboardPage(QTextDocument* document, QWidget* parent) : QWidget
     layout->addWidget(overviewPanel, 1, 1);
     layout->addWidget(panel(tr("Model Summary"), modelPanel, this), 2, 0);
     layout->addWidget(panel(tr("Quick Results"), resultPanel, this), 2, 1);
+    layout->addWidget(panel(tr("Recent Runs"), recentRunsPanel, this), 3, 0, 1, 2);
     layout->setRowStretch(1, 3);
     layout->setRowStretch(2, 2);
+    layout->setRowStretch(3, 0);
     layout->setColumnStretch(0, 1);
     layout->setColumnStretch(1, 1);
+}
+
+void DashboardPage::setRecentRuns(const std::vector<AnalysisRunRecord>& runs)
+{
+    recentRuns_->setRowCount(0);
+    for (const auto& run : runs) {
+        if (recentRuns_->rowCount() == 5) break;
+        if (run.runType == QStringLiteral("optimization-candidate")
+            || run.runType == QStringLiteral("convergence-step")) continue;
+        const auto row = recentRuns_->rowCount();
+        recentRuns_->insertRow(row);
+        const QStringList values{
+            run.started.toString(QStringLiteral("MM-dd HH:mm")),
+            run.sourceFile.isEmpty() ? tr("Archived model.nec")
+                                     : QFileInfo(run.sourceFile).fileName(),
+            run.backend,
+            run.status,
+            run.userNote.trimmed().isEmpty()
+                ? (run.summary.trimmed().isEmpty() ? tr("—") : run.summary.simplified())
+                : run.userNote.simplified(),
+        };
+        for (auto column = 0; column < values.size(); ++column) {
+            auto* item = new QTableWidgetItem(values[column]);
+            item->setData(Qt::UserRole, run.id);
+            if (column == 4) item->setToolTip(values[column]);
+            recentRuns_->setItem(row, column, item);
+        }
+    }
+}
+
+void DashboardPage::setOpenRecentRunCallback(
+    std::function<void(const QString&)> callback)
+{
+    openRecentRun_ = std::move(callback);
+}
+
+void DashboardPage::setOpenRunHistoryCallback(std::function<void()> callback)
+{
+    openRunHistory_ = std::move(callback);
 }
 
 void DashboardPage::setAverageGainAction(QAction* action)

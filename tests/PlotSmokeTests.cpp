@@ -229,12 +229,30 @@ auto main(int argc, char* argv[]) -> int
         return names;
     };
     auto consolidatedSetupNavigation = false;
+    auto resultWindowNavigation = false;
+    auto modelWindowNavigation = false;
+    auto setupWindowNavigation = false;
+    auto optimizationWindowNavigation = false;
+    QSettings resultWindowSettings;
+    resultWindowSettings.remove(QStringLiteral("resultWindows/impedance"));
+    resultWindowSettings.remove(QStringLiteral("resultWindows/currents"));
+    resultWindowSettings.remove(QStringLiteral("resultWindows/radiation"));
+    resultWindowSettings.remove(QStringLiteral("workspaceWindows/model-editor"));
+    resultWindowSettings.remove(QStringLiteral("workspaceWindows/analysis-setup"));
+    resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
+    resultWindowSettings.sync();
     {
         necwb::ui::MainWindow mainWindow;
         auto* setupWorkspace = mainWindow.findChild<QTabWidget*>(QStringLiteral("setupWorkspace"));
         auto* modelWorkspace = mainWindow.findChild<QTabWidget*>(QStringLiteral("modelWorkspace"));
         auto* setupModuleAction = mainWindow.findChild<QAction*>(
             QStringLiteral("setupModuleAction"));
+        auto* modelModuleAction = mainWindow.findChild<QAction*>(
+            QStringLiteral("modelModuleAction"));
+        auto* optimizeModuleAction = mainWindow.findChild<QAction*>(
+            QStringLiteral("optimizeModuleAction"));
+        auto* optimizationWorkspace = mainWindow.findChild<QWidget*>(
+            QStringLiteral("optimizationWorkspace"));
         auto* validateMenu = mainWindow.findChild<QMenu*>(QStringLiteral("validateMenu"));
         auto* runMenu = mainWindow.findChild<QMenu*>(QStringLiteral("runMenu"));
         auto* validationWorkspace = mainWindow.findChild<QTabWidget*>(
@@ -245,6 +263,18 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("openValidationResultsAction"));
         auto* reviewRuns = mainWindow.findChild<QAction*>(
             QStringLiteral("reviewRunHistoryAction"));
+        auto* resultWindowsMenu = mainWindow.findChild<QMenu*>(
+            QStringLiteral("resultWindowsMenu"));
+        auto* showImpedanceWindow = mainWindow.findChild<QAction*>(
+            QStringLiteral("showImpedanceWindowAction"));
+        auto* showCurrentsWindow = mainWindow.findChild<QAction*>(
+            QStringLiteral("showCurrentsWindowAction"));
+        auto* showRadiationWindow = mainWindow.findChild<QAction*>(
+            QStringLiteral("showRadiationWindowAction"));
+        auto* showRunHistory = mainWindow.findChild<QAction*>(
+            QStringLiteral("showRunHistoryAction"));
+        auto* resultsLauncherMenu = mainWindow.findChild<QMenu*>(
+            QStringLiteral("resultsLauncherMenu"));
         consolidatedSetupNavigation = setupModuleAction != nullptr
             && setupModuleAction->text() == QStringLiteral("&Setup")
             && tabNames(modelWorkspace) == QStringList{QStringLiteral("Geometry"),
@@ -257,9 +287,87 @@ auto main(int argc, char* argv[]) -> int
             && validateMenu != nullptr && runMenu != nullptr && validationSummary != nullptr
             && openValidation != nullptr && validateMenu->actions().contains(openValidation)
             && reviewRuns != nullptr && runMenu->actions().contains(reviewRuns);
+        if (modelWorkspace != nullptr && modelModuleAction != nullptr) {
+            modelModuleAction->setEnabled(true);
+            modelModuleAction->trigger();
+            application.processEvents();
+            const auto* modelEditorWindow = topLevelDialog(
+                QStringLiteral("modelEditorWindow"));
+            resultWindowSettings.sync();
+            modelWindowNavigation = modelEditorWindow != nullptr
+                && modelEditorWindow->isVisible()
+                && modelWorkspace->window() == modelEditorWindow
+                && resultWindowSettings.value(
+                    QStringLiteral("workspaceWindows/model-editor/detached"), false).toBool();
+        }
+        if (setupWorkspace != nullptr && setupModuleAction != nullptr) {
+            setupModuleAction->setEnabled(true);
+            setupModuleAction->trigger();
+            application.processEvents();
+            const auto* analysisSetupWindow = topLevelDialog(
+                QStringLiteral("analysisSetupWindow"));
+            resultWindowSettings.sync();
+            setupWindowNavigation = analysisSetupWindow != nullptr
+                && analysisSetupWindow->isVisible()
+                && setupWorkspace->window() == analysisSetupWindow
+                && resultWindowSettings.value(
+                    QStringLiteral("workspaceWindows/analysis-setup/detached"), false).toBool();
+        }
+        if (optimizationWorkspace != nullptr && optimizeModuleAction != nullptr) {
+            optimizeModuleAction->setEnabled(true);
+            optimizeModuleAction->trigger();
+            application.processEvents();
+            const auto* optimizationWindow = topLevelDialog(
+                QStringLiteral("optimizationWindow"));
+            resultWindowSettings.sync();
+            optimizationWindowNavigation = optimizationWindow != nullptr
+                && optimizationWindow->isVisible()
+                && optimizationWorkspace->window() == optimizationWindow
+                && resultWindowSettings.value(
+                    QStringLiteral("workspaceWindows/optimization/detached"), false).toBool();
+        }
+        if (resultWindowsMenu != nullptr && showImpedanceWindow != nullptr
+            && showCurrentsWindow != nullptr && showRadiationWindow != nullptr
+            && showRunHistory != nullptr) {
+            showImpedanceWindow->trigger();
+            showCurrentsWindow->trigger();
+            showRadiationWindow->trigger();
+            application.processEvents();
+            const auto* impedanceWindow = topLevelDialog(
+                QStringLiteral("impedanceResultWindow"));
+            const auto* currentsWindow = topLevelDialog(
+                QStringLiteral("currentsResultWindow"));
+            const auto* radiationWindow = topLevelDialog(
+                QStringLiteral("radiationResultWindow"));
+            resultWindowNavigation = resultWindowsMenu->actions().contains(showImpedanceWindow)
+                && resultWindowsMenu->actions().contains(showCurrentsWindow)
+                && resultWindowsMenu->actions().contains(showRadiationWindow)
+                && resultWindowsMenu->actions().contains(showRunHistory)
+                && resultsLauncherMenu != nullptr
+                && resultsLauncherMenu->actions().contains(showImpedanceWindow)
+                && resultsLauncherMenu->actions().contains(showRunHistory)
+                && impedanceWindow != nullptr && impedanceWindow->isVisible()
+                && currentsWindow != nullptr && currentsWindow->isVisible()
+                && radiationWindow != nullptr && radiationWindow->isVisible();
+        }
     }
+    resultWindowSettings.remove(QStringLiteral("resultWindows/impedance"));
+    resultWindowSettings.remove(QStringLiteral("resultWindows/currents"));
+    resultWindowSettings.remove(QStringLiteral("resultWindows/radiation"));
+    resultWindowSettings.remove(QStringLiteral("workspaceWindows/model-editor"));
+    resultWindowSettings.remove(QStringLiteral("workspaceWindows/analysis-setup"));
+    resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
+    resultWindowSettings.sync();
     if (!consolidatedSetupNavigation)
         return NECWB_SMOKE_FAILURE("consolidated setup navigation");
+    if (!resultWindowNavigation)
+        return NECWB_SMOKE_FAILURE("result window navigation");
+    if (!modelWindowNavigation)
+        return NECWB_SMOKE_FAILURE("model window navigation");
+    if (!setupWindowNavigation)
+        return NECWB_SMOKE_FAILURE("setup window navigation");
+    if (!optimizationWindowNavigation)
+        return NECWB_SMOKE_FAILURE("optimization window navigation");
     necwb::analysis::AnalysisResult result;
     result.feedpoints = {
         {14.0, 1, 6, {1.0, 0.0}, {0.01, 0.0}, {40.0, -12.0}, 0.005},
@@ -2210,6 +2318,24 @@ auto main(int argc, char* argv[]) -> int
     dashboard.setQuickActions(&checkAction, &runAction);
     dashboard.setAverageGainAction(&averageGainAction);
     dashboard.setConvergenceAction(&convergenceAction);
+    auto recentRunOpened = false;
+    auto runHistoryOpened = false;
+    dashboard.setOpenRecentRunCallback([&recentRunOpened](const QString& id) {
+        recentRunOpened = id == QStringLiteral("recent-0");
+    });
+    dashboard.setOpenRunHistoryCallback([&runHistoryOpened] { runHistoryOpened = true; });
+    std::vector<necwb::ui::AnalysisRunRecord> recentRuns;
+    for (auto index = 0; index < 6; ++index) {
+        necwb::ui::AnalysisRunRecord run;
+        run.id = QStringLiteral("recent-%1").arg(index);
+        run.started = QDateTime::currentDateTime().addSecs(-index);
+        run.sourceFile = QStringLiteral("/tmp/model-%1.nec").arg(index);
+        run.backend = QStringLiteral("nec2");
+        run.status = QStringLiteral("Completed");
+        run.summary = QStringLiteral("SWR %1").arg(index + 1);
+        recentRuns.push_back(std::move(run));
+    }
+    dashboard.setRecentRuns(recentRuns);
     dashboard.setDocumentState(QStringLiteral("test.nec"), true);
     dashboard.setResults(result, QStringLiteral("Model: test.nec · Run: dashboard"), false);
     dashboard.setAverageGainResult(necwb::analysis::assessAverageGain(1.02, 1.0), 14.1);
@@ -2240,6 +2366,20 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("dashboardAverageGainButton"));
     const auto* dashboardConvergenceButton = dashboard.findChild<QToolButton*>(
         QStringLiteral("dashboardConvergenceButton"));
+    auto* dashboardRecentRuns = dashboard.findChild<QTableWidget*>(
+        QStringLiteral("dashboardRecentRuns"));
+    auto* dashboardOpenRunHistory = dashboard.findChild<QPushButton*>(
+        QStringLiteral("dashboardOpenRunHistoryButton"));
+    if (dashboardRecentRuns != nullptr) {
+        QMetaObject::invokeMethod(dashboardRecentRuns, "cellDoubleClicked",
+            Qt::DirectConnection, Q_ARG(int, 0), Q_ARG(int, 0));
+    }
+    if (dashboardOpenRunHistory != nullptr) dashboardOpenRunHistory->click();
+    const auto dashboardRecentRunsCompact = dashboardRecentRuns != nullptr
+        && dashboardRecentRuns->rowCount() == 5
+        && dashboardRecentRuns->verticalHeader()->defaultSectionSize() <= 24
+        && dashboardRecentRuns->maximumHeight() <= 148
+        && recentRunOpened && runHistoryOpened;
     const auto dashboardQuickActions = dashboard.findChildren<QToolButton*>(
         QStringLiteral("dashboardQuickAction"));
     const auto dashboard3DIsOverview = dashboard3DControls != nullptr
@@ -2281,32 +2421,83 @@ auto main(int argc, char* argv[]) -> int
         || dashboardQuickActions[0]->defaultAction() != &checkAction
         || dashboardQuickActions[1]->defaultAction() != &runAction
         || !quickActionsRightAligned || !quadrantHeadersMatch || !qualityStatesShareRow
-        || !quickActionsMatchQualityButtons) {
+        || !quickActionsMatchQualityButtons || !dashboardRecentRunsCompact) {
         return NECWB_SMOKE_FAILURE("dashboard workspace");
     }
-    QSettings{}.remove(QStringLiteral("resultWindows/smoke-test"));
-    necwb::ui::DetachablePanel detachablePanel(
-        QStringLiteral("smoke-test"), QStringLiteral("Smoke Results"));
-    auto* detachableContent = new QLabel(QStringLiteral("Live result content"));
-    detachablePanel.setContent(detachableContent);
-    detachablePanel.show();
-    application.processEvents();
-    auto* popOutButton = detachablePanel.findChild<QPushButton*>(
-        QStringLiteral("smoke-testPopOutButton"));
-    if (popOutButton == nullptr) return NECWB_SMOKE_FAILURE("detachable panel button");
-    popOutButton->click();
-    application.processEvents();
-    auto* resultWindow = topLevelDialog(QStringLiteral("smoke-testResultWindow"));
-    const auto resultPanelDetached = detachablePanel.isDetached()
-        && resultWindow != nullptr && resultWindow->isVisible()
-        && resultWindow->parentWidget() == nullptr
-        && !resultWindow->testAttribute(Qt::WA_QuitOnClose)
-        && detachableContent->window() == resultWindow;
-    resultWindow->close();
-    application.processEvents();
-    const auto resultPanelReattached = !detachablePanel.isDetached()
-        && detachableContent->parentWidget() == &detachablePanel;
-    QSettings{}.remove(QStringLiteral("resultWindows/smoke-test"));
+    QSettings detachableSettings;
+    detachableSettings.remove(QStringLiteral("resultWindows/smoke-test"));
+    detachableSettings.sync();
+    auto resultPanelDetached = false;
+    auto resultPanelHiddenButLive = false;
+    auto resultPanelRaisedWithUpdate = false;
+    {
+        necwb::ui::DetachablePanel detachablePanel(
+            QStringLiteral("smoke-test"), QStringLiteral("Smoke Results"));
+        auto* detachableContent = new QLabel(QStringLiteral("Live result content"));
+        detachablePanel.setContent(detachableContent);
+        detachablePanel.show();
+        application.processEvents();
+        auto* popOutButton = detachablePanel.findChild<QPushButton*>(
+            QStringLiteral("smoke-testPopOutButton"));
+        if (popOutButton == nullptr) return NECWB_SMOKE_FAILURE("detachable panel button");
+        popOutButton->click();
+        application.processEvents();
+        auto* resultWindow = topLevelDialog(QStringLiteral("smoke-testResultWindow"));
+        resultPanelDetached = detachablePanel.isDetached()
+            && detachablePanel.isWindowVisible()
+            && resultWindow != nullptr && resultWindow->isVisible()
+            && resultWindow->parentWidget() == nullptr
+            && !resultWindow->testAttribute(Qt::WA_QuitOnClose)
+            && detachableContent->window() == resultWindow;
+        resultWindow->close();
+        application.processEvents();
+        detachableContent->setText(QStringLiteral("Updated while hidden"));
+        detachablePanel.setStatusText(QStringLiteral("Stale — model changed"));
+        detachableSettings.sync();
+        resultPanelHiddenButLive = detachablePanel.isDetached()
+            && !detachablePanel.isWindowVisible()
+            && detachableContent->window() == resultWindow
+            && !detachableSettings.value(
+                QStringLiteral("resultWindows/smoke-test/visible"), true).toBool();
+        detachablePanel.showWindow();
+        application.processEvents();
+        auto* windowStatus = resultWindow->findChild<QLabel*>(
+            QStringLiteral("smoke-testWindowStatusLabel"));
+        resultPanelRaisedWithUpdate = detachablePanel.isWindowVisible()
+            && detachableContent->text() == QStringLiteral("Updated while hidden")
+            && windowStatus != nullptr
+            && windowStatus->text() == QStringLiteral("Stale — model changed");
+        resultWindow->close();
+        application.processEvents();
+    }
+    auto resultPanelRestoredHidden = false;
+    auto resultPanelOpenStateSaved = false;
+    {
+        necwb::ui::DetachablePanel restoredPanel(
+            QStringLiteral("smoke-test"), QStringLiteral("Smoke Results"));
+        auto* restoredContent = new QLabel(QStringLiteral("Restored content"));
+        restoredPanel.setContent(restoredContent);
+        restoredPanel.show();
+        application.processEvents();
+        resultPanelRestoredHidden = restoredPanel.isDetached()
+            && !restoredPanel.isWindowVisible()
+            && restoredContent->window() != &restoredPanel;
+        restoredPanel.showWindow();
+        application.processEvents();
+        resultPanelOpenStateSaved = restoredPanel.isWindowVisible();
+    }
+    auto resultPanelRestoredVisible = false;
+    {
+        necwb::ui::DetachablePanel restoredPanel(
+            QStringLiteral("smoke-test"), QStringLiteral("Smoke Results"));
+        restoredPanel.setContent(new QLabel(QStringLiteral("Visible restored content")));
+        restoredPanel.show();
+        application.processEvents();
+        resultPanelRestoredVisible = restoredPanel.isDetached()
+            && restoredPanel.isWindowVisible();
+    }
+    detachableSettings.remove(QStringLiteral("resultWindows/smoke-test"));
+    detachableSettings.sync();
     QAction welcomeNew(QStringLiteral("New NEC Model"));
     QAction welcomeOpen(QStringLiteral("Open NEC File"));
     QString recentOpened;
@@ -3033,6 +3224,8 @@ auto main(int argc, char* argv[]) -> int
     if (!store.save(run)) {
         return NECWB_SMOKE_FAILURE("analysis run storage");
     }
+    if (store.loadRecent(1).size() != 1 || !store.loadRecent(0).empty())
+        return NECWB_SMOKE_FAILURE("recent analysis run storage");
     const QByteArray reviewOutput =
         " FREQUENCY : 1.4100E+01 MHz\n"
         " --------- ANTENNA INPUT PARAMETERS ---------\n"
@@ -3145,7 +3338,9 @@ auto main(int argc, char* argv[]) -> int
         && !summaryImage.isNull()
         && !fieldImage.isNull() && !currentImage.isNull()
         && !dashboardImage.isNull() && dashboardStateVisible && dashboard3DIsOverview
-        && resultPanelDetached && resultPanelReattached
+        && resultPanelDetached && resultPanelHiddenButLive
+        && resultPanelRaisedWithUpdate && resultPanelRestoredHidden
+        && resultPanelOpenStateSaved && resultPanelRestoredVisible
         && !welcomeImage.isNull() && welcomeStateValid && !examplesOpened && storeValid
         && runReviewValid
         && runReviewSwitchesCleanly

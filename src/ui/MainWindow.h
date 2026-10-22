@@ -70,6 +70,7 @@ class DashboardPage;
 class WelcomePage;
 class OptimizationWorkspace;
 class ParameterEditor;
+class DetachablePanel;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -132,7 +133,7 @@ private:
     void detachResults();
     void attachResults();
     void showDetachedResults();
-    void presentCompletedAnalysisResults();
+    void setLiveResultStatus(const QString& status);
     void showEditor(EditorDestination destination, int geometryTab = 0);
     void setDisplayLengthUnit(model::LengthUnit unit);
     void changeDeckLengthUnit(model::LengthUnit unit);
@@ -229,6 +230,7 @@ private:
     void finishAnalysis(SolverProcessResult result);
     void setCurrentRunStatus(const QString& status);
     void loadRunHistory();
+    void refreshDashboardRuns();
     void addRunRecord(const AnalysisRunRecord& record, bool prepend);
     void loadSelectedRun();
     void inspectSelectedRunInput();
@@ -324,6 +326,12 @@ private:
     QWidget* detachedResultsPlaceholder_{};
     QVBoxLayout* resultsHostLayout_{};
     QDialog* detachedResultsWindow_{};
+    DetachablePanel* impedancePanel_{};
+    DetachablePanel* currentsPanel_{};
+    DetachablePanel* radiationPanel_{};
+    DetachablePanel* modelPanel_{};
+    DetachablePanel* setupPanel_{};
+    DetachablePanel* optimizationPanel_{};
     QComboBox* resultsFrequencyControl_{};
     QLineEdit* rawOutputFindControl_{};
     DashboardPage* dashboardPage_{};
@@ -460,6 +468,7 @@ private:
     bool modelChecked_{};
     bool hasNecModel_{};
     bool resultsAvailable_{};
+    bool liveResultsStale_{};
     bool runHistoryLoaded_{};
     bool resultsDetached_{};
     bool runMonitorPinnedOpen_{};

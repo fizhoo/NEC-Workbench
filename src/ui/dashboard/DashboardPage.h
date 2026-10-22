@@ -4,8 +4,12 @@
 #include "analysis/AverageGainTest.h"
 #include "model/AntennaModel.h"
 #include "model/ModelSetup.h"
+#include "ui/analysis/AnalysisRunStore.h"
 
 #include <QWidget>
+
+#include <functional>
+#include <vector>
 
 class QLabel;
 class QTableWidget;
@@ -41,6 +45,9 @@ public:
     void setConvergenceState(const QString& summary);
     void markConvergenceStale();
     void clearConvergence();
+    void setRecentRuns(const std::vector<AnalysisRunRecord>& runs);
+    void setOpenRecentRunCallback(std::function<void(const QString&)> callback);
+    void setOpenRunHistoryCallback(std::function<void()> callback);
 
 private:
     void setValue(QTableWidget* table, int row, const QString& value);
@@ -57,6 +64,9 @@ private:
     QLabel* convergenceState_{};
     QToolButton* convergenceButton_{};
     QHBoxLayout* quickActions_{};
+    QTableWidget* recentRuns_{};
+    std::function<void(const QString&)> openRecentRun_;
+    std::function<void()> openRunHistory_;
     QString resultContext_;
     bool hasResults_{};
     bool resultsStale_{};

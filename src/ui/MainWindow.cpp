@@ -767,6 +767,7 @@ void MainWindow::createActions()
     optimizeModuleAction_ = moduleGroup->addAction(tr("&Optimize"));
     modelModuleAction_->setObjectName(QStringLiteral("modelModuleAction"));
     analysisModuleAction_->setObjectName(QStringLiteral("setupModuleAction"));
+    optimizeModuleAction_->setObjectName(QStringLiteral("optimizeModuleAction"));
     modelModuleAction_->setIcon(workbenchIcon("geometry"));
     analysisModuleAction_->setIcon(workbenchIcon("settings"));
     resultsModuleAction_->setIcon(workbenchIcon("results"));
@@ -833,7 +834,22 @@ void MainWindow::createWorkspace()
     dashboardPage_->setQuickActions(checkAction_, runAction_);
     dashboardPage_->setAverageGainAction(averageGainAction_);
     dashboardPage_->setConvergenceAction(convergenceAction_);
+    dashboardPage_->setOpenRecentRunCallback([this](const QString& id) {
+        if (!runHistoryLoaded_) loadRunHistory();
+        for (auto row = 0; row < analysisRuns_->rowCount(); ++row) {
+            const auto* item = analysisRuns_->item(row, RunStartedColumn);
+            if (item == nullptr || item->data(RunIdRole).toString() != id) continue;
+            analysisRuns_->setCurrentCell(row, RunStartedColumn);
+            loadSelectedRun();
+            return;
+        }
+    });
+    dashboardPage_->setOpenRunHistoryCallback([this] {
+        if (!showModule(resultsModuleIndex_)) return;
+        resultsWorkspace_->setCurrentIndex(analysisRunsTabIndex_);
+    });
     dashboardStack_->addWidget(dashboardPage_);
+    QTimer::singleShot(0, this, [this] { refreshDashboardRuns(); });
     homeModuleIndex_ = moduleStack_->addWidget(dashboardStack_);
 
     auto* structuredContainer = new QWidget(sourceWorkspace_);
@@ -1144,7 +1160,12 @@ void MainWindow::createWorkspace()
     modelWorkspace_->setTabIcon(modelDeckWorkspaceIndex_, workbenchIcon("nec-deck"));
     auto* modelNavigator = new WorkspaceNavigator(
         modelWorkspace_, QStringLiteral("model"), moduleStack_);
-    modelModuleIndex_ = moduleStack_->addWidget(modelNavigator);
+    modelPanel_ = new DetachablePanel(QStringLiteral("model-editor"),
+        tr("Model Editor"), moduleStack_, QStringLiteral("workspaceWindows"),
+        QStringLiteral("modelEditorWindow"));
+    modelPanel_->setStatusText(tr("No model loaded"));
+    modelPanel_->setContent(modelNavigator);
+    modelModuleIndex_ = moduleStack_->addWidget(modelPanel_);
 
     analysisSetupEditor_ = new AnalysisSetupEditor(analysisWorkspace_);
     connect(analysisSetupEditor_, &AnalysisSetupEditor::settingsChanged, this,
@@ -1308,7 +1329,12 @@ void MainWindow::createWorkspace()
 
     auto* analysisNavigator = new WorkspaceNavigator(
         analysisWorkspace_, QStringLiteral("analysis"), moduleStack_);
-    analysisModuleIndex_ = moduleStack_->addWidget(analysisNavigator);
+    setupPanel_ = new DetachablePanel(QStringLiteral("analysis-setup"),
+        tr("Analysis Setup"), moduleStack_, QStringLiteral("workspaceWindows"),
+        QStringLiteral("analysisSetupWindow"));
+    setupPanel_->setStatusText(tr("No model loaded"));
+    setupPanel_->setContent(analysisNavigator);
+    analysisModuleIndex_ = moduleStack_->addWidget(setupPanel_);
 
     createResultsWorkspace();
     createOptimizationWorkspace();
@@ -1462,6 +1488,7 @@ void MainWindow::createResultsWorkspace()
     averageGainResultsTabIndex_ = resultsWorkspace_->addTab(validationWorkspace_, tr("Validation"));
     convergenceWorkspace_->setRunsChangedCallback([this] {
         if (runHistoryLoaded_) loadRunHistory();
+        refreshDashboardRuns();
     });
     convergenceWorkspace_->setRunningChangedCallback([this] { synchronizeRunnerState(); });
     convergenceWorkspace_->setSummaryChangedCallback([this](const QString& summary) {
@@ -1476,16 +1503,16 @@ void MainWindow::createResultsWorkspace()
     impedanceTabs->addTab(analysisResultsView_, tr("Table"));
     visualizePlotsView_ = new SweepPlotsView(impedanceTabs);
     impedanceTabs->addTab(visualizePlotsView_, tr("Plots"));
-    auto* impedancePanel = new DetachablePanel(
+    impedancePanel_ = new DetachablePanel(
         QStringLiteral("impedance"), tr("Impedance Results"), resultsWorkspace_);
-    impedancePanel->setContent(impedanceTabs);
-    const auto impedanceTabIndex = resultsWorkspace_->addTab(impedancePanel, tr("Impedance"));
+    impedancePanel_->setContent(impedanceTabs);
+    const auto impedanceTabIndex = resultsWorkspace_->addTab(impedancePanel_, tr("Impedance"));
 
-    auto* currentsPanel = new DetachablePanel(
+    currentsPanel_ = new DetachablePanel(
         QStringLiteral("currents"), tr("Current Distribution"), resultsWorkspace_);
-    currentResultsView_ = new CurrentDistributionView(currentsPanel);
-    currentsPanel->setContent(currentResultsView_);
-    const auto currentsTabIndex = resultsWorkspace_->addTab(currentsPanel, tr("Currents"));
+    currentResultsView_ = new CurrentDistributionView(currentsPanel_);
+    currentsPanel_->setContent(currentResultsView_);
+    const auto currentsTabIndex = resultsWorkspace_->addTab(currentsPanel_, tr("Currents"));
 
     auto* radiationTabs = new QTabWidget(resultsWorkspace_);
     radiationTabs->setDocumentMode(true);
@@ -1495,10 +1522,10 @@ void MainWindow::createResultsWorkspace()
     radiationTabs->addTab(radiation3DView_, tr("3D Pattern"));
     radiationPerformanceView_ = new RadiationPerformanceView(radiationTabs);
     radiationTabs->addTab(radiationPerformanceView_, tr("Performance vs Frequency"));
-    auto* radiationPanel = new DetachablePanel(
+    radiationPanel_ = new DetachablePanel(
         QStringLiteral("radiation"), tr("Radiation Results"), resultsWorkspace_);
-    radiationPanel->setContent(radiationTabs);
-    const auto radiationTabIndex = resultsWorkspace_->addTab(radiationPanel, tr("Radiation"));
+    radiationPanel_->setContent(radiationTabs);
+    const auto radiationTabIndex = resultsWorkspace_->addTab(radiationPanel_, tr("Radiation"));
     radiationPatternView_->setSettingsChangedCallback([this](const auto& settings) {
         radiation3DView_->setDisplaySettings(settings);
         radiationPerformanceView_->setComponent(settings.component);
@@ -1566,11 +1593,23 @@ void MainWindow::createResultsWorkspace()
 
 void MainWindow::createOptimizationWorkspace()
 {
-    optimizationWorkspace_ = new OptimizationWorkspace(moduleStack_);
+    optimizationPanel_ = new DetachablePanel(QStringLiteral("optimization"),
+        tr("Optimization"), moduleStack_, QStringLiteral("workspaceWindows"),
+        QStringLiteral("optimizationWindow"));
+    optimizationPanel_->setStatusText(tr("No model loaded"));
+    optimizationWorkspace_ = new OptimizationWorkspace(optimizationPanel_);
+    optimizationWorkspace_->setObjectName(QStringLiteral("optimizationWorkspace"));
     optimizationWorkspace_->setRunsChangedCallback([this] {
         if (runHistoryLoaded_) loadRunHistory();
+        refreshDashboardRuns();
     });
-    optimizationWorkspace_->setRunningChangedCallback([this] { synchronizeRunnerState(); });
+    optimizationWorkspace_->setRunningChangedCallback([this] {
+        synchronizeRunnerState();
+        const auto modelName = currentFile_.isEmpty()
+            ? tr("Untitled model.nec") : QFileInfo(currentFile_).fileName();
+        optimizationPanel_->setStatusText(tr("%1 · %2").arg(modelName,
+            optimizationWorkspace_->isRunning() ? tr("Running") : tr("Ready")));
+    });
     optimizationWorkspace_->setParameterizationHelpCallback([this] {
         if (!showModule(modelModuleIndex_)) return;
         modelWorkspace_->setCurrentIndex(modelDeckWorkspaceIndex_);
@@ -1632,13 +1671,42 @@ void MainWindow::createOptimizationWorkspace()
         [this](double frequencyMHz) {
             return startOptimizationPeakSearch(frequencyMHz);
         });
-    optimizeModuleIndex_ = moduleStack_->addWidget(optimizationWorkspace_);
+    optimizationPanel_->setContent(optimizationWorkspace_);
+    optimizeModuleIndex_ = moduleStack_->addWidget(optimizationPanel_);
 }
 
 auto MainWindow::showModule(int index) -> bool
 {
     if (moduleStack_ == nullptr || index < 0 || index >= moduleStack_->count()) {
         return false;
+    }
+    if (index == modelModuleIndex_ && modelPanel_ != nullptr) {
+        modelPanel_->showWindow();
+        const auto current = moduleStack_->currentIndex();
+        if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
+        else if (current == analysisModuleIndex_) analysisModuleAction_->setChecked(true);
+        else if (current == resultsModuleIndex_) resultsModuleAction_->setChecked(true);
+        else if (current == optimizeModuleIndex_) optimizeModuleAction_->setChecked(true);
+        updateUndoActions();
+        return true;
+    }
+    if (index == analysisModuleIndex_ && setupPanel_ != nullptr) {
+        setupPanel_->showWindow();
+        const auto current = moduleStack_->currentIndex();
+        if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
+        else if (current == resultsModuleIndex_) resultsModuleAction_->setChecked(true);
+        else if (current == optimizeModuleIndex_) optimizeModuleAction_->setChecked(true);
+        updateUndoActions();
+        return true;
+    }
+    if (index == optimizeModuleIndex_ && optimizationPanel_ != nullptr) {
+        optimizationPanel_->showWindow();
+        optimizationWorkspace_->restoreCandidateDetailsWindow();
+        const auto current = moduleStack_->currentIndex();
+        if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
+        else if (current == resultsModuleIndex_) resultsModuleAction_->setChecked(true);
+        updateUndoActions();
+        return true;
     }
     if (index != moduleStack_->currentIndex() && !confirmCurrentEditorNavigation()) {
         const auto current = moduleStack_->currentIndex();
@@ -1776,10 +1844,11 @@ void MainWindow::showDetachedResults()
     detachedResultsWindow_->activateWindow();
 }
 
-void MainWindow::presentCompletedAnalysisResults()
+void MainWindow::setLiveResultStatus(const QString& status)
 {
-    if (resultsDetached_) showDetachedResults();
-    else detachResults();
+    if (impedancePanel_ != nullptr) impedancePanel_->setStatusText(status);
+    if (currentsPanel_ != nullptr) currentsPanel_->setStatusText(status);
+    if (radiationPanel_ != nullptr) radiationPanel_->setStatusText(status);
 }
 
 void MainWindow::showEditor(EditorDestination destination, int geometryTab)
@@ -2291,6 +2360,55 @@ void MainWindow::createMenusAndToolbar()
     densityMenu->addAction(compactDensityAction_);
     densityMenu->addAction(standardDensityAction_);
     densityMenu->addAction(spaciousDensityAction_);
+    auto* resultWindowsMenu = viewMenu->addMenu(tr("&Result Windows"));
+    resultWindowsMenu->setObjectName(QStringLiteral("resultWindowsMenu"));
+    auto* showImpedanceWindowAction = resultWindowsMenu->addAction(
+        workbenchIcon("frequency-sweep"), tr("Impedance && SWR"));
+    showImpedanceWindowAction->setObjectName(QStringLiteral("showImpedanceWindowAction"));
+    showImpedanceWindowAction->setStatusTip(
+        tr("Open or raise the live impedance and SWR result window"));
+    connect(showImpedanceWindowAction, &QAction::triggered, this,
+        [this] { impedancePanel_->showWindow(); });
+    auto* showCurrentsWindowAction = resultWindowsMenu->addAction(
+        workbenchIcon("sources"), tr("Currents"));
+    showCurrentsWindowAction->setObjectName(QStringLiteral("showCurrentsWindowAction"));
+    showCurrentsWindowAction->setStatusTip(
+        tr("Open or raise the live current-distribution window"));
+    connect(showCurrentsWindowAction, &QAction::triggered, this,
+        [this] { currentsPanel_->showWindow(); });
+    auto* showRadiationWindowAction = resultWindowsMenu->addAction(
+        workbenchIcon("radiation-pattern"), tr("Radiation"));
+    showRadiationWindowAction->setObjectName(QStringLiteral("showRadiationWindowAction"));
+    showRadiationWindowAction->setStatusTip(
+        tr("Open or raise the live radiation-result window"));
+    connect(showRadiationWindowAction, &QAction::triggered, this,
+        [this] { radiationPanel_->showWindow(); });
+    resultWindowsMenu->addSeparator();
+    auto* showRunHistoryAction = resultWindowsMenu->addAction(
+        workbenchIcon("analysis"), tr("Run History"));
+    showRunHistoryAction->setObjectName(QStringLiteral("showRunHistoryAction"));
+    showRunHistoryAction->setStatusTip(tr("Open the saved analysis-run history"));
+    connect(showRunHistoryAction, &QAction::triggered, this, [this] {
+        if (!showModule(resultsModuleIndex_)) return;
+        resultsWorkspace_->setCurrentIndex(analysisRunsTabIndex_);
+    });
+    if (auto* moduleNavigation = findChild<QToolBar*>(QStringLiteral("moduleNavigationToolbar"));
+        moduleNavigation != nullptr) {
+        if (auto* resultsButton = qobject_cast<QToolButton*>(
+                moduleNavigation->widgetForAction(resultsModuleAction_));
+            resultsButton != nullptr) {
+            auto* resultsMenu = new QMenu(resultsButton);
+            resultsMenu->setObjectName(QStringLiteral("resultsLauncherMenu"));
+            resultsMenu->addAction(showImpedanceWindowAction);
+            resultsMenu->addAction(showCurrentsWindowAction);
+            resultsMenu->addAction(showRadiationWindowAction);
+            resultsMenu->addSeparator();
+            resultsMenu->addAction(showRunHistoryAction);
+            resultsButton->setMenu(resultsMenu);
+            resultsButton->setPopupMode(QToolButton::InstantPopup);
+            resultsButton->setToolTip(tr("Open a live result window or review saved runs"));
+        }
+    }
     viewMenu->addSeparator();
     viewMenu->addAction(projectDock_->toggleViewAction());
     viewMenu->addAction(modelCheckWindowAction_);
@@ -2872,8 +2990,11 @@ void MainWindow::clearCheckResults()
     dashboardPage_->markConvergenceStale();
     convergenceWorkspace_->markStale();
     if (resultsAvailable_) dashboardPage_->markResultsStale();
-    if (resultsAvailable_)
+    if (resultsAvailable_) {
+        liveResultsStale_ = true;
         resultsStatusLabel_->setText(tr("STALE — the NEC model changed after these results were calculated."));
+        setLiveResultStatus(tr("Stale — model changed; run again"));
+    }
     updateAnalysisReadiness();
 }
 
@@ -3987,6 +4108,7 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
 {
     if (!currentRunRecord_) return;
     addRunRecord(*currentRunRecord_, true);
+    refreshDashboardRuns();
     currentRunRow_ = 0;
     analysisRuns_->selectRow(0);
 
@@ -4033,8 +4155,9 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
     cancelRunButton_->setEnabled(true);
     openRunFolderButton_->setEnabled(true);
     runAction_->setEnabled(false);
-    if (currentRunPurpose_ == SolverRunPurpose::Analysis
-        || currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
+    if (currentRunPurpose_ == SolverRunPurpose::Analysis)
+        setLiveResultStatus(tr("Running…"));
+    if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
         showModule(resultsModuleIndex_);
     }
     if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
@@ -4231,6 +4354,8 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             dashboardPage_->setModel(currentModel_, currentSetup_, solverBackendId_, true,
                 modelErrorCount_, modelWarningCount_);
             resultsAvailable_ = true;
+            liveResultsStale_ = false;
+            setLiveResultStatus(tr("Current"));
             resultsStatusLabel_->setText(tr("Current results — %1").arg(context));
             showActiveResultsContext(context);
             analysisResultsAvailable = !result.feedpoints.empty() || !result.currents.empty()
@@ -4309,8 +4434,11 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     } else {
         status = tr("Failed (exit %1)").arg(processResult.exitCode);
     }
-    if (currentRunPurpose_ == SolverRunPurpose::Analysis) {
-        if (runCompleted && analysisResultsAvailable) presentCompletedAnalysisResults();
+    if (currentRunPurpose_ == SolverRunPurpose::Analysis
+        && (!runCompleted || !analysisResultsAvailable)) {
+        setLiveResultStatus(!resultsAvailable_ ? tr("No results")
+            : liveResultsStale_ ? tr("Stale — previous results retained")
+                                : tr("Previous results retained"));
     }
     setCurrentRunStatus(status);
     if (currentRunRow_ >= 0) {
@@ -4351,6 +4479,7 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     synchronizeRunnerState();
     updateRunSelectionActions();
     updateAnalysisReadiness();
+    refreshDashboardRuns();
 }
 
 void MainWindow::setCurrentRunStatus(const QString& status)
@@ -4380,6 +4509,11 @@ void MainWindow::loadRunHistory()
     analysisRuns_->clearSelection();
     runHistoryLoaded_ = true;
     updateRunSelectionActions();
+}
+
+void MainWindow::refreshDashboardRuns()
+{
+    if (dashboardPage_ != nullptr) dashboardPage_->setRecentRuns(runStore_.loadRecent(100));
 }
 
 void MainWindow::addRunRecord(const AnalysisRunRecord& record, bool prepend)
@@ -4670,6 +4804,7 @@ void MainWindow::editSelectedRunNote()
     }
     resultReferenceController_.refreshMetadata(*record);
     updateResultReference();
+    refreshDashboardRuns();
 }
 
 void MainWindow::clearResultReference()
@@ -4761,6 +4896,7 @@ void MainWindow::deleteSelectedRun()
     }
     if (displayedRunDirectory_ == directory) clearDisplayedResults();
     updateRunSelectionActions();
+    refreshDashboardRuns();
 }
 
 void MainWindow::displayRunArtifacts(const QString& directory, const QString& context)
@@ -4841,6 +4977,8 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
     setDisplayedResults(result);
     displayedRunDirectory_ = directory;
     resultsAvailable_ = true;
+    liveResultsStale_ = false;
+    setLiveResultStatus(tr("Current"));
     resultsStatusLabel_->setText(archivedModelAvailable
         ? tr("Active model results — %1").arg(context)
         : tr("Results loaded — archived model.nec is missing or invalid · %1").arg(context));
@@ -5012,6 +5150,8 @@ void MainWindow::clearDisplayedResults()
     setDisplayedResults(empty);
     displayedRunDirectory_.clear();
     resultsAvailable_ = false;
+    liveResultsStale_ = false;
+    setLiveResultStatus(tr("No results"));
     resultsContextTitleLabel_->setText(tr("No Results Loaded"));
     resultsContextDetailLabel_->setText(
         tr("Select a run from Results → Runs, or analyze the active model."));
@@ -5356,7 +5496,8 @@ void MainWindow::pushGeometrySourceEdit(const QString& description, QString upda
     }
     auto destination = EditorDestination::Geometry;
     const auto geometryTab = workspace_->currentIndex();
-    if (moduleStack_->currentIndex() == analysisModuleIndex_) {
+    if (moduleStack_->currentIndex() == analysisModuleIndex_
+        || (setupPanel_ != nullptr && setupPanel_->isWindowActive())) {
         if (analysisWorkspace_->currentIndex() == modelSourcesWorkspaceIndex_)
             destination = EditorDestination::Sources;
         else if (analysisWorkspace_->currentIndex() == loadNetworkTabIndex_)
@@ -5365,7 +5506,8 @@ void MainWindow::pushGeometrySourceEdit(const QString& description, QString upda
             destination = EditorDestination::Environment;
         else
             destination = EditorDestination::Frequency;
-    } else if (moduleStack_->currentIndex() == modelModuleIndex_) {
+    } else if (moduleStack_->currentIndex() == modelModuleIndex_
+        || (modelPanel_ != nullptr && modelPanel_->isWindowActive())) {
         if (modelWorkspace_->currentIndex() == modelDeckWorkspaceIndex_)
             destination = EditorDestination::RawSource;
         else if (modelWorkspace_->currentIndex() == modelParametersWorkspaceIndex_)
@@ -5702,6 +5844,11 @@ void MainWindow::setCurrentFile(QString path)
     if (dashboardPage_ != nullptr)
         dashboardPage_->setDocumentState(currentFile_.isEmpty() ? QString{} : name,
             editor_->document()->isModified());
+    if (modelPanel_ != nullptr) modelPanel_->setStatusText(modelName);
+    if (setupPanel_ != nullptr) setupPanel_->setStatusText(modelName);
+    if (optimizationPanel_ != nullptr) optimizationPanel_->setStatusText(
+        tr("%1 · %2").arg(modelName,
+            optimizationWorkspace_->isRunning() ? tr("Running") : tr("Ready")));
     if (activeModelResultsLabel_ != nullptr) updateActiveModelResultsLabel();
 }
 

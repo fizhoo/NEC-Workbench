@@ -112,6 +112,30 @@ auto AnalysisRunStore::load() const -> std::vector<AnalysisRunRecord>
     return records;
 }
 
+auto AnalysisRunStore::loadRecent(std::size_t maximum) const
+    -> std::vector<AnalysisRunRecord>
+{
+    std::vector<AnalysisRunRecord> records;
+    if (maximum == 0) return records;
+    const QDir root(rootDirectory_);
+    const auto directories = root.entryList(
+        QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name | QDir::Reversed);
+    records.reserve(std::min(maximum, static_cast<std::size_t>(directories.size())));
+    for (const auto& directoryName : directories) {
+        auto record = readRecord(root.filePath(directoryName));
+        if (record.id.isEmpty()) continue;
+        if (record.status == QStringLiteral("Starting")
+            || record.status == QStringLiteral("Running")) {
+            record.status = QStringLiteral("Interrupted");
+            save(record);
+        }
+        records.push_back(std::move(record));
+        if (records.size() == maximum) break;
+    }
+    std::ranges::sort(records, std::greater{}, &AnalysisRunRecord::started);
+    return records;
+}
+
 auto AnalysisRunStore::save(const AnalysisRunRecord& record) const -> bool
 {
     if (!QDir().mkpath(record.directory)) {

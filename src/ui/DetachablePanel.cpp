@@ -5,20 +5,27 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QSettings>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <utility>
 
 namespace necwb::ui {
 
-DetachablePanel::DetachablePanel(QString id, QString title, QWidget* parent)
-    : QWidget(parent), id_(std::move(id)), title_(std::move(title))
+DetachablePanel::DetachablePanel(QString id, QString title, QWidget* parent,
+    QString settingsRoot, QString windowObjectName)
+    : QWidget(parent), id_(std::move(id)), title_(std::move(title)),
+      settingsRoot_(std::move(settingsRoot)), windowObjectName_(std::move(windowObjectName))
 {
     layout_ = new QVBoxLayout(this);
     layout_->setContentsMargins(0, 0, 0, 0);
     layout_->setSpacing(4);
 
     auto* toolbar = new QHBoxLayout;
+    statusText_ = tr("No results");
+    statusLabel_ = new QLabel(statusText_, this);
+    statusLabel_->setObjectName(id_ + QStringLiteral("StatusLabel"));
+    toolbar->addWidget(statusLabel_);
     toolbar->addStretch();
     toggleButton_ = new QPushButton(tr("Pop Out"), this);
     toggleButton_->setObjectName(id_ + QStringLiteral("PopOutButton"));
@@ -46,6 +53,7 @@ DetachablePanel::DetachablePanel(QString id, QString title, QWidget* parent)
 DetachablePanel::~DetachablePanel()
 {
     saveWindowGeometry();
+    saveWindowState();
     delete dialog_;
 }
 
@@ -55,11 +63,40 @@ void DetachablePanel::setContent(QWidget* content)
     content_ = content;
     content_->setParent(this);
     layout_->addWidget(content_, 1);
+    QTimer::singleShot(0, this, [this] {
+        const QSettings settings;
+        const auto prefix = settingsKey({});
+        if (settings.value(prefix + QStringLiteral("detached"), false).toBool())
+            detach(settings.value(prefix + QStringLiteral("visible"), false).toBool());
+    });
 }
 
 auto DetachablePanel::isDetached() const -> bool
 {
     return detached_;
+}
+
+auto DetachablePanel::isWindowVisible() const -> bool
+{
+    return detached_ && dialog_ != nullptr && dialog_->isVisible();
+}
+
+auto DetachablePanel::isWindowActive() const -> bool
+{
+    return detached_ && dialog_ != nullptr && dialog_->isActiveWindow();
+}
+
+void DetachablePanel::showWindow()
+{
+    if (detached_) showDetached();
+    else detach();
+}
+
+void DetachablePanel::setStatusText(QString status)
+{
+    statusText_ = std::move(status);
+    statusLabel_->setText(statusText_);
+    if (dialogStatusLabel_ != nullptr) dialogStatusLabel_->setText(statusText_);
 }
 
 void DetachablePanel::toggleDetached()
@@ -68,12 +105,13 @@ void DetachablePanel::toggleDetached()
     else detach();
 }
 
-void DetachablePanel::detach()
+void DetachablePanel::detach(bool showWindow)
 {
     if (detached_ || content_ == nullptr) return;
     if (dialog_ == nullptr) {
         dialog_ = new QDialog(nullptr, Qt::Window);
-        dialog_->setObjectName(id_ + QStringLiteral("ResultWindow"));
+        dialog_->setObjectName(windowObjectName_.isEmpty()
+            ? id_ + QStringLiteral("ResultWindow") : windowObjectName_);
         dialog_->setWindowTitle(tr("%1 — NEC Workbench").arg(title_));
         dialog_->setModal(false);
         dialog_->setAttribute(Qt::WA_QuitOnClose, false);
@@ -82,11 +120,17 @@ void DetachablePanel::detach()
         auto* dialogLayout = new QVBoxLayout(dialog_);
         dialogLayout->setContentsMargins(0, 0, 0, 0);
         dialogLayout->setSizeConstraint(QLayout::SetNoConstraint);
-        const auto geometry = QSettings{}.value(
-            QStringLiteral("resultWindows/%1/geometry").arg(id_)).toByteArray();
+        dialogStatusLabel_ = new QLabel(statusText_, dialog_);
+        dialogStatusLabel_->setObjectName(id_ + QStringLiteral("WindowStatusLabel"));
+        dialogStatusLabel_->setContentsMargins(6, 4, 6, 0);
+        dialogLayout->addWidget(dialogStatusLabel_);
+        const auto geometry = QSettings{}.value(settingsKey(QStringLiteral("geometry"))).toByteArray();
         if (!geometry.isEmpty()) dialog_->restoreGeometry(geometry);
         else dialog_->resize(900, 680);
-        connect(dialog_, &QDialog::finished, this, [this] { attach(); });
+        connect(dialog_, &QDialog::finished, this, [this] {
+            saveWindowGeometry();
+            saveWindowState();
+        });
     }
 
     layout_->removeWidget(content_);
@@ -95,7 +139,9 @@ void DetachablePanel::detach()
     placeholder_->show();
     detached_ = true;
     toggleButton_->setText(tr("Attach"));
-    showDetached();
+    saveWindowState();
+    if (showWindow) showDetached();
+    else dialog_->hide();
 }
 
 void DetachablePanel::attach()
@@ -110,6 +156,7 @@ void DetachablePanel::attach()
     detached_ = false;
     toggleButton_->setText(tr("Pop Out"));
     dialog_->hide();
+    saveWindowState();
 }
 
 void DetachablePanel::showDetached()
@@ -119,13 +166,26 @@ void DetachablePanel::showDetached()
     else dialog_->show();
     dialog_->raise();
     dialog_->activateWindow();
+    saveWindowState();
 }
 
 void DetachablePanel::saveWindowGeometry() const
 {
     if (dialog_ != nullptr)
-        QSettings{}.setValue(QStringLiteral("resultWindows/%1/geometry").arg(id_),
-            dialog_->saveGeometry());
+        QSettings{}.setValue(settingsKey(QStringLiteral("geometry")), dialog_->saveGeometry());
+}
+
+void DetachablePanel::saveWindowState() const
+{
+    const auto prefix = settingsKey({});
+    QSettings settings;
+    settings.setValue(prefix + QStringLiteral("detached"), detached_);
+    settings.setValue(prefix + QStringLiteral("visible"), isWindowVisible());
+}
+
+auto DetachablePanel::settingsKey(const QString& name) const -> QString
+{
+    return QStringLiteral("%1/%2/%3").arg(settingsRoot_, id_, name);
 }
 
 }
