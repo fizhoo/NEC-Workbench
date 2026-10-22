@@ -9,6 +9,7 @@
 #include "ui/analysis/AnalysisRunStore.h"
 #include "ui/analysis/ResultsSummaryView.h"
 #include "ui/analysis/RunReviewWindow.h"
+#include "ui/analysis/ResultWindowCoordinator.h"
 #include "ui/analysis/AverageGainResultsView.h"
 #include "ui/analysis/AnalysisRequestEditor.h"
 #include "ui/analysis/ConvergenceWorkspace.h"
@@ -2496,8 +2497,95 @@ auto main(int argc, char* argv[]) -> int
         resultPanelRestoredVisible = restoredPanel.isDetached()
             && restoredPanel.isWindowVisible();
     }
+    detachableSettings.remove(QStringLiteral("resultWindows/openSetEstablished"));
+    detachableSettings.remove(QStringLiteral("resultWindows/policy-impedance"));
+    detachableSettings.remove(QStringLiteral("resultWindows/policy-currents"));
+    detachableSettings.remove(QStringLiteral("resultWindows/policy-radiation"));
+    detachableSettings.sync();
+    auto firstRunWindowPolicy = false;
+    {
+        necwb::ui::DetachablePanel impedance(
+            QStringLiteral("policy-impedance"), QStringLiteral("Impedance"));
+        necwb::ui::DetachablePanel currents(
+            QStringLiteral("policy-currents"), QStringLiteral("Currents"));
+        necwb::ui::DetachablePanel radiation(
+            QStringLiteral("policy-radiation"), QStringLiteral("Radiation"));
+        impedance.setContent(new QLabel(QStringLiteral("Impedance")));
+        currents.setContent(new QLabel(QStringLiteral("Currents")));
+        radiation.setContent(new QLabel(QStringLiteral("Radiation")));
+        necwb::ui::ResultWindowCoordinator coordinator(&impedance, &currents, &radiation);
+        necwb::analysis::AnalysisResult completed;
+        completed.feedpoints.push_back({});
+        completed.radiation.push_back({});
+        coordinator.presentCompletedAnalysis(completed);
+        application.processEvents();
+        firstRunWindowPolicy = impedance.isWindowVisible() && !currents.isWindowVisible()
+            && radiation.isWindowVisible()
+            && detachableSettings.value(
+                QStringLiteral("resultWindows/openSetEstablished"), false).toBool();
+        if (auto* window = topLevelDialog(QStringLiteral("policy-impedanceResultWindow")))
+            window->close();
+        if (auto* window = topLevelDialog(QStringLiteral("policy-radiationResultWindow")))
+            window->close();
+        application.processEvents();
+    }
+    auto closedResultWindowsStayClosed = false;
+    {
+        necwb::ui::DetachablePanel impedance(
+            QStringLiteral("policy-impedance"), QStringLiteral("Impedance"));
+        necwb::ui::DetachablePanel currents(
+            QStringLiteral("policy-currents"), QStringLiteral("Currents"));
+        necwb::ui::DetachablePanel radiation(
+            QStringLiteral("policy-radiation"), QStringLiteral("Radiation"));
+        impedance.setContent(new QLabel(QStringLiteral("Impedance")));
+        currents.setContent(new QLabel(QStringLiteral("Currents")));
+        radiation.setContent(new QLabel(QStringLiteral("Radiation")));
+        impedance.show(); currents.show(); radiation.show();
+        application.processEvents();
+        necwb::ui::ResultWindowCoordinator coordinator(&impedance, &currents, &radiation);
+        necwb::analysis::AnalysisResult completed;
+        completed.feedpoints.push_back({});
+        completed.radiation.push_back({});
+        coordinator.presentCompletedAnalysis(completed);
+        application.processEvents();
+        closedResultWindowsStayClosed = !impedance.isWindowVisible()
+            && !currents.isWindowVisible() && !radiation.isWindowVisible();
+    }
+    detachableSettings.remove(QStringLiteral("resultWindows/offscreen"));
+    QDialog offscreenGeometry;
+    offscreenGeometry.resize(420, 300);
+    offscreenGeometry.move(50000, 50000);
+    detachableSettings.setValue(
+        QStringLiteral("resultWindows/offscreen/geometry"), offscreenGeometry.saveGeometry());
+    detachableSettings.setValue(QStringLiteral("resultWindows/offscreen/detached"), true);
+    detachableSettings.setValue(QStringLiteral("resultWindows/offscreen/visible"), true);
+    detachableSettings.sync();
+    auto offscreenWindowRecovered = false;
+    {
+        necwb::ui::DetachablePanel restoredPanel(
+            QStringLiteral("offscreen"), QStringLiteral("Off-screen Results"));
+        restoredPanel.setContent(new QLabel(QStringLiteral("Recovered content")));
+        restoredPanel.show();
+        application.processEvents();
+        const auto* restoredWindow = topLevelDialog(QStringLiteral("offscreenResultWindow"));
+        if (restoredWindow != nullptr) {
+            offscreenWindowRecovered = std::ranges::any_of(
+                QGuiApplication::screens(), [restoredWindow](const QScreen* screen) {
+                    const auto intersection = restoredWindow->frameGeometry().intersected(
+                        screen->availableGeometry());
+                    return intersection.width() >= 100 && intersection.height() >= 60;
+                });
+        }
+    }
+    detachableSettings.remove(QStringLiteral("resultWindows/openSetEstablished"));
+    detachableSettings.remove(QStringLiteral("resultWindows/policy-impedance"));
+    detachableSettings.remove(QStringLiteral("resultWindows/policy-currents"));
+    detachableSettings.remove(QStringLiteral("resultWindows/policy-radiation"));
+    detachableSettings.remove(QStringLiteral("resultWindows/offscreen"));
     detachableSettings.remove(QStringLiteral("resultWindows/smoke-test"));
     detachableSettings.sync();
+    if (!firstRunWindowPolicy || !closedResultWindowsStayClosed || !offscreenWindowRecovered)
+        return NECWB_SMOKE_FAILURE("result window open-set policy");
     QAction welcomeNew(QStringLiteral("New NEC Model"));
     QAction welcomeOpen(QStringLiteral("Open NEC File"));
     QString recentOpened;

@@ -1,14 +1,17 @@
 #include "ui/DetachablePanel.h"
 
 #include <QDialog>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QSettings>
+#include <QScreen>
 #include <QTimer>
 #include <QVBoxLayout>
 
 #include <utility>
+#include <ranges>
 
 namespace necwb::ui {
 
@@ -86,10 +89,13 @@ auto DetachablePanel::isWindowActive() const -> bool
     return detached_ && dialog_ != nullptr && dialog_->isActiveWindow();
 }
 
-void DetachablePanel::showWindow()
+void DetachablePanel::showWindow(WindowActivation activation)
 {
-    if (detached_) showDetached();
-    else detach();
+    if (detached_) showDetached(activation);
+    else {
+        detach(false);
+        showDetached(activation);
+    }
 }
 
 void DetachablePanel::setStatusText(QString status)
@@ -127,6 +133,7 @@ void DetachablePanel::detach(bool showWindow)
         const auto geometry = QSettings{}.value(settingsKey(QStringLiteral("geometry"))).toByteArray();
         if (!geometry.isEmpty()) dialog_->restoreGeometry(geometry);
         else dialog_->resize(900, 680);
+        ensureWindowOnScreen();
         connect(dialog_, &QDialog::finished, this, [this] {
             saveWindowGeometry();
             saveWindowState();
@@ -159,14 +166,37 @@ void DetachablePanel::attach()
     saveWindowState();
 }
 
-void DetachablePanel::showDetached()
+void DetachablePanel::showDetached(WindowActivation activation)
 {
     if (dialog_ == nullptr) return;
+    ensureWindowOnScreen();
     if (dialog_->isMinimized()) dialog_->showNormal();
     else dialog_->show();
-    dialog_->raise();
-    dialog_->activateWindow();
+    if (activation == WindowActivation::Activate) {
+        dialog_->raise();
+        dialog_->activateWindow();
+    }
     saveWindowState();
+}
+
+void DetachablePanel::ensureWindowOnScreen()
+{
+    if (dialog_ == nullptr) return;
+    const auto screens = QGuiApplication::screens();
+    if (screens.empty()) return;
+
+    const auto geometry = dialog_->frameGeometry();
+    const auto sufficientlyVisible = std::ranges::any_of(screens, [&geometry](const QScreen* screen) {
+        const auto intersection = geometry.intersected(screen->availableGeometry());
+        return intersection.width() >= 100 && intersection.height() >= 60;
+    });
+    if (sufficientlyVisible) return;
+
+    const auto* screen = QGuiApplication::primaryScreen();
+    if (screen == nullptr) return;
+    const auto available = screen->availableGeometry();
+    dialog_->resize(dialog_->size().boundedTo(available.size()));
+    dialog_->move(available.center() - dialog_->rect().center());
 }
 
 void DetachablePanel::saveWindowGeometry() const

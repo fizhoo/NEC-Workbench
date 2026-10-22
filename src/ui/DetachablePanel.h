@@ -12,6 +12,11 @@ namespace necwb::ui {
 
 class DetachablePanel final : public QWidget {
 public:
+    enum class WindowActivation {
+        Preserve,
+        Activate
+    };
+
     DetachablePanel(QString id, QString title, QWidget* parent = nullptr,
         QString settingsRoot = QStringLiteral("resultWindows"),
         QString windowObjectName = {});
@@ -21,14 +26,15 @@ public:
     [[nodiscard]] auto isDetached() const -> bool;
     [[nodiscard]] auto isWindowVisible() const -> bool;
     [[nodiscard]] auto isWindowActive() const -> bool;
-    void showWindow();
+    void showWindow(WindowActivation activation = WindowActivation::Activate);
     void setStatusText(QString status);
 
 private:
     void toggleDetached();
     void detach(bool showWindow = true);
     void attach();
-    void showDetached();
+    void showDetached(WindowActivation activation = WindowActivation::Activate);
+    void ensureWindowOnScreen();
     void saveWindowGeometry() const;
     void saveWindowState() const;
     [[nodiscard]] auto settingsKey(const QString& name) const -> QString;

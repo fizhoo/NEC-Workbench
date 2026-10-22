@@ -100,6 +100,8 @@ if(NECWB_BUILD_GUI)
         src/ui/analysis/ResultsSummaryView.h
         src/ui/analysis/ResultReferenceController.cpp
         src/ui/analysis/ResultReferenceController.h
+        src/ui/analysis/ResultWindowCoordinator.cpp
+        src/ui/analysis/ResultWindowCoordinator.h
         src/ui/analysis/RunReviewWindow.cpp
         src/ui/analysis/RunReviewWindow.h
         src/ui/analysis/SolverProcessRunner.cpp

@@ -29,6 +29,7 @@
 #include "ui/analysis/ConvergenceWorkspace.h"
 #include "ui/analysis/ImpedanceResultsView.h"
 #include "ui/analysis/QuickSweepDialog.h"
+#include "ui/analysis/ResultWindowCoordinator.h"
 #include "ui/analysis/ResultsSummaryView.h"
 #include "ui/analysis/RunReviewWindow.h"
 #include "ui/analysis/SweepPlotsView.h"
@@ -415,6 +416,8 @@ MainWindow::MainWindow()
     solverRunner_ = new SolverProcessRunner(this);
     createActions();
     createWorkspace();
+    resultWindowCoordinator_ = std::make_unique<ResultWindowCoordinator>(
+        impedancePanel_, currentsPanel_, radiationPanel_);
     createDocks();
     createMenusAndToolbar();
     qApp->installEventFilter(this);
@@ -2368,21 +2371,21 @@ void MainWindow::createMenusAndToolbar()
     showImpedanceWindowAction->setStatusTip(
         tr("Open or raise the live impedance and SWR result window"));
     connect(showImpedanceWindowAction, &QAction::triggered, this,
-        [this] { impedancePanel_->showWindow(); });
+        [this] { resultWindowCoordinator_->showImpedance(); });
     auto* showCurrentsWindowAction = resultWindowsMenu->addAction(
         workbenchIcon("sources"), tr("Currents"));
     showCurrentsWindowAction->setObjectName(QStringLiteral("showCurrentsWindowAction"));
     showCurrentsWindowAction->setStatusTip(
         tr("Open or raise the live current-distribution window"));
     connect(showCurrentsWindowAction, &QAction::triggered, this,
-        [this] { currentsPanel_->showWindow(); });
+        [this] { resultWindowCoordinator_->showCurrents(); });
     auto* showRadiationWindowAction = resultWindowsMenu->addAction(
         workbenchIcon("radiation-pattern"), tr("Radiation"));
     showRadiationWindowAction->setObjectName(QStringLiteral("showRadiationWindowAction"));
     showRadiationWindowAction->setStatusTip(
         tr("Open or raise the live radiation-result window"));
     connect(showRadiationWindowAction, &QAction::triggered, this,
-        [this] { radiationPanel_->showWindow(); });
+        [this] { resultWindowCoordinator_->showRadiation(); });
     resultWindowsMenu->addSeparator();
     auto* showRunHistoryAction = resultWindowsMenu->addAction(
         workbenchIcon("analysis"), tr("Run History"));
@@ -4360,6 +4363,8 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             showActiveResultsContext(context);
             analysisResultsAvailable = !result.feedpoints.empty() || !result.currents.empty()
                 || !result.radiation.empty();
+            if (analysisResultsAvailable)
+                resultWindowCoordinator_->presentCompletedAnalysis(result);
             if (analysisResultsAvailable && currentRunRecord_)
                 optimizationWorkspace_->setOptimizationBaseline(*currentRunRecord_, result);
         } else if (currentRunPurpose_ == SolverRunPurpose::OptimizationBaseline) {

@@ -20,6 +20,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -71,6 +72,7 @@ class WelcomePage;
 class OptimizationWorkspace;
 class ParameterEditor;
 class DetachablePanel;
+class ResultWindowCoordinator;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -432,6 +434,7 @@ private:
     QString activeModelResultsContext_;
     AnalysisRunStore runStore_;
     ResultReferenceController resultReferenceController_{runStore_};
+    std::unique_ptr<ResultWindowCoordinator> resultWindowCoordinator_;
     std::optional<AnalysisRunRecord> currentRunRecord_;
     SolverRunPurpose currentRunPurpose_{SolverRunPurpose::Analysis};
     analysis::AverageGainEnvironment currentAverageGainEnvironment_{
