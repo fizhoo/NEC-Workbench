@@ -161,19 +161,23 @@ public:
     void setComponentChangedCallback(ComponentChangedCallback callback);
 
 private:
+    void seedDirectionFromPatternPeak();
     void refresh();
     analysis::AnalysisResult result_;
     std::optional<analysis::AnalysisResult> referenceResult_;
     QString referenceLabel_;
     QComboBox* component_{};
-    QDoubleSpinBox* forwardTheta_{};
-    QDoubleSpinBox* forwardPhi_{};
+    QDoubleSpinBox* forwardElevation_{};
+    QDoubleSpinBox* forwardAzimuth_{};
+    QPushButton* usePatternPeak_{};
     QLabel* summary_{};
     QCheckBox* referenceControl_{};
     DirectionalMetricsView* plot_{};
     QString runContext_;
     std::optional<double> selectedFrequencyMHz_;
     ComponentChangedCallback componentChangedCallback_;
+    bool directionCustomized_{};
+    bool updatingDirection_{};
 };
 
 }

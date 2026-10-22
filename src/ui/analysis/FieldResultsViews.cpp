@@ -1805,29 +1805,34 @@ RadiationPerformanceView::RadiationPerformanceView(QWidget* parent)
     component_ = new QComboBox(this);
     component_->setObjectName(QStringLiteral("radiationPerformanceComponent"));
     populateRadiationComponents(component_);
-    forwardTheta_ = new QDoubleSpinBox(this);
-    forwardTheta_->setObjectName(QStringLiteral("radiationPerformanceTheta"));
-    forwardTheta_->setRange(-360.0, 360.0);
-    forwardTheta_->setDecimals(DisplayDecimalPlaces);
-    forwardTheta_->setValue(90.0);
-    forwardTheta_->setSuffix(QStringLiteral("°"));
-    forwardPhi_ = new QDoubleSpinBox(this);
-    forwardPhi_->setObjectName(QStringLiteral("radiationPerformancePhi"));
-    forwardPhi_->setRange(-360.0, 720.0);
-    forwardPhi_->setDecimals(DisplayDecimalPlaces);
-    forwardPhi_->setSuffix(QStringLiteral("°"));
+    forwardElevation_ = new QDoubleSpinBox(this);
+    forwardElevation_->setObjectName(QStringLiteral("radiationPerformanceElevation"));
+    forwardElevation_->setRange(-90.0, 90.0);
+    forwardElevation_->setDecimals(DisplayDecimalPlaces);
+    forwardElevation_->setSuffix(QStringLiteral("°"));
+    forwardAzimuth_ = new QDoubleSpinBox(this);
+    forwardAzimuth_->setObjectName(QStringLiteral("radiationPerformanceAzimuth"));
+    forwardAzimuth_->setRange(-360.0, 720.0);
+    forwardAzimuth_->setDecimals(DisplayDecimalPlaces);
+    forwardAzimuth_->setSuffix(QStringLiteral("°"));
+    usePatternPeak_ = new QPushButton(tr("Use Pattern Peak"), this);
+    usePatternPeak_->setObjectName(QStringLiteral("radiationPerformanceUsePatternPeak"));
     const auto directionTip = tr(
-        "Physical forward direction used for gain, F/B, and F/R. Exact NEC samples "
+        "Physical forward direction used for gain, F/B, and F/R. Elevation is measured "
+        "above the horizon; NEC theta equals 90 degrees minus elevation. Exact RP samples "
         "must exist at the requested direction; values are not interpolated.");
-    forwardTheta_->setToolTip(directionTip);
-    forwardPhi_->setToolTip(directionTip);
+    forwardElevation_->setToolTip(directionTip);
+    forwardAzimuth_->setToolTip(directionTip);
+    usePatternPeak_->setToolTip(tr(
+        "Set the direction to the strongest gain sample at the selected frequency."));
     controls->addWidget(new QLabel(tr("Component"), this));
     controls->addWidget(component_);
     controls->addSpacing(12);
-    controls->addWidget(new QLabel(tr("Forward θ"), this));
-    controls->addWidget(forwardTheta_);
-    controls->addWidget(new QLabel(tr("Forward φ"), this));
-    controls->addWidget(forwardPhi_);
+    controls->addWidget(new QLabel(tr("Forward elevation"), this));
+    controls->addWidget(forwardElevation_);
+    controls->addWidget(new QLabel(tr("Azimuth"), this));
+    controls->addWidget(forwardAzimuth_);
+    controls->addWidget(usePatternPeak_);
     controls->addStretch();
     referenceControl_ = new QCheckBox(tr("Show Reference Overlay"), this);
     referenceControl_->setObjectName(QStringLiteral("radiationPerformanceShowReference"));
@@ -1844,14 +1849,23 @@ RadiationPerformanceView::RadiationPerformanceView(QWidget* parent)
     layout->addWidget(summary_);
     layout->addWidget(plot_, 1);
     connect(component_, &QComboBox::currentIndexChanged, this, [this] {
-        refresh();
+        if (directionCustomized_) refresh();
+        else seedDirectionFromPatternPeak();
         if (componentChangedCallback_) {
             componentChangedCallback_(static_cast<analysis::RadiationComponent>(
                 component_->currentData().toInt()));
         }
     });
-    connect(forwardTheta_, &QDoubleSpinBox::valueChanged, this, [this] { refresh(); });
-    connect(forwardPhi_, &QDoubleSpinBox::valueChanged, this, [this] { refresh(); });
+    const auto directionChanged = [this] {
+        if (!updatingDirection_) directionCustomized_ = true;
+        refresh();
+    };
+    connect(forwardElevation_, &QDoubleSpinBox::valueChanged, this, directionChanged);
+    connect(forwardAzimuth_, &QDoubleSpinBox::valueChanged, this, directionChanged);
+    connect(usePatternPeak_, &QPushButton::clicked, this, [this] {
+        directionCustomized_ = false;
+        seedDirectionFromPatternPeak();
+    });
     connect(referenceControl_, &QCheckBox::toggled, this, [this] { refresh(); });
 }
 
@@ -1860,7 +1874,8 @@ void RadiationPerformanceView::setResults(
 {
     result_ = result;
     runContext_ = runDirectory;
-    refresh();
+    directionCustomized_ = false;
+    seedDirectionFromPatternPeak();
 }
 
 void RadiationPerformanceView::setReferenceResults(
@@ -1888,6 +1903,8 @@ void RadiationPerformanceView::setSelectedFrequency(double frequencyMHz)
 {
     selectedFrequencyMHz_ = frequencyMHz;
     plot_->setSelectedFrequency(frequencyMHz);
+    if (directionCustomized_) refresh();
+    else seedDirectionFromPatternPeak();
 }
 
 void RadiationPerformanceView::setComponent(analysis::RadiationComponent component)
@@ -1895,7 +1912,8 @@ void RadiationPerformanceView::setComponent(analysis::RadiationComponent compone
     const QSignalBlocker blocker(component_);
     const auto index = component_->findData(static_cast<int>(component));
     if (index >= 0) component_->setCurrentIndex(index);
-    refresh();
+    if (directionCustomized_) refresh();
+    else seedDirectionFromPatternPeak();
 }
 
 void RadiationPerformanceView::setComponentChangedCallback(
@@ -1904,12 +1922,35 @@ void RadiationPerformanceView::setComponentChangedCallback(
     componentChangedCallback_ = std::move(callback);
 }
 
+void RadiationPerformanceView::seedDirectionFromPatternPeak()
+{
+    const auto component = static_cast<analysis::RadiationComponent>(
+        component_->currentData().toInt());
+    const auto targetFrequency = selectedFrequencyMHz_.value_or(
+        result_.radiation.empty() ? 0.0 : result_.radiation.front().frequencyMHz);
+    const auto peak = analysis::radiationPeakAtNearestFrequency(
+        result_.radiation, component, targetFrequency);
+    usePatternPeak_->setEnabled(peak.has_value());
+    if (!peak) {
+        refresh();
+        return;
+    }
+
+    updatingDirection_ = true;
+    forwardElevation_->setValue(90.0 - peak->metrics.peakThetaDegrees);
+    forwardAzimuth_->setValue(peak->metrics.peakPhiDegrees);
+    updatingDirection_ = false;
+    refresh();
+}
+
 void RadiationPerformanceView::refresh()
 {
     const auto component = static_cast<analysis::RadiationComponent>(
         component_->currentData().toInt());
+    const auto thetaDegrees = 90.0 - forwardElevation_->value();
+    const auto phiDegrees = forwardAzimuth_->value();
     const auto metrics = analysis::radiationFrequencyMetrics(result_.radiation, component,
-        forwardTheta_->value(), forwardPhi_->value());
+        thetaDegrees, phiDegrees);
     std::vector<DirectionalPlotPoint> points;
     points.reserve(metrics.size());
     auto gainCount = std::size_t{};
@@ -1926,7 +1967,7 @@ void RadiationPerformanceView::refresh()
     if (referenceResult_ && referenceControl_->isChecked()) {
         const auto referenceMetrics = analysis::radiationFrequencyMetrics(
             referenceResult_->radiation, component,
-            forwardTheta_->value(), forwardPhi_->value());
+            thetaDegrees, phiDegrees);
         std::vector<DirectionalPlotPoint> referencePoints;
         referencePoints.reserve(referenceMetrics.size());
         for (const auto& metric : referenceMetrics) {
@@ -1942,11 +1983,34 @@ void RadiationPerformanceView::refresh()
         summary_->setText(tr("No radiation samples are available · %1").arg(runContext_));
         return;
     }
+    const auto selectedMetric = std::ranges::min_element(metrics,
+        [targetFrequency = selectedFrequencyMHz_.value_or(metrics.front().frequencyMHz)](
+            const auto& left, const auto& right) {
+            return std::abs(left.frequencyMHz - targetFrequency)
+                < std::abs(right.frequencyMHz - targetFrequency);
+        });
+    const auto direction = tr(
+        "Elevation %1°, azimuth %2° (NEC θ %3°)")
+        .arg(formatDecimal(forwardElevation_->value()),
+            formatDecimal(forwardAzimuth_->value()), formatDecimal(thetaDegrees));
+    if (selectedMetric->forwardAvailability == analysis::RadiationMetricAvailability::PatternNull) {
+        summary_->setText(tr(
+            "%1 is a pattern null at %2 MHz. Choose another sampled direction or use "
+            "Pattern Peak. · %3")
+            .arg(direction, formatDecimal(selectedMetric->frequencyMHz), runContext_));
+        return;
+    }
+    if (selectedMetric->forwardAvailability == analysis::RadiationMetricAvailability::Missing) {
+        summary_->setText(tr(
+            "%1 has no matching RP sample at %2 MHz. Exact samples are not interpolated; "
+            "choose another direction or use Pattern Peak. · %3")
+            .arg(direction, formatDecimal(selectedMetric->frequencyMHz), runContext_));
+        return;
+    }
     summary_->setText(tr(
-        "Forward θ %1°, φ %2° · %3 · Available frequencies: Gain %4/%7, "
-        "F/B %5/%7, F/R %6/%7 · Missing exact directions remain unavailable · %8")
-        .arg(formatDecimal(forwardTheta_->value()), formatDecimal(forwardPhi_->value()),
-            componentName(component))
+        "%1 · %2 · Available frequencies: Gain %3/%6, F/B %4/%6, F/R %5/%6 · "
+        "Missing exact directions remain unavailable · %7")
+        .arg(direction, componentName(component))
         .arg(gainCount).arg(frontToBackCount).arg(frontToRearCount).arg(metrics.size())
         .arg(runContext_));
 }

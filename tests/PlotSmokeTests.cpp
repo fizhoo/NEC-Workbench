@@ -1922,8 +1922,12 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("radiationPerformanceShowReference"));
     auto* radiationPerformancePlot = radiationPerformance.findChild<QWidget*>(
         QStringLiteral("directionalMetricsPlot"));
-    auto* radiationPerformanceTheta = radiationPerformance.findChild<QDoubleSpinBox*>(
-        QStringLiteral("radiationPerformanceTheta"));
+    auto* radiationPerformanceElevation = radiationPerformance.findChild<QDoubleSpinBox*>(
+        QStringLiteral("radiationPerformanceElevation"));
+    auto* radiationPerformanceAzimuth = radiationPerformance.findChild<QDoubleSpinBox*>(
+        QStringLiteral("radiationPerformanceAzimuth"));
+    auto* radiationPerformanceUsePatternPeak = radiationPerformance.findChild<QPushButton*>(
+        QStringLiteral("radiationPerformanceUsePatternPeak"));
     if (radiation2DComponent == nullptr || radiation2DFrequency == nullptr
         || radiation3DComponent == nullptr || radiation3DFrequency == nullptr
         || radiationPerformanceComponent == nullptr
@@ -1936,10 +1940,47 @@ auto main(int argc, char* argv[]) -> int
         || radiation2DShowReference == nullptr || radiation3DShowReference == nullptr
         || radiationPerformanceShowReference == nullptr
         || radiationPerformanceSummary == nullptr || radiationPerformancePlot == nullptr
-        || radiationPerformanceTheta == nullptr
+        || radiationPerformanceElevation == nullptr
+        || radiationPerformanceAzimuth == nullptr
+        || radiationPerformanceUsePatternPeak == nullptr
         || radiation2DExportImage == nullptr || radiation2DExportData == nullptr
         || radiation3DExportImage == nullptr || radiation3DExportData == nullptr)
         return NECWB_SMOKE_FAILURE("radiation result controls");
+    necwb::analysis::AnalysisResult directionalSeedResult;
+    directionalSeedResult.radiation = {
+        {14.175, 90.0, 0.0, -999.99, -999.99, -999.99},
+        {14.175, 85.0, 0.0, -17.94, -999.99, -17.94},
+        {14.175, 15.0, 90.0, 5.86, -999.99, 5.86},
+    };
+    necwb::ui::RadiationPerformanceView directionalSeedView;
+    directionalSeedView.setResults(directionalSeedResult, QStringLiteral("direction-test"));
+    directionalSeedView.setSelectedFrequency(14.175);
+    auto* seededElevation = directionalSeedView.findChild<QDoubleSpinBox*>(
+        QStringLiteral("radiationPerformanceElevation"));
+    auto* seededAzimuth = directionalSeedView.findChild<QDoubleSpinBox*>(
+        QStringLiteral("radiationPerformanceAzimuth"));
+    auto* seededSummary = directionalSeedView.findChild<QLabel*>(
+        QStringLiteral("radiationPerformanceSummary"));
+    auto* seededPeakButton = directionalSeedView.findChild<QPushButton*>(
+        QStringLiteral("radiationPerformanceUsePatternPeak"));
+    if (seededElevation == nullptr || seededAzimuth == nullptr
+        || seededSummary == nullptr || seededPeakButton == nullptr) {
+        return NECWB_SMOKE_FAILURE("directional performance seed controls");
+    }
+    const auto peakDirectionSeeded = seededElevation->value() == 75.0
+        && seededAzimuth->value() == 90.0
+        && seededSummary->text().contains(QStringLiteral("NEC θ 15"));
+    seededElevation->setValue(0.0);
+    seededAzimuth->setValue(0.0);
+    const auto patternNullExplained = seededSummary->text().contains(
+        QStringLiteral("pattern null"));
+    seededElevation->setValue(42.0);
+    seededAzimuth->setValue(47.0);
+    const auto missingDirectionExplained = seededSummary->text().contains(
+        QStringLiteral("no matching RP sample"));
+    seededPeakButton->click();
+    const auto patternPeakRestored = seededElevation->value() == 75.0
+        && seededAzimuth->value() == 90.0;
     const auto radiationReferencesDefaultHidden = !radiation2DShowReference->isChecked()
         && !radiation3DShowReference->isChecked()
         && !radiationPerformanceShowReference->isChecked();
@@ -3130,6 +3171,8 @@ auto main(int argc, char* argv[]) -> int
         && multiplePatternEditorValid
         && convergenceHistoryControlsValid
         && segmentationApplyAccepted
+        && peakDirectionSeeded && patternNullExplained && missingDirectionExplained
+        && patternPeakRestored
         && radiationControlsSynchronized && radiationSweepSelectable
         && nonPatternFrequencyIgnored && radiationFrequencySynchronized
         && mixedPatternCutsSeparated && horizontalDatasetSelectsCompatibleCut
