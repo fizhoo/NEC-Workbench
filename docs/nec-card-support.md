@@ -43,7 +43,7 @@ semantic paths for selection, fitting, attachment markers, and 2D/3D display. Ge
 or transformed paths are read-only so graphical editing cannot silently replace their
 source operations. `SP` arbitrary and shaped patches, `SM` patch grids, and their `SC`
 continuations remain separate surface primitives and appear as translucent polygons in
-2D, 3D, Dashboard, and radiation antenna overlays. Patch geometry is currently
+2D, 3D, and radiation antenna overlays. Patch geometry is currently
 read-only outside Raw Source and Structured Cards.
 
 ## Program Control Cards

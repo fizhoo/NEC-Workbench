@@ -12,6 +12,8 @@ process protocols.
 - Structured sources, grounds, loads, transmission lines, frequencies, and requests
 - External-solver execution with live status, durable run artifacts, and history
 - SWR, impedance, currents, and interactive 2D/3D radiation results
+- Compact operations dashboard with reusable model, setup, result, and run windows
+- Optional labeled historical overlays for impedance, SWR, and radiation results
 - Static model checks, Average Gain Test, and segmentation convergence studies
 - `SY` parameterization plus sweep, adaptive, Nelder–Mead, and Differential
   Evolution optimization with impedance and directional objectives
@@ -56,8 +58,9 @@ ctest --test-dir build --output-on-failure
 
 ## Build Artifacts
 
-Every push to `main` runs Linux AppImage and Windows ZIP workflows. Download the
-artifacts from a successful run on the repository's **Actions** page:
+Packaging workflows run for `main`, selected integration branches, pull requests,
+and manual dispatch. Download artifacts from a successful run on the repository's
+**Actions** page:
 
 - `NEC-Workbench-Linux-x86_64`
 - `NEC-Workbench-Windows-x64`

@@ -17,11 +17,14 @@ Workbench remains solver-independent and does not bundle external NEC engines.
 
 ### Analysis and Results
 
+- Compact Home operations dashboard with reusable Model, Setup, result, and Run History windows
 - `nec2c`, OpenNEC, and 4nec2 NEC2dXS process adapters with independent saved paths
 - Normal runs and temporary quick sweeps without rewriting the authored model
 - Durable run history with authored source, generated solver deck, output, logs,
   metadata, and detached historical review
 - Impedance/SWR, segment-current, and 2D/3D radiation inspection
+- One labeled historical overlay selected from Run History and shown independently
+  in compatible impedance/SWR and radiation views
 - Static adequacy checks, Average Gain Test, and segmentation convergence
 
 ### Optimization
@@ -38,20 +41,22 @@ Workbench remains solver-independent and does not bundle external NEC engines.
 ### Delivery
 
 - Automated Linux AppImage and Windows ZIP builds
-- Qt-free core, plot, and optimization tests
+- Automated core, plot, and optimization test suites; core logic remains Qt-free
 - In-application tooltips for detailed control behavior
 
 ## Current Milestone
 
 `v0.1.0-alpha.1` established the first public Linux AppImage and Windows ZIP baseline.
-The current milestone is Alpha 1 stabilization rather than broad feature expansion.
+The current milestone is an Alpha 2 stabilization candidate rather than broad feature
+expansion.
 
 1. Exercise representative real decks across supported solver backends and platforms.
-2. Strengthen regression coverage around source edits, run generation, output parsing,
-   detached windows, and optimization session restoration.
-3. Keep card-support claims synchronized with validation, structured editing, and rendering.
-4. Fix reproducible release defects before adding another major workflow.
-5. Prepare a focused `v0.1.0-alpha.2` maintenance release when the fixes justify it.
+2. Field-test the compact Home workflow, reusable windows, Run History, and historical overlays.
+3. Strengthen regression coverage around source edits, run generation, output parsing,
+   window restoration, and optimization session restoration.
+4. Keep card-support claims synchronized with validation, structured editing, and rendering.
+5. Download and smoke-test the Windows package on Windows before tagging Alpha 2.
+6. Fix reproducible release defects, then prepare a focused `v0.1.0-alpha.2` release.
 
 The first imported-deck validation audit is complete and documented in the
 [NEC Validation Reference](nec-validation-reference.md). Follow-up work should focus
@@ -82,7 +87,8 @@ over the existing reproducible methods.
 ### Results and Validation
 
 - CSV export for numerical result tables
-- Deliberate two-run impedance/SWR comparison before broader plot overlays
+- Refine one-run historical overlays from cross-platform field testing before considering
+  a separate multi-run comparison workflow
 - Convergence plots for impedance, gain, and pattern changes
 - Input-power normalization for current and field amplitudes
 - Near-field parsing and visualization

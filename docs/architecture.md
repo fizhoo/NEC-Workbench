@@ -53,23 +53,29 @@ same definitions.
 
 ## Workspaces
 
-The top-level workspaces are Home, Model, Setup, Results, and Optimize.
+The top-level destinations are Home, Model, Setup, Results, and Optimize. The UI is
+intentionally hybrid rather than a single deeply nested tab stack: Home remains the
+operations base, while focused editors and result views can stay open beside it.
 
-- **Home** summarizes the active model, recent results, and model quality.
+- **Home** summarizes the active model, recent results, model quality, and recent runs,
+  and launches the focused workspaces without duplicating their full content.
 - **Model** owns geometry, parameters, and NEC source.
 - **Setup** owns frequency, sources, loads/networks, environment, solver configuration,
   and output requests.
 - **Results** owns current or historical parsed output.
 - **Optimize** owns parameter studies and candidate review.
 
-The compact workspace navigator handles destinations; menus expose the complete
-command set; the toolbar contains frequent global actions. Project visibility is
-reduced automatically in space-intensive workspaces.
+The compact workspace navigator handles pages inside Model, Setup, and Results;
+menus expose the complete command set; the toolbar contains frequent global actions.
+Model and Setup use reusable detachable panels. Impedance, Currents, Radiation, and
+Run History use focused reusable windows so they can remain visible while the model
+is edited and rerun.
 
-Results and candidate details use reusable detachable windows. A detached view
-is the same live content, not a copied result model. Historical Run Review is
-separate and read-only so opening archived output cannot silently replace the
-active editor.
+Results and candidate details use reusable windows. A detached view is the same live
+content, not a copied result model. Historical Run Review is separate and read-only
+so opening archived output cannot silently replace the active editor. The Results
+historical-overlay controller selects at most one archived run and never changes the
+active result; each result window independently decides whether to display it.
 
 ## Validation
 

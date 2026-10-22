@@ -30,9 +30,11 @@ remain blocked until equivalent Workbench conversion is available.
 
 ## Application Layout
 
-The top workspace bar changes the main task. A compact navigator inside Model,
-Setup, and Results selects a page within that workspace. Collapse the navigator
-to icons when screen space is limited.
+The top workspace bar changes the main task. Home is the permanent operations base.
+Model and Setup open as reusable workspaces, while Impedance/SWR, Currents,
+Radiation, and Run History use focused windows that can remain visible during edits
+and reruns. A compact navigator selects pages inside the larger workspaces; collapse
+it to icons when screen space is limited.
 
 The menu bar holds less-frequent commands. Important global actions include:
 
@@ -43,11 +45,16 @@ The menu bar holds less-frequent commands. Important global actions include:
 - **Run → Run Analysis**
 - **Run → Quick Frequency Sweep**
 - **Run → Stop**
+- **View → Workspace Density**
 - **View → Reset Layout**
 
+Workspace Density offers Compact, Standard, and Spacious spacing without changing
+the application font size. Use Compact on smaller displays; window sizes and layout
+choices are retained separately.
+
 Project is hidden automatically in Results and Optimize when more horizontal room
-is useful. Results and candidate details may be detached and reused while editing
-the model. Selecting their workspace restores an existing hidden or minimized window.
+is useful. Opening a workspace again raises its existing window rather than creating
+duplicates. Historical Run Review remains a separate read-only window.
 
 ## Home
 
@@ -288,15 +295,16 @@ gain. F/R uses the documented rear azimuth cut and is not a full rear-hemisphere
 
 ### Runs and Historical Review
 
-Run History is discovered from durable run directories. Double-clicking a row opens
-one reusable read-only Run Review window. It does not replace the active editor.
+Run History is discovered from durable run directories and opens as one reusable
+window. Double-clicking a row opens one reusable read-only Run Review window. Neither
+window replaces the active editor.
 
 Use **Use as Historical Overlay** to select a completed analysis or quick sweep for
 comparison. Then enable it in the Impedance or Radiation result window where it is
 useful. The overlay remains labeled and never becomes the active result or model.
 
-The ordinary Results workspace compares one historical overlay at a time. Comparing several
-runs belongs in a separate comparison workflow and is not performed implicitly.
+The ordinary Results workspace compares one historical overlay at a time. Comparing
+several runs belongs in a separate comparison workflow and is not performed implicitly.
 
 Use **Edit Run Note…**, or double-click the Note cell, to record what changed or why
 a run matters. Notes are stored only in run metadata; they do not alter archived NEC
