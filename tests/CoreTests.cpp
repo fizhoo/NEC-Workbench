@@ -1866,6 +1866,22 @@ void testNecOutputParsing()
     expect(result.feedpoints[2].frequencyMHz == 14.3
             && result.feedpoints[2].impedance == std::complex<double>{48.963, -20.471},
         "parser accepts OpenNEC frequency and adjacent signed fields");
+
+    const std::string multipleSourceOutput =
+        " FREQUENCY : 1.4200E+01 MHz\n"
+        " --------- ANTENNA INPUT PARAMETERS ---------\n"
+        " 1 6 1.0E+00 0.0E+00 1.0E-02 0.0E+00 5.0E+01 0.0E+00 0 0 5.0E-03\n"
+        " 2 6 1.0E+00 0.0E+00 8.0E-03 1.0E-03 6.0E+01 -7.5E+00 0 0 4.0E-03\n"
+        "\n";
+    const auto multipleSourceResult = necwb::analysis::NecOutputParser{}.parse(
+        multipleSourceOutput);
+    expect(multipleSourceResult.feedpoints.size() == 2
+            && multipleSourceResult.feedpoints[0].wireTag == 1
+            && multipleSourceResult.feedpoints[1].wireTag == 2
+            && multipleSourceResult.feedpoints[1].frequencyMHz == 14.2
+            && multipleSourceResult.feedpoints[1].impedance
+                == std::complex<double>{60.0, -7.5},
+        "NEC output parser retains multiple source results at one frequency");
     expect(std::abs(necwb::analysis::standingWaveRatio({50.0, 0.0}) - 1.0) < 1.0e-12,
         "matched 50-ohm impedance has one-to-one SWR");
     expect(necwb::analysis::standingWaveRatio({0.0, 0.0})

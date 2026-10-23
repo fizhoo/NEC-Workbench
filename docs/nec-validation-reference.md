@@ -147,3 +147,33 @@ Four additional Workbench examples using `SY` expressions were expanded to numer
 solver decks, executed through both backends, and parsed successfully. Known-invalid
 or backend-specific legacy files remain classified separately rather than being made
 valid through silent source rewriting.
+
+## Broad Deck Regression — 2026-10-23
+
+The Alpha 2 Linux regression pass audited all 113 decks in the OpenNEC example
+corpus through Workbench symbol resolution and validation, then exercised the
+accepted decks with available NEC2C and OpenNEC builds.
+
+- Workbench accepted 96 decks without errors under each profile represented by this
+  corpus. All seven NEC2C execution failures were rejected by the Original NEC-2
+  profile; no invalid NEC2C deck silently passed validation.
+- Workbench parsed every finite NEC2C and OpenNEC result report produced by the
+  corpus. Two OpenNEC reports containing only `NaN` engineering values were
+  correctly not exposed as usable results.
+- A combined OpenNEC build containing both the transmission-line allocation fixes
+  and the later NEC-2 sequencing fixes matched the original Fortran reference on
+  eight focused `FR`/`RP`/`XQ`/`TL` execution probes.
+- The standalone OpenNEC sequencing branch did not include the earlier
+  transmission-line allocation fixes. Three otherwise valid log-periodic example
+  decks failed there with repeated memory-reallocation errors but passed with the
+  combined build.
+- OpenNEC still returned one feedpoint result per frequency for tested decks with
+  two simultaneous `EX` sources, while NEC2C and the original Fortran reference
+  returned both. Workbench's output parser retains multiple source results when the
+  backend supplies them; this remains an OpenNEC backend compatibility issue.
+
+This pass verifies Workbench validation, solver-deck handoff, and finite-result
+parsing. It does not claim numerical equivalence for every legacy example. The
+4nec2 NEC2dXS executable remains a Windows-only release check; its generated input
+format is covered by automated tests, but the real executable matrix must be run on
+Windows before Alpha 2.

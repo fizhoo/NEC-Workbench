@@ -63,10 +63,12 @@ The first imported-deck validation audit is complete and documented in the
 on verified extension profiles and confirmed corpus regressions rather than broad,
 solver-specific permissiveness.
 
-The initial dual-backend execution baseline now covers verified numeric and symbolic
-Workbench decks through NEC2C and the patched OpenNEC test build, including parsing
-the resulting impedance and radiation reports. Continue growing this corpus only with
-documented, reproducible cases.
+The Linux broad-deck pass now covers all 113 OpenNEC example decks through Workbench
+validation plus available NEC2C and OpenNEC execution. Workbench blocked every deck
+that failed NEC2C and parsed every finite result report. Focused sequencing probes
+also confirm the combined OpenNEC fixes; remaining OpenNEC multiple-source behavior
+is documented as a backend issue. The next release gate is the real 4nec2 NEC2dXS
+matrix and compact-workspace smoke test on Windows.
 
 ## Near-Term Work
 
