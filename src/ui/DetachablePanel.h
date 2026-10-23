@@ -51,6 +51,9 @@ private:
     QLabel* dialogStatusLabel_{};
     QDialog* dialog_{};
     bool detached_{};
+    mutable bool savedWindowState_{};
+    mutable bool savedDetached_{};
+    mutable bool savedVisible_{};
     QString statusText_;
 };
 

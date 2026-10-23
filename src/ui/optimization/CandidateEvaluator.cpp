@@ -164,8 +164,10 @@ void CandidateEvaluator::start(CandidateEvaluationRequest request)
 
     const auto solverDeck = analysis::prepareOptimizationInput(
         resolution.generatedDeck, request_.frequencyPlan, request_.objective);
+    const auto backendSolverDeck = analysis::formatSolverInputForBackend(
+        solverDeck, request_.backend.toStdString());
     if (!writeFile(directory.filePath(QStringLiteral("model.nec")),
-            QByteArray::fromStdString(solverDeck))) {
+            QByteArray::fromStdString(backendSolverDeck))) {
         finishLater(CandidateEvaluationStatus::FileError,
             tr("Could not write candidate model files."));
         return;

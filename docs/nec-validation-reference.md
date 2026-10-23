@@ -21,6 +21,12 @@ authoritative for numerical execution.
 The profile follows **Setup → Solver**. Backend-specific diagnostics identify the
 selected target by name and the Model Check report links back to Solver settings.
 
+Direct **4nec2 NEC2dXS** execution also has a backend-specific output boundary:
+recognized numeric cards in the generated `model.nec` use canonical single-space
+separators. Workbench accepts tabs and commas while editing, but NEC2dXS does not
+recognize tabs as free-field delimiters. This conversion changes only the solver copy;
+`model.source.nec` retains the authored formatting, and numeric text is not rounded.
+
 The following known extension families are not yet classified by dedicated rules:
 `LD 7`, `GN 3`, `EX 6`, percentage segment selectors, invisible-geometry tag
 conventions, and OpenNEC-only syntax. Until those rules are implemented, Raw Source

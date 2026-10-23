@@ -37,7 +37,7 @@ backend-specific options.
 | `GF` | Read Numerical Green's Function | Understood | No; backend-dependent |
 | `GE` | End geometry | Structured Editable | Boundary understood |
 
-The solver receives authored geometry cards unchanged. Workbench expands `GA`, helical
+The solver receives the authored geometry values unchanged. Workbench expands `GA`, helical
 `GH`, `GW`/`GC` taper combinations, and ordered `GM`/`GX`/`GR` transformations into
 semantic paths for selection, fitting, attachment markers, and 2D/3D display. Generated
 or transformed paths are read-only so graphical editing cannot silently replace their
@@ -82,3 +82,10 @@ read-only outside Raw Source and Structured Cards.
 `SY`, `Z0`, and `ZO` are normalized or removed as appropriate when Workbench creates a
 numeric deck for a strict NEC-2 backend. The authored source and archived source snapshot
 retain them.
+
+For direct **4nec2 NEC2dXS** execution, Workbench additionally rewrites recognized numeric
+cards in the generated `model.nec` with single-space field separators. NEC2dXS inherits
+the NEC-2 free-field convention of recognizing spaces and commas, but not tab characters;
+without this backend-only normalization, a tabbed card can fail with an invalid integer
+field error. Numeric field text is retained rather than rounded into narrower display
+columns. NEC2C and OpenNEC solver copies are not reformatted by this compatibility step.

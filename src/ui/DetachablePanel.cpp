@@ -207,10 +207,16 @@ void DetachablePanel::saveWindowGeometry() const
 
 void DetachablePanel::saveWindowState() const
 {
+    const auto visible = isWindowVisible();
+    if (savedWindowState_ && savedDetached_ == detached_ && savedVisible_ == visible) return;
+
     const auto prefix = settingsKey({});
     QSettings settings;
     settings.setValue(prefix + QStringLiteral("detached"), detached_);
-    settings.setValue(prefix + QStringLiteral("visible"), isWindowVisible());
+    settings.setValue(prefix + QStringLiteral("visible"), visible);
+    savedWindowState_ = true;
+    savedDetached_ = detached_;
+    savedVisible_ = visible;
 }
 
 auto DetachablePanel::settingsKey(const QString& name) const -> QString

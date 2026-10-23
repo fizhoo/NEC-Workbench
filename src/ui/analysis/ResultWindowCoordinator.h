@@ -23,6 +23,7 @@ private:
     DetachablePanel* impedance_{};
     DetachablePanel* currents_{};
     DetachablePanel* radiation_{};
+    bool openSetEstablished_{};
 };
 
 }

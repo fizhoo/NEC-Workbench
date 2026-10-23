@@ -31,7 +31,6 @@
 #include "ui/analysis/ImpedanceResultsView.h"
 #include "ui/analysis/QuickSweepDialog.h"
 #include "ui/analysis/ResultWindowCoordinator.h"
-#include "ui/analysis/ResultsSummaryView.h"
 #include "ui/analysis/RunReviewWindow.h"
 #include "ui/analysis/SweepPlotsView.h"
 #include "ui/analysis/FieldResultsViews.h"
@@ -537,14 +536,17 @@ auto MainWindow::eventFilter(QObject* watched, QEvent* event) -> bool
 {
     if (event->type() == QEvent::Show) {
         auto* dialog = qobject_cast<QDialog*>(watched);
-        if (dialog != nullptr && dialog->isWindow()) applyWorkspaceDensity();
+        if (dialog != nullptr && dialog->isWindow()
+            && dialog->property("workspaceDensityId").toString()
+                != workspaceDensityId(workspaceDensity_)) {
+            applyWorkspaceDensity(dialog);
+        }
     }
     return QMainWindow::eventFilter(watched, event);
 }
 
 MainWindow::~MainWindow()
 {
-    delete detachedResultsWindow_;
     delete runReviewWindow_;
 }
 
@@ -658,10 +660,11 @@ void MainWindow::createActions()
     connect(averageGainAction_, &QAction::triggered, this, [this] { startAverageGainTest(); });
 
     convergenceAction_ = new QAction(tr("Segmentation &Convergence…"), this);
+    convergenceAction_->setObjectName(QStringLiteral("segmentationConvergenceAction"));
     convergenceAction_->setIcon(workbenchIcon("frequency-sweep"));
     convergenceAction_->setEnabled(false);
     convergenceAction_->setStatusTip(tr(
-        "Open the multi-run segmentation convergence study under Results Validation"));
+        "Open the multi-run segmentation convergence study window"));
     connect(convergenceAction_, &QAction::triggered, this, [this] { showConvergenceStudy(); });
 
     fitGeometryAction_ = new QAction(tr("&Fit Geometry"), this);
@@ -708,13 +711,6 @@ void MainWindow::createActions()
     redoAction_->setIcon(workbenchIcon("redo"));
     redoAction_->setShortcut(QKeySequence::Redo);
     connect(redoAction_, &QAction::triggered, this, [this] { performRedo(); });
-
-    detachResultsAction_ = new QAction(tr("Detach Results Window"), this);
-    detachResultsAction_->setIcon(workbenchIcon("detach"));
-    detachResultsAction_->setObjectName(QStringLiteral("detachResultsAction"));
-    detachResultsAction_->setStatusTip(
-        tr("Move the existing Results workspace into a separate reusable window"));
-    connect(detachResultsAction_, &QAction::triggered, this, [this] { toggleResultsDetached(); });
 
     resetLayoutAction_ = new QAction(tr("&Reset Layout"), this);
     resetLayoutAction_->setObjectName(QStringLiteral("resetLayoutAction"));
@@ -793,6 +789,7 @@ void MainWindow::createActions()
     for (auto* action : moduleGroup->actions()) {
         action->setCheckable(true);
     }
+    resultsModuleAction_->setCheckable(false);
     homeModuleAction_->setChecked(true);
     modelModuleAction_->setEnabled(false);
     analysisModuleAction_->setEnabled(false);
@@ -802,8 +799,7 @@ void MainWindow::createActions()
     connect(modelModuleAction_, &QAction::triggered, this, [this] { showModule(modelModuleIndex_); });
     connect(analysisModuleAction_, &QAction::triggered, this, [this] { showModule(analysisModuleIndex_); });
     connect(resultsModuleAction_, &QAction::triggered, this, [this] {
-        if (resultsAvailable_) showModule(resultsModuleIndex_);
-        else showRunHistory();
+        showPrimaryResultsWindow();
     });
     connect(optimizeModuleAction_, &QAction::triggered,
         this, [this] { showModule(optimizeModuleIndex_); });
@@ -1393,104 +1389,21 @@ void MainWindow::createWorkspace()
     setupPanel_->setContent(analysisNavigator);
     analysisModuleIndex_ = moduleStack_->addWidget(setupPanel_);
 
-    createResultsWorkspace();
+    createResultWindows();
     createOptimizationWorkspace();
     preserveControlHeights(moduleStack_);
     showModule(homeModuleIndex_);
 }
 
-void MainWindow::createResultsWorkspace()
+void MainWindow::createResultWindows()
 {
-    resultsHost_ = new QWidget(moduleStack_);
-    resultsHostLayout_ = new QVBoxLayout(resultsHost_);
-    resultsHostLayout_->setContentsMargins(0, 0, 0, 0);
-    detachedResultsPlaceholder_ = new QWidget(resultsHost_);
-    auto* detachedPlaceholderLayout = new QVBoxLayout(detachedResultsPlaceholder_);
-    detachedPlaceholderLayout->setAlignment(Qt::AlignCenter);
-    auto* detachedPlaceholderTitle = new QLabel(
-        tr("Results are open in a separate window."), detachedResultsPlaceholder_);
-    auto detachedPlaceholderFont = detachedPlaceholderTitle->font();
-    detachedPlaceholderFont.setBold(true);
-    detachedPlaceholderTitle->setFont(detachedPlaceholderFont);
-    auto* showDetachedResultsButton = new QPushButton(
-        tr("Show Results Window"), detachedResultsPlaceholder_);
-    auto* attachDetachedResultsButton = new QPushButton(
-        tr("Attach Results to Main Window"), detachedResultsPlaceholder_);
-    detachedPlaceholderLayout->addWidget(detachedPlaceholderTitle, 0, Qt::AlignCenter);
-    detachedPlaceholderLayout->addWidget(showDetachedResultsButton, 0, Qt::AlignCenter);
-    detachedPlaceholderLayout->addWidget(attachDetachedResultsButton, 0, Qt::AlignCenter);
-    detachedResultsPlaceholder_->hide();
-    connect(showDetachedResultsButton, &QPushButton::clicked,
-        this, [this] { showDetachedResults(); });
-    connect(attachDetachedResultsButton, &QPushButton::clicked, this, [this] { attachResults(); });
-
-    resultsContent_ = new QWidget(resultsHost_);
-    resultsContent_->setObjectName(QStringLiteral("resultsWorkspaceContent"));
-    resultsContent_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-    auto* resultsLayout = new QVBoxLayout(resultsContent_);
-    resultsLayout->setContentsMargins(0, 0, 0, 0);
-    auto* resultsContextFrame = new QFrame(resultsContent_);
-    resultsContextFrame->setObjectName(QStringLiteral("resultsContextBanner"));
-    resultsContextFrame->setFrameShape(QFrame::StyledPanel);
-    auto* resultsContextLayout = new QVBoxLayout(resultsContextFrame);
-    resultsContextLayout->setContentsMargins(8, 6, 8, 6);
-    auto* resultsContextHeading = new QHBoxLayout;
-    resultsContextTitleLabel_ = new QLabel(tr("No Results Loaded"), resultsContextFrame);
-    resultsContextTitleLabel_->setObjectName(QStringLiteral("resultsContextTitleLabel"));
-    auto resultsContextFont = resultsContextTitleLabel_->font();
-    resultsContextFont.setBold(true);
-    resultsContextTitleLabel_->setFont(resultsContextFont);
-    detachResultsButton_ = new QPushButton(tr("Detach Results"), resultsContextFrame);
-    detachResultsButton_->setObjectName(QStringLiteral("detachResultsButton"));
-    resultsContextHeading->addWidget(resultsContextTitleLabel_, 1);
-    resultsContextHeading->addWidget(detachResultsButton_);
-    resultsContextDetailLabel_ = new QLabel(
-        tr("Select a run from Results → Runs, or analyze the active model."), resultsContextFrame);
-    resultsContextDetailLabel_->setObjectName(QStringLiteral("resultsContextDetailLabel"));
-    resultsContextDetailLabel_->setWordWrap(true);
-    activeModelResultsLabel_ = new QLabel(tr("Active Model: None"), resultsContextFrame);
-    activeModelResultsLabel_->setObjectName(QStringLiteral("activeModelResultsLabel"));
-    auto* referenceRow = new QHBoxLayout;
-    resultReferenceLabel_ = new QLabel(tr("Historical Overlay: None"), resultsContextFrame);
-    resultReferenceLabel_->setObjectName(QStringLiteral("resultReferenceLabel"));
-    clearResultReferenceButton_ = new QPushButton(tr("Clear Overlay"), resultsContextFrame);
-    clearResultReferenceButton_->setObjectName(QStringLiteral("clearResultReferenceButton"));
-    clearResultReferenceButton_->setEnabled(false);
-    changeResultReferenceButton_ = new QPushButton(tr("Choose Overlay…"), resultsContextFrame);
-    changeResultReferenceButton_->setObjectName(QStringLiteral("changeResultReferenceButton"));
-    referenceRow->addWidget(resultReferenceLabel_, 1);
-    referenceRow->addWidget(changeResultReferenceButton_);
-    referenceRow->addWidget(clearResultReferenceButton_);
-    resultsContextLayout->addLayout(resultsContextHeading);
-    resultsContextLayout->addWidget(resultsContextDetailLabel_);
-    resultsContextLayout->addWidget(activeModelResultsLabel_);
-    resultsContextLayout->addLayout(referenceRow);
-    connect(detachResultsButton_, &QPushButton::clicked, this, [this] { toggleResultsDetached(); });
-    connect(clearResultReferenceButton_, &QPushButton::clicked,
-        this, [this] { clearResultReference(); });
-    connect(changeResultReferenceButton_, &QPushButton::clicked,
-        this, [this] { chooseResultReference(); });
-    resultsStatusLabel_ = new QLabel(tr("No analysis results are loaded."), resultsContent_);
-    resultsStatusLabel_->setContentsMargins(8, 5, 8, 5);
-    resultsStatusLabel_->setWordWrap(true);
-    auto* frequencyBar = new QHBoxLayout;
-    auto* frequencyLabel = new QLabel(tr("Result Frequency:"), resultsContent_);
-    resultsFrequencyControl_ = new QComboBox(resultsContent_);
-    resultsFrequencyControl_->setObjectName(QStringLiteral("resultsFrequencyControl"));
-    resultsFrequencyControl_->setMinimumContentsLength(24);
-    resultsFrequencyControl_->setEnabled(false);
-    resultsAvailabilityLabel_ = new QLabel(tr("No result data available."), resultsContent_);
-    resultsAvailabilityLabel_->setObjectName(QStringLiteral("resultsAvailabilityLabel"));
-    frequencyBar->addWidget(frequencyLabel);
-    frequencyBar->addWidget(resultsFrequencyControl_);
-    frequencyBar->addSpacing(12);
-    frequencyBar->addWidget(resultsAvailabilityLabel_, 1);
-    resultsWorkspace_ = new QTabWidget(resultsContent_);
-    resultsWorkspace_->setObjectName(QStringLiteral("resultsWorkspace"));
-    resultsWorkspace_->setDocumentMode(true);
-    resultsSummaryView_ = new ResultsSummaryView(resultsWorkspace_);
-    resultsSummaryTabIndex_ = resultsWorkspace_->addTab(resultsSummaryView_, tr("Summary"));
-    validationWorkspace_ = new QTabWidget(resultsWorkspace_);
+    resultWindowsHost_ = new QWidget(moduleStack_);
+    resultWindowsHost_->setObjectName(QStringLiteral("resultWindowsHost"));
+    resultWindowsHost_->hide();
+    validationPanel_ = new DetachablePanel(QStringLiteral("validation"),
+        tr("Validation"), resultWindowsHost_, QStringLiteral("resultWindows"),
+        QStringLiteral("validationWindow"));
+    validationWorkspace_ = new QTabWidget(validationPanel_);
     validationWorkspace_->setObjectName(QStringLiteral("validationWorkspace"));
     validationWorkspace_->setDocumentMode(true);
     auto* validationOverview = new QWidget(validationWorkspace_);
@@ -1543,7 +1456,7 @@ void MainWindow::createResultsWorkspace()
     convergenceWorkspace_ = new ConvergenceWorkspace(validationWorkspace_);
     convergenceValidationTabIndex_ = validationWorkspace_->addTab(
         convergenceWorkspace_, tr("Segmentation Convergence"));
-    averageGainResultsTabIndex_ = resultsWorkspace_->addTab(validationWorkspace_, tr("Validation"));
+    validationPanel_->setContent(validationWorkspace_);
     convergenceWorkspace_->setRunsChangedCallback([this] {
         if (runHistoryLoaded_) loadRunHistory();
         refreshDashboardRuns();
@@ -1551,11 +1464,10 @@ void MainWindow::createResultsWorkspace()
     convergenceWorkspace_->setRunningChangedCallback([this] { synchronizeRunnerState(); });
     convergenceWorkspace_->setSummaryChangedCallback([this](const QString& summary) {
         dashboardPage_->setConvergenceState(summary);
-        resultsAvailable_ = true;
-        resultsStatusLabel_->setText(tr("Model validation — %1").arg(summary));
+        validationPanel_->setStatusText(summary);
     });
 
-    auto* impedanceContent = new QWidget(resultsWorkspace_);
+    auto* impedanceContent = new QWidget(resultWindowsHost_);
     auto* impedanceLayout = new QVBoxLayout(impedanceContent);
     impedanceLayout->setContentsMargins(0, 0, 0, 0);
     impedanceLayout->setSpacing(2);
@@ -1577,17 +1489,15 @@ void MainWindow::createResultsWorkspace()
     impedanceLayout->addWidget(impedanceOverlayControl_);
     impedanceLayout->addWidget(impedanceTabs, 1);
     impedancePanel_ = new DetachablePanel(
-        QStringLiteral("impedance"), tr("Impedance Results"), resultsWorkspace_);
+        QStringLiteral("impedance"), tr("Impedance Results"), resultWindowsHost_);
     impedancePanel_->setContent(impedanceContent);
-    const auto impedanceTabIndex = resultsWorkspace_->addTab(impedancePanel_, tr("Impedance"));
 
     currentsPanel_ = new DetachablePanel(
-        QStringLiteral("currents"), tr("Current Distribution"), resultsWorkspace_);
+        QStringLiteral("currents"), tr("Current Distribution"), resultWindowsHost_);
     currentResultsView_ = new CurrentDistributionView(currentsPanel_);
     currentsPanel_->setContent(currentResultsView_);
-    const auto currentsTabIndex = resultsWorkspace_->addTab(currentsPanel_, tr("Currents"));
 
-    auto* radiationContent = new QWidget(resultsWorkspace_);
+    auto* radiationContent = new QWidget(resultWindowsHost_);
     auto* radiationLayout = new QVBoxLayout(radiationContent);
     radiationLayout->setContentsMargins(0, 0, 0, 0);
     radiationLayout->setSpacing(2);
@@ -1615,9 +1525,8 @@ void MainWindow::createResultsWorkspace()
     radiationLayout->addWidget(radiationOverlayControl_);
     radiationLayout->addWidget(radiationTabs, 1);
     radiationPanel_ = new DetachablePanel(
-        QStringLiteral("radiation"), tr("Radiation Results"), resultsWorkspace_);
+        QStringLiteral("radiation"), tr("Radiation Results"), resultWindowsHost_);
     radiationPanel_->setContent(radiationContent);
-    const auto radiationTabIndex = resultsWorkspace_->addTab(radiationPanel_, tr("Radiation"));
     radiationPatternView_->setSettingsChangedCallback([this](const auto& settings) {
         radiation3DView_->setDisplaySettings(settings);
         radiationPerformanceView_->setComponent(settings.component);
@@ -1630,52 +1539,51 @@ void MainWindow::createResultsWorkspace()
         radiationPatternView_->setComponent(component);
         radiation3DView_->setComponent(component);
     });
-    connect(resultsFrequencyControl_, &QComboBox::currentIndexChanged, this, [this] {
-        if (resultsFrequencyControl_->currentIndex() >= 0)
-            applyResultFrequency(resultsFrequencyControl_->currentData().toDouble());
-    });
-    auto* rawOutputPage = new QWidget(resultsWorkspace_);
-    auto* rawOutputLayout = new QVBoxLayout(rawOutputPage);
-    rawOutputLayout->setContentsMargins(8, 8, 8, 8);
+
+    auto* rawOutputContent = new QWidget(resultWindowsHost_);
+    auto* rawOutputLayout = new QVBoxLayout(rawOutputContent);
+    rawOutputLayout->setContentsMargins(6, 4, 6, 6);
+    rawOutputLayout->setSpacing(4);
     auto* rawOutputDescription = new QLabel(tr(
-        "Complete, immutable model.out from the solver. The frequency selector filters parsed views; "
-        "it does not rewrite this archived file."), rawOutputPage);
+        "Complete, immutable model.out from the latest loaded analysis. Parsed result windows "
+        "do not alter this text."), rawOutputContent);
     rawOutputDescription->setWordWrap(true);
     auto* rawOutputControls = new QHBoxLayout;
-    auto* jumpFrequencyButton = new QPushButton(tr("Jump to Selected Frequency"), rawOutputPage);
-    rawOutputFindControl_ = new QLineEdit(rawOutputPage);
-    rawOutputFindControl_->setPlaceholderText(tr("Find text in complete output"));
-    auto* findOutputButton = new QPushButton(tr("Find Next"), rawOutputPage);
+    rawOutputControls->setSpacing(6);
+    rawOutputFrequencyControl_ = new QComboBox(rawOutputContent);
+    rawOutputFrequencyControl_->setObjectName(QStringLiteral("rawOutputFrequencyControl"));
+    rawOutputFrequencyControl_->setMinimumContentsLength(12);
+    rawOutputFrequencyControl_->setEnabled(false);
+    auto* jumpFrequencyButton = new QPushButton(
+        tr("Jump to Frequency"), rawOutputContent);
+    rawOutputFindControl_ = new QLineEdit(rawOutputContent);
+    rawOutputFindControl_->setObjectName(QStringLiteral("rawOutputFindControl"));
+    rawOutputFindControl_->setPlaceholderText(tr("Find text"));
+    auto* findOutputButton = new QPushButton(tr("Find Next"), rawOutputContent);
+    rawOutputControls->addWidget(new QLabel(tr("Frequency:"), rawOutputContent));
+    rawOutputControls->addWidget(rawOutputFrequencyControl_);
     rawOutputControls->addWidget(jumpFrequencyButton);
-    rawOutputControls->addSpacing(12);
+    rawOutputControls->addSpacing(8);
     rawOutputControls->addWidget(rawOutputFindControl_, 1);
     rawOutputControls->addWidget(findOutputButton);
-    analysisOutput_ = new QPlainTextEdit(rawOutputPage);
+    analysisOutput_ = new QPlainTextEdit(rawOutputContent);
+    analysisOutput_->setObjectName(QStringLiteral("analysisRawOutput"));
     analysisOutput_->setReadOnly(true);
+    analysisOutput_->setLineWrapMode(QPlainTextEdit::NoWrap);
     analysisOutput_->setPlaceholderText(tr("Complete solver output will appear here."));
     rawOutputLayout->addWidget(rawOutputDescription);
     rawOutputLayout->addLayout(rawOutputControls);
     rawOutputLayout->addWidget(analysisOutput_, 1);
     connect(jumpFrequencyButton, &QPushButton::clicked,
         this, [this] { jumpRawOutputToSelectedFrequency(); });
-    connect(findOutputButton, &QPushButton::clicked, this, [this] { findInRawOutput(); });
-    connect(rawOutputFindControl_, &QLineEdit::returnPressed, this, [this] { findInRawOutput(); });
-    analysisOutputTabIndex_ = resultsWorkspace_->addTab(rawOutputPage, tr("Raw Output"));
-    resultsWorkspace_->setTabIcon(resultsSummaryTabIndex_, workbenchIcon("results"));
-    resultsWorkspace_->setTabIcon(averageGainResultsTabIndex_, workbenchIcon("validate"));
-    resultsWorkspace_->setTabIcon(impedanceTabIndex, workbenchIcon("frequency-sweep"));
-    resultsWorkspace_->setTabIcon(currentsTabIndex, workbenchIcon("sources"));
-    resultsWorkspace_->setTabIcon(radiationTabIndex, workbenchIcon("radiation-pattern"));
-    resultsWorkspace_->setTabIcon(analysisOutputTabIndex_, workbenchIcon("nec-deck"));
-    auto* resultsNavigator = new WorkspaceNavigator(
-        resultsWorkspace_, QStringLiteral("results"), resultsContent_);
-    resultsLayout->addWidget(resultsContextFrame);
-    resultsLayout->addWidget(resultsStatusLabel_);
-    resultsLayout->addLayout(frequencyBar);
-    resultsLayout->addWidget(resultsNavigator, 1);
-    resultsHostLayout_->addWidget(resultsContent_, 1);
-    resultsHostLayout_->addWidget(detachedResultsPlaceholder_, 1);
-    resultsModuleIndex_ = moduleStack_->addWidget(resultsHost_);
+    connect(findOutputButton, &QPushButton::clicked,
+        this, [this] { findInRawOutput(); });
+    connect(rawOutputFindControl_, &QLineEdit::returnPressed,
+        this, [this] { findInRawOutput(); });
+    rawOutputPanel_ = new DetachablePanel(
+        QStringLiteral("raw-output"), tr("Raw Solver Output"), resultWindowsHost_,
+        QStringLiteral("resultWindows"), QStringLiteral("rawOutputWindow"));
+    rawOutputPanel_->setContent(rawOutputContent);
 }
 
 void MainWindow::createOptimizationWorkspace()
@@ -1772,7 +1680,6 @@ auto MainWindow::showModule(int index) -> bool
         const auto current = moduleStack_->currentIndex();
         if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
         else if (current == analysisModuleIndex_) analysisModuleAction_->setChecked(true);
-        else if (current == resultsModuleIndex_) resultsModuleAction_->setChecked(true);
         else if (current == optimizeModuleIndex_) optimizeModuleAction_->setChecked(true);
         updateUndoActions();
         return true;
@@ -1781,7 +1688,6 @@ auto MainWindow::showModule(int index) -> bool
         setupPanel_->showWindow();
         const auto current = moduleStack_->currentIndex();
         if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
-        else if (current == resultsModuleIndex_) resultsModuleAction_->setChecked(true);
         else if (current == optimizeModuleIndex_) optimizeModuleAction_->setChecked(true);
         updateUndoActions();
         return true;
@@ -1791,7 +1697,6 @@ auto MainWindow::showModule(int index) -> bool
         optimizationWorkspace_->restoreCandidateDetailsWindow();
         const auto current = moduleStack_->currentIndex();
         if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
-        else if (current == resultsModuleIndex_) resultsModuleAction_->setChecked(true);
         updateUndoActions();
         return true;
     }
@@ -1800,21 +1705,10 @@ auto MainWindow::showModule(int index) -> bool
         if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
         else if (current == modelModuleIndex_) modelModuleAction_->setChecked(true);
         else if (current == analysisModuleIndex_) analysisModuleAction_->setChecked(true);
-        else if (current == resultsModuleIndex_) resultsModuleAction_->setChecked(true);
         else if (current == optimizeModuleIndex_) optimizeModuleAction_->setChecked(true);
         return false;
     }
-    if (index == resultsModuleIndex_ && resultsDetached_ && detachedResultsWindow_ != nullptr) {
-        showDetachedResults();
-        const auto current = moduleStack_->currentIndex();
-        if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
-        else if (current == modelModuleIndex_) modelModuleAction_->setChecked(true);
-        else if (current == analysisModuleIndex_) analysisModuleAction_->setChecked(true);
-        else if (current == optimizeModuleIndex_) optimizeModuleAction_->setChecked(true);
-        return true;
-    }
     moduleStack_->setCurrentIndex(index);
-    if (index != resultsModuleIndex_) lastNonResultsModuleIndex_ = index;
     if (index == homeModuleIndex_) {
         homeModuleAction_->setChecked(true);
         dashboardStack_->setCurrentIndex(hasNecModel_ ? 1 : 0);
@@ -1822,8 +1716,6 @@ auto MainWindow::showModule(int index) -> bool
         modelModuleAction_->setChecked(true);
     } else if (index == analysisModuleIndex_) {
         analysisModuleAction_->setChecked(true);
-    } else if (index == resultsModuleIndex_) {
-        resultsModuleAction_->setChecked(true);
     } else if (index == optimizeModuleIndex_) {
         optimizeModuleAction_->setChecked(true);
         optimizationWorkspace_->restoreCandidateDetailsWindow();
@@ -1866,69 +1758,16 @@ auto MainWindow::confirmPendingEdits(QWidget* page) -> bool
     return true;
 }
 
-void MainWindow::toggleResultsDetached()
+void MainWindow::showPrimaryResultsWindow()
 {
-    if (resultsDetached_) attachResults();
-    else detachResults();
-}
-
-void MainWindow::detachResults()
-{
-    if (resultsDetached_ || resultsContent_ == nullptr || resultsHostLayout_ == nullptr) return;
-    if (detachedResultsWindow_ == nullptr) {
-        detachedResultsWindow_ = new QDialog(nullptr, Qt::Window);
-        detachedResultsWindow_->setObjectName(QStringLiteral("detachedResultsWindow"));
-        detachedResultsWindow_->setWindowTitle(tr("Results — NEC Workbench"));
-        detachedResultsWindow_->setModal(false);
-        detachedResultsWindow_->setAttribute(Qt::WA_QuitOnClose, false);
-        detachedResultsWindow_->setWindowFlag(Qt::WindowMinimizeButtonHint, true);
-        detachedResultsWindow_->setWindowFlag(Qt::WindowMaximizeButtonHint, true);
-        auto* layout = new QVBoxLayout(detachedResultsWindow_);
-        layout->setContentsMargins(0, 0, 0, 0);
-        layout->setSizeConstraint(QLayout::SetNoConstraint);
-        const auto geometry = QSettings{}.value(QStringLiteral("resultsWindow/geometry")).toByteArray();
-        if (!geometry.isEmpty()) detachedResultsWindow_->restoreGeometry(geometry);
-        else detachedResultsWindow_->resize(1000, 720);
-        connect(detachedResultsWindow_, &QDialog::finished, this, [this] { attachResults(); });
+    if (!resultsAvailable_) {
+        showRunHistory();
+        return;
     }
-
-    resultsHostLayout_->removeWidget(resultsContent_);
-    resultsContent_->setParent(detachedResultsWindow_);
-    detachedResultsWindow_->layout()->addWidget(resultsContent_);
-    detachedResultsPlaceholder_->show();
-    resultsDetached_ = true;
-    detachResultsAction_->setText(tr("Attach Results to Main Window"));
-    detachResultsButton_->setText(tr("Attach to Main Window"));
-    showDetachedResults();
-    if (moduleStack_->currentIndex() == resultsModuleIndex_)
-        showModule(lastNonResultsModuleIndex_ >= 0 ? lastNonResultsModuleIndex_ : homeModuleIndex_);
-}
-
-void MainWindow::attachResults()
-{
-    if (!resultsDetached_ || resultsContent_ == nullptr || resultsHostLayout_ == nullptr) return;
-    if (detachedResultsWindow_ != nullptr) {
-        QSettings{}.setValue(QStringLiteral("resultsWindow/geometry"),
-            detachedResultsWindow_->saveGeometry());
-        detachedResultsWindow_->layout()->removeWidget(resultsContent_);
-    }
-    resultsContent_->setParent(resultsHost_);
-    resultsHostLayout_->insertWidget(0, resultsContent_, 1);
-    detachedResultsPlaceholder_->hide();
-    resultsContent_->show();
-    resultsDetached_ = false;
-    detachResultsAction_->setText(tr("Detach Results Window"));
-    detachResultsButton_->setText(tr("Detach Results"));
-    if (detachedResultsWindow_ != nullptr) detachedResultsWindow_->hide();
-}
-
-void MainWindow::showDetachedResults()
-{
-    if (detachedResultsWindow_ == nullptr) return;
-    if (detachedResultsWindow_->isMinimized()) detachedResultsWindow_->showNormal();
-    else detachedResultsWindow_->show();
-    detachedResultsWindow_->raise();
-    detachedResultsWindow_->activateWindow();
+    if (!displayedResults_.feedpoints.empty()) resultWindowCoordinator_->showImpedance();
+    else if (!displayedResults_.radiation.empty()) resultWindowCoordinator_->showRadiation();
+    else if (!displayedResults_.currents.empty()) resultWindowCoordinator_->showCurrents();
+    else showRunHistory();
 }
 
 void MainWindow::setLiveResultStatus(const QString& status)
@@ -1936,6 +1775,7 @@ void MainWindow::setLiveResultStatus(const QString& status)
     if (impedancePanel_ != nullptr) impedancePanel_->setStatusText(status);
     if (currentsPanel_ != nullptr) currentsPanel_->setStatusText(status);
     if (radiationPanel_ != nullptr) radiationPanel_->setStatusText(status);
+    if (rawOutputPanel_ != nullptr) rawOutputPanel_->setStatusText(status);
 }
 
 void MainWindow::showEditor(EditorDestination destination, int geometryTab)
@@ -2302,8 +2142,8 @@ void MainWindow::createDocks()
     summaryFont.setBold(true);
     validationSummary_->setFont(summaryFont);
     validationScope_ = new QLabel(tr(
-        "Static source and geometry findings. AGT and convergence results are available under "
-        "Results > Validation."), modelCheckWindow_);
+        "Static source and geometry findings. AGT and convergence results are available in "
+        "the Validation window."), modelCheckWindow_);
     validationScope_->setWordWrap(true);
     diagnostics_ = new QTreeWidget(modelCheckWindow_);
     diagnostics_->setHeaderLabels({tr("Severity"), tr("Category"), tr("Line"), tr("Message")});
@@ -2470,6 +2310,13 @@ void MainWindow::createMenusAndToolbar()
         tr("Open or raise the live radiation-result window"));
     connect(showRadiationWindowAction, &QAction::triggered, this,
         [this] { resultWindowCoordinator_->showRadiation(); });
+    auto* showRawOutputWindowAction = resultWindowsMenu->addAction(
+        workbenchIcon("nec-deck"), tr("Raw Solver Output"));
+    showRawOutputWindowAction->setObjectName(QStringLiteral("showRawOutputWindowAction"));
+    showRawOutputWindowAction->setStatusTip(
+        tr("Open or raise the complete output from the latest loaded analysis"));
+    connect(showRawOutputWindowAction, &QAction::triggered, this,
+        [this] { rawOutputPanel_->showWindow(); });
     resultWindowsMenu->addSeparator();
     auto* showRunHistoryAction = resultWindowsMenu->addAction(
         workbenchIcon("analysis"), tr("Run History"));
@@ -2488,6 +2335,7 @@ void MainWindow::createMenusAndToolbar()
             resultsMenu->addAction(showImpedanceWindowAction);
             resultsMenu->addAction(showCurrentsWindowAction);
             resultsMenu->addAction(showRadiationWindowAction);
+            resultsMenu->addAction(showRawOutputWindowAction);
             resultsMenu->addSeparator();
             resultsMenu->addAction(showRunHistoryAction);
             resultsButton->setMenu(resultsMenu);
@@ -2501,8 +2349,6 @@ void MainWindow::createMenusAndToolbar()
     viewMenu->addAction(runMonitorWindowAction_);
     viewMenu->addSeparator();
     viewMenu->addAction(resetLayoutAction_);
-    viewMenu->addSeparator();
-    viewMenu->addAction(detachResultsAction_);
     viewMenu->addSeparator();
     viewMenu->addAction(fitGeometryAction_);
 
@@ -2522,9 +2368,8 @@ void MainWindow::createMenusAndToolbar()
     auto* openValidationAction = validateMenu->addAction(tr("Open Validation Results"));
     openValidationAction->setObjectName(QStringLiteral("openValidationResultsAction"));
     connect(openValidationAction, &QAction::triggered, this, [this] {
-        if (!showModule(resultsModuleIndex_)) return;
-        resultsWorkspace_->setCurrentIndex(averageGainResultsTabIndex_);
         validationWorkspace_->setCurrentIndex(validationOverviewTabIndex_);
+        validationPanel_->showWindow();
     });
 
     auto* runMenu = menuBar()->addMenu(tr("&Run"));
@@ -2565,7 +2410,6 @@ void MainWindow::createMenusAndToolbar()
 
 void MainWindow::resetWorkspaceLayout()
 {
-    if (resultsDetached_) attachResults();
     removeDockWidget(projectDock_);
     projectDock_->show();
     addDockWidget(Qt::LeftDockWidgetArea, projectDock_);
@@ -2582,8 +2426,7 @@ void MainWindow::resetWorkspaceLayout()
 void MainWindow::updateWorkspaceDockVisibility(int moduleIndex)
 {
     if (projectDock_ == nullptr) return;
-    const auto focusedWorkspace = moduleIndex == resultsModuleIndex_
-        || moduleIndex == optimizeModuleIndex_;
+    const auto focusedWorkspace = moduleIndex == optimizeModuleIndex_;
     if (focusedWorkspace && !focusedWorkspaceDockStateActive_) {
         projectDockVisibleBeforeFocusedWorkspace_ = projectDock_->isVisible();
         if (!projectDock_->isFloating()) projectDock_->hide();
@@ -2614,6 +2457,37 @@ void MainWindow::applyWorkspaceDensity()
         if (widget != this && qobject_cast<QDialog*>(widget) != nullptr)
             roots.push_back(widget);
     }
+    for (auto* root : roots) applyWorkspaceDensity(root);
+
+    auto applicationFont = QApplication::font();
+    applicationFont.setPointSize(workspaceDensityFontSize(workspaceDensity_));
+    QApplication::setFont(applicationFont);
+
+    const auto controlHeight = workspaceDensity_ == WorkspaceDensity::Compact ? 20
+        : workspaceDensity_ == WorkspaceDensity::Standard ? 24 : 28;
+    const auto horizontalPadding = workspaceDensity_ == WorkspaceDensity::Compact ? 4
+        : workspaceDensity_ == WorkspaceDensity::Standard ? 6 : 8;
+    const auto tabPadding = workspaceDensity_ == WorkspaceDensity::Compact ? 3
+        : workspaceDensity_ == WorkspaceDensity::Standard ? 5 : 7;
+    const auto toolbarHeight = workspaceDensity_ == WorkspaceDensity::Compact ? 24
+        : workspaceDensity_ == WorkspaceDensity::Standard ? 29 : 34;
+    qApp->setStyleSheet(QStringLiteral(
+        "QToolBar { spacing: 2px; padding: 0px 2px; min-height: %1px; }"
+        "QToolButton { padding: 1px %2px; }"
+        "QPushButton, QComboBox, QLineEdit, QAbstractSpinBox { min-height: %3px; padding: 1px %2px; }"
+        "QPushButton[pendingChanges=\"true\"] { background-color: #d98218; color: white; font-weight: 600; }"
+        "QTabBar::tab { padding: %4px %5px; }"
+        "QHeaderView::section { padding: 2px %2px; }"
+        "QTableView::item, QTreeView::item, QListView::item { padding: 1px %2px; }"
+        "QDockWidget::title { padding: 2px %2px; }"
+        "QStatusBar { min-height: %3px; }"
+    ).arg(toolbarHeight).arg(horizontalPadding).arg(controlHeight).arg(tabPadding).arg(tabPadding + 4));
+}
+
+void MainWindow::applyWorkspaceDensity(QWidget* root)
+{
+    if (root == nullptr) return;
+
     const auto baseFontSize = workspaceDensityFontSize(workspaceDensity_);
     const auto initialBaseFontSize = QApplication::font().pointSize();
     const auto updateFont = [baseFontSize, initialBaseFontSize](QWidget* widget) {
@@ -2627,34 +2501,26 @@ void MainWindow::applyWorkspaceDensity()
         font.setPointSize(std::max(6, baseFontSize + delta));
         widget->setFont(font);
     };
-    for (auto* root : roots) {
-        updateFont(root);
-        for (auto* widget : root->findChildren<QWidget*>()) updateFont(widget);
-    }
-
-    auto applicationFont = QApplication::font();
-    applicationFont.setPointSize(baseFontSize);
-    QApplication::setFont(applicationFont);
+    updateFont(root);
+    for (auto* widget : root->findChildren<QWidget*>()) updateFont(widget);
 
     const auto scale = workspaceDensityScale(workspaceDensity_);
-    for (auto* root : roots) {
-        for (auto* layout : root->findChildren<QLayout*>()) {
-            if (!layout->property("workspaceDensityMargins").isValid()) {
-                const auto margins = layout->contentsMargins();
-                layout->setProperty("workspaceDensityMargins", QVariantList{
-                    margins.left(), margins.top(), margins.right(), margins.bottom()});
-                layout->setProperty("workspaceDensitySpacing", layout->spacing());
-            }
-            const auto margins = layout->property("workspaceDensityMargins").toList();
-            if (margins.size() == 4) {
-                layout->setContentsMargins(qRound(margins[0].toInt() * scale),
-                    qRound(margins[1].toInt() * scale),
-                    qRound(margins[2].toInt() * scale),
-                    qRound(margins[3].toInt() * scale));
-            }
-            const auto spacing = layout->property("workspaceDensitySpacing").toInt();
-            if (spacing >= 0) layout->setSpacing(qRound(spacing * scale));
+    for (auto* layout : root->findChildren<QLayout*>()) {
+        if (!layout->property("workspaceDensityMargins").isValid()) {
+            const auto margins = layout->contentsMargins();
+            layout->setProperty("workspaceDensityMargins", QVariantList{
+                margins.left(), margins.top(), margins.right(), margins.bottom()});
+            layout->setProperty("workspaceDensitySpacing", layout->spacing());
         }
+        const auto margins = layout->property("workspaceDensityMargins").toList();
+        if (margins.size() == 4) {
+            layout->setContentsMargins(qRound(margins[0].toInt() * scale),
+                qRound(margins[1].toInt() * scale),
+                qRound(margins[2].toInt() * scale),
+                qRound(margins[3].toInt() * scale));
+        }
+        const auto spacing = layout->property("workspaceDensitySpacing").toInt();
+        if (spacing >= 0) layout->setSpacing(qRound(spacing * scale));
     }
 
     const auto minimumScale = workspaceDensity_ == WorkspaceDensity::Compact ? 0.75
@@ -2670,42 +2536,21 @@ void MainWindow::applyWorkspaceDensity()
         widget->setMinimumSize(qRound(minimumSize[0].toInt() * minimumScale),
             qRound(minimumSize[1].toInt() * minimumScale));
     };
-    for (auto* root : roots) {
-        for (auto* button : root->findChildren<QCommandLinkButton*>())
-            updateMinimumSize(button);
-        for (auto* view : root->findChildren<GeometryView*>()) updateMinimumSize(view);
-        for (auto* view : root->findChildren<Geometry3DView*>()) updateMinimumSize(view);
-        for (auto* widget : root->findChildren<QWidget*>()) {
-            if (dynamic_cast<Radiation3DView*>(widget) != nullptr)
-                updateMinimumSize(widget);
-        }
+    for (auto* button : root->findChildren<QCommandLinkButton*>())
+        updateMinimumSize(button);
+    for (auto* view : root->findChildren<GeometryView*>()) updateMinimumSize(view);
+    for (auto* view : root->findChildren<Geometry3DView*>()) updateMinimumSize(view);
+    for (auto* widget : root->findChildren<QWidget*>()) {
+        if (dynamic_cast<Radiation3DView*>(widget) != nullptr)
+            updateMinimumSize(widget);
     }
 
-    const auto controlHeight = workspaceDensity_ == WorkspaceDensity::Compact ? 20
-        : workspaceDensity_ == WorkspaceDensity::Standard ? 24 : 28;
-    const auto horizontalPadding = workspaceDensity_ == WorkspaceDensity::Compact ? 4
-        : workspaceDensity_ == WorkspaceDensity::Standard ? 6 : 8;
-    const auto tabPadding = workspaceDensity_ == WorkspaceDensity::Compact ? 3
-        : workspaceDensity_ == WorkspaceDensity::Standard ? 5 : 7;
-    const auto toolbarHeight = workspaceDensity_ == WorkspaceDensity::Compact ? 24
-        : workspaceDensity_ == WorkspaceDensity::Standard ? 29 : 34;
     const auto tableRowHeight = workspaceDensity_ == WorkspaceDensity::Compact ? 21
         : workspaceDensity_ == WorkspaceDensity::Standard ? 24 : 28;
-    for (auto* root : roots) {
-        for (auto* table : root->findChildren<QTableView*>())
-            table->verticalHeader()->setDefaultSectionSize(tableRowHeight);
-    }
-    qApp->setStyleSheet(QStringLiteral(
-        "QToolBar { spacing: 2px; padding: 0px 2px; min-height: %1px; }"
-        "QToolButton { padding: 1px %2px; }"
-        "QPushButton, QComboBox, QLineEdit, QAbstractSpinBox { min-height: %3px; padding: 1px %2px; }"
-        "QPushButton[pendingChanges=\"true\"] { background-color: #d98218; color: white; font-weight: 600; }"
-        "QTabBar::tab { padding: %4px %5px; }"
-        "QHeaderView::section { padding: 2px %2px; }"
-        "QTableView::item, QTreeView::item, QListView::item { padding: 1px %2px; }"
-        "QDockWidget::title { padding: 2px %2px; }"
-        "QStatusBar { min-height: %3px; }"
-    ).arg(toolbarHeight).arg(horizontalPadding).arg(controlHeight).arg(tabPadding).arg(tabPadding + 4));
+    for (auto* table : root->findChildren<QTableView*>())
+        table->verticalHeader()->setDefaultSectionSize(tableRowHeight);
+
+    root->setProperty("workspaceDensityId", workspaceDensityId(workspaceDensity_));
 }
 
 void MainWindow::showGettingStarted()
@@ -2954,7 +2799,7 @@ void MainWindow::checkModel(bool presentReport)
         profileName.data(), static_cast<qsizetype>(profileName.size()));
     validationScope_->setText(tr(
         "Validation target: %1. Static source and geometry findings are shown below; AGT and "
-        "convergence results are available under Results > Validation.").arg(compatibilityName));
+        "convergence results are available in the Validation window.").arg(compatibilityName));
     if (result.errorCount() != 0) {
         validationSummary_->setText(tr("Not ready for %1 · %2 blocking error(s)")
             .arg(compatibilityName)
@@ -3077,7 +2922,6 @@ void MainWindow::clearCheckResults()
     if (resultsAvailable_) dashboardPage_->markResultsStale();
     if (resultsAvailable_) {
         liveResultsStale_ = true;
-        resultsStatusLabel_->setText(tr("STALE — the NEC model changed after these results were calculated."));
         setLiveResultStatus(tr("Stale — model changed; run again"));
     }
     updateAnalysisReadiness();
@@ -3933,9 +3777,8 @@ void MainWindow::synchronizeRunnerState()
 
 void MainWindow::showConvergenceStudy()
 {
-    showModule(resultsModuleIndex_);
-    resultsWorkspace_->setCurrentIndex(averageGainResultsTabIndex_);
     validationWorkspace_->setCurrentIndex(convergenceValidationTabIndex_);
+    validationPanel_->showWindow();
 }
 
 void MainWindow::startAnalysis()
@@ -4039,6 +3882,8 @@ void MainWindow::startAnalysisRun(const std::string& authoredSource,
     const std::string& solverInput, const QString& runType, const QString& summary,
     const QString& activity, SolverRunPurpose purpose)
 {
+    const auto backendSolverInput = analysis::formatSolverInputForBackend(
+        solverInput, solverBackendId_.toStdString());
     currentRunPurpose_ = purpose;
     currentRunRecord_ = runStore_.create(solverBackendId_, currentFile_.isEmpty()
         ? QStringLiteral("Untitled model.nec") : currentFile_, runType);
@@ -4071,7 +3916,7 @@ void MainWindow::startAnalysisRun(const std::string& authoredSource,
         currentRunRecord_.reset();
         return;
     }
-    inputFile.write(QByteArray::fromStdString(solverInput));
+    inputFile.write(QByteArray::fromStdString(backendSolverInput));
     inputFile.close();
 
     analysis::SolverCommand command;
@@ -4171,8 +4016,10 @@ void MainWindow::startAverageGainTest()
         currentRunRecord_.reset();
         return;
     }
-    inputFile.write(QByteArray::fromStdString(analysis::prepareAverageGainTestInput(
-        resolution.generatedDeck, currentAverageGainFrequencyMHz_, currentAverageGainEnvironment_)));
+    const auto averageGainInput = analysis::prepareAverageGainTestInput(
+        resolution.generatedDeck, currentAverageGainFrequencyMHz_, currentAverageGainEnvironment_);
+    inputFile.write(QByteArray::fromStdString(analysis::formatSolverInputForBackend(
+        averageGainInput, solverBackendId_.toStdString())));
     inputFile.close();
     writeAverageGainMetadata(currentRunDirectory_, currentAverageGainFrequencyMHz_,
         currentAverageGainEnvironment_);
@@ -4199,6 +4046,8 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
 
     solverOutput_->clear();
     analysisOutput_->clear();
+    rawOutputFrequencyControl_->clear();
+    rawOutputFrequencyControl_->setEnabled(false);
     const auto program = QString::fromStdString(command.executable);
     QStringList arguments;
     for (const auto& argument : command.arguments) {
@@ -4243,14 +4092,11 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
     if (currentRunPurpose_ == SolverRunPurpose::Analysis)
         setLiveResultStatus(tr("Running…"));
     if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
-        showModule(resultsModuleIndex_);
-    }
-    if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
         averageGainResultsView_->setRunning(currentAverageGainFrequencyMHz_,
             currentAverageGainEnvironment_, runContext(*currentRunRecord_));
         dashboardPage_->setAverageGainRunning(currentAverageGainFrequencyMHz_);
-        resultsWorkspace_->setCurrentIndex(averageGainResultsTabIndex_);
         validationWorkspace_->setCurrentIndex(averageGainValidationTabIndex_);
+        validationPanel_->showWindow();
     }
     updateRunSelectionActions();
     statusBar()->showMessage(tr("Running %1…").arg(activity));
@@ -4384,13 +4230,10 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
                 dashboardPage_->setAverageGainResult(assessment, currentAverageGainFrequencyMHz_);
                 writeAverageGainMetadata(currentRunDirectory_, currentAverageGainFrequencyMHz_,
                     currentAverageGainEnvironment_, assessment, result.averagingSolidAnglePi);
-                resultsAvailable_ = true;
                 displayedRunDirectory_ = currentRunDirectory_;
-                resultsStatusLabel_->setText(tr("Average Gain Test — %1").arg(context));
-                showActiveResultsContext(context);
-                showModule(resultsModuleIndex_);
-                resultsWorkspace_->setCurrentIndex(averageGainResultsTabIndex_);
+                validationPanel_->setStatusText(tr("Average Gain Test — %1").arg(context));
                 validationWorkspace_->setCurrentIndex(averageGainValidationTabIndex_);
+                validationPanel_->showWindow();
                 const auto expectedSolidAngle = currentAverageGainEnvironment_
                         == analysis::AverageGainEnvironment::PerfectGround
                     ? 2.0 : 4.0;
@@ -4420,8 +4263,6 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
         }
         if (currentRunPurpose_ == SolverRunPurpose::Analysis) {
             const auto context = runContext(*currentRunRecord_);
-            resultsSummaryView_->setResults(result, context);
-            resultsSummaryView_->clearInputSnapshot();
             analysisResultsView_->setResults(result, context);
             visualizePlotsView_->setResults(result, context);
             currentResultsView_->setModel(currentModel_);
@@ -4441,8 +4282,6 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             resultsAvailable_ = true;
             liveResultsStale_ = false;
             setLiveResultStatus(tr("Current"));
-            resultsStatusLabel_->setText(tr("Current results — %1").arg(context));
-            showActiveResultsContext(context);
             analysisResultsAvailable = !result.feedpoints.empty() || !result.currents.empty()
                 || !result.radiation.empty();
             if (analysisResultsAvailable)
@@ -4768,7 +4607,6 @@ auto MainWindow::loadRunModel(const QString& directory, const QString& modelName
     editor_->document()->setModified(false);
     checkModel();
     dashboardPage_->setDocumentState(displayName, false);
-    updateActiveModelResultsLabel();
     return true;
 }
 
@@ -4834,7 +4672,6 @@ void MainWindow::pinSelectedRunReference()
 
 void MainWindow::chooseResultReference(QWidget* anchor)
 {
-    if (changeResultReferenceButton_ == nullptr) return;
     QMenu menu(this);
     auto eligibleCount = 0;
     const auto* selectedReference = resultReferenceController_.record();
@@ -4875,7 +4712,7 @@ void MainWindow::chooseResultReference(QWidget* anchor)
     menu.addSeparator();
     auto* historyAction = menu.addAction(tr("Open Run History…"));
     connect(historyAction, &QAction::triggered, this, [this] { showRunHistory(); });
-    auto* menuAnchor = anchor != nullptr ? anchor : changeResultReferenceButton_;
+    auto* menuAnchor = anchor != nullptr ? anchor : this;
     menu.exec(menuAnchor->mapToGlobal(QPoint(0, menuAnchor->height())));
 }
 
@@ -4931,21 +4768,10 @@ void MainWindow::setResultReferenceVisible(bool visible)
 
 void MainWindow::updateResultReference()
 {
-    if (resultReferenceLabel_ == nullptr || clearResultReferenceButton_ == nullptr
-        || changeResultReferenceButton_ == nullptr
-        || visualizePlotsView_ == nullptr || impedanceOverlayControl_ == nullptr
+    if (visualizePlotsView_ == nullptr || impedanceOverlayControl_ == nullptr
         || radiationOverlayControl_ == nullptr) return;
     const auto* reference = resultReferenceController_.result();
     const auto hasReference = reference != nullptr;
-    resultReferenceLabel_->setText(hasReference
-        ? tr("Historical Overlay: %1").arg(resultReferenceController_.label())
-        : resultReferenceController_.hasReference()
-            ? tr("Historical Overlay unavailable: archived output could not be read")
-            : tr("Historical Overlay: None"));
-    clearResultReferenceButton_->setText(tr("Clear Overlay"));
-    clearResultReferenceButton_->setEnabled(resultReferenceController_.hasReference());
-    changeResultReferenceButton_->setEnabled(!solverRunner_->isRunning()
-        && !optimizationWorkspace_->isRunning() && !convergenceWorkspace_->isRunning());
     if (hasReference) {
         const auto* record = resultReferenceController_.record();
         const auto modelName = record->sourceFile.isEmpty()
@@ -5037,8 +4863,8 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
         clearDisplayedResults();
         const auto message = tr("Historical run is incomplete — model.out is missing or unreadable. %1")
             .arg(context);
-        resultsStatusLabel_->setText(message);
         analysisOutput_->setPlainText(tr("Solver output unavailable: %1").arg(outputFile.fileName()));
+        rawOutputPanel_->setStatusText(message);
         showRunHistory();
         statusBar()->showMessage(message, 7000);
         return;
@@ -5071,20 +4897,17 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
     if (!hasParsedResults) {
         clearDisplayedResults();
         const auto message = tr("Historical run contains no supported result data. %1").arg(context);
-        resultsStatusLabel_->setText(message);
-        showModule(resultsModuleIndex_);
-        resultsWorkspace_->setCurrentIndex(analysisOutputTabIndex_);
+        rawOutputPanel_->setStatusText(message);
+        rawOutputPanel_->showWindow();
         statusBar()->showMessage(message, 7000);
         return;
     }
-    resultsSummaryView_->setResults(result, context);
     analysisResultsView_->setResults(result, context);
     visualizePlotsView_->setResults(result, context);
     currentResultsView_->setModel({});
     currentResultsView_->setResults(result, context);
     radiationPatternView_->setResults(result, context);
     radiation3DView_->setModel({});
-    auto archivedModelAvailable = false;
     QFile inputFile(QDir(directory).filePath(QStringLiteral("model.nec")));
     if (inputFile.open(QIODevice::ReadOnly)) {
         const auto runDocument = nec::NecParser{}.parse(
@@ -5093,10 +4916,8 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
         if (!conversion.model.empty()) {
             currentResultsView_->setModel(conversion.model);
             radiation3DView_->setModel(conversion.model);
-            archivedModelAvailable = true;
         }
     }
-    resultsSummaryView_->clearInputSnapshot();
     radiation3DView_->setResults(result, context);
     radiationPerformanceView_->setResults(result, context);
     setDisplayedResults(result);
@@ -5104,122 +4925,40 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
     resultsAvailable_ = true;
     liveResultsStale_ = false;
     setLiveResultStatus(tr("Current"));
-    resultsStatusLabel_->setText(archivedModelAvailable
-        ? tr("Active model results — %1").arg(context)
-        : tr("Results loaded — archived model.nec is missing or invalid · %1").arg(context));
-    showActiveResultsContext(context);
-    showModule(resultsModuleIndex_);
-    resultsWorkspace_->setCurrentIndex(resultsSummaryTabIndex_);
+    if (!result.feedpoints.empty()) resultWindowCoordinator_->showImpedance();
+    else if (!result.radiation.empty()) resultWindowCoordinator_->showRadiation();
+    else if (!result.currents.empty()) resultWindowCoordinator_->showCurrents();
     statusBar()->showMessage(tr("Displaying active model results: %1").arg(directory), 5000);
-}
-
-void MainWindow::showActiveResultsContext(const QString& context)
-{
-    resultsContextTitleLabel_->setText(tr("Active Model Results"));
-    resultsContextDetailLabel_->setText(tr("Latest solver output for the active editor — %1").arg(context));
-    updateActiveModelResultsLabel();
-}
-
-void MainWindow::updateActiveModelResultsLabel()
-{
-    if (!hasNecModel_) {
-        activeModelResultsLabel_->setText(tr("Active Model: None"));
-        return;
-    }
-    const auto name = currentFile_.isEmpty() ? tr("Untitled model.nec") : QFileInfo(currentFile_).fileName();
-    activeModelResultsLabel_->setText(tr("Active Model: %1").arg(name));
 }
 
 void MainWindow::setDisplayedResults(const analysis::AnalysisResult& result)
 {
-    const auto previousFrequency = resultsFrequencyControl_->currentIndex() >= 0
-        ? std::optional{resultsFrequencyControl_->currentData().toDouble()} : std::nullopt;
     displayedResults_ = result;
     std::vector<double> frequencies;
     const auto addFrequency = [&frequencies](double frequencyMHz) {
-        if (std::ranges::find_if(frequencies, [frequencyMHz](double value) {
-                return nearlyEqual(value, frequencyMHz);
-            }) == frequencies.end()) frequencies.push_back(frequencyMHz);
+        if (std::ranges::none_of(frequencies, [frequencyMHz](double existing) {
+                return nearlyEqual(existing, frequencyMHz);
+            })) frequencies.push_back(frequencyMHz);
     };
     for (const auto& value : result.feedpoints) addFrequency(value.frequencyMHz);
     for (const auto& value : result.currents) addFrequency(value.frequencyMHz);
     for (const auto& value : result.radiation) addFrequency(value.frequencyMHz);
     std::ranges::sort(frequencies);
-
-    const QSignalBlocker blocker(resultsFrequencyControl_);
-    resultsFrequencyControl_->clear();
+    const QSignalBlocker blocker(rawOutputFrequencyControl_);
+    rawOutputFrequencyControl_->clear();
     for (const auto frequencyMHz : frequencies) {
-        const auto hasImpedance = std::ranges::any_of(result.feedpoints, [frequencyMHz](const auto& value) {
-            return nearlyEqual(value.frequencyMHz, frequencyMHz);
-        });
-        const auto hasCurrents = std::ranges::any_of(result.currents, [frequencyMHz](const auto& value) {
-            return nearlyEqual(value.frequencyMHz, frequencyMHz);
-        });
-        const auto hasRadiation = std::ranges::any_of(result.radiation, [frequencyMHz](const auto& value) {
-            return nearlyEqual(value.frequencyMHz, frequencyMHz);
-        });
-        QStringList available;
-        if (hasImpedance) available.append(tr("Z"));
-        if (hasCurrents) available.append(tr("I"));
-        if (hasRadiation) available.append(tr("RP"));
-        resultsFrequencyControl_->addItem(tr("%1 MHz — %2")
-            .arg(formatDecimal(frequencyMHz), available.join(QStringLiteral(" · "))), frequencyMHz);
+        rawOutputFrequencyControl_->addItem(
+            tr("%1 MHz").arg(formatDecimal(frequencyMHz)), frequencyMHz);
     }
-    resultsFrequencyControl_->setEnabled(!frequencies.empty());
-    auto selectedIndex = 0;
-    if (previousFrequency) {
-        for (auto index = 0; index < resultsFrequencyControl_->count(); ++index) {
-            if (nearlyEqual(resultsFrequencyControl_->itemData(index).toDouble(), *previousFrequency)) {
-                selectedIndex = index;
-                break;
-            }
-        }
-    }
-    if (!frequencies.empty()) {
-        resultsFrequencyControl_->setCurrentIndex(selectedIndex);
-        applyResultFrequency(resultsFrequencyControl_->currentData().toDouble());
-    } else {
-        resultsAvailabilityLabel_->setText(tr("No parsed frequency results are available."));
-    }
+    rawOutputFrequencyControl_->setEnabled(!frequencies.empty());
     updateResultReference();
-}
-
-void MainWindow::applyResultFrequency(double frequencyMHz)
-{
-    const auto hasImpedance = std::ranges::any_of(displayedResults_.feedpoints, [frequencyMHz](const auto& value) {
-        return nearlyEqual(value.frequencyMHz, frequencyMHz);
-    });
-    const auto hasCurrents = std::ranges::any_of(displayedResults_.currents, [frequencyMHz](const auto& value) {
-        return nearlyEqual(value.frequencyMHz, frequencyMHz);
-    });
-    const auto hasRadiation = std::ranges::any_of(displayedResults_.radiation, [frequencyMHz](const auto& value) {
-        return nearlyEqual(value.frequencyMHz, frequencyMHz);
-    });
-    QStringList available;
-    QStringList missing;
-    const auto addStatus = [&available, &missing](bool present, const QString& name) {
-        (present ? available : missing).append(name);
-    };
-    addStatus(hasImpedance, tr("impedance"));
-    addStatus(hasCurrents, tr("currents"));
-    addStatus(hasRadiation, tr("radiation"));
-    auto text = tr("Available: %1").arg(available.empty() ? tr("none") : available.join(QStringLiteral(" · ")));
-    if (!missing.empty()) text += tr("  |  Missing: %1").arg(missing.join(QStringLiteral(" · ")));
-    resultsAvailabilityLabel_->setText(text);
-
-    resultsSummaryView_->setSelectedFrequency(frequencyMHz);
-    analysisResultsView_->setSelectedFrequency(frequencyMHz);
-    visualizePlotsView_->setSelectedFrequency(frequencyMHz);
-    currentResultsView_->setSelectedFrequency(frequencyMHz);
-    radiationPatternView_->setSelectedFrequency(frequencyMHz);
-    radiation3DView_->setSelectedFrequency(frequencyMHz);
-    radiationPerformanceView_->setSelectedFrequency(frequencyMHz);
 }
 
 void MainWindow::jumpRawOutputToSelectedFrequency()
 {
-    if (resultsFrequencyControl_->currentIndex() < 0 || analysisOutput_->document()->isEmpty()) return;
-    const auto target = resultsFrequencyControl_->currentData().toDouble();
+    if (rawOutputFrequencyControl_->currentIndex() < 0
+        || analysisOutput_->document()->isEmpty()) return;
+    const auto target = rawOutputFrequencyControl_->currentData().toDouble();
     static const QRegularExpression frequencyExpression(
         QStringLiteral("FREQUENCY\\s*:\\s*([+\\-0-9.EeDd]+)"),
         QRegularExpression::CaseInsensitiveOption);
@@ -5234,7 +4973,6 @@ void MainWindow::jumpRawOutputToSelectedFrequency()
         QTextCursor cursor(block);
         analysisOutput_->setTextCursor(cursor);
         analysisOutput_->centerCursor();
-        resultsWorkspace_->setCurrentIndex(analysisOutputTabIndex_);
         statusBar()->showMessage(
             tr("Raw output positioned at %1 MHz.").arg(formatDecimal(target)), 3000);
         return;
@@ -5260,7 +4998,6 @@ void MainWindow::clearDisplayedResults()
     updateResultReference();
     const analysis::AnalysisResult empty;
     const auto context = tr("No analysis run");
-    resultsSummaryView_->clear();
     averageGainResultsView_->clear();
     dashboardPage_->clearAverageGain();
     convergenceWorkspace_->clearResults();
@@ -5278,11 +5015,6 @@ void MainWindow::clearDisplayedResults()
     resultsAvailable_ = false;
     liveResultsStale_ = false;
     setLiveResultStatus(tr("No results"));
-    resultsContextTitleLabel_->setText(tr("No Results Loaded"));
-    resultsContextDetailLabel_->setText(
-        tr("Select a run from Results → Runs, or analyze the active model."));
-    updateActiveModelResultsLabel();
-    resultsStatusLabel_->setText(tr("No analysis results are loaded."));
 }
 
 void MainWindow::editWire(const model::Wire& original, const model::Wire& updated)
@@ -5975,7 +5707,6 @@ void MainWindow::setCurrentFile(QString path)
     if (optimizationPanel_ != nullptr) optimizationPanel_->setStatusText(
         tr("%1 · %2").arg(modelName,
             optimizationWorkspace_->isRunning() ? tr("Running") : tr("Ready")));
-    if (activeModelResultsLabel_ != nullptr) updateActiveModelResultsLabel();
 }
 
 void MainWindow::restoreWorkspaceLayout()
@@ -6086,9 +5817,6 @@ void MainWindow::saveWorkspaceLayout()
     }
     settings.remove(QStringLiteral("analysis/executablePath"));
     settings.setValue(QStringLiteral("analysis/timeoutSeconds"), solverTimeoutSeconds_);
-    if (detachedResultsWindow_ != nullptr)
-        settings.setValue(QStringLiteral("resultsWindow/geometry"),
-            detachedResultsWindow_->saveGeometry());
 }
 
 }

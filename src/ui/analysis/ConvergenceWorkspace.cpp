@@ -7,6 +7,7 @@
 #include "analysis/NecOutputParser.h"
 #include "analysis/SegmentationConvergence.h"
 #include "analysis/SolverCommand.h"
+#include "analysis/SolverInput.h"
 #include "nec/NecSymbolResolver.h"
 #include "nec/NecParser.h"
 #include "nec/NecSetupConverter.h"
@@ -558,12 +559,15 @@ void ConvergenceWorkspace::finishStudy()
 auto ConvergenceWorkspace::writeStepFiles(Step& step, const std::string& deck) -> bool
 {
     const QDir directory(step.record.directory);
+    const auto backendDeck = analysis::formatSolverInputForBackend(
+        deck, backend_.toStdString());
     const QJsonObject metadata{{QStringLiteral("version"), 1},
         {QStringLiteral("scale"), step.scale}, {QStringLiteral("totalSegments"), step.totalSegments},
         {QStringLiteral("frequencyMHz"), frequencyControl_->value()},
         {QStringLiteral("warning"), step.warning}};
     return writeFile(directory.filePath(QStringLiteral("model.source.nec")), source_.toUtf8())
-        && writeFile(directory.filePath(QStringLiteral("model.nec")), QByteArray::fromStdString(deck))
+        && writeFile(directory.filePath(QStringLiteral("model.nec")),
+            QByteArray::fromStdString(backendDeck))
         && writeFile(directory.filePath(QStringLiteral("convergence.json")),
             QJsonDocument(metadata).toJson(QJsonDocument::Indented));
 }

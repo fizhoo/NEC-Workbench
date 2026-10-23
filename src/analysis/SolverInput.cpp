@@ -85,6 +85,30 @@ auto normalizeSolverDeck(std::string_view source) -> std::string
     return output.str();
 }
 
+auto formatSolverInputForBackend(std::string_view source,
+    std::string_view backendId) -> std::string
+{
+    if (backendId != "nec2dxs") return std::string(source);
+
+    const auto document = nec::NecParser{}.parse(source);
+    std::ostringstream output;
+    const auto cards = document.cards();
+    for (std::size_t index = 0; index < cards.size(); ++index) {
+        const auto& card = cards[index];
+        if (card.kind == nec::NecCardKind::Blank
+            || card.kind == nec::NecCardKind::Comment
+            || card.kind == nec::NecCardKind::Unknown) {
+            output << card.sourceText;
+        } else {
+            output << card.mnemonic;
+            for (const auto& field : card.fields) output << ' ' << field;
+        }
+        if (index + 1 < cards.size() || document.hasFinalLineEnding())
+            output << document.lineEnding();
+    }
+    return output.str();
+}
+
 auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
     RadiationSweepMode mode) -> std::string
 {

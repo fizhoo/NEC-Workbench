@@ -1,7 +1,8 @@
 # NEC Workbench User Guide
 
-NEC Workbench organizes work into **Home**, **Model**, **Setup**, **Results**,
-and **Optimize**. Controls provide tooltips; this guide focuses on workflow and
+NEC Workbench uses **Home** as its operating base. **Model**, **Setup**, and
+**Optimize** open reusable work windows; **Results** opens focused live-result
+windows and Run History. Controls provide tooltips; this guide focuses on workflow and
 behavior that is not obvious from an individual control.
 
 ## Getting Started
@@ -11,7 +12,8 @@ behavior that is not obvious from an individual control.
 3. Configure frequency, sources, loads, environment, requests, and solver under Setup.
 4. Run **Check Model** (`F7`) and resolve blocking errors.
 5. Select **Run Analysis**.
-6. Review impedance, currents, radiation, raw output, and run history under Results.
+6. Open focused impedance, current, radiation, or raw-output windows from **Results**.
+   Use Run History and Run Review for archived input and historical raw output.
 
 NEC Workbench does not include an NEC solver. Configure a separately installed
 `nec2c`, OpenNEC, or 4nec2 NEC2dXS executable under **Setup → Solver**.
@@ -26,7 +28,11 @@ for execution.
 
 The **4nec2 NEC2dXS** adapter launches the calculator executable directly. Features
 normally preprocessed by the full 4nec2 application, beginning with `LD 6` LC traps,
-remain blocked until equivalent Workbench conversion is available.
+remain blocked until equivalent Workbench conversion is available. Workbench writes
+the numeric NEC2dXS solver copy with canonical space-delimited fields because the
+calculator's NEC-2 reader does not recognize tab characters as field separators.
+Authored tabs, commas, spacing, and comments remain unchanged in `model.source.nec`;
+only the archived `model.nec` sent directly to NEC2dXS is normalized.
 
 ## Application Layout
 
@@ -130,10 +136,10 @@ reports errors and warnings. Errors block analysis and optimization. Warnings
 identify conditions requiring engineering judgment.
 
 The **Validate** menu groups the static Model Check, Average Gain Test, and
-segmentation convergence commands. **Results → Validation** provides a compact
-status overview and keeps the two solver-backed studies together. The full static
-report remains a separate non-modal window so findings can stay visible while the
-model is edited.
+segmentation convergence commands. **Validate → Open Validation Results** opens a
+reusable focused window with the compact status overview and both solver-backed
+studies. The full static report remains a separate non-modal window so findings can
+stay visible while the model is edited.
 
 Static checks include card ordering, geometry completeness, field types, references,
 segment length, thin-wire ratios, source placement, adjoining segment consistency,
@@ -161,8 +167,9 @@ remapped by relative position; unsupported references block the operation.
 ### Average Gain Test
 
 Average Gain Test creates a temporary one-frequency, lossless deck in free space
-or over perfect ground. It does not modify the authored model. Results are archived
-under **Results → Validation**.
+or over perfect ground. It does not modify the authored model. Current AGT and
+convergence results share the reusable **Validation** window; completed studies are
+also archived in Run History.
 
 ### Segmentation Convergence
 
@@ -196,8 +203,8 @@ The backend selection controls command-line or standard-input behavior; Workbenc
 does not infer protocol from the executable filename.
 
 The **Run** menu provides direct access to the reusable Run Monitor and archived
-run history. The monitor is transient execution feedback; durable inputs, outputs,
-notes, and review remain under **Results → Runs**.
+Run History. The monitor is transient execution feedback; durable inputs, complete
+raw output, notes, and read-only review remain in Run Review.
 
 ### Model Check
 
@@ -303,8 +310,8 @@ Use **Use as Historical Overlay** to select a completed analysis or quick sweep 
 comparison. Then enable it in the Impedance or Radiation result window where it is
 useful. The overlay remains labeled and never becomes the active result or model.
 
-The ordinary Results workspace compares one historical overlay at a time. Comparing
-several runs belongs in a separate comparison workflow and is not performed implicitly.
+The live result windows compare one historical overlay at a time. Comparing several
+runs belongs in a separate comparison workflow and is not performed implicitly.
 
 Use **Edit Run Note…**, or double-click the Note cell, to record what changed or why
 a run matters. Notes are stored only in run metadata; they do not alter archived NEC
@@ -440,9 +447,9 @@ baseline internally. If no
 compatible result is available, the run button reads **Build Baseline & Optimize**.
 Workbench first runs only the study frequencies and focused outputs required by the
 enabled objective, then starts the selected search after that baseline succeeds.
-This internal optimization run leaves normal Results unchanged and keeps Optimize in
+This internal optimization run leaves the live result windows unchanged and keeps Optimize in
 front. Use **Run Analysis**—or **Apply This Candidate and Run**—to run the authored
-deck requests and populate normal Results.
+deck requests and populate the live result windows.
 
 A baseline is compatible only when its solver-effective model, backend, reference
 impedance, required frequencies, and radiation coverage match the study. Directional
@@ -457,15 +464,15 @@ Double-click a candidate to open **Candidate Results**. Candidate-only
 SWR/impedance plots are shown first. The Results view also contains the 2D pattern,
 **Directional vs Frequency** for Gain/F/B/F/R when available, and Objective Details;
 the numeric frequency table remains beside Results. This is temporary optimization
-data, not the active model's normal Results.
+data, not the active model's live results.
 
 Enable **Compare with starting model** only when a comparison is wanted. Candidate
 traces remain solid and starting-model traces are dashed on SWR/impedance, 2D pattern,
 and Directional vs Frequency views; Objective Details then adds
 candidate-minus-starting-model deltas for enabled criteria. This compares one
 candidate with the model recorded before the search, not multiple candidates. The
-main Results workspace remains reserved for normal analysis runs and manually
-selected historical overlays.
+live result windows remain reserved for normal analysis runs and manually selected
+historical overlays.
 
 The candidate menu can apply a scored candidate directly to the model or apply it
 and start a normal analysis. The existing **Apply Best to Model** action remains the

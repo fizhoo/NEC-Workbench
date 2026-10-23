@@ -3429,7 +3429,7 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
     if (headerText.size() > 110) headerText = headerText.left(109) + QChar(0x2026);
     candidateDetailLabel_->setText(headerText);
     candidateDetailLabel_->setToolTip(tr(
-        "%1\n%2\nTemporary optimization evaluation; normal Results remain separate.")
+        "%1\n%2\nTemporary optimization evaluation; live result windows remain separate.")
         .arg(candidateIdentity,
             breakdown.isEmpty() ? tr("Objective breakdown unavailable")
                                 : breakdown.join(tr(" · "))));
@@ -3475,7 +3475,7 @@ void OptimizationWorkspace::finishOptimizationBaseline(bool succeeded, QString d
                 "The optimization baseline does not cover the current study."));
         } else {
             statusLabel_->setText(tr(
-                "Optimization baseline created; normal Results remain unchanged. Starting optimization."));
+                "Optimization baseline created; live result windows remain unchanged. Starting optimization."));
         }
     }
     updateReadiness();

@@ -647,6 +647,31 @@ void testSymbolResolution()
     expect(solverInput.find("SY ") == std::string::npos
             && solverInput.find("FR 0 1 0 0 14.175 0") != std::string::npos,
         "native solver input contains resolved numeric cards and no Workbench symbols");
+    const std::string tabbedFourNec2Input =
+        "CM G5RV Multiband Antenna\r\n"
+        "CE\r\n"
+        "GW\t1\t31\t0\t-15\t0\t0\t15\t0\t.003\r\n"
+        "GE\t0\r\n"
+        "GN\t-1\r\n"
+        "EK\r\n"
+        "EX\t0\t1\t16\t0\t1.0\t0\t0\t0\r\n"
+        "FR\t0\t0\t0\t0\t14.2\t0\r\n"
+        "XQ\r\n"
+        "EN\r\n";
+    const auto fourNec2Input = necwb::analysis::formatSolverInputForBackend(
+        tabbedFourNec2Input, "nec2dxs");
+    expect(fourNec2Input.find('\t') == std::string::npos
+            && fourNec2Input.find("GW 1 31 0 -15 0 0 15 0 .003\r\n")
+                != std::string::npos
+            && fourNec2Input.find("EX 0 1 16 0 1.0 0 0 0\r\n")
+                != std::string::npos
+            && fourNec2Input.ends_with("EN\r\n"),
+        "4nec2 NEC2dXS input uses canonical space-delimited fields and preserves line endings");
+    expect(necwb::analysis::formatSolverInputForBackend(
+               tabbedFourNec2Input, "nec2") == tabbedFourNec2Input
+            && necwb::analysis::formatSolverInputForBackend(
+                tabbedFourNec2Input, "opennec") == tabbedFourNec2Input,
+        "backend input formatting leaves NEC2C and OpenNEC decks unchanged");
     const auto overridden = necwb::nec::NecSymbolResolver{}.resolve(source, {{"HALF", 7.5}});
     expect(overridden.ok()
             && overridden.generatedDeck.find("GW 1 21 -7.5 0 6 7.5 0 6 0.001") != std::string::npos,

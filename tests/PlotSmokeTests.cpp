@@ -268,13 +268,17 @@ auto main(int argc, char* argv[]) -> int
     auto consolidatedSetupNavigation = false;
     auto resultWindowNavigation = false;
     auto runHistoryWindowNavigation = false;
+    auto validationWindowNavigation = false;
     auto modelWindowNavigation = false;
     auto setupWindowNavigation = false;
     auto optimizationWindowNavigation = false;
+    auto dialogDensityIsIncremental = false;
     QSettings resultWindowSettings;
     resultWindowSettings.remove(QStringLiteral("resultWindows/impedance"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/currents"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/radiation"));
+    resultWindowSettings.remove(QStringLiteral("resultWindows/raw-output"));
+    resultWindowSettings.remove(QStringLiteral("resultWindows/validation"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/impedance/overlayVisible"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/radiation/overlayVisible"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/model-editor"));
@@ -284,6 +288,7 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.sync();
     {
         necwb::ui::MainWindow mainWindow;
+        mainWindow.setProperty("workspaceDensityId", QStringLiteral("density-smoke-sentinel"));
         auto* setupWorkspace = mainWindow.findChild<QTabWidget*>(QStringLiteral("setupWorkspace"));
         auto* modelWorkspace = mainWindow.findChild<QTabWidget*>(QStringLiteral("modelWorkspace"));
         auto* setupModuleAction = mainWindow.findChild<QAction*>(
@@ -306,6 +311,8 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("validationOverviewSummary"));
         auto* openValidation = mainWindow.findChild<QAction*>(
             QStringLiteral("openValidationResultsAction"));
+        auto* openConvergence = mainWindow.findChild<QAction*>(
+            QStringLiteral("segmentationConvergenceAction"));
         auto* reviewRuns = mainWindow.findChild<QAction*>(
             QStringLiteral("reviewRunHistoryAction"));
         auto* resultWindowsMenu = mainWindow.findChild<QMenu*>(
@@ -316,6 +323,8 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("showCurrentsWindowAction"));
         auto* showRadiationWindow = mainWindow.findChild<QAction*>(
             QStringLiteral("showRadiationWindowAction"));
+        auto* showRawOutputWindow = mainWindow.findChild<QAction*>(
+            QStringLiteral("showRawOutputWindowAction"));
         auto* showRunHistory = mainWindow.findChild<QAction*>(
             QStringLiteral("showRunHistoryAction"));
         auto* impedanceOverlay = mainWindow.findChild<QCheckBox*>(
@@ -340,6 +349,24 @@ auto main(int argc, char* argv[]) -> int
             && validateMenu != nullptr && runMenu != nullptr && validationSummary != nullptr
             && openValidation != nullptr && validateMenu->actions().contains(openValidation)
             && reviewRuns != nullptr && runMenu->actions().contains(reviewRuns);
+        if (openValidation != nullptr) {
+            openValidation->trigger();
+            application.processEvents();
+            const auto* validationWindow = topLevelDialog(QStringLiteral("validationWindow"));
+            validationWindowNavigation = validationWindow != nullptr
+                && validationWindow->isVisible()
+                && validationWorkspace != nullptr
+                && validationWorkspace->window() == validationWindow;
+        }
+        if (openConvergence != nullptr && validationWorkspace != nullptr) {
+            openConvergence->setEnabled(true);
+            openConvergence->trigger();
+            application.processEvents();
+            validationWindowNavigation = validationWindowNavigation
+                && validationWorkspace->currentIndex() == 2
+                && validationWorkspace->window()->objectName()
+                    == QStringLiteral("validationWindow");
+        }
         if (modelWorkspace != nullptr && modelModuleAction != nullptr) {
             modelModuleAction->setEnabled(true);
             modelModuleAction->trigger();
@@ -352,6 +379,10 @@ auto main(int argc, char* argv[]) -> int
                 && modelWorkspace->window() == modelEditorWindow
                 && resultWindowSettings.value(
                     QStringLiteral("workspaceWindows/model-editor/detached"), false).toBool();
+            dialogDensityIsIncremental = modelEditorWindow != nullptr
+                && !modelEditorWindow->property("workspaceDensityId").toString().isEmpty()
+                && mainWindow.property("workspaceDensityId").toString()
+                    == QStringLiteral("density-smoke-sentinel");
         }
         if (setupWorkspace != nullptr && setupModuleAction != nullptr) {
             setupModuleAction->setEnabled(true);
@@ -381,10 +412,11 @@ auto main(int argc, char* argv[]) -> int
         }
         if (resultWindowsMenu != nullptr && showImpedanceWindow != nullptr
             && showCurrentsWindow != nullptr && showRadiationWindow != nullptr
-            && showRunHistory != nullptr) {
+            && showRawOutputWindow != nullptr && showRunHistory != nullptr) {
             showImpedanceWindow->trigger();
             showCurrentsWindow->trigger();
             showRadiationWindow->trigger();
+            showRawOutputWindow->trigger();
             showRunHistory->trigger();
             application.processEvents();
             const auto* impedanceWindow = topLevelDialog(
@@ -393,6 +425,8 @@ auto main(int argc, char* argv[]) -> int
                 QStringLiteral("currentsResultWindow"));
             const auto* radiationWindow = topLevelDialog(
                 QStringLiteral("radiationResultWindow"));
+            const auto* rawOutputWindow = topLevelDialog(
+                QStringLiteral("rawOutputWindow"));
             const auto* runHistoryWindow = topLevelDialog(
                 QStringLiteral("runHistoryWindow"));
             const auto* runHistoryTable = runHistoryWindow != nullptr
@@ -401,27 +435,33 @@ auto main(int argc, char* argv[]) -> int
             resultWindowNavigation = resultWindowsMenu->actions().contains(showImpedanceWindow)
                 && resultWindowsMenu->actions().contains(showCurrentsWindow)
                 && resultWindowsMenu->actions().contains(showRadiationWindow)
+                && resultWindowsMenu->actions().contains(showRawOutputWindow)
                 && resultWindowsMenu->actions().contains(showRunHistory)
                 && resultsLauncherMenu != nullptr
                 && resultsLauncherMenu->actions().contains(showImpedanceWindow)
+                && resultsLauncherMenu->actions().contains(showRawOutputWindow)
                 && resultsLauncherMenu->actions().contains(showRunHistory)
                 && impedanceWindow != nullptr && impedanceWindow->isVisible()
                 && currentsWindow != nullptr && currentsWindow->isVisible()
                 && radiationWindow != nullptr && radiationWindow->isVisible()
+                && rawOutputWindow != nullptr && rawOutputWindow->isVisible()
+                && rawOutputWindow->findChild<QPlainTextEdit*>(
+                    QStringLiteral("analysisRawOutput")) != nullptr
                 && impedanceOverlay != nullptr && impedanceOverlayChooser != nullptr
                 && radiationOverlay != nullptr && radiationOverlayChooser != nullptr
-                && !impedanceOverlay->isChecked() && !radiationOverlay->isChecked();
+                && !impedanceOverlay->isChecked() && !radiationOverlay->isChecked()
+                && resultsWorkspace == nullptr;
             runHistoryWindowNavigation = runHistoryWindow != nullptr
                 && runHistoryWindow->isVisible()
                 && runHistoryTable != nullptr && runHistoryTable->window() == runHistoryWindow
-                && runHistoryHostStatus != nullptr && !runHistoryHostStatus->isVisible()
-                && resultsWorkspace != nullptr
-                && !tabNames(resultsWorkspace).contains(QStringLiteral("Runs"));
+                && runHistoryHostStatus != nullptr && !runHistoryHostStatus->isVisible();
         }
     }
     resultWindowSettings.remove(QStringLiteral("resultWindows/impedance"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/currents"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/radiation"));
+    resultWindowSettings.remove(QStringLiteral("resultWindows/raw-output"));
+    resultWindowSettings.remove(QStringLiteral("resultWindows/validation"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/impedance/overlayVisible"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/radiation/overlayVisible"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/model-editor"));
@@ -435,8 +475,12 @@ auto main(int argc, char* argv[]) -> int
         return NECWB_SMOKE_FAILURE("result window navigation");
     if (!runHistoryWindowNavigation)
         return NECWB_SMOKE_FAILURE("run history window navigation");
+    if (!validationWindowNavigation)
+        return NECWB_SMOKE_FAILURE("validation window navigation");
     if (!modelWindowNavigation)
         return NECWB_SMOKE_FAILURE("model window navigation");
+    if (!dialogDensityIsIncremental)
+        return NECWB_SMOKE_FAILURE("incremental dialog workspace density");
     if (!setupWindowNavigation)
         return NECWB_SMOKE_FAILURE("setup window navigation");
     if (!optimizationWindowNavigation)

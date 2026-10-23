@@ -85,10 +85,10 @@ optimization. Adequacy findings are warnings because their importance depends on
 the model and engineering purpose.
 
 Validation commands are grouped in the **Validate** menu. Static findings remain
-in a reusable non-modal report, while **Results → Validation** owns the compact
-overview, Average Gain Test result, and segmentation-convergence workspace. The
-Run Monitor remains execution UI rather than a validation result; durable runs are
-reviewed under **Results → Runs**.
+in a reusable non-modal report, while the focused **Validation** window owns the
+compact overview, Average Gain Test result, and segmentation-convergence workspace.
+The Run Monitor remains execution UI rather than a validation result; durable runs
+are reviewed through Run History and the read-only Run Review window.
 
 The static checker covers geometry/control-card ordering, segment length,
 thin-wire ratios, source placement, adjoining segmentation, and large junctions.
@@ -121,7 +121,9 @@ The selected backend identifies a process protocol, not merely an executable nam
 
 - `nec2c` uses attached input/output arguments.
 - OpenNEC uses positional input with original-format output options.
-- 4nec2 NEC2dXS receives filenames through standard input.
+- 4nec2 NEC2dXS receives filenames through standard input. Its generated numeric deck
+  uses canonical space-delimited fields so direct execution never depends on the full
+  4nec2 application's input preprocessing or on unsupported tab separators.
 
 Each backend has an independently persisted executable path. All adapters feed
 the same run store and backend-neutral result model. No solver is bundled.
@@ -196,26 +198,26 @@ solver work while preserving the stated metric definition.
 
 An optimization baseline is a durable analysis of the actual current model, not an
 optimizer candidate. Baseline identity and coverage are modeled independently from
-the Results workspace's optional historical overlay so those two comparisons cannot
+the live result windows' optional historical overlay so those two comparisons cannot
 silently replace one another. When the current study lacks a compatible baseline,
 the optimization workspace requests one through the ordinary MainWindow analysis
 pipeline with an optimization-specific generated deck containing only the study
 frequencies and objective-required outputs. It then begins candidate evaluation only
 after the run is parsed and indexed. This internal run is archived but does not
-replace the active normal Results state.
+replace the active live-result state.
 Directional baseline compatibility compares the exact generated theta/phi request
 grid, not only the presence of radiation data at a frequency. This keeps candidate
 overlays and directional objective reductions on the same sampled cut.
 The optimization session stores the baseline run ID; historical session review loads
-that archived result without replacing the active model's Results state.
+that archived result without replacing the active model's live-result state.
 
 Candidate comparison is owned by a focused panel inside the reusable detached
 candidate-preview window, leaving the main evaluation table and search-progress plot
 uncompressed. It reuses the normal SWR/impedance and 2D-pattern views, placing the
 compatible baseline behind the selected candidate as a labeled dashed series. The
 core fingerprint and coverage evaluator is Qt-free; widgets only present its status
-and data. Optimization candidates are not injected into the main Results workspace;
-that workspace's reference controller remains exclusively run-to-run comparison.
+and data. Optimization candidates are not injected into the live result windows;
+their historical-overlay controller remains exclusively run-to-run comparison.
 
 Applying a candidate is an explicit source edit to active `SY` definitions. It is
 undoable and does not mutate archived candidate artifacts. Applying and running

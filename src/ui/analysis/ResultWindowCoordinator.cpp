@@ -13,7 +13,9 @@ constexpr auto OpenSetEstablishedKey = "resultWindows/openSetEstablished";
 
 ResultWindowCoordinator::ResultWindowCoordinator(DetachablePanel* impedance,
     DetachablePanel* currents, DetachablePanel* radiation)
-    : impedance_(impedance), currents_(currents), radiation_(radiation)
+    : impedance_(impedance), currents_(currents), radiation_(radiation),
+      openSetEstablished_(QSettings{}.value(
+          QString::fromLatin1(OpenSetEstablishedKey), false).toBool())
 {
 }
 
@@ -49,6 +51,8 @@ void ResultWindowCoordinator::presentCompletedAnalysis(
 
 void ResultWindowCoordinator::establishOpenSet()
 {
+    if (openSetEstablished_) return;
+    openSetEstablished_ = true;
     QSettings{}.setValue(QString::fromLatin1(OpenSetEstablishedKey), true);
 }
 
@@ -57,7 +61,7 @@ auto ResultWindowCoordinator::openSetEstablished() const -> bool
     if ((impedance_ != nullptr && impedance_->isWindowVisible())
         || (currents_ != nullptr && currents_->isWindowVisible())
         || (radiation_ != nullptr && radiation_->isWindowVisible())) return true;
-    return QSettings{}.value(QString::fromLatin1(OpenSetEstablishedKey), false).toBool();
+    return openSetEstablished_;
 }
 
 }
