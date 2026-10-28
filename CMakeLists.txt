@@ -203,6 +203,9 @@ if(NECWB_BUILD_GUI)
 
     qt_add_executable(nec-workbench src/app/main.cpp)
     target_link_libraries(nec-workbench PRIVATE necwb_ui)
+    if(WIN32)
+        set_target_properties(nec-workbench PROPERTIES WIN32_EXECUTABLE TRUE)
+    endif()
 
     install(TARGETS nec-workbench
         BUNDLE DESTINATION .
