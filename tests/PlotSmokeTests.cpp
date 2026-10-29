@@ -2450,8 +2450,18 @@ auto main(int argc, char* argv[]) -> int
     QAction runAction(QStringLiteral("Run Analysis"), &dashboard);
     QAction sweepAction(QStringLiteral("Frequency Sweep…"), &dashboard);
     QAction stopAction(QStringLiteral("Stop"), &dashboard);
+    QAction averageGainAction(QStringLiteral("Run Average Gain Test…"), &dashboard);
+    QAction convergenceAction(QStringLiteral("Segmentation Convergence…"), &dashboard);
     dashboard.setFileActions(&openAction, &saveAction);
     dashboard.setQuickActions(&checkAction, &runAction, &sweepAction, &stopAction);
+    dashboard.setAverageGainAction(&averageGainAction);
+    dashboard.setConvergenceAction(&convergenceAction);
+    auto dashboardAverageGainTriggered = false;
+    auto dashboardConvergenceTriggered = false;
+    QObject::connect(&averageGainAction, &QAction::triggered,
+        [&dashboardAverageGainTriggered] { dashboardAverageGainTriggered = true; });
+    QObject::connect(&convergenceAction, &QAction::triggered,
+        [&dashboardConvergenceTriggered] { dashboardConvergenceTriggered = true; });
     auto runHistoryOpened = false;
     auto dashboardWorkspaceOpened = false;
     auto dashboardGeometryOpened = false;
@@ -2520,10 +2530,16 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("controlPanelStop"));
     auto* dashboardRuns = dashboard.findChild<QToolButton*>(
         QStringLiteral("controlPanelRuns"));
+    auto* dashboardAverageGainRun = dashboard.findChild<QToolButton*>(
+        QStringLiteral("controlPanelAverageGainRun"));
+    auto* dashboardConvergenceRun = dashboard.findChild<QToolButton*>(
+        QStringLiteral("controlPanelConvergenceRun"));
     auto* dashboardImpedance = dashboard.findChild<QToolButton*>(
         QStringLiteral("controlPanelImpedance"));
     auto* dashboardGeometry = dashboard.findChild<QToolButton*>(
         QStringLiteral("controlPanelGeometryView"));
+    if (dashboardAverageGainRun != nullptr) dashboardAverageGainRun->click();
+    if (dashboardConvergenceRun != nullptr) dashboardConvergenceRun->click();
     if (dashboardRuns != nullptr) dashboardRuns->click();
     if (dashboardImpedance != nullptr) dashboardImpedance->click();
     if (dashboardGeometry != nullptr) dashboardGeometry->click();
@@ -2557,7 +2573,12 @@ auto main(int argc, char* argv[]) -> int
         && dashboardCheck != nullptr && dashboardCheck->defaultAction() == &checkAction
         && dashboardRun != nullptr && dashboardRun->defaultAction() == &runAction
         && dashboardSweep != nullptr && dashboardSweep->defaultAction() == &sweepAction
-        && dashboardStop != nullptr && dashboardStop->defaultAction() == &stopAction;
+        && dashboardStop != nullptr && dashboardStop->defaultAction() == &stopAction
+        && dashboardAverageGainRun != nullptr
+        && dashboardAverageGainRun->text() == QStringLiteral("Run")
+        && dashboardConvergenceRun != nullptr
+        && dashboardConvergenceRun->text() == QStringLiteral("Run")
+        && dashboardAverageGainTriggered && dashboardConvergenceTriggered;
     const auto dashboardWindowStateVisible = dashboardImpedance != nullptr
         && dashboardImpedance->text().startsWith(QStringLiteral("●"));
     if (!dashboardActionsCorrect || !dashboardStateVisible || !dashboardDenseLayout

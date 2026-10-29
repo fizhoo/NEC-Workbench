@@ -274,6 +274,7 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     averageGainState_ = new QLabel(tr("not run"), panel);
     averageGainState_->setObjectName(QStringLiteral("controlPanelAverageGainState"));
     averageGainButton_ = compactButton(tr("Run"), panel);
+    averageGainButton_->setObjectName(QStringLiteral("controlPanelAverageGainRun"));
     averageGainButton_->setAutoRaise(true);
     qualityGrid->addWidget(averageGainState_, 0, 1);
     qualityGrid->addWidget(averageGainButton_, 0, 2);
@@ -281,6 +282,7 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     convergenceState_ = new QLabel(tr("not run"), panel);
     convergenceState_->setObjectName(QStringLiteral("controlPanelConvergenceState"));
     convergenceButton_ = compactButton(tr("Run"), panel);
+    convergenceButton_->setObjectName(QStringLiteral("controlPanelConvergenceRun"));
     convergenceButton_->setAutoRaise(true);
     qualityGrid->addWidget(convergenceState_, 1, 1);
     qualityGrid->addWidget(convergenceButton_, 1, 2);
@@ -354,13 +356,25 @@ void DashboardPage::setQuickActions(
 
 void DashboardPage::setAverageGainAction(QAction* action)
 {
-    averageGainButton_->setDefaultAction(action);
+    averageGainButton_->setIcon(action->icon());
+    averageGainButton_->setToolTip(action->toolTip());
+    averageGainButton_->setEnabled(action->isEnabled());
+    connect(averageGainButton_, &QToolButton::clicked, action, &QAction::trigger);
+    connect(action, &QAction::changed, averageGainButton_, [this, action] {
+        averageGainButton_->setEnabled(action->isEnabled());
+    });
     averageGainButton_->setText(tr("Run"));
 }
 
 void DashboardPage::setConvergenceAction(QAction* action)
 {
-    convergenceButton_->setDefaultAction(action);
+    convergenceButton_->setIcon(action->icon());
+    convergenceButton_->setToolTip(action->toolTip());
+    convergenceButton_->setEnabled(action->isEnabled());
+    connect(convergenceButton_, &QToolButton::clicked, action, &QAction::trigger);
+    connect(action, &QAction::changed, convergenceButton_, [this, action] {
+        convergenceButton_->setEnabled(action->isEnabled());
+    });
     convergenceButton_->setText(tr("Run"));
 }
 
