@@ -2480,8 +2480,10 @@ auto main(int argc, char* argv[]) -> int
     dashboard.render(&dashboardPainter); dashboardPainter.end();
     const auto* dashboardName = dashboard.findChild<QLabel*>(
         QStringLiteral("controlPanelModelName"));
-    const auto* dashboardLatest = dashboard.findChild<QLabel*>(
-        QStringLiteral("controlPanelLatestResult"));
+    const auto* dashboardExtrema = dashboard.findChild<QLabel*>(
+        QStringLiteral("controlPanelResultExtrema"));
+    const auto* dashboardQuickResults = dashboard.findChild<QWidget*>(
+        QStringLiteral("controlPanelQuickResults"));
     const auto* dashboardFooter = dashboard.findChild<QLabel*>(
         QStringLiteral("controlPanelFooter"));
     auto* dashboardRows = dashboard.findChild<QTableWidget*>(
@@ -2515,9 +2517,10 @@ auto main(int argc, char* argv[]) -> int
     const auto dashboardStateVisible = dashboardName != nullptr
         && dashboardName->text().contains(QStringLiteral("test.nec"))
         && dashboardName->text().contains(QLatin1Char('*'))
-        && dashboardLatest != nullptr
-        && dashboardLatest->text().contains(QStringLiteral("min SWR"))
-        && dashboardLatest->text().contains(QStringLiteral("peak gain"))
+        && dashboardQuickResults != nullptr
+        && dashboardExtrema != nullptr
+        && dashboardExtrema->text().contains(QStringLiteral("Min SWR"))
+        && dashboardExtrema->text().contains(QStringLiteral("Peak gain"))
         && dashboardFooter != nullptr
         && dashboardFooter->text().contains(QStringLiteral("Last run"));
     const auto dashboardDenseLayout = dashboardRows != nullptr

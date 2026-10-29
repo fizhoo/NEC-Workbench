@@ -88,6 +88,24 @@ auto summarizeResults(const AnalysisResult& result, double selectedFrequencyMHz,
         }
     }
 
+    if (const auto selectedPeak = radiationPeakAtNearestFrequency(
+            result.radiation, RadiationComponent::Total, selectedFrequencyMHz);
+        selectedPeak && selectedPeak->metrics.valid) {
+        const auto& metrics = selectedPeak->metrics;
+        const auto sample = std::ranges::find_if(result.radiation, [&](const auto& value) {
+            return nearlyEqual(value.frequencyMHz, selectedPeak->frequencyMHz)
+                && nearlyEqual(value.thetaDegrees, metrics.peakThetaDegrees)
+                && nearlyEqual(value.phiDegrees, metrics.peakPhiDegrees);
+        });
+        if (sample != result.radiation.end()) {
+            summary.selectedGain = PeakGainSummary{
+                selectedPeak->frequencyMHz, metrics.peakGainDb,
+                metrics.peakThetaDegrees, metrics.peakPhiDegrees,
+                sample->patternIndex, datasetKindFor(result, *sample)};
+            summary.selectedFrontToBackDb = metrics.frontToBackDb;
+        }
+    }
+
     const RadiationSample* peak{};
     for (const auto& sample : result.radiation) {
         if (!validGain(sample.totalGainDb)

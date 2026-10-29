@@ -1,12 +1,15 @@
 #include "ui/dashboard/DashboardPage.h"
 
 #include "analysis/ResultSummary.h"
+#include "analysis/FrequencyComparison.h"
 #include "model/ModelSummary.h"
 #include "nec/NecDocument.h"
 #include "ui/DisplayFormat.h"
 
 #include <QAction>
 #include <QFont>
+#include <QComboBox>
+#include <QGridLayout>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -33,17 +36,6 @@ auto groundName(model::GroundType ground) -> QString
         return QObject::tr("Reflection approximation");
     }
     return QObject::tr("Unknown");
-}
-
-auto datasetName(analysis::RadiationDatasetKind kind) -> QString
-{
-    switch (kind) {
-    case analysis::RadiationDatasetKind::Point: return QObject::tr("point");
-    case analysis::RadiationDatasetKind::AzimuthCut: return QObject::tr("azimuth cut");
-    case analysis::RadiationDatasetKind::ElevationCut: return QObject::tr("elevation cut");
-    case analysis::RadiationDatasetKind::FullPattern: return QObject::tr("full pattern");
-    }
-    return QObject::tr("pattern");
 }
 
 auto compactButton(const QString& text, QWidget* parent) -> QToolButton*
@@ -219,12 +211,39 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     connect(modelRows_, &QTableWidget::cellClicked, this, [this](int row, int) {
         if (openEditor_) openEditor_(static_cast<Editor>(row));
     });
-    auto* latestHeading = new QLabel(tr("LATEST RESULT"), panel);
+    auto* latestHeading = new QLabel(tr("QUICK RESULTS"), panel);
     latestHeading->setFont(resultsFont);
-    latestResult_ = new QLabel(tr("No analysis results"), panel);
-    latestResult_->setObjectName(QStringLiteral("controlPanelLatestResult"));
-    latestResult_->setWordWrap(true);
-    latestResult_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    auto* frequencyRow = new QHBoxLayout;
+    frequencyRow->addWidget(new QLabel(tr("At:"), panel));
+    resultFrequency_ = new QComboBox(panel);
+    resultFrequency_->setObjectName(QStringLiteral("controlPanelResultFrequency"));
+    frequencyRow->addWidget(resultFrequency_, 1);
+    quickResults_ = new QWidget(panel);
+    quickResults_->setObjectName(QStringLiteral("controlPanelQuickResults"));
+    auto* quickGrid = new QGridLayout(quickResults_);
+    quickGrid->setContentsMargins(0, 0, 0, 0);
+    quickGrid->setHorizontalSpacing(5);
+    quickGrid->setVerticalSpacing(1);
+    const auto addMetric = [&](int row, int pair, const QString& name,
+                               QToolButton*& value, bool radiation) {
+        quickGrid->addWidget(new QLabel(name, quickResults_), row, pair * 2);
+        value = compactButton(tr("—"), quickResults_);
+        value->setAutoRaise(true);
+        value->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        quickGrid->addWidget(value, row, pair * 2 + 1);
+        connect(value, &QToolButton::clicked, this, [this, radiation] {
+            if (openWorkspace_) openWorkspace_(radiation
+                ? Workspace::Radiation : Workspace::Impedance);
+        });
+    };
+    addMetric(0, 0, tr("Rin"), resistanceResult_, false);
+    addMetric(0, 1, tr("Xin"), reactanceResult_, false);
+    addMetric(1, 0, tr("SWR"), swrResult_, false);
+    addMetric(1, 1, tr("Gain"), gainResult_, true);
+    addMetric(2, 0, tr("F/B"), frontToBackResult_, true);
+    resultExtrema_ = new QLabel(panel);
+    resultExtrema_->setObjectName(QStringLiteral("controlPanelResultExtrema"));
+    resultExtrema_->setWordWrap(true);
     auto* modelHeadingRow = new QHBoxLayout;
     modelHeadingRow->setSpacing(4);
     modelHeadingRow->addWidget(modelHeading, 1);
@@ -233,7 +252,9 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     modelArea->addWidget(modelRows_);
     modelArea->addSpacing(3);
     modelArea->addWidget(latestHeading);
-    modelArea->addWidget(latestResult_);
+    modelArea->addLayout(frequencyRow);
+    modelArea->addWidget(quickResults_);
+    modelArea->addWidget(resultExtrema_);
     modelArea->addStretch();
 
     body->addLayout(commands, 0);
@@ -254,6 +275,8 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
              Workspace::Radiation})
         refreshResultButton(workspace);
     refreshGeometryViewButton();
+    connect(resultFrequency_, &QComboBox::currentIndexChanged,
+        this, [this] { refreshQuickResults(); });
 }
 
 void DashboardPage::setFileActions(QAction* open, QAction* save)
@@ -341,41 +364,60 @@ void DashboardPage::setResults(const analysis::AnalysisResult& result,
     radiationAvailable_ = !result.radiation.empty();
     resultStatus_ = !impedanceAvailable_ && !currentsAvailable_ && !radiationAvailable_
         ? tr("Results none") : stale ? tr("Results stale") : tr("Results current");
-    const auto selectedFrequency = !result.feedpoints.empty() ? result.feedpoints.front().frequencyMHz
-        : !result.radiation.empty() ? result.radiation.front().frequencyMHz : 0.0;
-    const auto summary = analysis::summarizeResults(result, selectedFrequency);
-    QStringList lines;
-    if (summary.selectedFeedpoint) {
-        const auto& feedpoint = *summary.selectedFeedpoint;
-        lines.append(tr("%1 MHz · W%2:S%3 · Z = %4 %5 j%6 Ω · SWR %7")
-            .arg(formatDecimal(feedpoint.frequencyMHz))
-            .arg(feedpoint.source.wireTag).arg(feedpoint.source.segment)
-            .arg(formatDecimal(feedpoint.impedance.real()))
-            .arg(feedpoint.impedance.imag() < 0.0 ? QStringLiteral("−") : QStringLiteral("+"))
-            .arg(formatDecimal(std::abs(feedpoint.impedance.imag())))
-            .arg(std::isfinite(feedpoint.swr) ? formatDecimal(feedpoint.swr) : tr("∞")));
+    currentResult_ = result;
+    const auto initial = analysis::summarizeResults(result,
+        result.feedpoints.empty() ? 0.0 : result.feedpoints.front().frequencyMHz);
+    std::vector<double> frequencies;
+    for (const auto& value : result.feedpoints) frequencies.push_back(value.frequencyMHz);
+    for (const auto& value : result.radiation) frequencies.push_back(value.frequencyMHz);
+    std::ranges::sort(frequencies);
+    frequencies.erase(std::unique(frequencies.begin(), frequencies.end(), [](double left, double right) {
+        return nearlyEqual(left, right);
+    }), frequencies.end());
+    resultFrequency_->clear();
+    for (const auto frequency : frequencies)
+        resultFrequency_->addItem(tr("%1 MHz").arg(formatDecimal(frequency)), frequency);
+    if (initial.minimumSwr) {
+        const auto index = resultFrequency_->findData(initial.minimumSwr->frequencyMHz);
+        if (index >= 0) resultFrequency_->setCurrentIndex(index);
     }
-    QStringList extrema;
-    if (summary.minimumSwr) {
-        extrema.append(tr("min SWR %1 @ %2 MHz")
-            .arg(formatDecimal(summary.minimumSwr->swr),
-                formatDecimal(summary.minimumSwr->frequencyMHz)));
-    }
-    if (summary.peakGain) {
-        extrema.append(tr("peak gain %1 dBi @ %2 MHz (%3)")
-            .arg(formatDecimal(summary.peakGain->gainDb),
-                formatDecimal(summary.peakGain->frequencyMHz),
-                datasetName(summary.peakGain->datasetKind)));
-    }
-    if (!extrema.empty()) lines.append(extrema.join(QStringLiteral(" · ")));
-    latestResult_->setText(lines.empty() ? tr("No supported analysis results")
-                                         : lines.join(QLatin1Char('\n')));
-    latestResult_->setToolTip(context);
+    refreshQuickResults();
     refreshHeader();
     refreshFooter();
     refreshResultButton(Workspace::Impedance);
     refreshResultButton(Workspace::Currents);
     refreshResultButton(Workspace::Radiation);
+}
+
+void DashboardPage::refreshQuickResults()
+{
+    const auto frequency = resultFrequency_->currentData().toDouble();
+    const auto summary = analysis::summarizeResults(currentResult_, frequency);
+    const auto set = [](QToolButton* button, const std::optional<double>& value,
+                        const QString& suffix = {}) {
+        button->setText(value ? formatDecimal(*value) + suffix : QString::fromUtf8("—"));
+    };
+    if (summary.selectedFeedpoint) {
+        set(resistanceResult_, summary.selectedFeedpoint->impedance.real(), tr(" Ω"));
+        set(reactanceResult_, summary.selectedFeedpoint->impedance.imag(), tr(" Ω"));
+        set(swrResult_, summary.selectedFeedpoint->swr);
+    } else {
+        set(resistanceResult_, std::nullopt); set(reactanceResult_, std::nullopt);
+        set(swrResult_, std::nullopt);
+    }
+    set(gainResult_, summary.selectedGain
+        ? std::optional<double>{summary.selectedGain->gainDb} : std::nullopt, tr(" dBi"));
+    set(frontToBackResult_, summary.selectedFrontToBackDb, tr(" dB"));
+    gainResult_->setVisible(summary.selectedGain.has_value());
+    frontToBackResult_->setVisible(summary.selectedGain.has_value());
+    QStringList extrema;
+    if (summary.minimumSwr) extrema.append(tr("Min SWR %1 @ %2 MHz")
+        .arg(formatDecimal(summary.minimumSwr->swr), formatDecimal(summary.minimumSwr->frequencyMHz)));
+    if (summary.peakGain) extrema.append(tr("Peak gain %1 dBi @ %2 MHz")
+        .arg(formatDecimal(summary.peakGain->gainDb), formatDecimal(summary.peakGain->frequencyMHz)));
+    resultExtrema_->setText(extrema.join(QStringLiteral(" · ")));
+    quickResults_->setEnabled(!resultsStale_);
+    quickResults_->setWindowOpacity(resultsStale_ ? 0.55 : 1.0);
 }
 
 void DashboardPage::markResultsStale()
@@ -385,6 +427,7 @@ void DashboardPage::markResultsStale()
     resultStatus_ = tr("Results stale");
     refreshHeader();
     refreshFooter();
+    refreshQuickResults();
 }
 
 void DashboardPage::setRecentRuns(const std::vector<AnalysisRunRecord>& runs)

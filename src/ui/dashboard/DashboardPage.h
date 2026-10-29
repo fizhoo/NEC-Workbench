@@ -11,6 +11,7 @@
 #include <vector>
 
 class QAction;
+class QComboBox;
 class QLabel;
 class QTableWidget;
 class QToolButton;
@@ -62,6 +63,7 @@ public:
 private:
     void refreshHeader();
     void refreshFooter();
+    void refreshQuickResults();
     void refreshResultButton(Workspace workspace);
     void refreshGeometryViewButton();
     void setModelRow(Editor editor, const QString& value);
@@ -71,7 +73,14 @@ private:
     QToolButton* backendState_{};
     QLabel* modelState_{};
     QLabel* resultState_{};
-    QLabel* latestResult_{};
+    QComboBox* resultFrequency_{};
+    QWidget* quickResults_{};
+    QLabel* resultExtrema_{};
+    QToolButton* resistanceResult_{};
+    QToolButton* reactanceResult_{};
+    QToolButton* swrResult_{};
+    QToolButton* gainResult_{};
+    QToolButton* frontToBackResult_{};
     QLabel* footer_{};
     QTableWidget* modelRows_{};
     QToolButton* impedanceButton_{};
@@ -87,6 +96,7 @@ private:
     QString resultStatus_{tr("Results none")};
     QString resultContext_;
     QString lastRunText_{tr("No completed run")};
+    analysis::AnalysisResult currentResult_;
     bool modified_{};
     bool resultsStale_{};
     bool impedanceAvailable_{};

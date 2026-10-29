@@ -202,6 +202,9 @@ void testControlPanelSummaries()
             && singleSummary.peakGain->datasetKind
                 == necwb::analysis::RadiationDatasetKind::ElevationCut,
         "result summary identifies peak gain and its elevation cut");
+    expect(singleSummary.selectedGain && singleSummary.selectedGain->frequencyMHz == 7.1
+            && singleSummary.selectedGain->gainDb == 6.2,
+        "selected-frequency gain matches the radiation peak at that frequency");
 
     necwb::analysis::AnalysisResult sweep;
     sweep.feedpoints = {
@@ -211,6 +214,10 @@ void testControlPanelSummaries()
         {14.2, 2, 6, {}, {}, {100.0, 0.0}},
     };
     sweep.radiation = {
+        {14.0, 90.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 2},
+        {14.2, 90.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 3},
         {21.0, 45.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0,
             necwb::analysis::PolarizationSense::Unknown, 4},
         {21.0, 45.0, 90.0, 0.0, 0.0, 6.0, 0.0, 0.0,
@@ -236,6 +243,9 @@ void testControlPanelSummaries()
             && sweepSummary.peakGain->datasetKind
                 == necwb::analysis::RadiationDatasetKind::FullPattern,
         "result summary labels a peak from another frequency and full pattern dataset");
+    expect(sweepSummary.selectedGain && sweepSummary.selectedGain->frequencyMHz == 14.2
+            && sweepSummary.selectedGain->gainDb == 4.0,
+        "selected-frequency snapshot does not substitute the sweep-wide peak gain");
 }
 
 void testOptimizationBaselineFingerprint()

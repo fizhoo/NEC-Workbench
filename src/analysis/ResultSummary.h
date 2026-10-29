@@ -46,6 +46,8 @@ struct PeakGainSummary {
 struct ResultSummary {
     std::optional<FeedpointSummary> selectedFeedpoint;
     std::optional<MinimumSwrSummary> minimumSwr;
+    std::optional<PeakGainSummary> selectedGain;
+    std::optional<double> selectedFrontToBackDb;
     std::optional<PeakGainSummary> peakGain;
 };
 
