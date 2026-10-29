@@ -285,7 +285,6 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/analysis-setup"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/run-history"));
-    resultWindowSettings.remove(QStringLiteral("view/projectTreeVisible"));
     resultWindowSettings.sync();
     {
         necwb::ui::MainWindow mainWindow;

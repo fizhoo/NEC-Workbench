@@ -2339,9 +2339,6 @@ void MainWindow::createMenusAndToolbar()
     auto* projectTreeAction = projectDock_->toggleViewAction();
     projectTreeAction->setText(tr("Project Tree"));
     viewMenu->addAction(projectTreeAction);
-    connect(projectTreeAction, &QAction::triggered, this, [](bool visible) {
-        QSettings{}.setValue(QStringLiteral("view/projectTreeVisible"), visible);
-    });
     viewMenu->addAction(modelCheckWindowAction_);
     viewMenu->addAction(runMonitorWindowAction_);
     viewMenu->addSeparator();
@@ -2394,7 +2391,6 @@ void MainWindow::createMenusAndToolbar()
 void MainWindow::resetWorkspaceLayout()
 {
     projectDock_->hide();
-    QSettings{}.setValue(QStringLiteral("view/projectTreeVisible"), false);
     modelCheckWindow_->hide();
     runMonitorWindow_->hide();
     statusBar()->showMessage(tr("Workspace layout reset."), 4000);
@@ -5714,8 +5710,6 @@ void MainWindow::restoreWorkspaceLayout()
     }
     const auto savedState = settings.value(QStringLiteral("mainWindow/state")).toByteArray();
     restoreState(savedState);
-    projectDock_->setVisible(settings.value(
-        QStringLiteral("view/projectTreeVisible"), false).toBool());
     if (savedState.isEmpty()) resetWorkspaceLayout();
     const auto modelCheckGeometry = settings.value(
         QStringLiteral("modelCheckWindow/geometry")).toByteArray();
