@@ -86,6 +86,7 @@ private:
     QLabel* modelState_{};
     QLabel* resultState_{};
     QComboBox* resultFrequency_{};
+    QLabel* resultStale_{};
     QWidget* quickResults_{};
     QLabel* resultExtrema_{};
     QToolButton* resistanceResult_{};

@@ -234,6 +234,11 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     resultFrequency_ = new QComboBox(panel);
     resultFrequency_->setObjectName(QStringLiteral("controlPanelResultFrequency"));
     frequencyRow->addWidget(resultFrequency_, 1);
+    resultStale_ = new QLabel(tr("STALE"), panel);
+    resultStale_->setObjectName(QStringLiteral("controlPanelResultStale"));
+    resultStale_->setStyleSheet(QStringLiteral("color: palette(mid); font-weight: bold;"));
+    resultStale_->hide();
+    frequencyRow->addWidget(resultStale_);
     quickResults_ = new QWidget(panel);
     quickResults_->setObjectName(QStringLiteral("controlPanelQuickResults"));
     auto* quickGrid = new QGridLayout(quickResults_);
@@ -496,7 +501,7 @@ void DashboardPage::refreshQuickResults()
         .arg(formatDecimal(summary.peakGain->gainDb), formatDecimal(summary.peakGain->frequencyMHz)));
     resultExtrema_->setText(extrema.join(QStringLiteral(" · ")));
     quickResults_->setEnabled(!resultsStale_);
-    quickResults_->setWindowOpacity(resultsStale_ ? 0.55 : 1.0);
+    resultStale_->setVisible(resultsStale_);
 }
 
 void DashboardPage::markResultsStale()

@@ -2508,6 +2508,8 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("controlPanelResultExtrema"));
     const auto* dashboardQuickResults = dashboard.findChild<QWidget*>(
         QStringLiteral("controlPanelQuickResults"));
+    const auto* dashboardStale = dashboard.findChild<QLabel*>(
+        QStringLiteral("controlPanelResultStale"));
     const auto* dashboardFooter = dashboard.findChild<QLabel*>(
         QStringLiteral("controlPanelFooter"));
     const auto* dashboardAverageGain = dashboard.findChild<QLabel*>(
@@ -2538,6 +2540,12 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("controlPanelImpedance"));
     auto* dashboardGeometry = dashboard.findChild<QToolButton*>(
         QStringLiteral("controlPanelGeometryView"));
+    const auto staleInitiallyHidden = dashboardStale != nullptr && !dashboardStale->isVisible();
+    dashboard.markResultsStale();
+    application.processEvents();
+    const auto staleStateVisible = dashboardStale != nullptr && dashboardStale->isVisible()
+        && dashboardQuickResults != nullptr && !dashboardQuickResults->isEnabled();
+    dashboard.setResults(result, QStringLiteral("Model: test.nec · Run: dashboard"), false);
     if (dashboardAverageGainRun != nullptr) dashboardAverageGainRun->click();
     if (dashboardConvergenceRun != nullptr) dashboardConvergenceRun->click();
     if (dashboardRuns != nullptr) dashboardRuns->click();
@@ -2561,7 +2569,8 @@ auto main(int argc, char* argv[]) -> int
         && dashboardAverageGain != nullptr
         && dashboardAverageGain->text() == QStringLiteral("failed")
         && dashboardConvergence != nullptr
-        && dashboardConvergence->text() == QStringLiteral("not run");
+        && dashboardConvergence->text() == QStringLiteral("not run")
+        && staleInitiallyHidden && staleStateVisible;
     const auto dashboardDenseLayout = dashboardRows != nullptr
         && dashboardRows->rowCount() == 9
         && dashboardRows->verticalHeader()->defaultSectionSize() <= 24
