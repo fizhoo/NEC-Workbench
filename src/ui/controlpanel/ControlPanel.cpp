@@ -221,7 +221,7 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     quickResults_->setObjectName(QStringLiteral("controlPanelQuickResults"));
     auto* quickGrid = new QGridLayout(quickResults_);
     quickGrid->setContentsMargins(0, 0, 0, 0);
-    quickGrid->setHorizontalSpacing(5);
+    quickGrid->setHorizontalSpacing(3);
     quickGrid->setVerticalSpacing(1);
     const auto addMetric = [&](int row, int pair, const QString& name,
                                QToolButton*& value, bool radiation,
@@ -231,6 +231,9 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
         quickGrid->addWidget(label, row, pair * 2);
         value = compactButton(tr("—"), quickResults_);
         value->setAutoRaise(true);
+        value->setStyleSheet(QStringLiteral(
+            "QToolButton { border: 1px solid transparent; padding: 1px 3px; text-align: left; }"
+            "QToolButton:hover { border-color: palette(mid); background: palette(alternate-base); }"));
         value->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         quickGrid->addWidget(value, row, pair * 2 + 1);
         connect(value, &QToolButton::clicked, this, [this, radiation] {
