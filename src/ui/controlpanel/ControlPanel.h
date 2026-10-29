@@ -80,6 +80,12 @@ private:
 
     QLabel* modelName_{};
     QToolButton* backendState_{};
+    QToolButton* openButton_{};
+    QToolButton* saveButton_{};
+    QToolButton* runButton_{};
+    QToolButton* sweepButton_{};
+    QToolButton* stopButton_{};
+    QToolButton* checkButton_{};
     QLabel* modelState_{};
     QLabel* resultState_{};
     QComboBox* resultFrequency_{};

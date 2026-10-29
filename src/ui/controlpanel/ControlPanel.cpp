@@ -39,11 +39,15 @@ auto groundName(model::GroundType ground) -> QString
     return QObject::tr("Unknown");
 }
 
-auto compactButton(const QString& text, QWidget* parent) -> QToolButton*
+auto compactButton(const QString& text, QWidget* parent,
+    const QString& objectName = {}, const char* iconName = nullptr) -> QToolButton*
 {
     auto* button = new QToolButton(parent);
     button->setText(text);
-    button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    button->setObjectName(objectName);
+    if (iconName != nullptr) button->setIcon(workbenchIcon(iconName));
+    button->setToolButtonStyle(iconName == nullptr
+        ? Qt::ToolButtonTextOnly : Qt::ToolButtonTextBesideIcon);
     button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     button->setMinimumHeight(25);
     button->setIconSize({16, 16});
@@ -61,11 +65,6 @@ auto countText(std::size_t count, const QString& singular, const QString& plural
 
 ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
 {
-    fileName_ = tr("Untitled model.nec");
-    modelStatus_ = tr("Model not checked");
-    resultStatus_ = tr("Results none");
-    lastRunText_ = tr("No completed run");
-
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(8, 7, 8, 6);
     outer->setSpacing(6);
@@ -105,33 +104,29 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     body->setSpacing(12);
     auto* commands = new QVBoxLayout;
     commands->setSpacing(4);
-    auto* open = compactButton(tr("Open…"), panel);
-    open->setObjectName(QStringLiteral("controlPanelOpen"));
-    auto* save = compactButton(tr("Save"), panel);
-    save->setObjectName(QStringLiteral("controlPanelSave"));
-    auto* run = compactButton(tr("▶ Run (F5)"), panel);
-    run->setObjectName(QStringLiteral("controlPanelRun"));
-    run->setMinimumHeight(30);
-    auto runFont = run->font();
+    openButton_ = compactButton(tr("Open…"), panel, QStringLiteral("controlPanelOpen"));
+    saveButton_ = compactButton(tr("Save"), panel, QStringLiteral("controlPanelSave"));
+    runButton_ = compactButton(tr("▶ Run (F5)"), panel, QStringLiteral("controlPanelRun"));
+    runButton_->setMinimumHeight(30);
+    auto runFont = runButton_->font();
     runFont.setBold(true);
-    run->setFont(runFont);
-    auto* sweep = compactButton(tr("Frequency Sweep…"), panel);
-    sweep->setObjectName(QStringLiteral("controlPanelFrequencySweep"));
-    auto* stop = compactButton(tr("Stop"), panel);
-    stop->setObjectName(QStringLiteral("controlPanelStop"));
-    stop->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
-    auto* check = compactButton(tr("Check model"), panel);
-    check->setObjectName(QStringLiteral("controlPanelCheck"));
-    commands->addWidget(open);
-    commands->addWidget(save);
+    runButton_->setFont(runFont);
+    sweepButton_ = compactButton(tr("Frequency Sweep…"), panel,
+        QStringLiteral("controlPanelFrequencySweep"));
+    stopButton_ = compactButton(tr("Stop"), panel, QStringLiteral("controlPanelStop"));
+    stopButton_->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+    checkButton_ = compactButton(tr("Check model"), panel,
+        QStringLiteral("controlPanelCheck"));
+    commands->addWidget(openButton_);
+    commands->addWidget(saveButton_);
     commands->addSpacing(3);
     auto* runRow = new QHBoxLayout;
     runRow->setSpacing(4);
-    runRow->addWidget(run, 1);
-    runRow->addWidget(stop);
+    runRow->addWidget(runButton_, 1);
+    runRow->addWidget(stopButton_);
     commands->addLayout(runRow);
-    commands->addWidget(sweep);
-    commands->addWidget(check);
+    commands->addWidget(sweepButton_);
+    commands->addWidget(checkButton_);
     auto* resultsHeading = new QLabel(tr("RESULTS  (live windows)"), panel);
     resultsHeading->setObjectName(QStringLiteral("controlPanelResultsHeading"));
     auto resultsFont = resultsHeading->font();
@@ -139,33 +134,22 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     resultsHeading->setFont(resultsFont);
     commands->addSpacing(4);
     commands->addWidget(resultsHeading);
-    impedanceButton_ = compactButton(tr("Impedance / SWR"), panel);
-    currentsButton_ = compactButton(tr("Currents"), panel);
-    radiationButton_ = compactButton(tr("Radiation"), panel);
-    geometryViewButton_ = compactButton(tr("Antenna View"), panel);
-    impedanceButton_->setObjectName(QStringLiteral("controlPanelImpedance"));
-    currentsButton_->setObjectName(QStringLiteral("controlPanelCurrents"));
-    radiationButton_->setObjectName(QStringLiteral("controlPanelRadiation"));
-    geometryViewButton_->setObjectName(QStringLiteral("controlPanelGeometryView"));
-    impedanceButton_->setIcon(workbenchIcon("results"));
-    currentsButton_->setIcon(workbenchIcon("currents"));
-    radiationButton_->setIcon(workbenchIcon("radiation-pattern"));
-    geometryViewButton_->setIcon(workbenchIcon("3d-view"));
-    for (auto* button : {impedanceButton_, currentsButton_, radiationButton_,
-             geometryViewButton_})
-        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    impedanceButton_ = compactButton(tr("Impedance / SWR"), panel,
+        QStringLiteral("controlPanelImpedance"), "results");
+    currentsButton_ = compactButton(tr("Currents"), panel,
+        QStringLiteral("controlPanelCurrents"), "currents");
+    radiationButton_ = compactButton(tr("Radiation"), panel,
+        QStringLiteral("controlPanelRadiation"), "radiation-pattern");
+    geometryViewButton_ = compactButton(tr("Antenna View"), panel,
+        QStringLiteral("controlPanelGeometryView"), "3d-view");
     for (auto* button : {impedanceButton_, currentsButton_, radiationButton_,
              geometryViewButton_})
         commands->addWidget(button);
     commands->addSpacing(5);
-    auto* runs = compactButton(tr("Runs…"), panel);
-    runs->setObjectName(QStringLiteral("controlPanelRuns"));
-    auto* optimize = compactButton(tr("Optimize…"), panel);
-    optimize->setObjectName(QStringLiteral("controlPanelOptimize"));
-    runs->setIcon(workbenchIcon("runs"));
-    optimize->setIcon(workbenchIcon("optimize"));
-    runs->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    optimize->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    auto* runs = compactButton(tr("Runs…"), panel,
+        QStringLiteral("controlPanelRuns"), "runs");
+    auto* optimize = compactButton(tr("Optimize…"), panel,
+        QStringLiteral("controlPanelOptimize"), "optimize");
     commands->addWidget(runs);
     commands->addWidget(optimize);
     commands->addStretch();
@@ -326,34 +310,19 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
 
 void ControlPanel::setFileActions(QAction* open, QAction* save)
 {
-    if (auto* button = findChild<QToolButton*>(QStringLiteral("controlPanelOpen"))) {
-        button->setDefaultAction(open);
-        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    }
-    if (auto* button = findChild<QToolButton*>(QStringLiteral("controlPanelSave"))) {
-        button->setDefaultAction(save);
-        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    }
+    openButton_->setDefaultAction(open);
+    saveButton_->setDefaultAction(save);
+    openButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    saveButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 }
 
 void ControlPanel::setQuickActions(
     QAction* check, QAction* run, QAction* sweep, QAction* stop)
 {
-    if (auto* button = findChild<QToolButton*>(QStringLiteral("controlPanelCheck"))) {
-        button->setDefaultAction(check);
-        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    }
-    if (auto* button = findChild<QToolButton*>(QStringLiteral("controlPanelRun"))) {
-        button->setDefaultAction(run);
-        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    }
-    if (auto* button = findChild<QToolButton*>(
-            QStringLiteral("controlPanelFrequencySweep"))) {
-        button->setDefaultAction(sweep);
-        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    }
-    if (auto* button = findChild<QToolButton*>(QStringLiteral("controlPanelStop"))) {
-        button->setDefaultAction(stop);
+    const std::array bindings{std::pair{checkButton_, check}, std::pair{runButton_, run},
+        std::pair{sweepButton_, sweep}, std::pair{stopButton_, stop}};
+    for (const auto& [button, action] : bindings) {
+        button->setDefaultAction(action);
         button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     }
 }
