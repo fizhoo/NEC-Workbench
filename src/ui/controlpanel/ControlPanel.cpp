@@ -134,17 +134,25 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     resultsHeading->setFont(resultsFont);
     commands->addSpacing(4);
     commands->addWidget(resultsHeading);
-    impedanceButton_ = compactButton(tr("Impedance / SWR"), panel,
+    auto* impedanceButton = compactButton(tr("Impedance / SWR"), panel,
         QStringLiteral("controlPanelImpedance"), "results");
-    currentsButton_ = compactButton(tr("Currents"), panel,
+    auto* currentsButton = compactButton(tr("Currents"), panel,
         QStringLiteral("controlPanelCurrents"), "currents");
-    radiationButton_ = compactButton(tr("Radiation"), panel,
+    auto* radiationButton = compactButton(tr("Radiation"), panel,
         QStringLiteral("controlPanelRadiation"), "radiation-pattern");
-    geometryViewButton_ = compactButton(tr("Antenna View"), panel,
+    auto* geometryButton = compactButton(tr("Antenna View"), panel,
         QStringLiteral("controlPanelGeometryView"), "3d-view");
-    for (auto* button : {impedanceButton_, currentsButton_, radiationButton_,
-             geometryViewButton_})
-        commands->addWidget(button);
+    resultLaunchers_ = {{{Workspace::Impedance, impedanceButton, tr("Impedance / SWR")},
+        {Workspace::Currents, currentsButton, tr("Currents")},
+        {Workspace::Radiation, radiationButton, tr("Radiation")},
+        {Workspace::GeometryView, geometryButton, tr("Antenna View")}}};
+    for (auto& launcher : resultLaunchers_) {
+        commands->addWidget(launcher.button);
+        connect(launcher.button, &QToolButton::clicked, this,
+            [this, workspace = launcher.workspace] {
+                if (openWorkspace_) openWorkspace_(workspace);
+            });
+    }
     commands->addSpacing(5);
     auto* runs = compactButton(tr("Runs…"), panel,
         QStringLiteral("controlPanelRuns"), "runs");
@@ -153,18 +161,6 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     commands->addWidget(runs);
     commands->addWidget(optimize);
     commands->addStretch();
-    connect(impedanceButton_, &QToolButton::clicked, this, [this] {
-        if (openWorkspace_) openWorkspace_(Workspace::Impedance);
-    });
-    connect(currentsButton_, &QToolButton::clicked, this, [this] {
-        if (openWorkspace_) openWorkspace_(Workspace::Currents);
-    });
-    connect(radiationButton_, &QToolButton::clicked, this, [this] {
-        if (openWorkspace_) openWorkspace_(Workspace::Radiation);
-    });
-    connect(geometryViewButton_, &QToolButton::clicked, this, [this] {
-        if (openWorkspace_) openWorkspace_(Workspace::GeometryView);
-    });
     connect(runs, &QToolButton::clicked, this, [this] {
         if (openRunHistory_) openRunHistory_();
         else if (openWorkspace_) openWorkspace_(Workspace::Runs);
@@ -300,10 +296,8 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
 
     refreshHeader();
     refreshFooter();
-    for (const auto workspace : {Workspace::Impedance, Workspace::Currents,
-             Workspace::Radiation})
-        refreshResultButton(workspace);
-    refreshGeometryViewButton();
+    for (const auto& launcher : resultLaunchers_)
+        refreshResultLauncher(launcher.workspace);
     connect(resultFrequency_, &QComboBox::currentIndexChanged,
         this, [this] { refreshQuickResults(); });
 }
@@ -402,8 +396,9 @@ void ControlPanel::setModel(const model::AntennaModel& model,
             : countText(summary.radiationRequests.size(), tr("pattern"), tr("patterns")));
     setModelRow(Editor::Deck, countText(summary.cardCount, tr("card"), tr("cards")));
     modelRows_->setEnabled(summary.cardCount != 0);
-    geometryViewButton_->setEnabled(!model.empty());
-    refreshGeometryViewButton();
+    auto* geometry = resultLauncher(Workspace::GeometryView);
+    geometry->available = !model.empty();
+    refreshResultLauncher(Workspace::GeometryView);
 }
 
 void ControlPanel::setResults(const analysis::AnalysisResult& result,
@@ -411,10 +406,13 @@ void ControlPanel::setResults(const analysis::AnalysisResult& result,
 {
     resultContext_ = context;
     resultsStale_ = stale;
-    impedanceAvailable_ = !result.feedpoints.empty();
-    currentsAvailable_ = !result.currents.empty();
-    radiationAvailable_ = !result.radiation.empty();
-    resultStatus_ = !impedanceAvailable_ && !currentsAvailable_ && !radiationAvailable_
+    resultLauncher(Workspace::Impedance)->available = !result.feedpoints.empty();
+    resultLauncher(Workspace::Currents)->available = !result.currents.empty();
+    resultLauncher(Workspace::Radiation)->available = !result.radiation.empty();
+    const auto hasResults = std::ranges::any_of(resultLaunchers_, [](const auto& launcher) {
+        return launcher.workspace != Workspace::GeometryView && launcher.available;
+    });
+    resultStatus_ = !hasResults
         ? tr("Results none") : stale ? tr("Results stale") : tr("Results current");
     currentResult_ = result;
     const auto initial = analysis::summarizeResults(result,
@@ -436,9 +434,9 @@ void ControlPanel::setResults(const analysis::AnalysisResult& result,
     refreshQuickResults();
     refreshHeader();
     refreshFooter();
-    refreshResultButton(Workspace::Impedance);
-    refreshResultButton(Workspace::Currents);
-    refreshResultButton(Workspace::Radiation);
+    for (const auto workspace : {Workspace::Impedance, Workspace::Currents,
+             Workspace::Radiation})
+        refreshResultLauncher(workspace);
 }
 
 void ControlPanel::refreshQuickResults()
@@ -476,7 +474,9 @@ void ControlPanel::refreshQuickResults()
 
 void ControlPanel::markResultsStale()
 {
-    if (!impedanceAvailable_ && !currentsAvailable_ && !radiationAvailable_) return;
+    if (std::ranges::none_of(resultLaunchers_, [](const auto& launcher) {
+            return launcher.workspace != Workspace::GeometryView && launcher.available;
+        })) return;
     resultsStale_ = true;
     resultStatus_ = tr("Results stale");
     refreshHeader();
@@ -526,15 +526,10 @@ void ControlPanel::setRecentRuns(const std::vector<AnalysisRunRecord>& runs)
 
 void ControlPanel::setResultWindowVisible(Workspace workspace, bool visible)
 {
-    switch (workspace) {
-    case Workspace::Impedance: impedanceVisible_ = visible; break;
-    case Workspace::Currents: currentsVisible_ = visible; break;
-    case Workspace::Radiation: radiationVisible_ = visible; break;
-    case Workspace::GeometryView: geometryViewVisible_ = visible; break;
-    default: return;
-    }
-    if (workspace == Workspace::GeometryView) refreshGeometryViewButton();
-    else refreshResultButton(workspace);
+    auto* launcher = resultLauncher(workspace);
+    if (launcher == nullptr) return;
+    launcher->visible = visible;
+    refreshResultLauncher(workspace);
 }
 
 void ControlPanel::setOpenRunHistoryCallback(std::function<void()> callback)
@@ -563,44 +558,26 @@ void ControlPanel::refreshHeader()
 void ControlPanel::refreshFooter()
 {
     const auto state = resultsStale_ ? tr("model changed · results stale")
-        : impedanceAvailable_ || currentsAvailable_ || radiationAvailable_
+        : std::ranges::any_of(resultLaunchers_, [](const auto& launcher) {
+              return launcher.workspace != Workspace::GeometryView && launcher.available;
+          })
             ? tr("model unchanged since run") : tr("no current results");
     footer_->setText(tr("%1 · %2").arg(lastRunText_, state));
     footer_->setToolTip(resultContext_);
 }
 
-void ControlPanel::refreshResultButton(Workspace workspace)
+void ControlPanel::refreshResultLauncher(Workspace workspace)
 {
-    auto* button = resultButton(workspace);
-    if (button == nullptr) return;
-    auto available = true;
-    auto visible = false;
-    QString label;
-    switch (workspace) {
-    case Workspace::Impedance:
-        available = impedanceAvailable_; visible = impedanceVisible_; label = tr("Impedance / SWR"); break;
-    case Workspace::Currents:
-        available = currentsAvailable_; visible = currentsVisible_; label = tr("Currents"); break;
-    case Workspace::Radiation:
-        available = radiationAvailable_; visible = radiationVisible_; label = tr("Radiation"); break;
-    default: return;
-    }
-    button->setEnabled(available);
-    button->setText(tr("%1 %2").arg(visible ? QStringLiteral("●")
-                                             : QStringLiteral("○"), label));
-    button->setToolTip(available
-        ? visible ? tr("This live result window is open; click to raise it")
+    auto* launcher = resultLauncher(workspace);
+    if (launcher == nullptr) return;
+    launcher->button->setEnabled(launcher->available);
+    launcher->button->setText(tr("%1 %2").arg(launcher->visible
+        ? QStringLiteral("●") : QStringLiteral("○"), launcher->label));
+    launcher->button->setToolTip(launcher->available
+        ? launcher->visible ? tr("This live window is open; click to raise it")
                   : tr("Open this live result window")
-        : tr("Run an analysis that produces these results first"));
-}
-
-void ControlPanel::refreshGeometryViewButton()
-{
-    geometryViewButton_->setText(geometryViewVisible_
-        ? tr("● Antenna View") : tr("○ Antenna View"));
-    geometryViewButton_->setToolTip(geometryViewVisible_
-        ? tr("The reusable 2D/3D antenna view is open; click to raise it")
-        : tr("Open the reusable 2D/3D antenna view"));
+        : workspace == Workspace::GeometryView ? tr("Open a model first")
+                                               : tr("Run an analysis that produces these results first"));
 }
 
 void ControlPanel::setModelRow(Editor editor, const QString& value)
@@ -610,14 +587,11 @@ void ControlPanel::setModelRow(Editor editor, const QString& value)
     item->setToolTip(value);
 }
 
-auto ControlPanel::resultButton(Workspace workspace) const -> QToolButton*
+auto ControlPanel::resultLauncher(Workspace workspace) -> ResultLauncher*
 {
-    switch (workspace) {
-    case Workspace::Impedance: return impedanceButton_;
-    case Workspace::Currents: return currentsButton_;
-    case Workspace::Radiation: return radiationButton_;
-    default: return nullptr;
-    }
+    const auto found = std::ranges::find(resultLaunchers_, workspace,
+        &ResultLauncher::workspace);
+    return found == resultLaunchers_.end() ? nullptr : &*found;
 }
 
 }

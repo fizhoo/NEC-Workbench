@@ -70,13 +70,19 @@ public:
     void setOpenEditorCallback(std::function<void(Editor)> callback);
 
 private:
+    struct ResultLauncher {
+        Workspace workspace{};
+        QToolButton* button{};
+        QString label;
+        bool available{};
+        bool visible{};
+    };
     void refreshHeader();
     void refreshFooter();
     void refreshQuickResults();
-    void refreshResultButton(Workspace workspace);
-    void refreshGeometryViewButton();
+    void refreshResultLauncher(Workspace workspace);
     void setModelRow(Editor editor, const QString& value);
-    [[nodiscard]] auto resultButton(Workspace workspace) const -> QToolButton*;
+    [[nodiscard]] auto resultLauncher(Workspace workspace) -> ResultLauncher*;
 
     QLabel* modelName_{};
     QToolButton* backendState_{};
@@ -104,10 +110,7 @@ private:
     std::array<StudyState, 2> studyStates_{StudyState::NotRun, StudyState::NotRun};
     QLabel* footer_{};
     QTableWidget* modelRows_{};
-    QToolButton* impedanceButton_{};
-    QToolButton* currentsButton_{};
-    QToolButton* radiationButton_{};
-    QToolButton* geometryViewButton_{};
+    std::array<ResultLauncher, 4> resultLaunchers_{};
     std::function<void()> openRunHistory_;
     std::function<void(Workspace)> openWorkspace_;
     std::function<void(Editor)> openEditor_;
@@ -120,13 +123,6 @@ private:
     analysis::AnalysisResult currentResult_;
     bool modified_{};
     bool resultsStale_{};
-    bool impedanceAvailable_{};
-    bool currentsAvailable_{};
-    bool radiationAvailable_{};
-    bool impedanceVisible_{};
-    bool currentsVisible_{};
-    bool radiationVisible_{};
-    bool geometryViewVisible_{};
 };
 
 }
