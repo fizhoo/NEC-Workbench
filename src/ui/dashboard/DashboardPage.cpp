@@ -244,6 +244,24 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     resultExtrema_ = new QLabel(panel);
     resultExtrema_->setObjectName(QStringLiteral("controlPanelResultExtrema"));
     resultExtrema_->setWordWrap(true);
+    auto* qualityHeading = new QLabel(tr("MODEL QUALITY"), panel);
+    qualityHeading->setFont(resultsFont);
+    auto* qualityGrid = new QGridLayout;
+    qualityGrid->setContentsMargins(0, 0, 0, 0);
+    qualityGrid->setHorizontalSpacing(4);
+    qualityGrid->setVerticalSpacing(2);
+    qualityGrid->addWidget(new QLabel(tr("Avg gain test:"), panel), 0, 0);
+    averageGainState_ = new QLabel(tr("not run"), panel);
+    averageGainButton_ = compactButton(tr("Run"), panel);
+    averageGainButton_->setAutoRaise(true);
+    qualityGrid->addWidget(averageGainState_, 0, 1);
+    qualityGrid->addWidget(averageGainButton_, 0, 2);
+    qualityGrid->addWidget(new QLabel(tr("Convergence:"), panel), 1, 0);
+    convergenceState_ = new QLabel(tr("not run"), panel);
+    convergenceButton_ = compactButton(tr("Run"), panel);
+    convergenceButton_->setAutoRaise(true);
+    qualityGrid->addWidget(convergenceState_, 1, 1);
+    qualityGrid->addWidget(convergenceButton_, 1, 2);
     auto* modelHeadingRow = new QHBoxLayout;
     modelHeadingRow->setSpacing(4);
     modelHeadingRow->addWidget(modelHeading, 1);
@@ -255,6 +273,9 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     modelArea->addLayout(frequencyRow);
     modelArea->addWidget(quickResults_);
     modelArea->addWidget(resultExtrema_);
+    modelArea->addSpacing(2);
+    modelArea->addWidget(qualityHeading);
+    modelArea->addLayout(qualityGrid);
     modelArea->addStretch();
 
     body->addLayout(commands, 0);
@@ -299,6 +320,18 @@ void DashboardPage::setQuickActions(
         button->setDefaultAction(sweep);
     if (auto* button = findChild<QToolButton*>(QStringLiteral("controlPanelStop")))
         button->setDefaultAction(stop);
+}
+
+void DashboardPage::setAverageGainAction(QAction* action)
+{
+    averageGainButton_->setDefaultAction(action);
+    averageGainButton_->setText(tr("Run"));
+}
+
+void DashboardPage::setConvergenceAction(QAction* action)
+{
+    convergenceButton_->setDefaultAction(action);
+    convergenceButton_->setText(tr("Run"));
 }
 
 void DashboardPage::setDocumentState(const QString& fileName, bool modified)
@@ -428,6 +461,55 @@ void DashboardPage::markResultsStale()
     refreshHeader();
     refreshFooter();
     refreshQuickResults();
+}
+
+void DashboardPage::setAverageGainRunning(double frequencyMHz)
+{
+    averageGainState_->setText(tr("running @ %1 MHz").arg(formatDecimal(frequencyMHz)));
+}
+
+void DashboardPage::setAverageGainResult(
+    const analysis::AverageGainAssessment& assessment, double frequencyMHz)
+{
+    hasAverageGainResult_ = true;
+    averageGainState_->setText(tr("%1 @ %2 MHz")
+        .arg(formatDecimal(assessment.normalizedGain), formatDecimal(frequencyMHz)));
+}
+
+void DashboardPage::setAverageGainFailure(const QString& message)
+{
+    hasAverageGainResult_ = false;
+    averageGainState_->setText(tr("failed"));
+    averageGainState_->setToolTip(message);
+}
+
+void DashboardPage::markAverageGainStale()
+{
+    if (hasAverageGainResult_) averageGainState_->setText(tr("stale"));
+}
+
+void DashboardPage::clearAverageGain()
+{
+    hasAverageGainResult_ = false;
+    averageGainState_->setText(tr("not run"));
+}
+
+void DashboardPage::setConvergenceState(const QString& summary)
+{
+    hasConvergenceResult_ = true;
+    convergenceState_->setText(summary);
+    convergenceState_->setToolTip(summary);
+}
+
+void DashboardPage::markConvergenceStale()
+{
+    if (hasConvergenceResult_) convergenceState_->setText(tr("stale"));
+}
+
+void DashboardPage::clearConvergence()
+{
+    hasConvergenceResult_ = false;
+    convergenceState_->setText(tr("not run"));
 }
 
 void DashboardPage::setRecentRuns(const std::vector<AnalysisRunRecord>& runs)

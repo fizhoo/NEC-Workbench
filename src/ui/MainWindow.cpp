@@ -848,6 +848,8 @@ void MainWindow::createWorkspace()
     dashboardPage_->setFileActions(openAction_, saveAction_);
     dashboardPage_->setQuickActions(
         checkAction_, runAction_, quickSweepAction_, stopAction_);
+    dashboardPage_->setAverageGainAction(averageGainAction_);
+    dashboardPage_->setConvergenceAction(convergenceAction_);
     dashboardPage_->setOpenRunHistoryCallback([this] {
         showRunHistory();
     });
@@ -1466,6 +1468,7 @@ void MainWindow::createResultWindows()
     convergenceWorkspace_->setRunningChangedCallback([this] { synchronizeRunnerState(); });
     convergenceWorkspace_->setSummaryChangedCallback([this](const QString& summary) {
         validationPanel_->setStatusText(summary);
+        dashboardPage_->setConvergenceState(summary);
     });
 
     auto* impedanceContent = new QWidget(resultWindowsHost_);
@@ -2885,6 +2888,8 @@ void MainWindow::clearCheckResults()
         solverBackendId_, false, modelErrorCount_, modelWarningCount_);
     averageGainResultsView_->markStale();
     convergenceWorkspace_->markStale();
+    dashboardPage_->markAverageGainStale();
+    dashboardPage_->markConvergenceStale();
     if (resultsAvailable_) dashboardPage_->markResultsStale();
     if (resultsAvailable_) {
         liveResultsStale_ = true;
@@ -4060,6 +4065,7 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
     if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
         averageGainResultsView_->setRunning(currentAverageGainFrequencyMHz_,
             currentAverageGainEnvironment_, runContext(*currentRunRecord_));
+        dashboardPage_->setAverageGainRunning(currentAverageGainFrequencyMHz_);
         validationWorkspace_->setCurrentIndex(averageGainValidationTabIndex_);
         validationPanel_->showWindow();
     }
@@ -4192,6 +4198,8 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
                     .arg(averageGainClassificationName(assessment.classification));
                 averageGainResultsView_->setResult(assessment, currentAverageGainFrequencyMHz_,
                     currentAverageGainEnvironment_, result.averagingSolidAnglePi, context);
+                dashboardPage_->setAverageGainResult(
+                    assessment, currentAverageGainFrequencyMHz_);
                 writeAverageGainMetadata(currentRunDirectory_, currentAverageGainFrequencyMHz_,
                     currentAverageGainEnvironment_, assessment, result.averagingSolidAnglePi);
                 displayedRunDirectory_ = currentRunDirectory_;
@@ -4210,6 +4218,8 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             } else {
                 averageGainResultsView_->setFailure(
                     tr("The solver output contains no AVERAGE POWER GAIN value."), context);
+                dashboardPage_->setAverageGainFailure(
+                    tr("No average power gain was reported."));
             }
             analysisRuns_->setItem(currentRunRow_, RunResultsColumn,
                 new QTableWidgetItem(runResultsText(*currentRunRecord_)));

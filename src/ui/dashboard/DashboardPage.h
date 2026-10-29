@@ -1,6 +1,7 @@
 #pragma once
 
 #include "analysis/AnalysisResult.h"
+#include "analysis/AverageGainTest.h"
 #include "model/AntennaModel.h"
 #include "model/ModelSetup.h"
 #include "ui/analysis/AnalysisRunStore.h"
@@ -48,12 +49,23 @@ public:
 
     void setFileActions(QAction* open, QAction* save);
     void setQuickActions(QAction* check, QAction* run, QAction* sweep, QAction* stop);
+    void setAverageGainAction(QAction* action);
+    void setConvergenceAction(QAction* action);
     void setDocumentState(const QString& fileName, bool modified);
     void setModel(const model::AntennaModel& model, const model::ModelSetup& setup,
         const nec::NecDocument& document, const QString& solver, bool checked,
         std::size_t errors, std::size_t warnings);
     void setResults(const analysis::AnalysisResult& result, const QString& context, bool stale);
     void markResultsStale();
+    void setAverageGainRunning(double frequencyMHz);
+    void setAverageGainResult(const analysis::AverageGainAssessment& assessment,
+        double frequencyMHz);
+    void setAverageGainFailure(const QString& message);
+    void markAverageGainStale();
+    void clearAverageGain();
+    void setConvergenceState(const QString& summary);
+    void markConvergenceStale();
+    void clearConvergence();
     void setRecentRuns(const std::vector<AnalysisRunRecord>& runs);
     void setResultWindowVisible(Workspace workspace, bool visible);
     void setOpenRunHistoryCallback(std::function<void()> callback);
@@ -81,6 +93,10 @@ private:
     QToolButton* swrResult_{};
     QToolButton* gainResult_{};
     QToolButton* frontToBackResult_{};
+    QLabel* averageGainState_{};
+    QLabel* convergenceState_{};
+    QToolButton* averageGainButton_{};
+    QToolButton* convergenceButton_{};
     QLabel* footer_{};
     QTableWidget* modelRows_{};
     QToolButton* impedanceButton_{};
@@ -106,6 +122,8 @@ private:
     bool currentsVisible_{};
     bool radiationVisible_{};
     bool geometryViewVisible_{};
+    bool hasAverageGainResult_{};
+    bool hasConvergenceResult_{};
 };
 
 }
