@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QSize>
 #include <QWidget>
 
 #include <functional>
@@ -21,7 +22,7 @@ public:
 
     DetachablePanel(QString id, QString title, QWidget* parent = nullptr,
         QString settingsRoot = QStringLiteral("resultWindows"),
-        QString windowObjectName = {});
+        QString windowObjectName = {}, QSize defaultWindowSize = {900, 680});
     ~DetachablePanel() override;
 
     void setContent(QWidget* content);
@@ -46,6 +47,7 @@ private:
     QString title_;
     QString settingsRoot_;
     QString windowObjectName_;
+    QSize defaultWindowSize_;
     QVBoxLayout* layout_{};
     QWidget* content_{};
     QWidget* placeholder_{};

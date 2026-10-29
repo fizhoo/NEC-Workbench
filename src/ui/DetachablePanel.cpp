@@ -17,9 +17,10 @@
 namespace necwb::ui {
 
 DetachablePanel::DetachablePanel(QString id, QString title, QWidget* parent,
-    QString settingsRoot, QString windowObjectName)
+    QString settingsRoot, QString windowObjectName, QSize defaultWindowSize)
     : QWidget(parent), id_(std::move(id)), title_(std::move(title)),
-      settingsRoot_(std::move(settingsRoot)), windowObjectName_(std::move(windowObjectName))
+      settingsRoot_(std::move(settingsRoot)), windowObjectName_(std::move(windowObjectName)),
+      defaultWindowSize_(defaultWindowSize)
 {
     layout_ = new QVBoxLayout(this);
     layout_->setContentsMargins(0, 0, 0, 0);
@@ -154,7 +155,7 @@ void DetachablePanel::detach(bool showWindow)
         const auto geometry = QSettings{}.value(
             settingsKey(QStringLiteral("geometry"))).toByteArray();
         if (!geometry.isEmpty()) dialog_->restoreGeometry(geometry);
-        else dialog_->resize(900, 680);
+        else dialog_->resize(defaultWindowSize_);
         windowGeometryInitialized_ = true;
     }
     ensureWindowOnScreen();

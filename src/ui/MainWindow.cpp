@@ -1374,7 +1374,7 @@ void MainWindow::createWorkspace()
         });
     runHistoryPanel_ = new DetachablePanel(QStringLiteral("run-history"),
         tr("Run History"), moduleStack_, QStringLiteral("workspaceWindows"),
-        QStringLiteral("runHistoryWindow"));
+        QStringLiteral("runHistoryWindow"), QSize{520, 380});
     runHistoryPanel_->setStatusText(tr("Saved analysis and study runs"));
     runHistoryPanel_->setContent(runsPage);
     moduleStack_->addWidget(runHistoryPanel_);
@@ -1404,7 +1404,7 @@ void MainWindow::createResultWindows()
     resultWindowsHost_->hide();
     validationPanel_ = new DetachablePanel(QStringLiteral("validation"),
         tr("Validation"), resultWindowsHost_, QStringLiteral("resultWindows"),
-        QStringLiteral("validationWindow"));
+        QStringLiteral("validationWindow"), QSize{520, 380});
     validationWorkspace_ = new QTabWidget(validationPanel_);
     validationWorkspace_->setObjectName(QStringLiteral("validationWorkspace"));
     validationWorkspace_->setDocumentMode(true);
@@ -1480,6 +1480,7 @@ void MainWindow::createResultWindows()
     impedanceTabs->addTab(analysisResultsView_, tr("Table"));
     visualizePlotsView_ = new SweepPlotsView(impedanceTabs);
     impedanceTabs->addTab(visualizePlotsView_, tr("Plots"));
+    impedanceTabs->setCurrentWidget(visualizePlotsView_);
     visualizePlotsView_->setReferenceControlVisible(false);
     impedanceOverlayControl_->setVisibilityChangedCallback([this](bool visible) {
         visualizePlotsView_->setReferenceVisible(visible);
@@ -1490,11 +1491,13 @@ void MainWindow::createResultWindows()
     impedanceLayout->addWidget(impedanceOverlayControl_);
     impedanceLayout->addWidget(impedanceTabs, 1);
     impedancePanel_ = new DetachablePanel(
-        QStringLiteral("impedance"), tr("Impedance Results"), resultWindowsHost_);
+        QStringLiteral("impedance"), tr("Impedance Results"), resultWindowsHost_,
+        QStringLiteral("resultWindows"), QString{}, QSize{520, 380});
     impedancePanel_->setContent(impedanceContent);
 
     currentsPanel_ = new DetachablePanel(
-        QStringLiteral("currents"), tr("Current Distribution"), resultWindowsHost_);
+        QStringLiteral("currents"), tr("Current Distribution"), resultWindowsHost_,
+        QStringLiteral("resultWindows"), QString{}, QSize{520, 380});
     currentResultsView_ = new CurrentDistributionView(currentsPanel_);
     currentsPanel_->setContent(currentResultsView_);
 
@@ -1526,7 +1529,8 @@ void MainWindow::createResultWindows()
     radiationLayout->addWidget(radiationOverlayControl_);
     radiationLayout->addWidget(radiationTabs, 1);
     radiationPanel_ = new DetachablePanel(
-        QStringLiteral("radiation"), tr("Radiation Results"), resultWindowsHost_);
+        QStringLiteral("radiation"), tr("Radiation Results"), resultWindowsHost_,
+        QStringLiteral("resultWindows"), QString{}, QSize{520, 380});
     radiationPanel_->setContent(radiationContent);
     radiationPatternView_->setSettingsChangedCallback([this](const auto& settings) {
         radiation3DView_->setDisplaySettings(settings);
@@ -1583,7 +1587,7 @@ void MainWindow::createResultWindows()
         this, [this] { findInRawOutput(); });
     rawOutputPanel_ = new DetachablePanel(
         QStringLiteral("raw-output"), tr("Raw Solver Output"), resultWindowsHost_,
-        QStringLiteral("resultWindows"), QStringLiteral("rawOutputWindow"));
+        QStringLiteral("resultWindows"), QStringLiteral("rawOutputWindow"), QSize{520, 380});
     rawOutputPanel_->setContent(rawOutputContent);
 }
 
