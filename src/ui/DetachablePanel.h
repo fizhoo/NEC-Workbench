@@ -15,14 +15,18 @@ namespace necwb::ui {
 
 class DetachablePanel final : public QWidget {
 public:
+    struct Options {
+        QString settingsRoot{QStringLiteral("resultWindows")};
+        QString windowObjectName;
+        QSize defaultWindowSize{900, 680};
+    };
     enum class WindowActivation {
         Preserve,
         Activate
     };
 
-    DetachablePanel(QString id, QString title, QWidget* parent = nullptr,
-        QString settingsRoot = QStringLiteral("resultWindows"),
-        QString windowObjectName = {}, QSize defaultWindowSize = {900, 680});
+    DetachablePanel(QString id, QString title, QWidget* parent = nullptr);
+    DetachablePanel(QString id, QString title, QWidget* parent, Options options);
     ~DetachablePanel() override;
 
     void setContent(QWidget* content);

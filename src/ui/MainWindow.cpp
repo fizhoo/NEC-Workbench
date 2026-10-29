@@ -136,6 +136,7 @@ namespace necwb::ui {
 namespace {
 
 constexpr QSize kControlPanelMinimum{520, 440};
+constexpr QSize kResultWindowSize{520, 380};
 
 constexpr auto ItemKindRole = Qt::UserRole;
 constexpr auto WireTagRole = Qt::UserRole + 1;
@@ -1205,8 +1206,8 @@ void MainWindow::createWorkspace()
     auto* modelNavigator = new WorkspaceNavigator(
         modelWorkspace_, QStringLiteral("model"), moduleStack_);
     modelPanel_ = new DetachablePanel(QStringLiteral("model-editor"),
-        tr("Model Editor"), moduleStack_, QStringLiteral("workspaceWindows"),
-        QStringLiteral("modelEditorWindow"));
+        tr("Model Editor"), moduleStack_, {QStringLiteral("workspaceWindows"),
+            QStringLiteral("modelEditorWindow")});
     modelPanel_->setStatusText(tr("No model loaded"));
     modelPanel_->setContent(modelNavigator);
     modelModuleIndex_ = moduleStack_->addWidget(modelPanel_);
@@ -1371,8 +1372,8 @@ void MainWindow::createWorkspace()
             else loadSelectedRun();
         });
     runHistoryPanel_ = new DetachablePanel(QStringLiteral("run-history"),
-        tr("Run History"), moduleStack_, QStringLiteral("workspaceWindows"),
-        QStringLiteral("runHistoryWindow"), QSize{520, 380});
+        tr("Run History"), moduleStack_, {QStringLiteral("workspaceWindows"),
+            QStringLiteral("runHistoryWindow"), kResultWindowSize});
     runHistoryPanel_->setStatusText(tr("Saved analysis and study runs"));
     runHistoryPanel_->setContent(runsPage);
     moduleStack_->addWidget(runHistoryPanel_);
@@ -1383,8 +1384,8 @@ void MainWindow::createWorkspace()
     auto* analysisNavigator = new WorkspaceNavigator(
         analysisWorkspace_, QStringLiteral("analysis"), moduleStack_);
     setupPanel_ = new DetachablePanel(QStringLiteral("analysis-setup"),
-        tr("Analysis Setup"), moduleStack_, QStringLiteral("workspaceWindows"),
-        QStringLiteral("analysisSetupWindow"));
+        tr("Analysis Setup"), moduleStack_, {QStringLiteral("workspaceWindows"),
+            QStringLiteral("analysisSetupWindow")});
     setupPanel_->setStatusText(tr("No model loaded"));
     setupPanel_->setContent(analysisNavigator);
     analysisModuleIndex_ = moduleStack_->addWidget(setupPanel_);
@@ -1401,8 +1402,8 @@ void MainWindow::createResultWindows()
     resultWindowsHost_->setObjectName(QStringLiteral("resultWindowsHost"));
     resultWindowsHost_->hide();
     validationPanel_ = new DetachablePanel(QStringLiteral("validation"),
-        tr("Validation"), resultWindowsHost_, QStringLiteral("resultWindows"),
-        QStringLiteral("validationWindow"), QSize{520, 380});
+        tr("Validation"), resultWindowsHost_, {QStringLiteral("resultWindows"),
+            QStringLiteral("validationWindow"), kResultWindowSize});
     validationWorkspace_ = new QTabWidget(validationPanel_);
     validationWorkspace_->setObjectName(QStringLiteral("validationWorkspace"));
     validationWorkspace_->setDocumentMode(true);
@@ -1492,12 +1493,12 @@ void MainWindow::createResultWindows()
     impedanceLayout->addWidget(impedanceTabs, 1);
     impedancePanel_ = new DetachablePanel(
         QStringLiteral("impedance"), tr("Impedance Results"), resultWindowsHost_,
-        QStringLiteral("resultWindows"), QString{}, QSize{520, 380});
+        {QStringLiteral("resultWindows"), {}, kResultWindowSize});
     impedancePanel_->setContent(impedanceContent);
 
     currentsPanel_ = new DetachablePanel(
         QStringLiteral("currents"), tr("Current Distribution"), resultWindowsHost_,
-        QStringLiteral("resultWindows"), QString{}, QSize{520, 380});
+        {QStringLiteral("resultWindows"), {}, kResultWindowSize});
     currentResultsView_ = new CurrentDistributionView(currentsPanel_);
     currentsPanel_->setContent(currentResultsView_);
 
@@ -1530,7 +1531,7 @@ void MainWindow::createResultWindows()
     radiationLayout->addWidget(radiationTabs, 1);
     radiationPanel_ = new DetachablePanel(
         QStringLiteral("radiation"), tr("Radiation Results"), resultWindowsHost_,
-        QStringLiteral("resultWindows"), QString{}, QSize{520, 380});
+        {QStringLiteral("resultWindows"), {}, kResultWindowSize});
     radiationPanel_->setContent(radiationContent);
     radiationPatternView_->setSettingsChangedCallback([this](const auto& settings) {
         radiation3DView_->setDisplaySettings(settings);
@@ -1587,15 +1588,16 @@ void MainWindow::createResultWindows()
         this, [this] { findInRawOutput(); });
     rawOutputPanel_ = new DetachablePanel(
         QStringLiteral("raw-output"), tr("Raw Solver Output"), resultWindowsHost_,
-        QStringLiteral("resultWindows"), QStringLiteral("rawOutputWindow"), QSize{520, 380});
+        {QStringLiteral("resultWindows"), QStringLiteral("rawOutputWindow"),
+            kResultWindowSize});
     rawOutputPanel_->setContent(rawOutputContent);
 }
 
 void MainWindow::createOptimizationWorkspace()
 {
     optimizationPanel_ = new DetachablePanel(QStringLiteral("optimization"),
-        tr("Optimization"), moduleStack_, QStringLiteral("workspaceWindows"),
-        QStringLiteral("optimizationWindow"));
+        tr("Optimization"), moduleStack_, {QStringLiteral("workspaceWindows"),
+            QStringLiteral("optimizationWindow")});
     optimizationPanel_->setStatusText(tr("No model loaded"));
     optimizationWorkspace_ = new OptimizationWorkspace(optimizationPanel_);
     optimizationWorkspace_->setObjectName(QStringLiteral("optimizationWorkspace"));

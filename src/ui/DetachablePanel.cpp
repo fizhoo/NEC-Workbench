@@ -16,11 +16,17 @@
 
 namespace necwb::ui {
 
-DetachablePanel::DetachablePanel(QString id, QString title, QWidget* parent,
-    QString settingsRoot, QString windowObjectName, QSize defaultWindowSize)
+DetachablePanel::DetachablePanel(QString id, QString title, QWidget* parent)
+    : DetachablePanel(std::move(id), std::move(title), parent, Options{})
+{
+}
+
+DetachablePanel::DetachablePanel(
+    QString id, QString title, QWidget* parent, Options options)
     : QWidget(parent), id_(std::move(id)), title_(std::move(title)),
-      settingsRoot_(std::move(settingsRoot)), windowObjectName_(std::move(windowObjectName)),
-      defaultWindowSize_(defaultWindowSize)
+      settingsRoot_(std::move(options.settingsRoot)),
+      windowObjectName_(std::move(options.windowObjectName)),
+      defaultWindowSize_(options.defaultWindowSize)
 {
     layout_ = new QVBoxLayout(this);
     layout_->setContentsMargins(0, 0, 0, 0);
