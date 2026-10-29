@@ -73,8 +73,6 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
 
     auto* panel = new QWidget(this);
     panel->setObjectName(QStringLiteral("controlPanel"));
-    panel->setMinimumWidth(560);
-    panel->setMaximumWidth(600);
     auto* panelLayout = new QVBoxLayout(panel);
     panelLayout->setContentsMargins(0, 0, 0, 0);
     panelLayout->setSpacing(6);
@@ -189,7 +187,6 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     modelRows_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     modelRows_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     modelRows_->setFixedHeight(9 * 24 + 2);
-    modelRows_->setMinimumWidth(365);
     const std::array labels{
         tr("Frequency"), tr("Wires"), tr("Sources"), tr("Loads"),
         tr("Trans. lines"), tr("Ground"), tr("Variables"), tr("Requests"), tr("Deck")};

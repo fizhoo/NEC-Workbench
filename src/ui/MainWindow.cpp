@@ -135,6 +135,8 @@
 namespace necwb::ui {
 namespace {
 
+constexpr QSize kControlPanelMinimum{520, 440};
+
 constexpr auto ItemKindRole = Qt::UserRole;
 constexpr auto WireTagRole = Qt::UserRole + 1;
 constexpr auto SourceLineRole = Qt::UserRole + 2;
@@ -420,8 +422,7 @@ MainWindow::MainWindow()
 {
     setWindowTitle(tr("Untitled[*] — NEC Workbench"));
     setWindowModified(false);
-    setMinimumSize(520, 440);
-    resize(760, 600);
+    setMinimumSize(kControlPanelMinimum);
 
     solverRunner_ = new SolverProcessRunner(this);
     createActions();
@@ -2571,7 +2572,6 @@ void MainWindow::newModel()
     editor_->document()->setModified(false);
     showEditor(EditorDestination::RawSource);
     checkModel();
-    QTimer::singleShot(0, this, [this] { fitControlPanelWindow(); });
 }
 
 void MainWindow::openFile()
@@ -2608,7 +2608,6 @@ void MainWindow::openFileAtPath(const QString& path)
     editor_->document()->setModified(false);
     showEditor(EditorDestination::RawSource);
     checkModel();
-    QTimer::singleShot(0, this, [this] { fitControlPanelWindow(); });
 }
 
 void MainWindow::fitControlPanelWindow()
@@ -2617,8 +2616,7 @@ void MainWindow::fitControlPanelWindow()
     const auto hint = controlPanel_->sizeHint();
     const auto frameHeight = menuBar()->sizeHint().height()
         + statusBar()->sizeHint().height();
-    resize(std::clamp(hint.width(), 560, 640),
-        std::clamp(hint.height() + frameHeight, 440, 620));
+    resize(QSize{hint.width(), hint.height() + frameHeight}.expandedTo(kControlPanelMinimum));
 }
 
 void MainWindow::openExample()
@@ -5698,6 +5696,7 @@ void MainWindow::setCurrentFile(QString path)
     if (optimizationPanel_ != nullptr) optimizationPanel_->setStatusText(
         tr("%1 · %2").arg(modelName,
             optimizationWorkspace_->isRunning() ? tr("Running") : tr("Ready")));
+    if (hasNecModel_) QTimer::singleShot(0, this, [this] { fitControlPanelWindow(); });
 }
 
 void MainWindow::restoreWorkspaceLayout()
@@ -5709,9 +5708,7 @@ void MainWindow::restoreWorkspaceLayout()
     } else {
         const auto normalGeometry = settings.value(QStringLiteral("mainWindow/normalGeometry")).toRect();
         if (normalGeometry.isValid()) setGeometry(normalGeometry);
-        else if (workspaceDensity_ == WorkspaceDensity::Compact) resize(600, 500);
-        else if (workspaceDensity_ == WorkspaceDensity::Standard) resize(680, 560);
-        else resize(760, 620);
+        else resize(sizeHint().expandedTo(kControlPanelMinimum));
     }
     const auto savedState = settings.value(QStringLiteral("mainWindow/state")).toByteArray();
     restoreState(savedState);

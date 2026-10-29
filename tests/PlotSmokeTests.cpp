@@ -2578,7 +2578,7 @@ auto main(int argc, char* argv[]) -> int
         && controlPanelRows->rowCount() == 9
         && controlPanelRows->verticalHeader()->defaultSectionSize() <= 24
         && controlPanelRows->height() <= 220
-        && controlPanel.findChild<QWidget*>(QStringLiteral("controlPanel"))->maximumWidth() <= 600;
+        && controlPanel.sizeHint().width() <= 700;
     const auto controlPanelActionsCorrect = controlPanelOpen != nullptr
         && controlPanelOpen->defaultAction() == &openAction
         && controlPanelSave != nullptr && controlPanelSave->defaultAction() == &saveAction
