@@ -66,7 +66,6 @@ public:
     void clearStudy(Study study);
     void setRecentRuns(const std::vector<AnalysisRunRecord>& runs);
     void setResultWindowVisible(Workspace workspace, bool visible);
-    void setOpenRunHistoryCallback(std::function<void()> callback);
     void setOpenWorkspaceCallback(std::function<void(Workspace)> callback);
     void setOpenEditorCallback(std::function<void(Editor)> callback);
 
@@ -112,7 +111,6 @@ private:
     QLabel* footer_{};
     QTableWidget* modelRows_{};
     std::array<ResultLauncher, 4> resultLaunchers_{};
-    std::function<void()> openRunHistory_;
     std::function<void(Workspace)> openWorkspace_;
     std::function<void(Editor)> openEditor_;
     QString fileName_{tr("Untitled model.nec")};

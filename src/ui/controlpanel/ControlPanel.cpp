@@ -162,8 +162,7 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     commands->addWidget(optimize);
     commands->addStretch();
     connect(runs, &QToolButton::clicked, this, [this] {
-        if (openRunHistory_) openRunHistory_();
-        else if (openWorkspace_) openWorkspace_(Workspace::Runs);
+        if (openWorkspace_) openWorkspace_(Workspace::Runs);
     });
     connect(optimize, &QToolButton::clicked, this, [this] {
         if (openWorkspace_) openWorkspace_(Workspace::Optimize);
@@ -536,11 +535,6 @@ void ControlPanel::setResultWindowVisible(Workspace workspace, bool visible)
     if (launcher == nullptr) return;
     launcher->visible = visible;
     refreshResultLauncher(workspace);
-}
-
-void ControlPanel::setOpenRunHistoryCallback(std::function<void()> callback)
-{
-    openRunHistory_ = std::move(callback);
 }
 
 void ControlPanel::setOpenWorkspaceCallback(std::function<void(Workspace)> callback)

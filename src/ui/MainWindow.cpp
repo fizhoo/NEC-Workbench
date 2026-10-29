@@ -847,9 +847,6 @@ void MainWindow::createWorkspace()
         checkAction_, runAction_, quickSweepAction_, stopAction_);
     controlPanel_->setAverageGainAction(averageGainAction_);
     controlPanel_->setConvergenceAction(convergenceAction_);
-    controlPanel_->setOpenRunHistoryCallback([this] {
-        showRunHistory();
-    });
     controlPanel_->setOpenWorkspaceCallback([this](ControlPanel::Workspace destination) {
         switch (destination) {
         case ControlPanel::Workspace::Setup:

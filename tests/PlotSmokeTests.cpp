@@ -2465,9 +2465,11 @@ auto main(int argc, char* argv[]) -> int
     auto controlPanelWorkspaceOpened = false;
     auto controlPanelGeometryOpened = false;
     auto controlPanelEditorOpened = false;
-    controlPanel.setOpenRunHistoryCallback([&runHistoryOpened] { runHistoryOpened = true; });
     controlPanel.setOpenWorkspaceCallback(
-        [&controlPanelWorkspaceOpened, &controlPanelGeometryOpened](auto destination) {
+        [&runHistoryOpened, &controlPanelWorkspaceOpened,
+            &controlPanelGeometryOpened](auto destination) {
+        if (destination == necwb::ui::ControlPanel::Workspace::Runs)
+            runHistoryOpened = true;
         if (destination == necwb::ui::ControlPanel::Workspace::Impedance)
             controlPanelWorkspaceOpened = true;
         if (destination == necwb::ui::ControlPanel::Workspace::GeometryView)
