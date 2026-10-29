@@ -2485,17 +2485,20 @@ auto main(int argc, char* argv[]) -> int
     dashboard.setRecentRuns({recentRun});
     dashboard.setDocumentState(QStringLiteral("test.nec"), true);
     dashboard.setResults(result, QStringLiteral("Model: test.nec · Run: dashboard"), false);
-    dashboard.setAverageGainResult({1.0, 1.0, 1.0, 0.0,
-        necwb::analysis::AverageGainClassification::Pass}, 14.1);
-    dashboard.setConvergenceState(QStringLiteral("passed"));
-    dashboard.clearAverageGain();
-    dashboard.clearConvergence();
+    dashboard.setStudyStatus(necwb::ui::DashboardPage::Study::AverageGain,
+        necwb::ui::DashboardPage::StudyState::Complete, QStringLiteral("1.000 @ 14.100 MHz"));
+    dashboard.setStudyStatus(necwb::ui::DashboardPage::Study::Convergence,
+        necwb::ui::DashboardPage::StudyState::Complete, QStringLiteral("passed"));
+    dashboard.clearStudy(necwb::ui::DashboardPage::Study::AverageGain);
+    dashboard.clearStudy(necwb::ui::DashboardPage::Study::Convergence);
     const auto studiesCleared = dashboard.findChild<QLabel*>(
             QStringLiteral("controlPanelAverageGainState"))->text() == QStringLiteral("not run")
         && dashboard.findChild<QLabel*>(
             QStringLiteral("controlPanelConvergenceState"))->text() == QStringLiteral("not run");
-    dashboard.setAverageGainRunning(14.1);
-    dashboard.setAverageGainFailure(QStringLiteral("solver failed"));
+    dashboard.setStudyStatus(necwb::ui::DashboardPage::Study::AverageGain,
+        necwb::ui::DashboardPage::StudyState::Running, QStringLiteral("running @ 14.100 MHz"));
+    dashboard.setStudyStatus(necwb::ui::DashboardPage::Study::AverageGain,
+        necwb::ui::DashboardPage::StudyState::Failed, {}, QStringLiteral("solver failed"));
     dashboard.setResultWindowVisible(
         necwb::ui::DashboardPage::Workspace::Impedance, true);
     dashboard.show(); application.processEvents();

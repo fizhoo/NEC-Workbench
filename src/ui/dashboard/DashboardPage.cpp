@@ -275,22 +275,21 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     qualityGrid->setContentsMargins(0, 0, 0, 0);
     qualityGrid->setHorizontalSpacing(4);
     qualityGrid->setVerticalSpacing(2);
-    qualityGrid->addWidget(new QLabel(tr("Avg gain test:"), panel), 0, 0);
-    averageGainState_ = new QLabel(tr("not run"), panel);
-    averageGainState_->setObjectName(QStringLiteral("controlPanelAverageGainState"));
-    averageGainButton_ = compactButton(tr("Run"), panel);
-    averageGainButton_->setObjectName(QStringLiteral("controlPanelAverageGainRun"));
-    averageGainButton_->setAutoRaise(true);
-    qualityGrid->addWidget(averageGainState_, 0, 1);
-    qualityGrid->addWidget(averageGainButton_, 0, 2);
-    qualityGrid->addWidget(new QLabel(tr("Convergence:"), panel), 1, 0);
-    convergenceState_ = new QLabel(tr("not run"), panel);
-    convergenceState_->setObjectName(QStringLiteral("controlPanelConvergenceState"));
-    convergenceButton_ = compactButton(tr("Run"), panel);
-    convergenceButton_->setObjectName(QStringLiteral("controlPanelConvergenceRun"));
-    convergenceButton_->setAutoRaise(true);
-    qualityGrid->addWidget(convergenceState_, 1, 1);
-    qualityGrid->addWidget(convergenceButton_, 1, 2);
+    const std::array qualityNames{tr("Avg gain test:"), tr("Convergence:")};
+    const std::array stateNames{QStringLiteral("controlPanelAverageGainState"),
+        QStringLiteral("controlPanelConvergenceState")};
+    const std::array buttonNames{QStringLiteral("controlPanelAverageGainRun"),
+        QStringLiteral("controlPanelConvergenceRun")};
+    for (auto row = 0; row < 2; ++row) {
+        qualityGrid->addWidget(new QLabel(qualityNames[row], panel), row, 0);
+        studyStateLabels_[row] = new QLabel(tr("not run"), panel);
+        studyStateLabels_[row]->setObjectName(stateNames[row]);
+        studyButtons_[row] = compactButton(tr("Run"), panel);
+        studyButtons_[row]->setObjectName(buttonNames[row]);
+        studyButtons_[row]->setAutoRaise(true);
+        qualityGrid->addWidget(studyStateLabels_[row], row, 1);
+        qualityGrid->addWidget(studyButtons_[row], row, 2);
+    }
     modelArea->addWidget(modelHeading);
     modelArea->addWidget(modelRows_);
     modelArea->addSpacing(3);
@@ -361,26 +360,28 @@ void DashboardPage::setQuickActions(
 
 void DashboardPage::setAverageGainAction(QAction* action)
 {
-    averageGainButton_->setIcon(action->icon());
-    averageGainButton_->setToolTip(action->toolTip());
-    averageGainButton_->setEnabled(action->isEnabled());
-    connect(averageGainButton_, &QToolButton::clicked, action, &QAction::trigger);
-    connect(action, &QAction::changed, averageGainButton_, [this, action] {
-        averageGainButton_->setEnabled(action->isEnabled());
+    auto* button = studyButtons_[static_cast<std::size_t>(Study::AverageGain)];
+    button->setIcon(action->icon());
+    button->setToolTip(action->toolTip());
+    button->setEnabled(action->isEnabled());
+    connect(button, &QToolButton::clicked, action, &QAction::trigger);
+    connect(action, &QAction::changed, button, [button, action] {
+        button->setEnabled(action->isEnabled());
     });
-    averageGainButton_->setText(tr("Run"));
+    button->setText(tr("Run"));
 }
 
 void DashboardPage::setConvergenceAction(QAction* action)
 {
-    convergenceButton_->setIcon(action->icon());
-    convergenceButton_->setToolTip(action->toolTip());
-    convergenceButton_->setEnabled(action->isEnabled());
-    connect(convergenceButton_, &QToolButton::clicked, action, &QAction::trigger);
-    connect(action, &QAction::changed, convergenceButton_, [this, action] {
-        convergenceButton_->setEnabled(action->isEnabled());
+    auto* button = studyButtons_[static_cast<std::size_t>(Study::Convergence)];
+    button->setIcon(action->icon());
+    button->setToolTip(action->toolTip());
+    button->setEnabled(action->isEnabled());
+    connect(button, &QToolButton::clicked, action, &QAction::trigger);
+    connect(action, &QAction::changed, button, [button, action] {
+        button->setEnabled(action->isEnabled());
     });
-    convergenceButton_->setText(tr("Run"));
+    button->setText(tr("Run"));
 }
 
 void DashboardPage::setDocumentState(const QString& fileName, bool modified)
@@ -514,53 +515,29 @@ void DashboardPage::markResultsStale()
     refreshQuickResults();
 }
 
-void DashboardPage::setAverageGainRunning(double frequencyMHz)
+void DashboardPage::setStudyStatus(
+    Study study, StudyState state, const QString& text, const QString& toolTip)
 {
-    averageGainState_->setText(tr("running @ %1 MHz").arg(formatDecimal(frequencyMHz)));
+    const auto index = static_cast<std::size_t>(study);
+    if (state == StudyState::Stale && studyStates_[index] != StudyState::Complete) return;
+    studyStates_[index] = state;
+    const auto defaultText = [this, state] {
+        switch (state) {
+        case StudyState::NotRun: return tr("not run");
+        case StudyState::Running: return tr("running");
+        case StudyState::Complete: return tr("complete");
+        case StudyState::Failed: return tr("failed");
+        case StudyState::Stale: return tr("stale");
+        }
+        return QString{};
+    }();
+    studyStateLabels_[index]->setText(text.isEmpty() ? defaultText : text);
+    studyStateLabels_[index]->setToolTip(toolTip.isEmpty() ? text : toolTip);
 }
 
-void DashboardPage::setAverageGainResult(
-    const analysis::AverageGainAssessment& assessment, double frequencyMHz)
+void DashboardPage::clearStudy(Study study)
 {
-    hasAverageGainResult_ = true;
-    averageGainState_->setText(tr("%1 @ %2 MHz")
-        .arg(formatDecimal(assessment.normalizedGain), formatDecimal(frequencyMHz)));
-}
-
-void DashboardPage::setAverageGainFailure(const QString& message)
-{
-    hasAverageGainResult_ = false;
-    averageGainState_->setText(tr("failed"));
-    averageGainState_->setToolTip(message);
-}
-
-void DashboardPage::markAverageGainStale()
-{
-    if (hasAverageGainResult_) averageGainState_->setText(tr("stale"));
-}
-
-void DashboardPage::clearAverageGain()
-{
-    hasAverageGainResult_ = false;
-    averageGainState_->setText(tr("not run"));
-}
-
-void DashboardPage::setConvergenceState(const QString& summary)
-{
-    hasConvergenceResult_ = true;
-    convergenceState_->setText(summary);
-    convergenceState_->setToolTip(summary);
-}
-
-void DashboardPage::markConvergenceStale()
-{
-    if (hasConvergenceResult_) convergenceState_->setText(tr("stale"));
-}
-
-void DashboardPage::clearConvergence()
-{
-    hasConvergenceResult_ = false;
-    convergenceState_->setText(tr("not run"));
+    setStudyStatus(study, StudyState::NotRun);
 }
 
 void DashboardPage::setRecentRuns(const std::vector<AnalysisRunRecord>& runs)

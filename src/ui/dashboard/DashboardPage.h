@@ -9,6 +9,7 @@
 #include <QWidget>
 
 #include <functional>
+#include <array>
 #include <vector>
 
 class QAction;
@@ -23,6 +24,8 @@ namespace necwb::ui {
 
 class DashboardPage final : public QWidget {
 public:
+    enum class Study { AverageGain, Convergence };
+    enum class StudyState { NotRun, Running, Complete, Failed, Stale };
     enum class Workspace {
         Setup,
         GeometryView,
@@ -57,15 +60,9 @@ public:
         std::size_t errors, std::size_t warnings);
     void setResults(const analysis::AnalysisResult& result, const QString& context, bool stale);
     void markResultsStale();
-    void setAverageGainRunning(double frequencyMHz);
-    void setAverageGainResult(const analysis::AverageGainAssessment& assessment,
-        double frequencyMHz);
-    void setAverageGainFailure(const QString& message);
-    void markAverageGainStale();
-    void clearAverageGain();
-    void setConvergenceState(const QString& summary);
-    void markConvergenceStale();
-    void clearConvergence();
+    void setStudyStatus(Study study, StudyState state, const QString& text = {},
+        const QString& toolTip = {});
+    void clearStudy(Study study);
     void setRecentRuns(const std::vector<AnalysisRunRecord>& runs);
     void setResultWindowVisible(Workspace workspace, bool visible);
     void setOpenRunHistoryCallback(std::function<void()> callback);
@@ -96,10 +93,9 @@ private:
     QToolButton* gainResult_{};
     QLabel* frontToBackResultLabel_{};
     QToolButton* frontToBackResult_{};
-    QLabel* averageGainState_{};
-    QLabel* convergenceState_{};
-    QToolButton* averageGainButton_{};
-    QToolButton* convergenceButton_{};
+    std::array<QLabel*, 2> studyStateLabels_{};
+    std::array<QToolButton*, 2> studyButtons_{};
+    std::array<StudyState, 2> studyStates_{StudyState::NotRun, StudyState::NotRun};
     QLabel* footer_{};
     QTableWidget* modelRows_{};
     QToolButton* impedanceButton_{};
@@ -125,8 +121,6 @@ private:
     bool currentsVisible_{};
     bool radiationVisible_{};
     bool geometryViewVisible_{};
-    bool hasAverageGainResult_{};
-    bool hasConvergenceResult_{};
 };
 
 }
