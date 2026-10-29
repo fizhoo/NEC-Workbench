@@ -2480,6 +2480,12 @@ auto main(int argc, char* argv[]) -> int
     dashboard.setConvergenceState(QStringLiteral("passed"));
     dashboard.clearAverageGain();
     dashboard.clearConvergence();
+    const auto studiesCleared = dashboard.findChild<QLabel*>(
+            QStringLiteral("controlPanelAverageGainState"))->text() == QStringLiteral("not run")
+        && dashboard.findChild<QLabel*>(
+            QStringLiteral("controlPanelConvergenceState"))->text() == QStringLiteral("not run");
+    dashboard.setAverageGainRunning(14.1);
+    dashboard.setAverageGainFailure(QStringLiteral("solver failed"));
     dashboard.setResultWindowVisible(
         necwb::ui::DashboardPage::Workspace::Impedance, true);
     dashboard.show(); application.processEvents();
@@ -2535,8 +2541,9 @@ auto main(int argc, char* argv[]) -> int
         && dashboardExtrema->text().contains(QStringLiteral("Peak gain"))
         && dashboardFooter != nullptr
         && dashboardFooter->text().contains(QStringLiteral("Last run"))
+        && studiesCleared
         && dashboardAverageGain != nullptr
-        && dashboardAverageGain->text() == QStringLiteral("not run")
+        && dashboardAverageGain->text() == QStringLiteral("failed")
         && dashboardConvergence != nullptr
         && dashboardConvergence->text() == QStringLiteral("not run");
     const auto dashboardDenseLayout = dashboardRows != nullptr

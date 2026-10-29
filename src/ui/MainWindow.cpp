@@ -4294,12 +4294,14 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     } else if (processSucceeded && currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
         const auto message = tr("The solver did not produce a readable model.out file.");
         averageGainResultsView_->setFailure(message, runContext(*currentRunRecord_));
+        dashboardPage_->setAverageGainFailure(message);
     } else if (currentRunRecord_) {
         if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
             const auto message = processResult.detail.isEmpty()
                 ? tr("The solver did not complete the Average Gain Test.")
                 : processResult.detail;
             averageGainResultsView_->setFailure(message, runContext(*currentRunRecord_));
+            dashboardPage_->setAverageGainFailure(message);
         }
         currentRunRecord_->outputBytes = QFileInfo(currentRunOutputPath_).size();
         if (currentRunRow_ >= 0) {
