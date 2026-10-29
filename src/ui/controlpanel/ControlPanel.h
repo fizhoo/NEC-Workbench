@@ -2,6 +2,7 @@
 
 #include "analysis/AnalysisResult.h"
 #include "analysis/AverageGainTest.h"
+#include "analysis/ResultSummary.h"
 #include "model/AntennaModel.h"
 #include "model/ModelSetup.h"
 #include "ui/analysis/AnalysisRunStore.h"
@@ -120,7 +121,7 @@ private:
     QString resultStatus_{tr("Results none")};
     QString resultContext_;
     QString lastRunText_{tr("No completed run")};
-    analysis::AnalysisResult currentResult_;
+    std::vector<analysis::ResultSummary> resultSummaries_;
     bool modified_{};
     bool resultsStale_{};
 };

@@ -53,6 +53,13 @@ auto datasetKindFor(const AnalysisResult& result, const RadiationSample& peak)
     return RadiationDatasetKind::Point;
 }
 
+auto makeGainSummary(const AnalysisResult& result, const RadiationSample& sample)
+    -> PeakGainSummary
+{
+    return {sample.frequencyMHz, sample.totalGainDb, sample.thetaDegrees,
+        sample.phiDegrees, sample.patternIndex, datasetKindFor(result, sample)};
+}
+
 }
 
 auto summarizeResults(const AnalysisResult& result, double selectedFrequencyMHz,
@@ -100,10 +107,7 @@ auto summarizeResults(const AnalysisResult& result, double selectedFrequencyMHz,
         });
         if (sample != result.radiation.end()
             && datasetKindFor(result, *sample) != RadiationDatasetKind::Point) {
-            summary.selectedGain = PeakGainSummary{
-                selectedPeak->frequencyMHz, metrics.peakGainDb,
-                metrics.peakThetaDegrees, metrics.peakPhiDegrees,
-                sample->patternIndex, datasetKindFor(result, *sample)};
+            summary.selectedGain = makeGainSummary(result, *sample);
             summary.selectedFrontToBackDb = metrics.frontToBackDb;
         }
     }
@@ -115,14 +119,7 @@ auto summarizeResults(const AnalysisResult& result, double selectedFrequencyMHz,
         peak = &sample;
     }
     if (peak != nullptr) {
-        summary.peakGain = PeakGainSummary{
-            peak->frequencyMHz,
-            peak->totalGainDb,
-            peak->thetaDegrees,
-            peak->phiDegrees,
-            peak->patternIndex,
-            datasetKindFor(result, *peak),
-        };
+        summary.peakGain = makeGainSummary(result, *peak);
     }
     return summary;
 }

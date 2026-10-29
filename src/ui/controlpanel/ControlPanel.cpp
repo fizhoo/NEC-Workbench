@@ -14,6 +14,7 @@
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QSignalBlocker>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QToolButton>
@@ -22,6 +23,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <tuple>
 #include <utility>
 
 namespace necwb::ui {
@@ -414,9 +416,6 @@ void ControlPanel::setResults(const analysis::AnalysisResult& result,
     });
     resultStatus_ = !hasResults
         ? tr("Results none") : stale ? tr("Results stale") : tr("Results current");
-    currentResult_ = result;
-    const auto initial = analysis::summarizeResults(result,
-        result.feedpoints.empty() ? 0.0 : result.feedpoints.front().frequencyMHz);
     std::vector<double> frequencies;
     for (const auto& value : result.feedpoints) frequencies.push_back(value.frequencyMHz);
     for (const auto& value : result.radiation) frequencies.push_back(value.frequencyMHz);
@@ -424,11 +423,16 @@ void ControlPanel::setResults(const analysis::AnalysisResult& result,
     frequencies.erase(std::unique(frequencies.begin(), frequencies.end(), [](double left, double right) {
         return nearlyEqual(left, right);
     }), frequencies.end());
+    const QSignalBlocker blocker(resultFrequency_);
     resultFrequency_->clear();
-    for (const auto frequency : frequencies)
+    resultSummaries_.clear();
+    for (const auto frequency : frequencies) {
         resultFrequency_->addItem(tr("%1 MHz").arg(formatDecimal(frequency)), frequency);
-    if (initial.minimumSwr) {
-        const auto index = resultFrequency_->findData(initial.minimumSwr->frequencyMHz);
+        resultSummaries_.push_back(analysis::summarizeResults(result, frequency));
+    }
+    if (!resultSummaries_.empty() && resultSummaries_.front().minimumSwr) {
+        const auto index = resultFrequency_->findData(
+            resultSummaries_.front().minimumSwr->frequencyMHz);
         if (index >= 0) resultFrequency_->setCurrentIndex(index);
     }
     refreshQuickResults();
@@ -441,8 +445,9 @@ void ControlPanel::setResults(const analysis::AnalysisResult& result,
 
 void ControlPanel::refreshQuickResults()
 {
-    const auto frequency = resultFrequency_->currentData().toDouble();
-    const auto summary = analysis::summarizeResults(currentResult_, frequency);
+    const auto index = resultFrequency_->currentIndex();
+    const auto summary = index >= 0 && index < static_cast<int>(resultSummaries_.size())
+        ? resultSummaries_[static_cast<std::size_t>(index)] : analysis::ResultSummary{};
     const auto set = [](QToolButton* button, const std::optional<double>& value,
                         const QString& suffix = {}) {
         button->setText(value ? formatDecimal(*value) + suffix : QString::fromUtf8("—"));
@@ -458,10 +463,14 @@ void ControlPanel::refreshQuickResults()
     set(gainResult_, summary.selectedGain
         ? std::optional<double>{summary.selectedGain->gainDb} : std::nullopt, tr(" dBi"));
     set(frontToBackResult_, summary.selectedFrontToBackDb, tr(" dB"));
-    gainResult_->setVisible(summary.selectedGain.has_value());
-    frontToBackResult_->setVisible(summary.selectedGain.has_value());
-    gainResultLabel_->setVisible(summary.selectedGain.has_value());
-    frontToBackResultLabel_->setVisible(summary.selectedGain.has_value());
+    const std::array radiationRows{
+        std::tuple{gainResultLabel_, gainResult_, summary.selectedGain.has_value()},
+        std::tuple{frontToBackResultLabel_, frontToBackResult_,
+            summary.selectedFrontToBackDb.has_value()}};
+    for (const auto& [label, value, visible] : radiationRows) {
+        label->setVisible(visible);
+        value->setVisible(visible);
+    }
     QStringList extrema;
     if (summary.minimumSwr) extrema.append(tr("Min SWR %1 @ %2 MHz")
         .arg(formatDecimal(summary.minimumSwr->swr), formatDecimal(summary.minimumSwr->frequencyMHz)));
