@@ -432,6 +432,18 @@ MainWindow::MainWindow()
     createWorkspace();
     resultWindowCoordinator_ = std::make_unique<ResultWindowCoordinator>(
         impedancePanel_, currentsPanel_, radiationPanel_);
+    impedancePanel_->setVisibilityChangedCallback([this](bool visible) {
+        dashboardPage_->setResultWindowVisible(DashboardPage::Workspace::Impedance, visible);
+    });
+    currentsPanel_->setVisibilityChangedCallback([this](bool visible) {
+        dashboardPage_->setResultWindowVisible(DashboardPage::Workspace::Currents, visible);
+    });
+    radiationPanel_->setVisibilityChangedCallback([this](bool visible) {
+        dashboardPage_->setResultWindowVisible(DashboardPage::Workspace::Radiation, visible);
+    });
+    modelPanel_->setVisibilityChangedCallback([this](bool visible) {
+        dashboardPage_->setResultWindowVisible(DashboardPage::Workspace::GeometryView, visible);
+    });
     createDocks();
     createMenusAndToolbar();
     qApp->installEventFilter(this);
@@ -523,10 +535,8 @@ MainWindow::MainWindow()
         if (index == structuredSourceTabIndex_ && !modelChecked_) checkModel();
         updateUndoActions();
     });
-    connect(moduleStack_, &QStackedWidget::currentChanged, this, [this](int index) {
-        updateWorkspaceDockVisibility(index);
-        updateUndoActions();
-    });
+    connect(moduleStack_, &QStackedWidget::currentChanged, this,
+        [this] { updateUndoActions(); });
 
     restoreWorkspaceLayout();
     updateUndoActions();
@@ -811,19 +821,8 @@ void MainWindow::createWorkspace()
     auto* centralLayout = new QVBoxLayout(central);
     centralLayout->setContentsMargins(0, 0, 0, 0);
     centralLayout->setSpacing(0);
-    auto* moduleNavigation = new QToolBar(tr("Workbench Modules"), central);
-    moduleNavigation->setObjectName(QStringLiteral("moduleNavigationToolbar"));
-    moduleNavigation->setIconSize({18, 18});
-    moduleNavigation->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    moduleNavigation->addAction(homeModuleAction_);
-    moduleNavigation->addSeparator();
-    moduleNavigation->addAction(modelModuleAction_);
-    moduleNavigation->addAction(analysisModuleAction_);
-    moduleNavigation->addAction(resultsModuleAction_);
-    moduleNavigation->addAction(optimizeModuleAction_);
     moduleStack_ = new QStackedWidget(central);
     moduleStack_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-    centralLayout->addWidget(moduleNavigation);
     centralLayout->addWidget(moduleStack_, 1);
     setCentralWidget(central);
 
@@ -845,31 +844,18 @@ void MainWindow::createWorkspace()
     welcomePage_->setRecentFiles(recentFiles());
     dashboardStack_->addWidget(welcomePage_);
     dashboardPage_ = new DashboardPage(dashboardStack_);
-    dashboardPage_->setQuickActions(checkAction_, runAction_);
-    dashboardPage_->setAverageGainAction(averageGainAction_);
-    dashboardPage_->setConvergenceAction(convergenceAction_);
-    dashboardPage_->setOpenRecentRunCallback([this](const QString& id) {
-        if (!runHistoryLoaded_) loadRunHistory();
-        for (auto row = 0; row < analysisRuns_->rowCount(); ++row) {
-            const auto* item = analysisRuns_->item(row, RunStartedColumn);
-            if (item == nullptr || item->data(RunIdRole).toString() != id) continue;
-            analysisRuns_->setCurrentCell(row, RunStartedColumn);
-            loadSelectedRun();
-            return;
-        }
-    });
+    dashboardPage_->setFileActions(openAction_, saveAction_);
+    dashboardPage_->setQuickActions(
+        checkAction_, runAction_, quickSweepAction_, stopAction_);
     dashboardPage_->setOpenRunHistoryCallback([this] {
         showRunHistory();
     });
     dashboardPage_->setOpenWorkspaceCallback([this](DashboardPage::Workspace destination) {
         switch (destination) {
-        case DashboardPage::Workspace::Model:
-            showModule(modelModuleIndex_);
-            break;
         case DashboardPage::Workspace::Setup:
             showModule(analysisModuleIndex_);
             break;
-        case DashboardPage::Workspace::Antenna:
+        case DashboardPage::Workspace::GeometryView:
             if (showModule(modelModuleIndex_)) {
                 modelWorkspace_->setCurrentIndex(modelGeometryWorkspaceIndex_);
                 workspace_->setCurrentIndex(geometry3DTabIndex_);
@@ -890,6 +876,21 @@ void MainWindow::createWorkspace()
         case DashboardPage::Workspace::Optimize:
             showModule(optimizeModuleIndex_);
             break;
+        }
+    });
+    dashboardPage_->setOpenEditorCallback([this](DashboardPage::Editor destination) {
+        switch (destination) {
+        case DashboardPage::Editor::Frequency: showEditor(EditorDestination::Frequency); break;
+        case DashboardPage::Editor::Wires: showEditor(EditorDestination::Geometry); break;
+        case DashboardPage::Editor::Sources: showEditor(EditorDestination::Sources); break;
+        case DashboardPage::Editor::Loads:
+        case DashboardPage::Editor::TransmissionLines:
+            showEditor(EditorDestination::Loads);
+            break;
+        case DashboardPage::Editor::Ground: showEditor(EditorDestination::Environment); break;
+        case DashboardPage::Editor::Variables: showEditor(EditorDestination::Parameters); break;
+        case DashboardPage::Editor::Requests: showEditor(EditorDestination::Requests); break;
+        case DashboardPage::Editor::Deck: showEditor(EditorDestination::RawSource); break;
         }
     });
     dashboardStack_->addWidget(dashboardPage_);
@@ -1225,8 +1226,8 @@ void MainWindow::createWorkspace()
             convergenceWorkspace_->setContext(editor_->toPlainText(), currentFile_,
                 solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_,
                 modelChecked_ && modelErrorCount_ == 0);
-            dashboardPage_->setModel(currentModel_, currentSetup_, solverBackendId_, modelChecked_,
-                modelErrorCount_, modelWarningCount_);
+            dashboardPage_->setModel(currentModel_, currentSetup_, activeSource().document(),
+                solverBackendId_, modelChecked_, modelErrorCount_, modelWarningCount_);
             runAction_->setStatusTip(solverExecutablePath_.isEmpty()
                     ? tr("Select a NEC engine executable under Setup → Solver")
                     : tr("Run the checked model with the selected NEC engine"));
@@ -1463,7 +1464,6 @@ void MainWindow::createResultWindows()
     });
     convergenceWorkspace_->setRunningChangedCallback([this] { synchronizeRunnerState(); });
     convergenceWorkspace_->setSummaryChangedCallback([this](const QString& summary) {
-        dashboardPage_->setConvergenceState(summary);
         validationPanel_->setStatusText(summary);
     });
 
@@ -1694,7 +1694,6 @@ auto MainWindow::showModule(int index) -> bool
     }
     if (index == optimizeModuleIndex_ && optimizationPanel_ != nullptr) {
         optimizationPanel_->showWindow();
-        optimizationWorkspace_->restoreCandidateDetailsWindow();
         const auto current = moduleStack_->currentIndex();
         if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
         updateUndoActions();
@@ -1718,7 +1717,6 @@ auto MainWindow::showModule(int index) -> bool
         analysisModuleAction_->setChecked(true);
     } else if (index == optimizeModuleIndex_) {
         optimizeModuleAction_->setChecked(true);
-        optimizationWorkspace_->restoreCandidateDetailsWindow();
     }
     updateUndoActions();
     return true;
@@ -1796,6 +1794,9 @@ void MainWindow::showEditor(EditorDestination destination, int geometryTab)
     } else if (destination == EditorDestination::Environment) {
         if (!showModule(analysisModuleIndex_)) return;
         analysisWorkspace_->setCurrentIndex(modelEnvironmentWorkspaceIndex_);
+    } else if (destination == EditorDestination::Requests) {
+        if (!showModule(analysisModuleIndex_)) return;
+        analysisWorkspace_->setCurrentIndex(analysisRequestsTabIndex_);
     } else if (destination == EditorDestination::Parameters) {
         if (!showModule(modelModuleIndex_)) return;
         modelWorkspace_->setCurrentIndex(modelParametersWorkspaceIndex_);
@@ -2119,13 +2120,11 @@ void MainWindow::showAutoSegmentation()
 
 void MainWindow::createDocks()
 {
-    projectDock_ = new QDockWidget(tr("Project"), this);
-    projectDock_->setObjectName(QStringLiteral("projectDock"));
-    projectTree_ = new QTreeWidget(projectDock_);
+    projectTree_ = new QTreeWidget(this);
+    projectTree_->setObjectName(QStringLiteral("projectTree"));
     projectTree_->setHeaderHidden(true);
     projectTree_->setAlternatingRowColors(true);
-    projectDock_->setWidget(projectTree_);
-    addDockWidget(Qt::LeftDockWidgetArea, projectDock_);
+    projectTree_->hide();
 
     modelCheckWindow_ = new QDialog(this, Qt::Tool);
     modelCheckWindow_->setObjectName(QStringLiteral("modelCheckWindow"));
@@ -2325,26 +2324,7 @@ void MainWindow::createMenusAndToolbar()
     connect(showRunHistoryAction, &QAction::triggered, this, [this] {
         showRunHistory();
     });
-    if (auto* moduleNavigation = findChild<QToolBar*>(QStringLiteral("moduleNavigationToolbar"));
-        moduleNavigation != nullptr) {
-        if (auto* resultsButton = qobject_cast<QToolButton*>(
-                moduleNavigation->widgetForAction(resultsModuleAction_));
-            resultsButton != nullptr) {
-            auto* resultsMenu = new QMenu(resultsButton);
-            resultsMenu->setObjectName(QStringLiteral("resultsLauncherMenu"));
-            resultsMenu->addAction(showImpedanceWindowAction);
-            resultsMenu->addAction(showCurrentsWindowAction);
-            resultsMenu->addAction(showRadiationWindowAction);
-            resultsMenu->addAction(showRawOutputWindowAction);
-            resultsMenu->addSeparator();
-            resultsMenu->addAction(showRunHistoryAction);
-            resultsButton->setMenu(resultsMenu);
-            resultsButton->setPopupMode(QToolButton::InstantPopup);
-            resultsButton->setToolTip(tr("Open a live result window or review saved runs"));
-        }
-    }
     viewMenu->addSeparator();
-    viewMenu->addAction(projectDock_->toggleViewAction());
     viewMenu->addAction(modelCheckWindowAction_);
     viewMenu->addAction(runMonitorWindowAction_);
     viewMenu->addSeparator();
@@ -2392,49 +2372,13 @@ void MainWindow::createMenusAndToolbar()
     helpMenu->addSeparator();
     helpMenu->addAction(aboutAction_);
 
-    auto* toolbar = addToolBar(tr("Main"));
-    toolbar->setObjectName(QStringLiteral("mainToolbar"));
-    toolbar->setIconSize({24, 24});
-    toolbar->addAction(newAction_);
-    toolbar->addAction(openAction_);
-    toolbar->addAction(saveAction_);
-    toolbar->addSeparator();
-    toolbar->addAction(undoAction_);
-    toolbar->addAction(redoAction_);
-    toolbar->addSeparator();
-    toolbar->addAction(checkAction_);
-    toolbar->addAction(runAction_);
-    toolbar->addAction(quickSweepAction_);
-    toolbar->addAction(stopAction_);
 }
 
 void MainWindow::resetWorkspaceLayout()
 {
-    removeDockWidget(projectDock_);
-    projectDock_->show();
-    addDockWidget(Qt::LeftDockWidgetArea, projectDock_);
-    const auto projectWidth = workspaceDensity_ == WorkspaceDensity::Compact ? 220
-        : workspaceDensity_ == WorkspaceDensity::Standard ? 260 : 300;
-    resizeDocks({projectDock_}, {projectWidth}, Qt::Horizontal);
     modelCheckWindow_->hide();
     runMonitorWindow_->hide();
-    focusedWorkspaceDockStateActive_ = false;
-    updateWorkspaceDockVisibility(moduleStack_ == nullptr ? -1 : moduleStack_->currentIndex());
     statusBar()->showMessage(tr("Workspace layout reset."), 4000);
-}
-
-void MainWindow::updateWorkspaceDockVisibility(int moduleIndex)
-{
-    if (projectDock_ == nullptr) return;
-    const auto focusedWorkspace = moduleIndex == optimizeModuleIndex_;
-    if (focusedWorkspace && !focusedWorkspaceDockStateActive_) {
-        projectDockVisibleBeforeFocusedWorkspace_ = projectDock_->isVisible();
-        if (!projectDock_->isFloating()) projectDock_->hide();
-        focusedWorkspaceDockStateActive_ = true;
-    } else if (!focusedWorkspace && focusedWorkspaceDockStateActive_) {
-        if (projectDockVisibleBeforeFocusedWorkspace_) projectDock_->show();
-        focusedWorkspaceDockStateActive_ = false;
-    }
 }
 
 void MainWindow::setWorkspaceDensity(WorkspaceDensity density)
@@ -2849,7 +2793,7 @@ void MainWindow::checkModel(bool presentReport)
     analysisRequestEditor_->setData(currentSetup_);
     structuredCardEditor_->setParameterControlledFields(parameterFields);
     structuredCardEditor_->setDocument(document);
-    dashboardPage_->setModel(currentModel_, currentSetup_, solverBackendId_, true,
+    dashboardPage_->setModel(currentModel_, currentSetup_, document, solverBackendId_, true,
         modelErrorCount_, modelWarningCount_);
     updateProjectTree(currentModel_, document);
     optimizationWorkspace_->setContext(editor_->toPlainText(), currentFile_,
@@ -2913,11 +2857,16 @@ void MainWindow::clearCheckResults()
     optimizationWorkspace_->setModelValid(false);
     convergenceWorkspace_->setContext(editor_->toPlainText(), currentFile_,
         solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_, false);
-    dashboardPage_->setModel(currentModel_, currentSetup_, solverBackendId_, false,
-        modelErrorCount_, modelWarningCount_);
-    dashboardPage_->markAverageGainStale();
+    const auto& cache = activeSource();
+    auto dashboardModel = currentModel_;
+    auto dashboardSetup = currentSetup_;
+    if (const auto* resolved = cache.resolvedDocument(); resolved != nullptr) {
+        dashboardModel = nec::NecModelConverter{}.convert(*resolved).model;
+        dashboardSetup = nec::NecSetupConverter{}.convert(*resolved);
+    }
+    dashboardPage_->setModel(dashboardModel, dashboardSetup, cache.document(),
+        solverBackendId_, false, modelErrorCount_, modelWarningCount_);
     averageGainResultsView_->markStale();
-    dashboardPage_->markConvergenceStale();
     convergenceWorkspace_->markStale();
     if (resultsAvailable_) dashboardPage_->markResultsStale();
     if (resultsAvailable_) {
@@ -4094,7 +4043,6 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
     if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
         averageGainResultsView_->setRunning(currentAverageGainFrequencyMHz_,
             currentAverageGainEnvironment_, runContext(*currentRunRecord_));
-        dashboardPage_->setAverageGainRunning(currentAverageGainFrequencyMHz_);
         validationWorkspace_->setCurrentIndex(averageGainValidationTabIndex_);
         validationPanel_->showWindow();
     }
@@ -4227,7 +4175,6 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
                     .arg(averageGainClassificationName(assessment.classification));
                 averageGainResultsView_->setResult(assessment, currentAverageGainFrequencyMHz_,
                     currentAverageGainEnvironment_, result.averagingSolidAnglePi, context);
-                dashboardPage_->setAverageGainResult(assessment, currentAverageGainFrequencyMHz_);
                 writeAverageGainMetadata(currentRunDirectory_, currentAverageGainFrequencyMHz_,
                     currentAverageGainEnvironment_, assessment, result.averagingSolidAnglePi);
                 displayedRunDirectory_ = currentRunDirectory_;
@@ -4246,7 +4193,6 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             } else {
                 averageGainResultsView_->setFailure(
                     tr("The solver output contains no AVERAGE POWER GAIN value."), context);
-                dashboardPage_->setAverageGainFailure(tr("average power gain was not reported"));
             }
             analysisRuns_->setItem(currentRunRow_, RunResultsColumn,
                 new QTableWidgetItem(runResultsText(*currentRunRecord_)));
@@ -4277,8 +4223,8 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             activeModelResultsDirectory_ = currentRunDirectory_;
             activeModelResultsContext_ = context;
             dashboardPage_->setResults(result, context, false);
-            dashboardPage_->setModel(currentModel_, currentSetup_, solverBackendId_, true,
-                modelErrorCount_, modelWarningCount_);
+            dashboardPage_->setModel(currentModel_, currentSetup_, activeSource().document(),
+                solverBackendId_, true, modelErrorCount_, modelWarningCount_);
             resultsAvailable_ = true;
             liveResultsStale_ = false;
             setLiveResultStatus(tr("Current"));
@@ -4314,14 +4260,12 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     } else if (processSucceeded && currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
         const auto message = tr("The solver did not produce a readable model.out file.");
         averageGainResultsView_->setFailure(message, runContext(*currentRunRecord_));
-        dashboardPage_->setAverageGainFailure(message);
     } else if (currentRunRecord_) {
         if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
             const auto message = processResult.detail.isEmpty()
                 ? tr("The solver did not complete the Average Gain Test.")
                 : processResult.detail;
             averageGainResultsView_->setFailure(message, runContext(*currentRunRecord_));
-            dashboardPage_->setAverageGainFailure(message);
         }
         currentRunRecord_->outputBytes = QFileInfo(currentRunOutputPath_).size();
         if (currentRunRow_ >= 0) {
@@ -4999,9 +4943,7 @@ void MainWindow::clearDisplayedResults()
     const analysis::AnalysisResult empty;
     const auto context = tr("No analysis run");
     averageGainResultsView_->clear();
-    dashboardPage_->clearAverageGain();
     convergenceWorkspace_->clearResults();
-    dashboardPage_->clearConvergence();
     analysisResultsView_->setResults(empty, context);
     visualizePlotsView_->setResults(empty, context);
     currentResultsView_->setModel({});
@@ -5011,6 +4953,7 @@ void MainWindow::clearDisplayedResults()
     radiation3DView_->setModel({});
     radiationPerformanceView_->setResults(empty, context);
     setDisplayedResults(empty);
+    dashboardPage_->setResults(empty, context, false);
     displayedRunDirectory_.clear();
     resultsAvailable_ = false;
     liveResultsStale_ = false;
@@ -5730,7 +5673,6 @@ void MainWindow::restoreWorkspaceLayout()
     const auto runMonitorGeometry = settings.value(
         QStringLiteral("runMonitorWindow/geometry")).toByteArray();
     if (!runMonitorGeometry.isEmpty()) runMonitorWindow_->restoreGeometry(runMonitorGeometry);
-    updateWorkspaceDockVisibility(moduleStack_ == nullptr ? -1 : moduleStack_->currentIndex());
     auto geometrySettings = geometrySettings_;
     geometrySettings.lengthUnit = static_cast<model::LengthUnit>(settings.value(
         QStringLiteral("model/displayLengthUnit"), static_cast<int>(model::LengthUnit::Meter)).toInt());

@@ -11,6 +11,7 @@
 #include <QVBoxLayout>
 
 #include <utility>
+#include <algorithm>
 #include <ranges>
 
 namespace necwb::ui {
@@ -105,6 +106,12 @@ void DetachablePanel::setStatusText(QString status)
     if (dialogStatusLabel_ != nullptr) dialogStatusLabel_->setText(statusText_);
 }
 
+void DetachablePanel::setVisibilityChangedCallback(std::function<void(bool)> callback)
+{
+    visibilityChanged_ = std::move(callback);
+    if (visibilityChanged_) visibilityChanged_(isWindowVisible());
+}
+
 void DetachablePanel::toggleDetached()
 {
     if (detached_) attach();
@@ -130,19 +137,27 @@ void DetachablePanel::detach(bool showWindow)
         dialogStatusLabel_->setObjectName(id_ + QStringLiteral("WindowStatusLabel"));
         dialogStatusLabel_->setContentsMargins(6, 4, 6, 0);
         dialogLayout->addWidget(dialogStatusLabel_);
-        const auto geometry = QSettings{}.value(settingsKey(QStringLiteral("geometry"))).toByteArray();
-        if (!geometry.isEmpty()) dialog_->restoreGeometry(geometry);
-        else dialog_->resize(900, 680);
-        ensureWindowOnScreen();
         connect(dialog_, &QDialog::finished, this, [this] {
             saveWindowGeometry();
             saveWindowState();
+            if (visibilityChanged_) visibilityChanged_(false);
         });
     }
 
     layout_->removeWidget(content_);
     content_->setParent(dialog_);
     dialog_->layout()->addWidget(content_);
+    content_->show();
+    dialog_->layout()->invalidate();
+    dialog_->layout()->activate();
+    if (!windowGeometryInitialized_) {
+        const auto geometry = QSettings{}.value(
+            settingsKey(QStringLiteral("geometry"))).toByteArray();
+        if (!geometry.isEmpty()) dialog_->restoreGeometry(geometry);
+        else dialog_->resize(900, 680);
+        windowGeometryInitialized_ = true;
+    }
+    ensureWindowOnScreen();
     placeholder_->show();
     detached_ = true;
     toggleButton_->setText(tr("Attach"));
@@ -164,6 +179,7 @@ void DetachablePanel::attach()
     toggleButton_->setText(tr("Pop Out"));
     dialog_->hide();
     saveWindowState();
+    if (visibilityChanged_) visibilityChanged_(false);
 }
 
 void DetachablePanel::showDetached(WindowActivation activation)
@@ -177,6 +193,7 @@ void DetachablePanel::showDetached(WindowActivation activation)
         dialog_->activateWindow();
     }
     saveWindowState();
+    if (visibilityChanged_) visibilityChanged_(true);
 }
 
 void DetachablePanel::ensureWindowOnScreen()
@@ -186,17 +203,32 @@ void DetachablePanel::ensureWindowOnScreen()
     if (screens.empty()) return;
 
     const auto geometry = dialog_->frameGeometry();
-    const auto sufficientlyVisible = std::ranges::any_of(screens, [&geometry](const QScreen* screen) {
-        const auto intersection = geometry.intersected(screen->availableGeometry());
-        return intersection.width() >= 100 && intersection.height() >= 60;
-    });
-    if (sufficientlyVisible) return;
-
-    const auto* screen = QGuiApplication::primaryScreen();
+    const QScreen* screen = nullptr;
+    auto visibleArea = 0;
+    for (const auto* candidate : screens) {
+        const auto intersection = geometry.intersected(candidate->availableGeometry());
+        const auto area = intersection.width() * intersection.height();
+        if (area > visibleArea) {
+            screen = candidate;
+            visibleArea = area;
+        }
+    }
+    if (screen == nullptr) screen = QGuiApplication::primaryScreen();
     if (screen == nullptr) return;
+
     const auto available = screen->availableGeometry();
-    dialog_->resize(dialog_->size().boundedTo(available.size()));
-    dialog_->move(available.center() - dialog_->rect().center());
+    auto size = dialog_->size().boundedTo(available.size());
+    auto position = dialog_->pos();
+    if (visibleArea < 100 * 60) {
+        position = available.center() - QPoint(size.width() / 2, size.height() / 2);
+    } else {
+        position.setX(std::clamp(position.x(), available.left(),
+            available.right() - size.width() + 1));
+        position.setY(std::clamp(position.y(), available.top(),
+            available.bottom() - size.height() + 1));
+    }
+    dialog_->resize(size);
+    dialog_->move(position);
 }
 
 void DetachablePanel::saveWindowGeometry() const

@@ -30,6 +30,8 @@ add_library(necwb_core
     src/analysis/OptimizationPreset.h
     src/analysis/ReferenceRunSelection.cpp
     src/analysis/ReferenceRunSelection.h
+    src/analysis/ResultSummary.cpp
+    src/analysis/ResultSummary.h
     src/analysis/SegmentationConvergence.cpp
     src/analysis/SolverCommand.cpp
     src/analysis/SolverInput.cpp
@@ -40,6 +42,8 @@ add_library(necwb_core
     src/model/AutoSegmentation.cpp
     src/model/LengthUnit.cpp
     src/model/ModelSetup.cpp
+    src/model/ModelSummary.cpp
+    src/model/ModelSummary.h
     src/model/WireGauge.cpp
     src/nec/NecDocument.cpp
     src/nec/NecCardCatalog.cpp

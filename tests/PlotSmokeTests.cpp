@@ -309,6 +309,10 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("run-historyStatusLabel"));
         auto* validationSummary = mainWindow.findChild<QLabel*>(
             QStringLiteral("validationOverviewSummary"));
+        const auto compactPrimaryNavigation = mainWindow.findChild<QWidget*>(
+            QStringLiteral("moduleNavigationToolbar")) == nullptr
+            && mainWindow.findChild<QWidget*>(QStringLiteral("mainToolbar")) == nullptr
+            && mainWindow.findChild<QWidget*>(QStringLiteral("projectDock")) == nullptr;
         auto* openValidation = mainWindow.findChild<QAction*>(
             QStringLiteral("openValidationResultsAction"));
         auto* openConvergence = mainWindow.findChild<QAction*>(
@@ -335,8 +339,6 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("radiationShowHistoricalOverlay"));
         auto* radiationOverlayChooser = mainWindow.findChild<QPushButton*>(
             QStringLiteral("radiationChooseHistoricalOverlay"));
-        auto* resultsLauncherMenu = mainWindow.findChild<QMenu*>(
-            QStringLiteral("resultsLauncherMenu"));
         consolidatedSetupNavigation = setupModuleAction != nullptr
             && setupModuleAction->text() == QStringLiteral("&Setup")
             && tabNames(modelWorkspace) == QStringList{QStringLiteral("Geometry"),
@@ -346,6 +348,7 @@ auto main(int argc, char* argv[]) -> int
                 QStringLiteral("Environment"), QStringLiteral("Requests"), QStringLiteral("Solver")}
             && tabNames(validationWorkspace) == QStringList{QStringLiteral("Static Check"),
                 QStringLiteral("Average Gain Test"), QStringLiteral("Segmentation Convergence")}
+            && compactPrimaryNavigation
             && validateMenu != nullptr && runMenu != nullptr && validationSummary != nullptr
             && openValidation != nullptr && validateMenu->actions().contains(openValidation)
             && reviewRuns != nullptr && runMenu->actions().contains(reviewRuns);
@@ -403,10 +406,18 @@ auto main(int argc, char* argv[]) -> int
             application.processEvents();
             const auto* optimizationWindow = topLevelDialog(
                 QStringLiteral("optimizationWindow"));
+            const auto* unexpectedRadiationWindow = topLevelDialog(
+                QStringLiteral("radiationResultWindow"));
+            const auto* unexpectedCandidateWindow = topLevelDialog(
+                QStringLiteral("optimizationCandidateDetailsWindow"));
             resultWindowSettings.sync();
             optimizationWindowNavigation = optimizationWindow != nullptr
                 && optimizationWindow->isVisible()
                 && optimizationWorkspace->window() == optimizationWindow
+                && (unexpectedRadiationWindow == nullptr
+                    || !unexpectedRadiationWindow->isVisible())
+                && (unexpectedCandidateWindow == nullptr
+                    || !unexpectedCandidateWindow->isVisible())
                 && resultWindowSettings.value(
                     QStringLiteral("workspaceWindows/optimization/detached"), false).toBool();
         }
@@ -437,10 +448,6 @@ auto main(int argc, char* argv[]) -> int
                 && resultWindowsMenu->actions().contains(showRadiationWindow)
                 && resultWindowsMenu->actions().contains(showRawOutputWindow)
                 && resultWindowsMenu->actions().contains(showRunHistory)
-                && resultsLauncherMenu != nullptr
-                && resultsLauncherMenu->actions().contains(showImpedanceWindow)
-                && resultsLauncherMenu->actions().contains(showRawOutputWindow)
-                && resultsLauncherMenu->actions().contains(showRunHistory)
                 && impedanceWindow != nullptr && impedanceWindow->isVisible()
                 && currentsWindow != nullptr && currentsWindow->isVisible()
                 && radiationWindow != nullptr && radiationWindow->isVisible()
@@ -2424,131 +2431,113 @@ auto main(int argc, char* argv[]) -> int
     radiation3D.render(&currentPainter); currentPainter.end();
     necwb::ui::DashboardPage dashboard;
     const auto dashboardCompact = hasCompactMargins(dashboard, 8);
-    dashboard.resize(1000, 700);
+    dashboard.resize(600, 520);
     necwb::model::ModelSetup setup;
-    dashboard.setModel(antenna, setup, QStringLiteral("nec2"), true, 0, 0);
+    setup.frequency = {0, 3, 14.0, 0.1, 1};
+    setup.excitations = {{0, 2, 1, 1.0, 0.0, 2}};
+    setup.radiationPatterns = {{19, 37, 0.0, 0.0, 5.0, 10.0, 3}};
+    const auto dashboardDocument = necwb::nec::NecParser{}.parse(
+        "GW 1 11 0 0 0 1 0 0 .001\nGE 0\nEX 0 1 6 0 1 0\n"
+        "FR 0 3 0 0 14 .1\nRP 0 19 37 1000 0 0 5 10\nEN\n");
+    dashboard.setModel(antenna, setup, dashboardDocument,
+        QStringLiteral("nec2"), true, 0, 0);
+    QAction openAction(QStringLiteral("Open…"), &dashboard);
+    QAction saveAction(QStringLiteral("Save"), &dashboard);
     QAction checkAction(QStringLiteral("Check Model"), &dashboard);
     QAction runAction(QStringLiteral("Run Analysis"), &dashboard);
-    QAction averageGainAction(QStringLiteral("Run Average Gain Test"), &dashboard);
-    QAction convergenceAction(QStringLiteral("Segmentation Convergence"), &dashboard);
-    dashboard.setQuickActions(&checkAction, &runAction);
-    dashboard.setAverageGainAction(&averageGainAction);
-    dashboard.setConvergenceAction(&convergenceAction);
-    auto recentRunOpened = false;
+    QAction sweepAction(QStringLiteral("Frequency Sweep…"), &dashboard);
+    QAction stopAction(QStringLiteral("Stop"), &dashboard);
+    dashboard.setFileActions(&openAction, &saveAction);
+    dashboard.setQuickActions(&checkAction, &runAction, &sweepAction, &stopAction);
     auto runHistoryOpened = false;
     auto dashboardWorkspaceOpened = false;
-    dashboard.setOpenRecentRunCallback([&recentRunOpened](const QString& id) {
-        recentRunOpened = id == QStringLiteral("recent-0");
-    });
+    auto dashboardGeometryOpened = false;
+    auto dashboardEditorOpened = false;
     dashboard.setOpenRunHistoryCallback([&runHistoryOpened] { runHistoryOpened = true; });
-    dashboard.setOpenWorkspaceCallback([&dashboardWorkspaceOpened](auto destination) {
-        dashboardWorkspaceOpened = destination
-            == necwb::ui::DashboardPage::Workspace::Impedance;
+    dashboard.setOpenWorkspaceCallback(
+        [&dashboardWorkspaceOpened, &dashboardGeometryOpened](auto destination) {
+        if (destination == necwb::ui::DashboardPage::Workspace::Impedance)
+            dashboardWorkspaceOpened = true;
+        if (destination == necwb::ui::DashboardPage::Workspace::GeometryView)
+            dashboardGeometryOpened = true;
+        });
+    dashboard.setOpenEditorCallback([&dashboardEditorOpened](auto destination) {
+        dashboardEditorOpened = destination == necwb::ui::DashboardPage::Editor::Requests;
     });
-    std::vector<necwb::ui::AnalysisRunRecord> recentRuns;
-    for (auto index = 0; index < 6; ++index) {
-        necwb::ui::AnalysisRunRecord run;
-        run.id = QStringLiteral("recent-%1").arg(index);
-        run.started = QDateTime::currentDateTime().addSecs(-index);
-        run.sourceFile = QStringLiteral("/tmp/model-%1.nec").arg(index);
-        run.backend = QStringLiteral("nec2");
-        run.status = QStringLiteral("Completed");
-        run.summary = QStringLiteral("SWR %1").arg(index + 1);
-        recentRuns.push_back(std::move(run));
-    }
-    dashboard.setRecentRuns(recentRuns);
+    necwb::ui::AnalysisRunRecord recentRun;
+    recentRun.id = QStringLiteral("recent-0");
+    recentRun.started = QDateTime::currentDateTime();
+    recentRun.status = QStringLiteral("Completed");
+    recentRun.durationSeconds = 1.25;
+    dashboard.setRecentRuns({recentRun});
     dashboard.setDocumentState(QStringLiteral("test.nec"), true);
     dashboard.setResults(result, QStringLiteral("Model: test.nec · Run: dashboard"), false);
-    dashboard.setAverageGainResult(necwb::analysis::assessAverageGain(1.02, 1.0), 14.1);
-    dashboard.setConvergenceState(QStringLiteral("Stable across final refinements"));
+    dashboard.setResultWindowVisible(
+        necwb::ui::DashboardPage::Workspace::Impedance, true);
     dashboard.show(); application.processEvents();
-    QImage dashboardImage(1000, 700, QImage::Format_ARGB32_Premultiplied);
+    QImage dashboardImage(600, 520, QImage::Format_ARGB32_Premultiplied);
     dashboardImage.fill(Qt::transparent); QPainter dashboardPainter(&dashboardImage);
     dashboard.render(&dashboardPainter); dashboardPainter.end();
-    const auto* dashboardFileState = dashboard.findChild<QLabel*>(QStringLiteral("dashboardFileState"));
-    const auto* dashboardHeading = dashboard.findChild<QLabel*>(QStringLiteral("dashboardHeading"));
-    const auto dashboardStateVisible = dashboardFileState != nullptr
-        && dashboardFileState->text().contains(QStringLiteral("test.nec"))
-        && dashboardFileState->text().contains(QStringLiteral("Unsaved"));
-    const auto* dashboardQuickActionsContainer = dashboard.findChild<QWidget*>(
-        QStringLiteral("dashboardQuickActionsContainer"));
-    const auto* dashboardWorkbenchPanel = dashboard.findChild<QGroupBox*>(
-        QStringLiteral("dashboardWorkbenchPanel"));
-    const auto* dashboardStatusFooter = dashboard.findChild<QWidget*>(
-        QStringLiteral("dashboardStatusFooter"));
-    const auto* dashboardAverageGainState = dashboard.findChild<QLabel*>(
-        QStringLiteral("dashboardAverageGainState"));
-    const auto* dashboardConvergenceState = dashboard.findChild<QLabel*>(
-        QStringLiteral("dashboardConvergenceState"));
-    const auto* dashboardAverageGainButton = dashboard.findChild<QToolButton*>(
-        QStringLiteral("dashboardAverageGainButton"));
-    const auto* dashboardConvergenceButton = dashboard.findChild<QToolButton*>(
-        QStringLiteral("dashboardConvergenceButton"));
-    auto* dashboardRecentRuns = dashboard.findChild<QTableWidget*>(
-        QStringLiteral("dashboardRecentRuns"));
-    auto* dashboardModelSummary = dashboard.findChild<QTableWidget*>(
-        QStringLiteral("dashboardModelSummary"));
-    auto* dashboardQuickResults = dashboard.findChild<QTableWidget*>(
-        QStringLiteral("dashboardQuickResults"));
-    auto* dashboardOpenRunHistory = dashboard.findChild<QPushButton*>(
-        QStringLiteral("dashboardOpenRunHistoryButton"));
-    const auto dashboardLaunchers = dashboard.findChildren<QToolButton*>(
-        QRegularExpression(QStringLiteral("dashboardWorkspaceLauncher.*")));
-    auto* dashboardImpedanceLauncher = dashboard.findChild<QToolButton*>(
-        QStringLiteral("dashboardWorkspaceLauncher3"));
-    if (dashboardRecentRuns != nullptr) {
-        QMetaObject::invokeMethod(dashboardRecentRuns, "cellDoubleClicked",
-            Qt::DirectConnection, Q_ARG(int, 0), Q_ARG(int, 0));
+    const auto* dashboardName = dashboard.findChild<QLabel*>(
+        QStringLiteral("controlPanelModelName"));
+    const auto* dashboardLatest = dashboard.findChild<QLabel*>(
+        QStringLiteral("controlPanelLatestResult"));
+    const auto* dashboardFooter = dashboard.findChild<QLabel*>(
+        QStringLiteral("controlPanelFooter"));
+    auto* dashboardRows = dashboard.findChild<QTableWidget*>(
+        QStringLiteral("controlPanelModelRows"));
+    auto* dashboardOpen = dashboard.findChild<QToolButton*>(
+        QStringLiteral("controlPanelOpen"));
+    auto* dashboardSave = dashboard.findChild<QToolButton*>(
+        QStringLiteral("controlPanelSave"));
+    auto* dashboardCheck = dashboard.findChild<QToolButton*>(
+        QStringLiteral("controlPanelCheck"));
+    auto* dashboardRun = dashboard.findChild<QToolButton*>(
+        QStringLiteral("controlPanelRun"));
+    auto* dashboardSweep = dashboard.findChild<QToolButton*>(
+        QStringLiteral("controlPanelFrequencySweep"));
+    auto* dashboardStop = dashboard.findChild<QToolButton*>(
+        QStringLiteral("controlPanelStop"));
+    auto* dashboardRuns = dashboard.findChild<QToolButton*>(
+        QStringLiteral("controlPanelRuns"));
+    auto* dashboardImpedance = dashboard.findChild<QToolButton*>(
+        QStringLiteral("controlPanelImpedance"));
+    auto* dashboardGeometry = dashboard.findChild<QToolButton*>(
+        QStringLiteral("controlPanelGeometryView"));
+    if (dashboardRuns != nullptr) dashboardRuns->click();
+    if (dashboardImpedance != nullptr) dashboardImpedance->click();
+    if (dashboardGeometry != nullptr) dashboardGeometry->click();
+    if (dashboardRows != nullptr) {
+        QMetaObject::invokeMethod(dashboardRows, "cellClicked", Qt::DirectConnection,
+            Q_ARG(int, static_cast<int>(necwb::ui::DashboardPage::Editor::Requests)),
+            Q_ARG(int, 0));
     }
-    if (dashboardOpenRunHistory != nullptr) dashboardOpenRunHistory->click();
-    if (dashboardImpedanceLauncher != nullptr) dashboardImpedanceLauncher->click();
-    const auto dashboardRecentRunsCompact = dashboardRecentRuns != nullptr
-        && dashboardRecentRuns->rowCount() == 5
-        && dashboardRecentRuns->verticalHeader()->defaultSectionSize() <= 24
-        && dashboardRecentRuns->maximumHeight() <= 148
-        && recentRunOpened && runHistoryOpened;
-    const auto dashboardDenseLayout = dashboardHeading != nullptr
-        && dashboardFileState != nullptr
-        && dashboardHeading->mapTo(&dashboard, QPoint{}).y()
-            == dashboardFileState->mapTo(&dashboard, QPoint{}).y()
-        && dashboardModelSummary != nullptr && dashboardQuickResults != nullptr
-        && dashboardModelSummary->verticalHeader()->defaultSectionSize() <= 22
-        && dashboardQuickResults->verticalHeader()->defaultSectionSize() <= 22;
-    const auto dashboardQuickActions = dashboard.findChildren<QToolButton*>(
-        QStringLiteral("dashboardQuickAction"));
-    const auto quickActionsLeftAligned = dashboardQuickActionsContainer != nullptr
-        && dashboardQuickActionsContainer->parentWidget() != nullptr
-        && dashboardQuickActionsContainer->x() <= 12;
-    const auto dashboardGroups = dashboard.findChildren<QGroupBox*>();
-    const auto groupWithTitle = [&dashboardGroups](const QString& title) -> QGroupBox* {
-        const auto match = std::ranges::find(dashboardGroups, title, &QGroupBox::title);
-        return match == dashboardGroups.end() ? nullptr : *match;
-    };
-    const auto* dashboardModelSummaryPanel = groupWithTitle(QStringLiteral("Model Summary"));
-    const auto* dashboardQuickResultsPanel = groupWithTitle(QStringLiteral("Quick Results"));
-    const auto summaryPanelsAligned = dashboardWorkbenchPanel != nullptr
-        && dashboardStatusFooter != nullptr
-        && dashboardModelSummaryPanel != nullptr && dashboardQuickResultsPanel != nullptr
-        && dashboardModelSummaryPanel->mapTo(&dashboard, QPoint{}).y()
-            == dashboardQuickResultsPanel->mapTo(&dashboard, QPoint{}).y();
-    const auto qualityStatesShareRow = dashboardAverageGainState != nullptr
-        && dashboardConvergenceState != nullptr
-        && dashboardAverageGainState->mapTo(&dashboard, QPoint{}).y()
-            == dashboardConvergenceState->mapTo(&dashboard, QPoint{}).y();
-    const auto quickActionsMatchQualityButtons = dashboardQuickActions.size() == 2
-        && dashboardAverageGainButton != nullptr && dashboardConvergenceButton != nullptr
-        && !dashboardQuickActions[0]->autoRaise() && !dashboardQuickActions[1]->autoRaise()
-        && dashboardQuickActions[0]->toolButtonStyle()
-            == dashboardAverageGainButton->toolButtonStyle()
-        && dashboardQuickActions[1]->toolButtonStyle()
-            == dashboardConvergenceButton->toolButtonStyle();
-    if (dashboardQuickActions.size() != 2
-        || dashboardQuickActions[0]->defaultAction() != &checkAction
-        || dashboardQuickActions[1]->defaultAction() != &runAction
-        || !quickActionsLeftAligned || !summaryPanelsAligned || !qualityStatesShareRow
-        || !quickActionsMatchQualityButtons || !dashboardRecentRunsCompact
-        || !dashboardDenseLayout || dashboardLaunchers.size() != 8
-        || !dashboardWorkspaceOpened) {
+    const auto dashboardStateVisible = dashboardName != nullptr
+        && dashboardName->text().contains(QStringLiteral("test.nec"))
+        && dashboardName->text().contains(QLatin1Char('*'))
+        && dashboardLatest != nullptr
+        && dashboardLatest->text().contains(QStringLiteral("min SWR"))
+        && dashboardLatest->text().contains(QStringLiteral("peak gain"))
+        && dashboardFooter != nullptr
+        && dashboardFooter->text().contains(QStringLiteral("Last run"));
+    const auto dashboardDenseLayout = dashboardRows != nullptr
+        && dashboardRows->rowCount() == 9
+        && dashboardRows->verticalHeader()->defaultSectionSize() <= 24
+        && dashboardRows->height() <= 220
+        && dashboard.findChild<QWidget*>(QStringLiteral("controlPanel"))->maximumWidth() <= 600;
+    const auto dashboardActionsCorrect = dashboardOpen != nullptr
+        && dashboardOpen->defaultAction() == &openAction
+        && dashboardSave != nullptr && dashboardSave->defaultAction() == &saveAction
+        && dashboardCheck != nullptr && dashboardCheck->defaultAction() == &checkAction
+        && dashboardRun != nullptr && dashboardRun->defaultAction() == &runAction
+        && dashboardSweep != nullptr && dashboardSweep->defaultAction() == &sweepAction
+        && dashboardStop != nullptr && dashboardStop->defaultAction() == &stopAction;
+    const auto dashboardWindowStateVisible = dashboardImpedance != nullptr
+        && dashboardImpedance->text().contains(QStringLiteral("[open]"));
+    if (!dashboardActionsCorrect || !dashboardStateVisible || !dashboardDenseLayout
+        || !dashboardWindowStateVisible || !runHistoryOpened
+        || !dashboardWorkspaceOpened || !dashboardGeometryOpened
+        || !dashboardEditorOpened) {
         return NECWB_SMOKE_FAILURE("dashboard workspace");
     }
     QSettings detachableSettings;
@@ -2703,15 +2692,47 @@ auto main(int argc, char* argv[]) -> int
                 });
         }
     }
+    detachableSettings.remove(QStringLiteral("resultWindows/oversized"));
+    QDialog oversizedGeometry;
+    oversizedGeometry.resize(50000, 50000);
+    oversizedGeometry.move(0, 0);
+    detachableSettings.setValue(
+        QStringLiteral("resultWindows/oversized/geometry"), oversizedGeometry.saveGeometry());
+    detachableSettings.setValue(QStringLiteral("resultWindows/oversized/detached"), true);
+    detachableSettings.setValue(QStringLiteral("resultWindows/oversized/visible"), true);
+    detachableSettings.sync();
+    auto oversizedWindowClamped = false;
+    {
+        necwb::ui::DetachablePanel restoredPanel(
+            QStringLiteral("oversized"), QStringLiteral("Oversized Results"));
+        restoredPanel.setContent(new QLabel(QStringLiteral("Recovered content")));
+        restoredPanel.show();
+        application.processEvents();
+        const auto* restoredWindow = topLevelDialog(QStringLiteral("oversizedResultWindow"));
+        if (restoredWindow != nullptr) {
+            oversizedWindowClamped = std::ranges::any_of(
+                QGuiApplication::screens(), [restoredWindow](const QScreen* screen) {
+                    const auto available = screen->availableGeometry();
+                    const auto frame = restoredWindow->frameGeometry();
+                    const auto intersection = available.intersected(frame);
+                    return restoredWindow->width() <= available.width()
+                        && restoredWindow->height() <= available.height()
+                        && intersection.width() >= 100 && intersection.height() >= 60;
+                });
+        }
+    }
     detachableSettings.remove(QStringLiteral("resultWindows/openSetEstablished"));
     detachableSettings.remove(QStringLiteral("resultWindows/policy-impedance"));
     detachableSettings.remove(QStringLiteral("resultWindows/policy-currents"));
     detachableSettings.remove(QStringLiteral("resultWindows/policy-radiation"));
     detachableSettings.remove(QStringLiteral("resultWindows/offscreen"));
+    detachableSettings.remove(QStringLiteral("resultWindows/oversized"));
     detachableSettings.remove(QStringLiteral("resultWindows/smoke-test"));
     detachableSettings.sync();
     if (!firstRunWindowPolicy || !closedResultWindowsStayClosed || !offscreenWindowRecovered)
         return NECWB_SMOKE_FAILURE("result window open-set policy");
+    if (!oversizedWindowClamped)
+        return NECWB_SMOKE_FAILURE("oversized result window clamping");
     QAction welcomeNew(QStringLiteral("New NEC Model"));
     QAction welcomeOpen(QStringLiteral("Open NEC File"));
     QString recentOpened;

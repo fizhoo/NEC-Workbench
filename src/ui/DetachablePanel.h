@@ -3,6 +3,8 @@
 #include <QString>
 #include <QWidget>
 
+#include <functional>
+
 class QDialog;
 class QLabel;
 class QPushButton;
@@ -28,6 +30,7 @@ public:
     [[nodiscard]] auto isWindowActive() const -> bool;
     void showWindow(WindowActivation activation = WindowActivation::Activate);
     void setStatusText(QString status);
+    void setVisibilityChangedCallback(std::function<void(bool)> callback);
 
 private:
     void toggleDetached();
@@ -51,10 +54,12 @@ private:
     QLabel* dialogStatusLabel_{};
     QDialog* dialog_{};
     bool detached_{};
+    bool windowGeometryInitialized_{};
     mutable bool savedWindowState_{};
     mutable bool savedDetached_{};
     mutable bool savedVisible_{};
     QString statusText_;
+    std::function<void(bool)> visibilityChanged_;
 };
 
 }

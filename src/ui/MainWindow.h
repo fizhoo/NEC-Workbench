@@ -104,7 +104,8 @@ private:
         Parameters,
         Sources,
         Loads,
-        Environment
+        Environment,
+        Requests
     };
 
     struct SourceHistoryEntry {
@@ -122,7 +123,6 @@ private:
     void createDocks();
     void createMenusAndToolbar();
     void resetWorkspaceLayout();
-    void updateWorkspaceDockVisibility(int moduleIndex);
     void setWorkspaceDensity(WorkspaceDensity density);
     void applyWorkspaceDensity();
     void applyWorkspaceDensity(QWidget* root);
@@ -374,7 +374,6 @@ private:
     QTreeWidget* projectTree_{};
     QTreeWidget* diagnostics_{};
     QPlainTextEdit* solverOutput_{};
-    QDockWidget* projectDock_{};
     QDialog* modelCheckWindow_{};
     QDialog* runMonitorWindow_{};
     QLabel* validationSummary_{};
@@ -457,8 +456,6 @@ private:
     std::optional<SourceHistoryEntry> pendingSourceHistoryEntry_;
     std::vector<SourceHistoryEntry> sourceUndoHistory_;
     std::vector<SourceHistoryEntry> sourceRedoHistory_;
-    bool projectDockVisibleBeforeFocusedWorkspace_{};
-    bool focusedWorkspaceDockStateActive_{};
     std::optional<std::pair<int, int>> pendingTransmissionLineEndpoint_;
 };
 

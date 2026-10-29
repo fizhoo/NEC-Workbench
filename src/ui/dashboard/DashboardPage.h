@@ -1,7 +1,6 @@
 #pragma once
 
 #include "analysis/AnalysisResult.h"
-#include "analysis/AverageGainTest.h"
 #include "model/AntennaModel.h"
 #include "model/ModelSetup.h"
 #include "ui/analysis/AnalysisRunStore.h"
@@ -11,20 +10,20 @@
 #include <functional>
 #include <vector>
 
+class QAction;
 class QLabel;
 class QTableWidget;
-class QAction;
-class QHBoxLayout;
 class QToolButton;
+
+namespace necwb::nec { class NecDocument; }
 
 namespace necwb::ui {
 
 class DashboardPage final : public QWidget {
 public:
     enum class Workspace {
-        Model,
         Setup,
-        Antenna,
+        GeometryView,
         Impedance,
         Currents,
         Radiation,
@@ -32,53 +31,71 @@ public:
         Optimize
     };
 
+    enum class Editor {
+        Frequency,
+        Wires,
+        Sources,
+        Loads,
+        TransmissionLines,
+        Ground,
+        Variables,
+        Requests,
+        Deck
+    };
+
     explicit DashboardPage(QWidget* parent = nullptr);
 
-    void setQuickActions(QAction* check, QAction* run);
-    void setAverageGainAction(QAction* action);
-    void setConvergenceAction(QAction* action);
+    void setFileActions(QAction* open, QAction* save);
+    void setQuickActions(QAction* check, QAction* run, QAction* sweep, QAction* stop);
     void setDocumentState(const QString& fileName, bool modified);
-
     void setModel(const model::AntennaModel& model, const model::ModelSetup& setup,
-        const QString& solver, bool checked, std::size_t errors, std::size_t warnings);
+        const nec::NecDocument& document, const QString& solver, bool checked,
+        std::size_t errors, std::size_t warnings);
     void setResults(const analysis::AnalysisResult& result, const QString& context, bool stale);
     void markResultsStale();
-    void setAverageGainRunning(double frequencyMHz);
-    void setAverageGainResult(const analysis::AverageGainAssessment& assessment,
-        double frequencyMHz);
-    void setAverageGainFailure(const QString& message);
-    void markAverageGainStale();
-    void clearAverageGain();
-    void setConvergenceState(const QString& summary);
-    void markConvergenceStale();
-    void clearConvergence();
     void setRecentRuns(const std::vector<AnalysisRunRecord>& runs);
-    void setOpenRecentRunCallback(std::function<void(const QString&)> callback);
+    void setResultWindowVisible(Workspace workspace, bool visible);
     void setOpenRunHistoryCallback(std::function<void()> callback);
     void setOpenWorkspaceCallback(std::function<void(Workspace)> callback);
+    void setOpenEditorCallback(std::function<void(Editor)> callback);
 
 private:
-    void setValue(QTableWidget* table, int row, const QString& value);
+    void refreshHeader();
+    void refreshFooter();
+    void refreshResultButton(Workspace workspace);
+    void refreshGeometryViewButton();
+    void setModelRow(Editor editor, const QString& value);
+    [[nodiscard]] auto resultButton(Workspace workspace) const -> QToolButton*;
 
-    QTableWidget* modelSummary_{};
-    QTableWidget* quickResults_{};
+    QLabel* modelName_{};
+    QToolButton* backendState_{};
     QLabel* modelState_{};
     QLabel* resultState_{};
-    QLabel* fileState_{};
-    QLabel* averageGainState_{};
-    QToolButton* averageGainButton_{};
-    QLabel* convergenceState_{};
-    QToolButton* convergenceButton_{};
-    QHBoxLayout* quickActions_{};
-    QTableWidget* recentRuns_{};
-    std::function<void(const QString&)> openRecentRun_;
+    QLabel* latestResult_{};
+    QLabel* footer_{};
+    QTableWidget* modelRows_{};
+    QToolButton* impedanceButton_{};
+    QToolButton* currentsButton_{};
+    QToolButton* radiationButton_{};
+    QToolButton* geometryViewButton_{};
     std::function<void()> openRunHistory_;
     std::function<void(Workspace)> openWorkspace_;
+    std::function<void(Editor)> openEditor_;
+    QString fileName_{tr("Untitled model.nec")};
+    QString backend_;
+    QString modelStatus_{tr("Model not checked")};
+    QString resultStatus_{tr("Results none")};
     QString resultContext_;
-    bool hasResults_{};
+    QString lastRunText_{tr("No completed run")};
+    bool modified_{};
     bool resultsStale_{};
-    bool hasAverageGainResult_{};
-    bool hasConvergenceResult_{};
+    bool impedanceAvailable_{};
+    bool currentsAvailable_{};
+    bool radiationAvailable_{};
+    bool impedanceVisible_{};
+    bool currentsVisible_{};
+    bool radiationVisible_{};
+    bool geometryViewVisible_{};
 };
 
 }

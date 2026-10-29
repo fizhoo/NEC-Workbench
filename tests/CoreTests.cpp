@@ -10,11 +10,13 @@
 #include "analysis/OptimizationObjective.h"
 #include "analysis/OptimizationPreset.h"
 #include "analysis/ReferenceRunSelection.h"
+#include "analysis/ResultSummary.h"
 #include "analysis/SegmentationConvergence.h"
 #include "analysis/SolverInput.h"
 #include "geometry/OrthographicProjection.h"
 #include "model/AutoSegmentation.h"
 #include "model/LengthUnit.h"
+#include "model/ModelSummary.h"
 #include "model/WireGeometry.h"
 #include "model/WireGauge.h"
 #include "nec/DeckGeometryUnits.h"
@@ -136,6 +138,104 @@ void testHistoricalOverlayCompatibility()
     expect(compatibility.impedance == HistoricalOverlayStatus::NoMatchingData
             && compatibility.radiation == HistoricalOverlayStatus::NoMatchingData,
         "historical overlay rejects unrelated result grids");
+}
+
+void testControlPanelSummaries()
+{
+    necwb::model::AntennaModel model;
+    model.addWire({1, {-5.0, 0.0, 10.0}, {0.0, 0.0, 10.0}, 11, 0.001, 3});
+    model.addWire({2, {0.0, 0.0, 10.0}, {5.0, 0.0, 10.0}, 9, 0.001, 4});
+    necwb::model::ModelSetup setup;
+    setup.frequency = necwb::model::FrequencyDefinition{0, 3, 14.0, 0.1, 6};
+    setup.ground = necwb::model::GroundDefinition{
+        necwb::model::GroundType::SommerfeldNorton};
+    setup.executionRequest = necwb::model::ExecutionRequest{0, 11};
+    setup.excitations = {{0, 2, 5, 1.0, 0.0, 7}};
+    setup.loads = {{0, 1, 1, 11, 50.0, 0.0, 0.0, 8}};
+    setup.transmissionLines = {{1, 11, 2, 1, 50.0, 2.0, 0.0, 0.0, 0.0, 0.0, 9}};
+    setup.radiationPatterns = {{19, 37, 0.0, 0.0, 5.0, 10.0, 10}};
+    const auto document = necwb::nec::NecParser{}.parse(
+        "CM summary model\nSY half=5\nGW 1 11 -5 0 10 0 0 10 .001\n"
+        "GW 2 9 0 0 10 5 0 10 .001\nGE 0\nFR 0 3 0 0 14 .1\n"
+        "EX 0 2 5 0 1 0\nLD 0 1 1 11 50 0 0\nTL 1 11 2 1 50 2\n"
+        "RP 0 19 37 1000 0 0 5 10\nXQ\nEN\n\n");
+    const auto modelSummary = necwb::model::summarizeModel(model, setup, document);
+    expect(modelSummary.wireCount == 2 && modelSummary.segmentCount == 20
+            && modelSummary.sources.size() == 1 && modelSummary.sources[0].wireTag == 2
+            && modelSummary.sources[0].segment == 5 && modelSummary.loadCount == 1
+            && modelSummary.transmissionLineCount == 1,
+        "model summary counts geometry and retains source location");
+    expect(modelSummary.frequency && modelSummary.frequency->startMHz == 14.0
+            && modelSummary.frequency->endMHz == 14.2
+            && modelSummary.frequency->pointCount == 3,
+        "model summary retains the authored frequency sweep");
+    expect(modelSummary.groundType == necwb::model::GroundType::SommerfeldNorton
+            && modelSummary.symbolCount == 1
+            && modelSummary.radiationRequests.size() == 1
+            && modelSummary.radiationRequests[0].thetaCount == 19
+            && modelSummary.radiationRequests[0].phiCount == 37
+            && modelSummary.executionRequestCount == 1
+            && modelSummary.cardCount == 12,
+        "model summary counts variables, requests, and nonblank deck cards");
+
+    const auto emptySummary = necwb::analysis::summarizeResults({}, 14.0);
+    expect(!emptySummary.selectedFeedpoint && !emptySummary.minimumSwr
+            && !emptySummary.peakGain,
+        "result summary represents an empty analysis without placeholder values");
+
+    necwb::analysis::AnalysisResult singleFrequency;
+    singleFrequency.feedpoints = {{7.1, 1, 11, {}, {}, {50.0, 0.0}, 0.5}};
+    singleFrequency.radiation = {
+        {7.1, 0.0, 0.0, 0.0, 0.0, -5.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 0},
+        {7.1, 90.0, 0.0, 0.0, 0.0, 6.2, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 0},
+    };
+    const auto singleSummary = necwb::analysis::summarizeResults(singleFrequency, 7.1);
+    expect(singleSummary.selectedFeedpoint && singleSummary.minimumSwr
+            && singleSummary.selectedFeedpoint->frequencyMHz == 7.1
+            && singleSummary.selectedFeedpoint->swr == 1.0
+            && singleSummary.minimumSwr->frequencyMHz == 7.1,
+        "result summary reports one-frequency impedance and minimum SWR consistently");
+    expect(singleSummary.peakGain && singleSummary.peakGain->frequencyMHz == 7.1
+            && singleSummary.peakGain->gainDb == 6.2
+            && singleSummary.peakGain->datasetKind
+                == necwb::analysis::RadiationDatasetKind::ElevationCut,
+        "result summary identifies peak gain and its elevation cut");
+
+    necwb::analysis::AnalysisResult sweep;
+    sweep.feedpoints = {
+        {14.0, 1, 6, {}, {}, {50.0, 0.0}},
+        {14.2, 1, 6, {}, {}, {75.0, 0.0}},
+        {14.0, 2, 6, {}, {}, {150.0, 0.0}},
+        {14.2, 2, 6, {}, {}, {100.0, 0.0}},
+    };
+    sweep.radiation = {
+        {21.0, 45.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 4},
+        {21.0, 45.0, 90.0, 0.0, 0.0, 6.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 4},
+        {21.0, 90.0, 0.0, 0.0, 0.0, 7.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 4},
+        {21.0, 90.0, 90.0, 0.0, 0.0, 8.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 4},
+    };
+    const auto sweepSummary = necwb::analysis::summarizeResults(
+        sweep, 14.19, necwb::analysis::FeedpointIdentity{2, 6});
+    expect(sweepSummary.selectedFeedpoint && sweepSummary.minimumSwr
+            && sweepSummary.selectedFeedpoint->frequencyMHz == 14.2
+            && sweepSummary.selectedFeedpoint->source
+                == necwb::analysis::FeedpointIdentity{2, 6}
+            && sweepSummary.minimumSwr->frequencyMHz == 14.2
+            && sweepSummary.minimumSwr->source
+                == necwb::analysis::FeedpointIdentity{2, 6},
+        "result summary keeps selected and minimum SWR values on one source");
+    expect(sweepSummary.peakGain && sweepSummary.peakGain->frequencyMHz == 21.0
+            && sweepSummary.peakGain->gainDb == 8.0
+            && sweepSummary.peakGain->patternIndex == 4
+            && sweepSummary.peakGain->datasetKind
+                == necwb::analysis::RadiationDatasetKind::FullPattern,
+        "result summary labels a peak from another frequency and full pattern dataset");
 }
 
 void testOptimizationBaselineFingerprint()
@@ -2778,6 +2878,7 @@ auto main() -> int
 {
     testReferenceRunSelection();
     testHistoricalOverlayCompatibility();
+    testControlPanelSummaries();
     testOptimizationBaselineFingerprint();
     testOptimizationBaselineCompatibility();
     testOptimizationPresets();
