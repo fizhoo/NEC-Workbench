@@ -2536,7 +2536,7 @@ auto main(int argc, char* argv[]) -> int
         && dashboardSweep != nullptr && dashboardSweep->defaultAction() == &sweepAction
         && dashboardStop != nullptr && dashboardStop->defaultAction() == &stopAction;
     const auto dashboardWindowStateVisible = dashboardImpedance != nullptr
-        && dashboardImpedance->text().contains(QStringLiteral("[open]"));
+        && dashboardImpedance->text().startsWith(QStringLiteral("●"));
     if (!dashboardActionsCorrect || !dashboardStateVisible || !dashboardDenseLayout
         || !dashboardWindowStateVisible || !runHistoryOpened
         || !dashboardWorkspaceOpened || !dashboardGeometryOpened

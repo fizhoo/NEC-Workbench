@@ -169,6 +169,7 @@ if(NECWB_BUILD_GUI)
             resources/icons/3d-view.svg
             resources/icons/analysis.svg
             resources/icons/check.svg
+            resources/icons/currents.svg
             resources/icons/delete.svg
             resources/icons/detach.svg
             resources/icons/edit.svg
@@ -177,6 +178,7 @@ if(NECWB_BUILD_GUI)
             resources/icons/fit.svg
             resources/icons/frequency-sweep.svg
             resources/icons/geometry.svg
+            resources/icons/ground.svg
             resources/icons/help.svg
             resources/icons/import.svg
             resources/icons/loads.svg
@@ -188,7 +190,9 @@ if(NECWB_BUILD_GUI)
             resources/icons/radiation-pattern.svg
             resources/icons/redo.svg
             resources/icons/results.svg
+            resources/icons/requests.svg
             resources/icons/run.svg
+            resources/icons/runs.svg
             resources/icons/save.svg
             resources/icons/settings.svg
             resources/icons/sources.svg
@@ -197,6 +201,7 @@ if(NECWB_BUILD_GUI)
             resources/icons/transmission-lines.svg
             resources/icons/undo.svg
             resources/icons/validate.svg
+            resources/icons/variables.svg
     )
     target_link_libraries(necwb_ui PUBLIC necwb_core Qt6::Widgets)
     if(MSVC)

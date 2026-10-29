@@ -5,6 +5,7 @@
 #include "model/ModelSummary.h"
 #include "nec/NecDocument.h"
 #include "ui/DisplayFormat.h"
+#include "ui/WorkbenchIcon.h"
 
 #include <QAction>
 #include <QFont>
@@ -45,6 +46,7 @@ auto compactButton(const QString& text, QWidget* parent) -> QToolButton*
     button->setToolButtonStyle(Qt::ToolButtonTextOnly);
     button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     button->setMinimumHeight(25);
+    button->setIconSize({16, 16});
     return button;
 }
 
@@ -143,6 +145,11 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     impedanceButton_->setObjectName(QStringLiteral("controlPanelImpedance"));
     currentsButton_->setObjectName(QStringLiteral("controlPanelCurrents"));
     radiationButton_->setObjectName(QStringLiteral("controlPanelRadiation"));
+    impedanceButton_->setIcon(workbenchIcon("results"));
+    currentsButton_->setIcon(workbenchIcon("currents"));
+    radiationButton_->setIcon(workbenchIcon("radiation-pattern"));
+    for (auto* button : {impedanceButton_, currentsButton_, radiationButton_})
+        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     for (auto* button : {impedanceButton_, currentsButton_, radiationButton_})
         commands->addWidget(button);
     commands->addSpacing(5);
@@ -150,6 +157,10 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     runs->setObjectName(QStringLiteral("controlPanelRuns"));
     auto* optimize = compactButton(tr("Optimize…"), panel);
     optimize->setObjectName(QStringLiteral("controlPanelOptimize"));
+    runs->setIcon(workbenchIcon("runs"));
+    optimize->setIcon(workbenchIcon("optimize"));
+    runs->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    optimize->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     commands->addWidget(runs);
     commands->addWidget(optimize);
     commands->addStretch();
@@ -192,17 +203,23 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     const std::array labels{
         tr("Frequency"), tr("Wires"), tr("Sources"), tr("Loads"),
         tr("Trans. lines"), tr("Ground"), tr("Variables"), tr("Requests"), tr("Deck")};
+    const std::array icons{
+        "frequency-sweep", "geometry", "sources", "loads", "transmission-lines",
+        "ground", "variables", "requests", "nec-deck"};
     for (auto row = 0; row < static_cast<int>(labels.size()); ++row) {
         auto* label = new QTableWidgetItem(labels[static_cast<std::size_t>(row)]);
         auto font = label->font();
         font.setBold(true);
         label->setFont(font);
+        label->setIcon(workbenchIcon(icons[static_cast<std::size_t>(row)]));
         modelRows_->setItem(row, 0, label);
         modelRows_->setItem(row, 1, new QTableWidgetItem(tr("—")));
         modelRows_->setItem(row, 2, new QTableWidgetItem(QStringLiteral("›")));
     }
     geometryViewButton_ = compactButton(tr("Geometry View"), panel);
     geometryViewButton_->setObjectName(QStringLiteral("controlPanelGeometryView"));
+    geometryViewButton_->setIcon(workbenchIcon("3d-view"));
+    geometryViewButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     geometryViewButton_->setAutoRaise(true);
     geometryViewButton_->setToolTip(tr("Open or raise the reusable 2D/3D Geometry View"));
     connect(geometryViewButton_, &QToolButton::clicked, this, [this] {
@@ -302,24 +319,36 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
 
 void DashboardPage::setFileActions(QAction* open, QAction* save)
 {
-    if (auto* button = findChild<QToolButton*>(QStringLiteral("controlPanelOpen")))
+    if (auto* button = findChild<QToolButton*>(QStringLiteral("controlPanelOpen"))) {
         button->setDefaultAction(open);
-    if (auto* button = findChild<QToolButton*>(QStringLiteral("controlPanelSave")))
+        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    }
+    if (auto* button = findChild<QToolButton*>(QStringLiteral("controlPanelSave"))) {
         button->setDefaultAction(save);
+        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    }
 }
 
 void DashboardPage::setQuickActions(
     QAction* check, QAction* run, QAction* sweep, QAction* stop)
 {
-    if (auto* button = findChild<QToolButton*>(QStringLiteral("controlPanelCheck")))
+    if (auto* button = findChild<QToolButton*>(QStringLiteral("controlPanelCheck"))) {
         button->setDefaultAction(check);
-    if (auto* button = findChild<QToolButton*>(QStringLiteral("controlPanelRun")))
+        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    }
+    if (auto* button = findChild<QToolButton*>(QStringLiteral("controlPanelRun"))) {
         button->setDefaultAction(run);
+        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    }
     if (auto* button = findChild<QToolButton*>(
-            QStringLiteral("controlPanelFrequencySweep")))
+            QStringLiteral("controlPanelFrequencySweep"))) {
         button->setDefaultAction(sweep);
-    if (auto* button = findChild<QToolButton*>(QStringLiteral("controlPanelStop")))
+        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    }
+    if (auto* button = findChild<QToolButton*>(QStringLiteral("controlPanelStop"))) {
         button->setDefaultAction(stop);
+        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    }
 }
 
 void DashboardPage::setAverageGainAction(QAction* action)
@@ -589,7 +618,8 @@ void DashboardPage::refreshResultButton(Workspace workspace)
     default: return;
     }
     button->setEnabled(available);
-    button->setText(visible ? tr("%1  [open]").arg(label) : label);
+    button->setText(tr("%1 %2").arg(visible ? QStringLiteral("●")
+                                             : QStringLiteral("○"), label));
     button->setToolTip(available
         ? visible ? tr("This live result window is open; click to raise it")
                   : tr("Open this live result window")
@@ -598,7 +628,8 @@ void DashboardPage::refreshResultButton(Workspace workspace)
 
 void DashboardPage::refreshGeometryViewButton()
 {
-    geometryViewButton_->setText(geometryViewVisible_ ? tr("View [open]") : tr("View"));
+    geometryViewButton_->setText(geometryViewVisible_
+        ? tr("● Geometry View") : tr("○ Geometry View"));
 }
 
 void DashboardPage::setModelRow(Editor editor, const QString& value)

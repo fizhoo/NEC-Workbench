@@ -3,6 +3,7 @@
 #include "ui/DisplayFormat.h"
 #include "ui/DetachablePanel.h"
 #include "ui/WorkspaceNavigator.h"
+#include "ui/WorkbenchIcon.h"
 
 #include "analysis/FrequencyComparison.h"
 #include "analysis/HistoricalOverlayCompatibility.h"
@@ -143,12 +144,6 @@ auto modelSegmentCount(const model::AntennaModel& model) -> int
     auto count = 0;
     for (const auto& wire : model.wires()) count += wire.segments;
     return count;
-}
-
-auto workbenchIcon(const char* name) -> QIcon
-{
-    return QIcon(QStringLiteral(":/icons/")
-        + QString::fromLatin1(name) + QStringLiteral(".svg"));
 }
 
 auto historicalOverlayStatusText(analysis::HistoricalOverlayStatus status) -> QString
