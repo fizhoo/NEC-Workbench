@@ -66,7 +66,7 @@ class SetupEditor;
 class LoadNetworkEditor;
 class WireCardEditor;
 class StructuredCardEditor;
-class DashboardPage;
+class ControlPanel;
 class WelcomePage;
 class OptimizationWorkspace;
 class ParameterEditor;
@@ -330,7 +330,7 @@ private:
     DetachablePanel* optimizationPanel_{};
     QComboBox* rawOutputFrequencyControl_{};
     QLineEdit* rawOutputFindControl_{};
-    DashboardPage* dashboardPage_{};
+    ControlPanel* controlPanel_{};
     WelcomePage* welcomePage_{};
     WireCardEditor* wireCardEditor_{};
     StructuredCardEditor* structuredCardEditor_{};

@@ -15,7 +15,7 @@
 #include "ui/analysis/ConvergenceWorkspace.h"
 #include "ui/analysis/FieldResultsViews.h"
 #include "ui/analysis/HistoricalOverlayControl.h"
-#include "ui/dashboard/DashboardPage.h"
+#include "ui/controlpanel/ControlPanel.h"
 #include "ui/cards/StructuredCardEditor.h"
 #include "ui/cards/WireCardEditor.h"
 #include "ui/editor/NecEditor.h"
@@ -2432,172 +2432,172 @@ auto main(int argc, char* argv[]) -> int
     QImage currentImage(800, 600, QImage::Format_ARGB32_Premultiplied);
     currentImage.fill(Qt::transparent); QPainter currentPainter(&currentImage);
     radiation3D.render(&currentPainter); currentPainter.end();
-    necwb::ui::DashboardPage dashboard;
-    const auto dashboardCompact = hasCompactMargins(dashboard, 8);
-    dashboard.resize(600, 520);
+    necwb::ui::ControlPanel controlPanel;
+    const auto controlPanelCompact = hasCompactMargins(controlPanel, 8);
+    controlPanel.resize(600, 520);
     necwb::model::ModelSetup setup;
     setup.frequency = {0, 3, 14.0, 0.1, 1};
     setup.excitations = {{0, 2, 1, 1.0, 0.0, 2}};
     setup.radiationPatterns = {{19, 37, 0.0, 0.0, 5.0, 10.0, 3}};
-    const auto dashboardDocument = necwb::nec::NecParser{}.parse(
+    const auto controlPanelDocument = necwb::nec::NecParser{}.parse(
         "GW 1 11 0 0 0 1 0 0 .001\nGE 0\nEX 0 1 6 0 1 0\n"
         "FR 0 3 0 0 14 .1\nRP 0 19 37 1000 0 0 5 10\nEN\n");
-    dashboard.setModel(antenna, setup, dashboardDocument,
+    controlPanel.setModel(antenna, setup, controlPanelDocument,
         QStringLiteral("nec2"), true, 0, 0);
-    QAction openAction(QStringLiteral("Open…"), &dashboard);
-    QAction saveAction(QStringLiteral("Save"), &dashboard);
-    QAction checkAction(QStringLiteral("Check Model"), &dashboard);
-    QAction runAction(QStringLiteral("Run Analysis"), &dashboard);
-    QAction sweepAction(QStringLiteral("Frequency Sweep…"), &dashboard);
-    QAction stopAction(QStringLiteral("Stop"), &dashboard);
-    QAction averageGainAction(QStringLiteral("Run Average Gain Test…"), &dashboard);
-    QAction convergenceAction(QStringLiteral("Segmentation Convergence…"), &dashboard);
-    dashboard.setFileActions(&openAction, &saveAction);
-    dashboard.setQuickActions(&checkAction, &runAction, &sweepAction, &stopAction);
-    dashboard.setAverageGainAction(&averageGainAction);
-    dashboard.setConvergenceAction(&convergenceAction);
-    auto dashboardAverageGainTriggered = false;
-    auto dashboardConvergenceTriggered = false;
+    QAction openAction(QStringLiteral("Open…"), &controlPanel);
+    QAction saveAction(QStringLiteral("Save"), &controlPanel);
+    QAction checkAction(QStringLiteral("Check Model"), &controlPanel);
+    QAction runAction(QStringLiteral("Run Analysis"), &controlPanel);
+    QAction sweepAction(QStringLiteral("Frequency Sweep…"), &controlPanel);
+    QAction stopAction(QStringLiteral("Stop"), &controlPanel);
+    QAction averageGainAction(QStringLiteral("Run Average Gain Test…"), &controlPanel);
+    QAction convergenceAction(QStringLiteral("Segmentation Convergence…"), &controlPanel);
+    controlPanel.setFileActions(&openAction, &saveAction);
+    controlPanel.setQuickActions(&checkAction, &runAction, &sweepAction, &stopAction);
+    controlPanel.setAverageGainAction(&averageGainAction);
+    controlPanel.setConvergenceAction(&convergenceAction);
+    auto controlPanelAverageGainTriggered = false;
+    auto controlPanelConvergenceTriggered = false;
     QObject::connect(&averageGainAction, &QAction::triggered,
-        [&dashboardAverageGainTriggered] { dashboardAverageGainTriggered = true; });
+        [&controlPanelAverageGainTriggered] { controlPanelAverageGainTriggered = true; });
     QObject::connect(&convergenceAction, &QAction::triggered,
-        [&dashboardConvergenceTriggered] { dashboardConvergenceTriggered = true; });
+        [&controlPanelConvergenceTriggered] { controlPanelConvergenceTriggered = true; });
     auto runHistoryOpened = false;
-    auto dashboardWorkspaceOpened = false;
-    auto dashboardGeometryOpened = false;
-    auto dashboardEditorOpened = false;
-    dashboard.setOpenRunHistoryCallback([&runHistoryOpened] { runHistoryOpened = true; });
-    dashboard.setOpenWorkspaceCallback(
-        [&dashboardWorkspaceOpened, &dashboardGeometryOpened](auto destination) {
-        if (destination == necwb::ui::DashboardPage::Workspace::Impedance)
-            dashboardWorkspaceOpened = true;
-        if (destination == necwb::ui::DashboardPage::Workspace::GeometryView)
-            dashboardGeometryOpened = true;
+    auto controlPanelWorkspaceOpened = false;
+    auto controlPanelGeometryOpened = false;
+    auto controlPanelEditorOpened = false;
+    controlPanel.setOpenRunHistoryCallback([&runHistoryOpened] { runHistoryOpened = true; });
+    controlPanel.setOpenWorkspaceCallback(
+        [&controlPanelWorkspaceOpened, &controlPanelGeometryOpened](auto destination) {
+        if (destination == necwb::ui::ControlPanel::Workspace::Impedance)
+            controlPanelWorkspaceOpened = true;
+        if (destination == necwb::ui::ControlPanel::Workspace::GeometryView)
+            controlPanelGeometryOpened = true;
         });
-    dashboard.setOpenEditorCallback([&dashboardEditorOpened](auto destination) {
-        dashboardEditorOpened = destination == necwb::ui::DashboardPage::Editor::Requests;
+    controlPanel.setOpenEditorCallback([&controlPanelEditorOpened](auto destination) {
+        controlPanelEditorOpened = destination == necwb::ui::ControlPanel::Editor::Requests;
     });
     necwb::ui::AnalysisRunRecord recentRun;
     recentRun.id = QStringLiteral("recent-0");
     recentRun.started = QDateTime::currentDateTime();
     recentRun.status = QStringLiteral("Completed");
     recentRun.durationSeconds = 1.25;
-    dashboard.setRecentRuns({recentRun});
-    dashboard.setDocumentState(QStringLiteral("test.nec"), true);
-    dashboard.setResults(result, QStringLiteral("Model: test.nec · Run: dashboard"), false);
-    dashboard.setStudyStatus(necwb::ui::DashboardPage::Study::AverageGain,
-        necwb::ui::DashboardPage::StudyState::Complete, QStringLiteral("1.000 @ 14.100 MHz"));
-    dashboard.setStudyStatus(necwb::ui::DashboardPage::Study::Convergence,
-        necwb::ui::DashboardPage::StudyState::Complete, QStringLiteral("passed"));
-    dashboard.clearStudy(necwb::ui::DashboardPage::Study::AverageGain);
-    dashboard.clearStudy(necwb::ui::DashboardPage::Study::Convergence);
-    const auto studiesCleared = dashboard.findChild<QLabel*>(
+    controlPanel.setRecentRuns({recentRun});
+    controlPanel.setDocumentState(QStringLiteral("test.nec"), true);
+    controlPanel.setResults(result, QStringLiteral("Model: test.nec · Run: controlPanel"), false);
+    controlPanel.setStudyStatus(necwb::ui::ControlPanel::Study::AverageGain,
+        necwb::ui::ControlPanel::StudyState::Complete, QStringLiteral("1.000 @ 14.100 MHz"));
+    controlPanel.setStudyStatus(necwb::ui::ControlPanel::Study::Convergence,
+        necwb::ui::ControlPanel::StudyState::Complete, QStringLiteral("passed"));
+    controlPanel.clearStudy(necwb::ui::ControlPanel::Study::AverageGain);
+    controlPanel.clearStudy(necwb::ui::ControlPanel::Study::Convergence);
+    const auto studiesCleared = controlPanel.findChild<QLabel*>(
             QStringLiteral("controlPanelAverageGainState"))->text() == QStringLiteral("not run")
-        && dashboard.findChild<QLabel*>(
+        && controlPanel.findChild<QLabel*>(
             QStringLiteral("controlPanelConvergenceState"))->text() == QStringLiteral("not run");
-    dashboard.setStudyStatus(necwb::ui::DashboardPage::Study::AverageGain,
-        necwb::ui::DashboardPage::StudyState::Running, QStringLiteral("running @ 14.100 MHz"));
-    dashboard.setStudyStatus(necwb::ui::DashboardPage::Study::AverageGain,
-        necwb::ui::DashboardPage::StudyState::Failed, {}, QStringLiteral("solver failed"));
-    dashboard.setResultWindowVisible(
-        necwb::ui::DashboardPage::Workspace::Impedance, true);
-    dashboard.show(); application.processEvents();
-    QImage dashboardImage(600, 520, QImage::Format_ARGB32_Premultiplied);
-    dashboardImage.fill(Qt::transparent); QPainter dashboardPainter(&dashboardImage);
-    dashboard.render(&dashboardPainter); dashboardPainter.end();
-    const auto* dashboardName = dashboard.findChild<QLabel*>(
+    controlPanel.setStudyStatus(necwb::ui::ControlPanel::Study::AverageGain,
+        necwb::ui::ControlPanel::StudyState::Running, QStringLiteral("running @ 14.100 MHz"));
+    controlPanel.setStudyStatus(necwb::ui::ControlPanel::Study::AverageGain,
+        necwb::ui::ControlPanel::StudyState::Failed, {}, QStringLiteral("solver failed"));
+    controlPanel.setResultWindowVisible(
+        necwb::ui::ControlPanel::Workspace::Impedance, true);
+    controlPanel.show(); application.processEvents();
+    QImage controlPanelImage(600, 520, QImage::Format_ARGB32_Premultiplied);
+    controlPanelImage.fill(Qt::transparent); QPainter controlPanelPainter(&controlPanelImage);
+    controlPanel.render(&controlPanelPainter); controlPanelPainter.end();
+    const auto* controlPanelName = controlPanel.findChild<QLabel*>(
         QStringLiteral("controlPanelModelName"));
-    const auto* dashboardExtrema = dashboard.findChild<QLabel*>(
+    const auto* controlPanelExtrema = controlPanel.findChild<QLabel*>(
         QStringLiteral("controlPanelResultExtrema"));
-    const auto* dashboardQuickResults = dashboard.findChild<QWidget*>(
+    const auto* controlPanelQuickResults = controlPanel.findChild<QWidget*>(
         QStringLiteral("controlPanelQuickResults"));
-    const auto* dashboardStale = dashboard.findChild<QLabel*>(
+    const auto* controlPanelStale = controlPanel.findChild<QLabel*>(
         QStringLiteral("controlPanelResultStale"));
-    const auto* dashboardFooter = dashboard.findChild<QLabel*>(
+    const auto* controlPanelFooter = controlPanel.findChild<QLabel*>(
         QStringLiteral("controlPanelFooter"));
-    const auto* dashboardAverageGain = dashboard.findChild<QLabel*>(
+    const auto* controlPanelAverageGain = controlPanel.findChild<QLabel*>(
         QStringLiteral("controlPanelAverageGainState"));
-    const auto* dashboardConvergence = dashboard.findChild<QLabel*>(
+    const auto* controlPanelConvergence = controlPanel.findChild<QLabel*>(
         QStringLiteral("controlPanelConvergenceState"));
-    auto* dashboardRows = dashboard.findChild<QTableWidget*>(
+    auto* controlPanelRows = controlPanel.findChild<QTableWidget*>(
         QStringLiteral("controlPanelModelRows"));
-    auto* dashboardOpen = dashboard.findChild<QToolButton*>(
+    auto* controlPanelOpen = controlPanel.findChild<QToolButton*>(
         QStringLiteral("controlPanelOpen"));
-    auto* dashboardSave = dashboard.findChild<QToolButton*>(
+    auto* controlPanelSave = controlPanel.findChild<QToolButton*>(
         QStringLiteral("controlPanelSave"));
-    auto* dashboardCheck = dashboard.findChild<QToolButton*>(
+    auto* controlPanelCheck = controlPanel.findChild<QToolButton*>(
         QStringLiteral("controlPanelCheck"));
-    auto* dashboardRun = dashboard.findChild<QToolButton*>(
+    auto* controlPanelRun = controlPanel.findChild<QToolButton*>(
         QStringLiteral("controlPanelRun"));
-    auto* dashboardSweep = dashboard.findChild<QToolButton*>(
+    auto* controlPanelSweep = controlPanel.findChild<QToolButton*>(
         QStringLiteral("controlPanelFrequencySweep"));
-    auto* dashboardStop = dashboard.findChild<QToolButton*>(
+    auto* controlPanelStop = controlPanel.findChild<QToolButton*>(
         QStringLiteral("controlPanelStop"));
-    auto* dashboardRuns = dashboard.findChild<QToolButton*>(
+    auto* controlPanelRuns = controlPanel.findChild<QToolButton*>(
         QStringLiteral("controlPanelRuns"));
-    auto* dashboardAverageGainRun = dashboard.findChild<QToolButton*>(
+    auto* controlPanelAverageGainRun = controlPanel.findChild<QToolButton*>(
         QStringLiteral("controlPanelAverageGainRun"));
-    auto* dashboardConvergenceRun = dashboard.findChild<QToolButton*>(
+    auto* controlPanelConvergenceRun = controlPanel.findChild<QToolButton*>(
         QStringLiteral("controlPanelConvergenceRun"));
-    auto* dashboardImpedance = dashboard.findChild<QToolButton*>(
+    auto* controlPanelImpedance = controlPanel.findChild<QToolButton*>(
         QStringLiteral("controlPanelImpedance"));
-    auto* dashboardGeometry = dashboard.findChild<QToolButton*>(
+    auto* controlPanelGeometry = controlPanel.findChild<QToolButton*>(
         QStringLiteral("controlPanelGeometryView"));
-    const auto staleInitiallyHidden = dashboardStale != nullptr && !dashboardStale->isVisible();
-    dashboard.markResultsStale();
+    const auto staleInitiallyHidden = controlPanelStale != nullptr && !controlPanelStale->isVisible();
+    controlPanel.markResultsStale();
     application.processEvents();
-    const auto staleStateVisible = dashboardStale != nullptr && dashboardStale->isVisible()
-        && dashboardQuickResults != nullptr && !dashboardQuickResults->isEnabled();
-    dashboard.setResults(result, QStringLiteral("Model: test.nec · Run: dashboard"), false);
-    if (dashboardAverageGainRun != nullptr) dashboardAverageGainRun->click();
-    if (dashboardConvergenceRun != nullptr) dashboardConvergenceRun->click();
-    if (dashboardRuns != nullptr) dashboardRuns->click();
-    if (dashboardImpedance != nullptr) dashboardImpedance->click();
-    if (dashboardGeometry != nullptr) dashboardGeometry->click();
-    if (dashboardRows != nullptr) {
-        QMetaObject::invokeMethod(dashboardRows, "cellClicked", Qt::DirectConnection,
-            Q_ARG(int, static_cast<int>(necwb::ui::DashboardPage::Editor::Requests)),
+    const auto staleStateVisible = controlPanelStale != nullptr && controlPanelStale->isVisible()
+        && controlPanelQuickResults != nullptr && !controlPanelQuickResults->isEnabled();
+    controlPanel.setResults(result, QStringLiteral("Model: test.nec · Run: controlPanel"), false);
+    if (controlPanelAverageGainRun != nullptr) controlPanelAverageGainRun->click();
+    if (controlPanelConvergenceRun != nullptr) controlPanelConvergenceRun->click();
+    if (controlPanelRuns != nullptr) controlPanelRuns->click();
+    if (controlPanelImpedance != nullptr) controlPanelImpedance->click();
+    if (controlPanelGeometry != nullptr) controlPanelGeometry->click();
+    if (controlPanelRows != nullptr) {
+        QMetaObject::invokeMethod(controlPanelRows, "cellClicked", Qt::DirectConnection,
+            Q_ARG(int, static_cast<int>(necwb::ui::ControlPanel::Editor::Requests)),
             Q_ARG(int, 0));
     }
-    const auto dashboardStateVisible = dashboardName != nullptr
-        && dashboardName->text().contains(QStringLiteral("test.nec"))
-        && dashboardName->text().contains(QLatin1Char('*'))
-        && dashboardQuickResults != nullptr
-        && dashboardExtrema != nullptr
-        && dashboardExtrema->text().contains(QStringLiteral("Min SWR"))
-        && dashboardExtrema->text().contains(QStringLiteral("Peak gain"))
-        && dashboardFooter != nullptr
-        && dashboardFooter->text().contains(QStringLiteral("Last run"))
+    const auto controlPanelStateVisible = controlPanelName != nullptr
+        && controlPanelName->text().contains(QStringLiteral("test.nec"))
+        && controlPanelName->text().contains(QLatin1Char('*'))
+        && controlPanelQuickResults != nullptr
+        && controlPanelExtrema != nullptr
+        && controlPanelExtrema->text().contains(QStringLiteral("Min SWR"))
+        && controlPanelExtrema->text().contains(QStringLiteral("Peak gain"))
+        && controlPanelFooter != nullptr
+        && controlPanelFooter->text().contains(QStringLiteral("Last run"))
         && studiesCleared
-        && dashboardAverageGain != nullptr
-        && dashboardAverageGain->text() == QStringLiteral("failed")
-        && dashboardConvergence != nullptr
-        && dashboardConvergence->text() == QStringLiteral("not run")
+        && controlPanelAverageGain != nullptr
+        && controlPanelAverageGain->text() == QStringLiteral("failed")
+        && controlPanelConvergence != nullptr
+        && controlPanelConvergence->text() == QStringLiteral("not run")
         && staleInitiallyHidden && staleStateVisible;
-    const auto dashboardDenseLayout = dashboardRows != nullptr
-        && dashboardRows->rowCount() == 9
-        && dashboardRows->verticalHeader()->defaultSectionSize() <= 24
-        && dashboardRows->height() <= 220
-        && dashboard.findChild<QWidget*>(QStringLiteral("controlPanel"))->maximumWidth() <= 600;
-    const auto dashboardActionsCorrect = dashboardOpen != nullptr
-        && dashboardOpen->defaultAction() == &openAction
-        && dashboardSave != nullptr && dashboardSave->defaultAction() == &saveAction
-        && dashboardCheck != nullptr && dashboardCheck->defaultAction() == &checkAction
-        && dashboardRun != nullptr && dashboardRun->defaultAction() == &runAction
-        && dashboardSweep != nullptr && dashboardSweep->defaultAction() == &sweepAction
-        && dashboardStop != nullptr && dashboardStop->defaultAction() == &stopAction
-        && dashboardAverageGainRun != nullptr
-        && dashboardAverageGainRun->text() == QStringLiteral("Run")
-        && dashboardConvergenceRun != nullptr
-        && dashboardConvergenceRun->text() == QStringLiteral("Run")
-        && dashboardAverageGainTriggered && dashboardConvergenceTriggered;
-    const auto dashboardWindowStateVisible = dashboardImpedance != nullptr
-        && dashboardImpedance->text().startsWith(QStringLiteral("●"));
-    if (!dashboardActionsCorrect || !dashboardStateVisible || !dashboardDenseLayout
-        || !dashboardWindowStateVisible || !runHistoryOpened
-        || !dashboardWorkspaceOpened || !dashboardGeometryOpened
-        || !dashboardEditorOpened) {
-        return NECWB_SMOKE_FAILURE("dashboard workspace");
+    const auto controlPanelDenseLayout = controlPanelRows != nullptr
+        && controlPanelRows->rowCount() == 9
+        && controlPanelRows->verticalHeader()->defaultSectionSize() <= 24
+        && controlPanelRows->height() <= 220
+        && controlPanel.findChild<QWidget*>(QStringLiteral("controlPanel"))->maximumWidth() <= 600;
+    const auto controlPanelActionsCorrect = controlPanelOpen != nullptr
+        && controlPanelOpen->defaultAction() == &openAction
+        && controlPanelSave != nullptr && controlPanelSave->defaultAction() == &saveAction
+        && controlPanelCheck != nullptr && controlPanelCheck->defaultAction() == &checkAction
+        && controlPanelRun != nullptr && controlPanelRun->defaultAction() == &runAction
+        && controlPanelSweep != nullptr && controlPanelSweep->defaultAction() == &sweepAction
+        && controlPanelStop != nullptr && controlPanelStop->defaultAction() == &stopAction
+        && controlPanelAverageGainRun != nullptr
+        && controlPanelAverageGainRun->text() == QStringLiteral("Run")
+        && controlPanelConvergenceRun != nullptr
+        && controlPanelConvergenceRun->text() == QStringLiteral("Run")
+        && controlPanelAverageGainTriggered && controlPanelConvergenceTriggered;
+    const auto controlPanelWindowStateVisible = controlPanelImpedance != nullptr
+        && controlPanelImpedance->text().startsWith(QStringLiteral("●"));
+    if (!controlPanelActionsCorrect || !controlPanelStateVisible || !controlPanelDenseLayout
+        || !controlPanelWindowStateVisible || !runHistoryOpened
+        || !controlPanelWorkspaceOpened || !controlPanelGeometryOpened
+        || !controlPanelEditorOpened) {
+        return NECWB_SMOKE_FAILURE("controlPanel workspace");
     }
     QSettings detachableSettings;
     detachableSettings.remove(QStringLiteral("resultWindows/smoke-test"));
@@ -3631,14 +3631,14 @@ auto main(int argc, char* argv[]) -> int
     const auto passed = !image.isNull() && engineeringAxes && candidatePlotValid
         && !summaryImage.isNull()
         && !fieldImage.isNull() && !currentImage.isNull()
-        && !dashboardImage.isNull() && dashboardStateVisible
+        && !controlPanelImage.isNull() && controlPanelStateVisible
         && resultPanelDetached && resultPanelHiddenButLive
         && resultPanelRaisedWithUpdate && resultPanelRestoredHidden
         && resultPanelOpenStateSaved && resultPanelRestoredVisible
         && !welcomeImage.isNull() && welcomeStateValid && !examplesOpened && storeValid
         && runReviewValid
         && runReviewSwitchesCleanly
-        && solverSetupCompact && dashboardCompact && structuredCardsCompact
+        && solverSetupCompact && controlPanelCompact && structuredCardsCompact
         && parameterEditorCompact && requestEditorCompact && runReviewCompact
         && runDeletionSafe
         && !structuredImage.isNull() && invalidEditBlocked && duplicateFrequencyBlocked

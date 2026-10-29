@@ -22,7 +22,7 @@ namespace necwb::nec { class NecDocument; }
 
 namespace necwb::ui {
 
-class DashboardPage final : public QWidget {
+class ControlPanel final : public QWidget {
 public:
     enum class Study { AverageGain, Convergence };
     enum class StudyState { NotRun, Running, Complete, Failed, Stale };
@@ -48,7 +48,7 @@ public:
         Deck
     };
 
-    explicit DashboardPage(QWidget* parent = nullptr);
+    explicit ControlPanel(QWidget* parent = nullptr);
 
     void setFileActions(QAction* open, QAction* save);
     void setQuickActions(QAction* check, QAction* run, QAction* sweep, QAction* stop);

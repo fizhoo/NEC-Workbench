@@ -22,7 +22,7 @@
 #include "nec/NecSymbolEditor.h"
 #include "nec/NecSymbolResolver.h"
 #include "nec/NecWriter.h"
-#include "ui/dashboard/DashboardPage.h"
+#include "ui/controlpanel/ControlPanel.h"
 #include "ui/cards/WireCardEditor.h"
 #include "ui/cards/StructuredCardEditor.h"
 #include "ui/analysis/AnalysisSetupEditor.h"
@@ -429,16 +429,16 @@ MainWindow::MainWindow()
     resultWindowCoordinator_ = std::make_unique<ResultWindowCoordinator>(
         impedancePanel_, currentsPanel_, radiationPanel_);
     impedancePanel_->setVisibilityChangedCallback([this](bool visible) {
-        dashboardPage_->setResultWindowVisible(DashboardPage::Workspace::Impedance, visible);
+        controlPanel_->setResultWindowVisible(ControlPanel::Workspace::Impedance, visible);
     });
     currentsPanel_->setVisibilityChangedCallback([this](bool visible) {
-        dashboardPage_->setResultWindowVisible(DashboardPage::Workspace::Currents, visible);
+        controlPanel_->setResultWindowVisible(ControlPanel::Workspace::Currents, visible);
     });
     radiationPanel_->setVisibilityChangedCallback([this](bool visible) {
-        dashboardPage_->setResultWindowVisible(DashboardPage::Workspace::Radiation, visible);
+        controlPanel_->setResultWindowVisible(ControlPanel::Workspace::Radiation, visible);
     });
     modelPanel_->setVisibilityChangedCallback([this](bool visible) {
-        dashboardPage_->setResultWindowVisible(DashboardPage::Workspace::GeometryView, visible);
+        controlPanel_->setResultWindowVisible(ControlPanel::Workspace::GeometryView, visible);
     });
     createDocks();
     createMenusAndToolbar();
@@ -492,8 +492,8 @@ MainWindow::MainWindow()
         saveAction_->setEnabled(modified);
         setWindowModified(modified);
         sourceWorkspace_->setTabText(0, modified ? tr("Raw Source *") : tr("Raw Source"));
-        if (dashboardPage_ != nullptr)
-            dashboardPage_->setDocumentState(currentFile_.isEmpty()
+        if (controlPanel_ != nullptr)
+            controlPanel_->setDocumentState(currentFile_.isEmpty()
                     ? QString{} : QFileInfo(currentFile_).fileName(), modified);
     });
     connect(editor_->document(), &QTextDocument::undoAvailable, this, [this] { updateUndoActions(); });
@@ -839,59 +839,59 @@ void MainWindow::createWorkspace()
         [this] { openExample(); }, [this] { clearRecentFiles(); }, dashboardStack_);
     welcomePage_->setRecentFiles(recentFiles());
     dashboardStack_->addWidget(welcomePage_);
-    dashboardPage_ = new DashboardPage(dashboardStack_);
-    dashboardPage_->setFileActions(openAction_, saveAction_);
-    dashboardPage_->setQuickActions(
+    controlPanel_ = new ControlPanel(dashboardStack_);
+    controlPanel_->setFileActions(openAction_, saveAction_);
+    controlPanel_->setQuickActions(
         checkAction_, runAction_, quickSweepAction_, stopAction_);
-    dashboardPage_->setAverageGainAction(averageGainAction_);
-    dashboardPage_->setConvergenceAction(convergenceAction_);
-    dashboardPage_->setOpenRunHistoryCallback([this] {
+    controlPanel_->setAverageGainAction(averageGainAction_);
+    controlPanel_->setConvergenceAction(convergenceAction_);
+    controlPanel_->setOpenRunHistoryCallback([this] {
         showRunHistory();
     });
-    dashboardPage_->setOpenWorkspaceCallback([this](DashboardPage::Workspace destination) {
+    controlPanel_->setOpenWorkspaceCallback([this](ControlPanel::Workspace destination) {
         switch (destination) {
-        case DashboardPage::Workspace::Setup:
+        case ControlPanel::Workspace::Setup:
             showModule(analysisModuleIndex_);
             break;
-        case DashboardPage::Workspace::GeometryView:
+        case ControlPanel::Workspace::GeometryView:
             if (showModule(modelModuleIndex_)) {
                 modelWorkspace_->setCurrentIndex(modelGeometryWorkspaceIndex_);
                 workspace_->setCurrentIndex(geometry3DTabIndex_);
             }
             break;
-        case DashboardPage::Workspace::Impedance:
+        case ControlPanel::Workspace::Impedance:
             resultWindowCoordinator_->showImpedance();
             break;
-        case DashboardPage::Workspace::Currents:
+        case ControlPanel::Workspace::Currents:
             resultWindowCoordinator_->showCurrents();
             break;
-        case DashboardPage::Workspace::Radiation:
+        case ControlPanel::Workspace::Radiation:
             resultWindowCoordinator_->showRadiation();
             break;
-        case DashboardPage::Workspace::Runs:
+        case ControlPanel::Workspace::Runs:
             showRunHistory();
             break;
-        case DashboardPage::Workspace::Optimize:
+        case ControlPanel::Workspace::Optimize:
             showModule(optimizeModuleIndex_);
             break;
         }
     });
-    dashboardPage_->setOpenEditorCallback([this](DashboardPage::Editor destination) {
+    controlPanel_->setOpenEditorCallback([this](ControlPanel::Editor destination) {
         switch (destination) {
-        case DashboardPage::Editor::Frequency: showEditor(EditorDestination::Frequency); break;
-        case DashboardPage::Editor::Wires: showEditor(EditorDestination::Geometry); break;
-        case DashboardPage::Editor::Sources: showEditor(EditorDestination::Sources); break;
-        case DashboardPage::Editor::Loads:
-        case DashboardPage::Editor::TransmissionLines:
+        case ControlPanel::Editor::Frequency: showEditor(EditorDestination::Frequency); break;
+        case ControlPanel::Editor::Wires: showEditor(EditorDestination::Geometry); break;
+        case ControlPanel::Editor::Sources: showEditor(EditorDestination::Sources); break;
+        case ControlPanel::Editor::Loads:
+        case ControlPanel::Editor::TransmissionLines:
             showEditor(EditorDestination::Loads);
             break;
-        case DashboardPage::Editor::Ground: showEditor(EditorDestination::Environment); break;
-        case DashboardPage::Editor::Variables: showEditor(EditorDestination::Parameters); break;
-        case DashboardPage::Editor::Requests: showEditor(EditorDestination::Requests); break;
-        case DashboardPage::Editor::Deck: showEditor(EditorDestination::RawSource); break;
+        case ControlPanel::Editor::Ground: showEditor(EditorDestination::Environment); break;
+        case ControlPanel::Editor::Variables: showEditor(EditorDestination::Parameters); break;
+        case ControlPanel::Editor::Requests: showEditor(EditorDestination::Requests); break;
+        case ControlPanel::Editor::Deck: showEditor(EditorDestination::RawSource); break;
         }
     });
-    dashboardStack_->addWidget(dashboardPage_);
+    dashboardStack_->addWidget(controlPanel_);
     QTimer::singleShot(0, this, [this] { refreshDashboardRuns(); });
     homeModuleIndex_ = moduleStack_->addWidget(dashboardStack_);
 
@@ -1224,7 +1224,7 @@ void MainWindow::createWorkspace()
             convergenceWorkspace_->setContext(editor_->toPlainText(), currentFile_,
                 solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_,
                 modelChecked_ && modelErrorCount_ == 0);
-            dashboardPage_->setModel(currentModel_, currentSetup_, activeSource().document(),
+            controlPanel_->setModel(currentModel_, currentSetup_, activeSource().document(),
                 solverBackendId_, modelChecked_, modelErrorCount_, modelWarningCount_);
             runAction_->setStatusTip(solverExecutablePath_.isEmpty()
                     ? tr("Select a NEC engine executable under Setup → Solver")
@@ -1463,8 +1463,8 @@ void MainWindow::createResultWindows()
     convergenceWorkspace_->setRunningChangedCallback([this] { synchronizeRunnerState(); });
     convergenceWorkspace_->setSummaryChangedCallback([this](const QString& summary) {
         validationPanel_->setStatusText(summary);
-        dashboardPage_->setStudyStatus(DashboardPage::Study::Convergence,
-            DashboardPage::StudyState::Complete, summary);
+        controlPanel_->setStudyStatus(ControlPanel::Study::Convergence,
+            ControlPanel::StudyState::Complete, summary);
     });
 
     auto* impedanceContent = new QWidget(resultWindowsHost_);
@@ -2613,8 +2613,8 @@ void MainWindow::openFileAtPath(const QString& path)
 
 void MainWindow::fitControlPanelWindow()
 {
-    if (isMaximized() || dashboardPage_ == nullptr) return;
-    const auto hint = dashboardPage_->sizeHint();
+    if (isMaximized() || controlPanel_ == nullptr) return;
+    const auto hint = controlPanel_->sizeHint();
     const auto frameHeight = menuBar()->sizeHint().height()
         + statusBar()->sizeHint().height();
     resize(std::clamp(hint.width(), 560, 640),
@@ -2821,7 +2821,7 @@ void MainWindow::checkModel(bool presentReport)
     analysisRequestEditor_->setData(currentSetup_);
     structuredCardEditor_->setParameterControlledFields(parameterFields);
     structuredCardEditor_->setDocument(document);
-    dashboardPage_->setModel(currentModel_, currentSetup_, document, solverBackendId_, true,
+    controlPanel_->setModel(currentModel_, currentSetup_, document, solverBackendId_, true,
         modelErrorCount_, modelWarningCount_);
     updateProjectTree(currentModel_, document);
     optimizationWorkspace_->setContext(editor_->toPlainText(), currentFile_,
@@ -2892,15 +2892,15 @@ void MainWindow::clearCheckResults()
         dashboardModel = nec::NecModelConverter{}.convert(*resolved).model;
         dashboardSetup = nec::NecSetupConverter{}.convert(*resolved);
     }
-    dashboardPage_->setModel(dashboardModel, dashboardSetup, cache.document(),
+    controlPanel_->setModel(dashboardModel, dashboardSetup, cache.document(),
         solverBackendId_, false, modelErrorCount_, modelWarningCount_);
     averageGainResultsView_->markStale();
     convergenceWorkspace_->markStale();
-    dashboardPage_->setStudyStatus(DashboardPage::Study::AverageGain,
-        DashboardPage::StudyState::Stale);
-    dashboardPage_->setStudyStatus(DashboardPage::Study::Convergence,
-        DashboardPage::StudyState::Stale);
-    if (resultsAvailable_) dashboardPage_->markResultsStale();
+    controlPanel_->setStudyStatus(ControlPanel::Study::AverageGain,
+        ControlPanel::StudyState::Stale);
+    controlPanel_->setStudyStatus(ControlPanel::Study::Convergence,
+        ControlPanel::StudyState::Stale);
+    if (resultsAvailable_) controlPanel_->markResultsStale();
     if (resultsAvailable_) {
         liveResultsStale_ = true;
         setLiveResultStatus(tr("Stale — model changed; run again"));
@@ -4075,8 +4075,8 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
     if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
         averageGainResultsView_->setRunning(currentAverageGainFrequencyMHz_,
             currentAverageGainEnvironment_, runContext(*currentRunRecord_));
-        dashboardPage_->setStudyStatus(DashboardPage::Study::AverageGain,
-            DashboardPage::StudyState::Running,
+        controlPanel_->setStudyStatus(ControlPanel::Study::AverageGain,
+            ControlPanel::StudyState::Running,
             tr("running @ %1 MHz").arg(formatDecimal(currentAverageGainFrequencyMHz_)));
         validationWorkspace_->setCurrentIndex(averageGainValidationTabIndex_);
         validationPanel_->showWindow();
@@ -4210,8 +4210,8 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
                     .arg(averageGainClassificationName(assessment.classification));
                 averageGainResultsView_->setResult(assessment, currentAverageGainFrequencyMHz_,
                     currentAverageGainEnvironment_, result.averagingSolidAnglePi, context);
-                dashboardPage_->setStudyStatus(DashboardPage::Study::AverageGain,
-                    DashboardPage::StudyState::Complete,
+                controlPanel_->setStudyStatus(ControlPanel::Study::AverageGain,
+                    ControlPanel::StudyState::Complete,
                     tr("%1 @ %2 MHz").arg(formatDecimal(assessment.normalizedGain),
                         formatDecimal(currentAverageGainFrequencyMHz_)));
                 writeAverageGainMetadata(currentRunDirectory_, currentAverageGainFrequencyMHz_,
@@ -4232,8 +4232,8 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             } else {
                 averageGainResultsView_->setFailure(
                     tr("The solver output contains no AVERAGE POWER GAIN value."), context);
-                dashboardPage_->setStudyStatus(DashboardPage::Study::AverageGain,
-                    DashboardPage::StudyState::Failed, {},
+                controlPanel_->setStudyStatus(ControlPanel::Study::AverageGain,
+                    ControlPanel::StudyState::Failed, {},
                     tr("No average power gain was reported."));
             }
             analysisRuns_->setItem(currentRunRow_, RunResultsColumn,
@@ -4264,8 +4264,8 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             displayedRunDirectory_ = currentRunDirectory_;
             activeModelResultsDirectory_ = currentRunDirectory_;
             activeModelResultsContext_ = context;
-            dashboardPage_->setResults(result, context, false);
-            dashboardPage_->setModel(currentModel_, currentSetup_, activeSource().document(),
+            controlPanel_->setResults(result, context, false);
+            controlPanel_->setModel(currentModel_, currentSetup_, activeSource().document(),
                 solverBackendId_, true, modelErrorCount_, modelWarningCount_);
             resultsAvailable_ = true;
             liveResultsStale_ = false;
@@ -4302,16 +4302,16 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     } else if (processSucceeded && currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
         const auto message = tr("The solver did not produce a readable model.out file.");
         averageGainResultsView_->setFailure(message, runContext(*currentRunRecord_));
-        dashboardPage_->setStudyStatus(DashboardPage::Study::AverageGain,
-            DashboardPage::StudyState::Failed, {}, message);
+        controlPanel_->setStudyStatus(ControlPanel::Study::AverageGain,
+            ControlPanel::StudyState::Failed, {}, message);
     } else if (currentRunRecord_) {
         if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
             const auto message = processResult.detail.isEmpty()
                 ? tr("The solver did not complete the Average Gain Test.")
                 : processResult.detail;
             averageGainResultsView_->setFailure(message, runContext(*currentRunRecord_));
-            dashboardPage_->setStudyStatus(DashboardPage::Study::AverageGain,
-                DashboardPage::StudyState::Failed, {}, message);
+            controlPanel_->setStudyStatus(ControlPanel::Study::AverageGain,
+                ControlPanel::StudyState::Failed, {}, message);
         }
         currentRunRecord_->outputBytes = QFileInfo(currentRunOutputPath_).size();
         if (currentRunRow_ >= 0) {
@@ -4435,7 +4435,7 @@ void MainWindow::showRunHistory()
 
 void MainWindow::refreshDashboardRuns()
 {
-    if (dashboardPage_ != nullptr) dashboardPage_->setRecentRuns(runStore_.loadRecent(100));
+    if (controlPanel_ != nullptr) controlPanel_->setRecentRuns(runStore_.loadRecent(100));
 }
 
 void MainWindow::addRunRecord(const AnalysisRunRecord& record, bool prepend)
@@ -4596,7 +4596,7 @@ auto MainWindow::loadRunModel(const QString& directory, const QString& modelName
         .arg(runContext, inputFile.fileName()));
     editor_->document()->setModified(false);
     checkModel();
-    dashboardPage_->setDocumentState(displayName, false);
+    controlPanel_->setDocumentState(displayName, false);
     return true;
 }
 
@@ -4990,8 +4990,8 @@ void MainWindow::clearDisplayedResults()
     const auto context = tr("No analysis run");
     averageGainResultsView_->clear();
     convergenceWorkspace_->clearResults();
-    dashboardPage_->clearStudy(DashboardPage::Study::AverageGain);
-    dashboardPage_->clearStudy(DashboardPage::Study::Convergence);
+    controlPanel_->clearStudy(ControlPanel::Study::AverageGain);
+    controlPanel_->clearStudy(ControlPanel::Study::Convergence);
     analysisResultsView_->setResults(empty, context);
     visualizePlotsView_->setResults(empty, context);
     currentResultsView_->setModel({});
@@ -5001,7 +5001,7 @@ void MainWindow::clearDisplayedResults()
     radiation3DView_->setModel({});
     radiationPerformanceView_->setResults(empty, context);
     setDisplayedResults(empty);
-    dashboardPage_->setResults(empty, context, false);
+    controlPanel_->setResults(empty, context, false);
     displayedRunDirectory_.clear();
     resultsAvailable_ = false;
     liveResultsStale_ = false;
@@ -5690,8 +5690,8 @@ void MainWindow::setCurrentFile(QString path)
     const auto modelName = currentFile_.isEmpty() ? tr("Untitled model.nec") : name;
     modelFileStatus_->setText(tr("Open model: %1").arg(modelName));
     modelFileStatus_->setToolTip(currentFile_.isEmpty() ? tr("This model has not been saved yet.") : currentFile_);
-    if (dashboardPage_ != nullptr)
-        dashboardPage_->setDocumentState(currentFile_.isEmpty() ? QString{} : name,
+    if (controlPanel_ != nullptr)
+        controlPanel_->setDocumentState(currentFile_.isEmpty() ? QString{} : name,
             editor_->document()->isModified());
     if (modelPanel_ != nullptr) modelPanel_->setStatusText(modelName);
     if (setupPanel_ != nullptr) setupPanel_->setStatusText(modelName);

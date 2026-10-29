@@ -122,8 +122,8 @@ if(NECWB_BUILD_GUI)
         src/ui/cards/WireCardEditor.h
         src/ui/cards/StructuredCardEditor.cpp
         src/ui/cards/StructuredCardEditor.h
-        src/ui/dashboard/DashboardPage.cpp
-        src/ui/dashboard/DashboardPage.h
+        src/ui/controlpanel/ControlPanel.cpp
+        src/ui/controlpanel/ControlPanel.h
         src/ui/editor/NecEditor.cpp
         src/ui/editor/NecEditor.h
         src/ui/editor/NecHighlighter.cpp

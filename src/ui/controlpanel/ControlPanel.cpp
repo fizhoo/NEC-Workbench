@@ -1,4 +1,4 @@
-#include "ui/dashboard/DashboardPage.h"
+#include "ui/controlpanel/ControlPanel.h"
 
 #include "analysis/ResultSummary.h"
 #include "analysis/FrequencyComparison.h"
@@ -59,7 +59,7 @@ auto countText(std::size_t count, const QString& singular, const QString& plural
 
 }
 
-DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
+ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
 {
     fileName_ = tr("Untitled model.nec");
     modelStatus_ = tr("Model not checked");
@@ -324,7 +324,7 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
         this, [this] { refreshQuickResults(); });
 }
 
-void DashboardPage::setFileActions(QAction* open, QAction* save)
+void ControlPanel::setFileActions(QAction* open, QAction* save)
 {
     if (auto* button = findChild<QToolButton*>(QStringLiteral("controlPanelOpen"))) {
         button->setDefaultAction(open);
@@ -336,7 +336,7 @@ void DashboardPage::setFileActions(QAction* open, QAction* save)
     }
 }
 
-void DashboardPage::setQuickActions(
+void ControlPanel::setQuickActions(
     QAction* check, QAction* run, QAction* sweep, QAction* stop)
 {
     if (auto* button = findChild<QToolButton*>(QStringLiteral("controlPanelCheck"))) {
@@ -358,7 +358,7 @@ void DashboardPage::setQuickActions(
     }
 }
 
-void DashboardPage::setAverageGainAction(QAction* action)
+void ControlPanel::setAverageGainAction(QAction* action)
 {
     auto* button = studyButtons_[static_cast<std::size_t>(Study::AverageGain)];
     button->setIcon(action->icon());
@@ -371,7 +371,7 @@ void DashboardPage::setAverageGainAction(QAction* action)
     button->setText(tr("Run"));
 }
 
-void DashboardPage::setConvergenceAction(QAction* action)
+void ControlPanel::setConvergenceAction(QAction* action)
 {
     auto* button = studyButtons_[static_cast<std::size_t>(Study::Convergence)];
     button->setIcon(action->icon());
@@ -384,14 +384,14 @@ void DashboardPage::setConvergenceAction(QAction* action)
     button->setText(tr("Run"));
 }
 
-void DashboardPage::setDocumentState(const QString& fileName, bool modified)
+void ControlPanel::setDocumentState(const QString& fileName, bool modified)
 {
     fileName_ = fileName.isEmpty() ? tr("Untitled model.nec") : fileName;
     modified_ = modified;
     refreshHeader();
 }
 
-void DashboardPage::setModel(const model::AntennaModel& model,
+void ControlPanel::setModel(const model::AntennaModel& model,
     const model::ModelSetup& setup, const nec::NecDocument& document,
     const QString& solver, bool checked, std::size_t errors, std::size_t warnings)
 {
@@ -437,7 +437,7 @@ void DashboardPage::setModel(const model::AntennaModel& model,
     refreshGeometryViewButton();
 }
 
-void DashboardPage::setResults(const analysis::AnalysisResult& result,
+void ControlPanel::setResults(const analysis::AnalysisResult& result,
     const QString& context, bool stale)
 {
     resultContext_ = context;
@@ -472,7 +472,7 @@ void DashboardPage::setResults(const analysis::AnalysisResult& result,
     refreshResultButton(Workspace::Radiation);
 }
 
-void DashboardPage::refreshQuickResults()
+void ControlPanel::refreshQuickResults()
 {
     const auto frequency = resultFrequency_->currentData().toDouble();
     const auto summary = analysis::summarizeResults(currentResult_, frequency);
@@ -505,7 +505,7 @@ void DashboardPage::refreshQuickResults()
     resultStale_->setVisible(resultsStale_);
 }
 
-void DashboardPage::markResultsStale()
+void ControlPanel::markResultsStale()
 {
     if (!impedanceAvailable_ && !currentsAvailable_ && !radiationAvailable_) return;
     resultsStale_ = true;
@@ -515,7 +515,7 @@ void DashboardPage::markResultsStale()
     refreshQuickResults();
 }
 
-void DashboardPage::setStudyStatus(
+void ControlPanel::setStudyStatus(
     Study study, StudyState state, const QString& text, const QString& toolTip)
 {
     const auto index = static_cast<std::size_t>(study);
@@ -535,12 +535,12 @@ void DashboardPage::setStudyStatus(
     studyStateLabels_[index]->setToolTip(toolTip.isEmpty() ? text : toolTip);
 }
 
-void DashboardPage::clearStudy(Study study)
+void ControlPanel::clearStudy(Study study)
 {
     setStudyStatus(study, StudyState::NotRun);
 }
 
-void DashboardPage::setRecentRuns(const std::vector<AnalysisRunRecord>& runs)
+void ControlPanel::setRecentRuns(const std::vector<AnalysisRunRecord>& runs)
 {
     const auto found = std::ranges::find_if(runs, [](const auto& run) {
         return run.status == QStringLiteral("Completed")
@@ -555,7 +555,7 @@ void DashboardPage::setRecentRuns(const std::vector<AnalysisRunRecord>& runs)
     refreshFooter();
 }
 
-void DashboardPage::setResultWindowVisible(Workspace workspace, bool visible)
+void ControlPanel::setResultWindowVisible(Workspace workspace, bool visible)
 {
     switch (workspace) {
     case Workspace::Impedance: impedanceVisible_ = visible; break;
@@ -568,22 +568,22 @@ void DashboardPage::setResultWindowVisible(Workspace workspace, bool visible)
     else refreshResultButton(workspace);
 }
 
-void DashboardPage::setOpenRunHistoryCallback(std::function<void()> callback)
+void ControlPanel::setOpenRunHistoryCallback(std::function<void()> callback)
 {
     openRunHistory_ = std::move(callback);
 }
 
-void DashboardPage::setOpenWorkspaceCallback(std::function<void(Workspace)> callback)
+void ControlPanel::setOpenWorkspaceCallback(std::function<void(Workspace)> callback)
 {
     openWorkspace_ = std::move(callback);
 }
 
-void DashboardPage::setOpenEditorCallback(std::function<void(Editor)> callback)
+void ControlPanel::setOpenEditorCallback(std::function<void(Editor)> callback)
 {
     openEditor_ = std::move(callback);
 }
 
-void DashboardPage::refreshHeader()
+void ControlPanel::refreshHeader()
 {
     modelName_->setText(modified_ ? tr("%1 *").arg(fileName_) : fileName_);
     backendState_->setText(backend_.isEmpty() ? tr("Setup solver") : backend_);
@@ -591,7 +591,7 @@ void DashboardPage::refreshHeader()
     resultState_->setText(resultStatus_);
 }
 
-void DashboardPage::refreshFooter()
+void ControlPanel::refreshFooter()
 {
     const auto state = resultsStale_ ? tr("model changed · results stale")
         : impedanceAvailable_ || currentsAvailable_ || radiationAvailable_
@@ -600,7 +600,7 @@ void DashboardPage::refreshFooter()
     footer_->setToolTip(resultContext_);
 }
 
-void DashboardPage::refreshResultButton(Workspace workspace)
+void ControlPanel::refreshResultButton(Workspace workspace)
 {
     auto* button = resultButton(workspace);
     if (button == nullptr) return;
@@ -625,7 +625,7 @@ void DashboardPage::refreshResultButton(Workspace workspace)
         : tr("Run an analysis that produces these results first"));
 }
 
-void DashboardPage::refreshGeometryViewButton()
+void ControlPanel::refreshGeometryViewButton()
 {
     geometryViewButton_->setText(geometryViewVisible_
         ? tr("● Antenna View") : tr("○ Antenna View"));
@@ -634,14 +634,14 @@ void DashboardPage::refreshGeometryViewButton()
         : tr("Open the reusable 2D/3D antenna view"));
 }
 
-void DashboardPage::setModelRow(Editor editor, const QString& value)
+void ControlPanel::setModelRow(Editor editor, const QString& value)
 {
     auto* item = modelRows_->item(static_cast<int>(editor), 1);
     item->setText(value);
     item->setToolTip(value);
 }
 
-auto DashboardPage::resultButton(Workspace workspace) const -> QToolButton*
+auto ControlPanel::resultButton(Workspace workspace) const -> QToolButton*
 {
     switch (workspace) {
     case Workspace::Impedance: return impedanceButton_;
