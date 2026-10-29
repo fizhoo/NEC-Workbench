@@ -242,8 +242,11 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     quickGrid->setHorizontalSpacing(5);
     quickGrid->setVerticalSpacing(1);
     const auto addMetric = [&](int row, int pair, const QString& name,
-                               QToolButton*& value, bool radiation) {
-        quickGrid->addWidget(new QLabel(name, quickResults_), row, pair * 2);
+                               QToolButton*& value, bool radiation,
+                               QLabel** labelOutput = nullptr) {
+        auto* label = new QLabel(name, quickResults_);
+        if (labelOutput != nullptr) *labelOutput = label;
+        quickGrid->addWidget(label, row, pair * 2);
         value = compactButton(tr("—"), quickResults_);
         value->setAutoRaise(true);
         value->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -256,8 +259,9 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     addMetric(0, 0, tr("Rin"), resistanceResult_, false);
     addMetric(0, 1, tr("Xin"), reactanceResult_, false);
     addMetric(1, 0, tr("SWR"), swrResult_, false);
-    addMetric(1, 1, tr("Gain"), gainResult_, true);
-    addMetric(2, 0, tr("F/B"), frontToBackResult_, true);
+    addMetric(1, 1, tr("Gain"), gainResult_, true, &gainResultLabel_);
+    addMetric(2, 0, tr("F/B"), frontToBackResult_, true,
+        &frontToBackResultLabel_);
     resultExtrema_ = new QLabel(panel);
     resultExtrema_->setObjectName(QStringLiteral("controlPanelResultExtrema"));
     resultExtrema_->setWordWrap(true);
@@ -472,6 +476,8 @@ void DashboardPage::refreshQuickResults()
     set(frontToBackResult_, summary.selectedFrontToBackDb, tr(" dB"));
     gainResult_->setVisible(summary.selectedGain.has_value());
     frontToBackResult_->setVisible(summary.selectedGain.has_value());
+    gainResultLabel_->setVisible(summary.selectedGain.has_value());
+    frontToBackResultLabel_->setVisible(summary.selectedGain.has_value());
     QStringList extrema;
     if (summary.minimumSwr) extrema.append(tr("Min SWR %1 @ %2 MHz")
         .arg(formatDecimal(summary.minimumSwr->swr), formatDecimal(summary.minimumSwr->frequencyMHz)));

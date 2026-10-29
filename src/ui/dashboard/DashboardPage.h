@@ -91,7 +91,9 @@ private:
     QToolButton* resistanceResult_{};
     QToolButton* reactanceResult_{};
     QToolButton* swrResult_{};
+    QLabel* gainResultLabel_{};
     QToolButton* gainResult_{};
+    QLabel* frontToBackResultLabel_{};
     QToolButton* frontToBackResult_{};
     QLabel* averageGainState_{};
     QLabel* convergenceState_{};
