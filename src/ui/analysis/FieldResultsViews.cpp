@@ -1167,15 +1167,20 @@ RadiationPatternView::RadiationPatternView(QWidget* parent) : QWidget(parent)
     form->setColumnStretch(1, 1);
     form->setColumnStretch(3, 1);
     auto* navigation = new QHBoxLayout;
-    auto* previous = new QPushButton(tr("◀ Previous Angle"), this);
-    orientationButton_ = new QPushButton(tr("Vertical Cut"), this);
+    auto* previous = new QPushButton(tr("◀ Angle"), this);
+    previous->setToolTip(tr("Select the previous calculated angle"));
+    orientationButton_ = new QPushButton(tr("Vertical"), this);
     orientationButton_->setObjectName(QStringLiteral("radiation2DOrientation"));
-    auto* next = new QPushButton(tr("Next Angle ▶"), this);
-    maxGainCutButton_ = new QPushButton(tr("Show Max-Gain Cut"), this);
+    auto* next = new QPushButton(tr("Angle ▶"), this);
+    next->setToolTip(tr("Select the next calculated angle"));
+    maxGainCutButton_ = new QPushButton(tr("Max-Gain Cut"), this);
+    maxGainCutButton_->setToolTip(tr("Show the cut containing maximum gain"));
     maxGainCutButton_->setObjectName(QStringLiteral("radiation2DMaxGainCut"));
-    exportImageButton_ = new QPushButton(tr("Export Image…"), this);
+    exportImageButton_ = new QPushButton(tr("Image…"), this);
+    exportImageButton_->setToolTip(tr("Export pattern image"));
     exportImageButton_->setObjectName(QStringLiteral("radiation2DExportImage"));
-    exportDataButton_ = new QPushButton(tr("Export CSV…"), this);
+    exportDataButton_ = new QPushButton(tr("CSV…"), this);
+    exportDataButton_->setToolTip(tr("Export pattern data as CSV"));
     exportDataButton_->setObjectName(QStringLiteral("radiation2DExportData"));
     referenceControl_ = new QCheckBox(tr("Show Historical Overlay"), this);
     referenceControl_->setObjectName(QStringLiteral("radiation2DShowReference"));
@@ -1345,7 +1350,7 @@ void RadiationPatternView::refreshCutControls()
     else if (orientation_ == CutOrientation::Horizontal && !horizontalAvailable && verticalAvailable)
         orientation_ = CutOrientation::Vertical;
     orientationButton_->setText(orientation_ == CutOrientation::Vertical
-        ? tr("Vertical Cut") : tr("Horizontal Cut"));
+        ? tr("Vertical") : tr("Horizontal"));
     cutLabel_->setText(orientation_ == CutOrientation::Vertical
         ? tr("Phi plane") : tr("Theta angle"));
     const auto oppositeOrientation = orientation_ == CutOrientation::Vertical

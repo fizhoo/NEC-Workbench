@@ -238,7 +238,7 @@ public:
     explicit SweepPlotWidget(QWidget* parent = nullptr)
         : QWidget(parent)
     {
-        setMinimumHeight(240);
+        setMinimumHeight(110);
         setMouseTracking(true);
     }
 
