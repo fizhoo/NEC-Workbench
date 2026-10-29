@@ -324,20 +324,17 @@ void ControlPanel::setQuickActions(
 
 void ControlPanel::setAverageGainAction(QAction* action)
 {
-    auto* button = studyButtons_[static_cast<std::size_t>(Study::AverageGain)];
-    button->setIcon(action->icon());
-    button->setToolTip(action->toolTip());
-    button->setEnabled(action->isEnabled());
-    connect(button, &QToolButton::clicked, action, &QAction::trigger);
-    connect(action, &QAction::changed, button, [button, action] {
-        button->setEnabled(action->isEnabled());
-    });
-    button->setText(tr("Run"));
+    setStudyAction(Study::AverageGain, action);
 }
 
 void ControlPanel::setConvergenceAction(QAction* action)
 {
-    auto* button = studyButtons_[static_cast<std::size_t>(Study::Convergence)];
+    setStudyAction(Study::Convergence, action);
+}
+
+void ControlPanel::setStudyAction(Study study, QAction* action)
+{
+    auto* button = studyButtons_[static_cast<std::size_t>(study)];
     button->setIcon(action->icon());
     button->setToolTip(action->toolTip());
     button->setEnabled(action->isEnabled());
@@ -500,10 +497,8 @@ void ControlPanel::setStudyStatus(
     studyStates_[index] = state;
     const auto defaultText = [this, state] {
         switch (state) {
-        case StudyState::NotRun: return tr("not run");
-        case StudyState::Running: return tr("running");
-        case StudyState::Complete: return tr("complete");
-        case StudyState::Failed: return tr("failed");
+        case StudyState::NotRun: return tr("not run"); case StudyState::Running: return tr("running");
+        case StudyState::Complete: return tr("complete"); case StudyState::Failed: return tr("failed");
         case StudyState::Stale: return tr("stale");
         }
         return QString{};

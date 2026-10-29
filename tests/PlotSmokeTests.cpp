@@ -2432,6 +2432,9 @@ auto main(int argc, char* argv[]) -> int
     currentImage.fill(Qt::transparent); QPainter currentPainter(&currentImage);
     radiation3D.render(&currentPainter); currentPainter.end();
     necwb::ui::ControlPanel controlPanel;
+    using Study = necwb::ui::ControlPanel::Study;
+    using StudyState = necwb::ui::ControlPanel::StudyState;
+    using Workspace = necwb::ui::ControlPanel::Workspace;
     const auto controlPanelCompact = hasCompactMargins(controlPanel, 8);
     controlPanel.resize(600, 520);
     necwb::model::ModelSetup setup;
@@ -2443,107 +2446,86 @@ auto main(int argc, char* argv[]) -> int
         "FR 0 3 0 0 14 .1\nRP 0 19 37 1000 0 0 5 10\nEN\n");
     controlPanel.setModel(antenna, setup, controlPanelDocument,
         QStringLiteral("nec2"), true, 0, 0);
-    QAction openAction(QStringLiteral("Open…"), &controlPanel);
-    QAction saveAction(QStringLiteral("Save"), &controlPanel);
-    QAction checkAction(QStringLiteral("Check Model"), &controlPanel);
-    QAction runAction(QStringLiteral("Run Analysis"), &controlPanel);
-    QAction sweepAction(QStringLiteral("Frequency Sweep…"), &controlPanel);
-    QAction stopAction(QStringLiteral("Stop"), &controlPanel);
-    QAction averageGainAction(QStringLiteral("Run Average Gain Test…"), &controlPanel);
-    QAction convergenceAction(QStringLiteral("Segmentation Convergence…"), &controlPanel);
+    QAction openAction(QStringLiteral("Open…"), &controlPanel),
+        saveAction(QStringLiteral("Save"), &controlPanel);
+    QAction checkAction(QStringLiteral("Check Model"), &controlPanel),
+        runAction(QStringLiteral("Run Analysis"), &controlPanel);
+    QAction sweepAction(QStringLiteral("Frequency Sweep…"), &controlPanel),
+        stopAction(QStringLiteral("Stop"), &controlPanel);
+    QAction averageGainAction(QStringLiteral("Run Average Gain Test…"), &controlPanel),
+        convergenceAction(QStringLiteral("Segmentation Convergence…"), &controlPanel);
     controlPanel.setFileActions(&openAction, &saveAction);
     controlPanel.setQuickActions(&checkAction, &runAction, &sweepAction, &stopAction);
     controlPanel.setAverageGainAction(&averageGainAction);
     controlPanel.setConvergenceAction(&convergenceAction);
-    auto controlPanelAverageGainTriggered = false;
-    auto controlPanelConvergenceTriggered = false;
+    auto controlPanelAverageGainTriggered = false, controlPanelConvergenceTriggered = false;
     QObject::connect(&averageGainAction, &QAction::triggered,
-        [&controlPanelAverageGainTriggered] { controlPanelAverageGainTriggered = true; });
+        [&] { controlPanelAverageGainTriggered = true; });
     QObject::connect(&convergenceAction, &QAction::triggered,
-        [&controlPanelConvergenceTriggered] { controlPanelConvergenceTriggered = true; });
-    auto runHistoryOpened = false;
-    auto controlPanelWorkspaceOpened = false;
-    auto controlPanelGeometryOpened = false;
-    auto controlPanelEditorOpened = false;
+        [&] { controlPanelConvergenceTriggered = true; });
+    auto runHistoryOpened = false, controlPanelWorkspaceOpened = false,
+        controlPanelGeometryOpened = false, controlPanelEditorOpened = false;
     controlPanel.setOpenWorkspaceCallback(
         [&runHistoryOpened, &controlPanelWorkspaceOpened,
             &controlPanelGeometryOpened](auto destination) {
-        if (destination == necwb::ui::ControlPanel::Workspace::Runs)
-            runHistoryOpened = true;
-        if (destination == necwb::ui::ControlPanel::Workspace::Impedance)
-            controlPanelWorkspaceOpened = true;
-        if (destination == necwb::ui::ControlPanel::Workspace::GeometryView)
-            controlPanelGeometryOpened = true;
+        if (destination == Workspace::Runs) runHistoryOpened = true;
+        if (destination == Workspace::Impedance) controlPanelWorkspaceOpened = true;
+        if (destination == Workspace::GeometryView) controlPanelGeometryOpened = true;
         });
     controlPanel.setOpenEditorCallback([&controlPanelEditorOpened](auto destination) {
         controlPanelEditorOpened = destination == necwb::ui::ControlPanel::Editor::Requests;
     });
     necwb::ui::AnalysisRunRecord recentRun;
-    recentRun.id = QStringLiteral("recent-0");
-    recentRun.started = QDateTime::currentDateTime();
-    recentRun.status = QStringLiteral("Completed");
-    recentRun.durationSeconds = 1.25;
+    recentRun.id = QStringLiteral("recent-0"); recentRun.started = QDateTime::currentDateTime();
+    recentRun.status = QStringLiteral("Completed"); recentRun.durationSeconds = 1.25;
     controlPanel.setRecentRuns({recentRun});
     controlPanel.setDocumentState(QStringLiteral("test.nec"), true);
     controlPanel.setResults(result, QStringLiteral("Model: test.nec · Run: controlPanel"), false);
-    controlPanel.setStudyStatus(necwb::ui::ControlPanel::Study::AverageGain,
-        necwb::ui::ControlPanel::StudyState::Complete, QStringLiteral("1.000 @ 14.100 MHz"));
-    controlPanel.setStudyStatus(necwb::ui::ControlPanel::Study::Convergence,
-        necwb::ui::ControlPanel::StudyState::Complete, QStringLiteral("passed"));
-    controlPanel.clearStudy(necwb::ui::ControlPanel::Study::AverageGain);
-    controlPanel.clearStudy(necwb::ui::ControlPanel::Study::Convergence);
+    controlPanel.setStudyStatus(Study::AverageGain, StudyState::Complete,
+        QStringLiteral("1.000 @ 14.100 MHz"));
+    controlPanel.setStudyStatus(Study::Convergence, StudyState::Complete, QStringLiteral("passed"));
+    controlPanel.clearStudy(Study::AverageGain);
+    controlPanel.clearStudy(Study::Convergence);
     const auto studiesCleared = controlPanel.findChild<QLabel*>(
             QStringLiteral("controlPanelAverageGainState"))->text() == QStringLiteral("not run")
         && controlPanel.findChild<QLabel*>(
             QStringLiteral("controlPanelConvergenceState"))->text() == QStringLiteral("not run");
-    controlPanel.setStudyStatus(necwb::ui::ControlPanel::Study::AverageGain,
-        necwb::ui::ControlPanel::StudyState::Running, QStringLiteral("running @ 14.100 MHz"));
-    controlPanel.setStudyStatus(necwb::ui::ControlPanel::Study::AverageGain,
-        necwb::ui::ControlPanel::StudyState::Failed, {}, QStringLiteral("solver failed"));
-    controlPanel.setResultWindowVisible(
-        necwb::ui::ControlPanel::Workspace::Impedance, true);
+    controlPanel.setStudyStatus(Study::AverageGain, StudyState::Running,
+        QStringLiteral("running @ 14.100 MHz"));
+    controlPanel.setStudyStatus(Study::AverageGain, StudyState::Failed, {},
+        QStringLiteral("solver failed"));
+    controlPanel.setResultWindowVisible(Workspace::Impedance, true);
     controlPanel.show(); application.processEvents();
     QImage controlPanelImage(600, 520, QImage::Format_ARGB32_Premultiplied);
     controlPanelImage.fill(Qt::transparent); QPainter controlPanelPainter(&controlPanelImage);
     controlPanel.render(&controlPanelPainter); controlPanelPainter.end();
-    const auto* controlPanelName = controlPanel.findChild<QLabel*>(
-        QStringLiteral("controlPanelModelName"));
-    const auto* controlPanelExtrema = controlPanel.findChild<QLabel*>(
-        QStringLiteral("controlPanelResultExtrema"));
-    const auto* controlPanelQuickResults = controlPanel.findChild<QWidget*>(
+    const auto label = [&controlPanel](const char* name) {
+        return controlPanel.findChild<QLabel*>(QString::fromLatin1(name));
+    };
+    const auto button = [&controlPanel](const char* name) {
+        return controlPanel.findChild<QToolButton*>(QString::fromLatin1(name));
+    };
+    const auto* controlPanelName = label("controlPanelModelName");
+    const auto* controlPanelExtrema = label("controlPanelResultExtrema");
+    const auto* controlPanelStale = label("controlPanelResultStale");
+    const auto* controlPanelFooter = label("controlPanelFooter");
+    const auto* controlPanelAverageGain = label("controlPanelAverageGainState");
+    const auto* controlPanelConvergence = label("controlPanelConvergenceState");
+    auto* controlPanelQuickResults = controlPanel.findChild<QWidget*>(
         QStringLiteral("controlPanelQuickResults"));
-    const auto* controlPanelStale = controlPanel.findChild<QLabel*>(
-        QStringLiteral("controlPanelResultStale"));
-    const auto* controlPanelFooter = controlPanel.findChild<QLabel*>(
-        QStringLiteral("controlPanelFooter"));
-    const auto* controlPanelAverageGain = controlPanel.findChild<QLabel*>(
-        QStringLiteral("controlPanelAverageGainState"));
-    const auto* controlPanelConvergence = controlPanel.findChild<QLabel*>(
-        QStringLiteral("controlPanelConvergenceState"));
     auto* controlPanelRows = controlPanel.findChild<QTableWidget*>(
         QStringLiteral("controlPanelModelRows"));
-    auto* controlPanelOpen = controlPanel.findChild<QToolButton*>(
-        QStringLiteral("controlPanelOpen"));
-    auto* controlPanelSave = controlPanel.findChild<QToolButton*>(
-        QStringLiteral("controlPanelSave"));
-    auto* controlPanelCheck = controlPanel.findChild<QToolButton*>(
-        QStringLiteral("controlPanelCheck"));
-    auto* controlPanelRun = controlPanel.findChild<QToolButton*>(
-        QStringLiteral("controlPanelRun"));
-    auto* controlPanelSweep = controlPanel.findChild<QToolButton*>(
-        QStringLiteral("controlPanelFrequencySweep"));
-    auto* controlPanelStop = controlPanel.findChild<QToolButton*>(
-        QStringLiteral("controlPanelStop"));
-    auto* controlPanelRuns = controlPanel.findChild<QToolButton*>(
-        QStringLiteral("controlPanelRuns"));
-    auto* controlPanelAverageGainRun = controlPanel.findChild<QToolButton*>(
-        QStringLiteral("controlPanelAverageGainRun"));
-    auto* controlPanelConvergenceRun = controlPanel.findChild<QToolButton*>(
-        QStringLiteral("controlPanelConvergenceRun"));
-    auto* controlPanelImpedance = controlPanel.findChild<QToolButton*>(
-        QStringLiteral("controlPanelImpedance"));
-    auto* controlPanelGeometry = controlPanel.findChild<QToolButton*>(
-        QStringLiteral("controlPanelGeometryView"));
+    auto* controlPanelOpen = button("controlPanelOpen");
+    auto* controlPanelSave = button("controlPanelSave");
+    auto* controlPanelCheck = button("controlPanelCheck");
+    auto* controlPanelRun = button("controlPanelRun");
+    auto* controlPanelSweep = button("controlPanelFrequencySweep");
+    auto* controlPanelStop = button("controlPanelStop");
+    auto* controlPanelRuns = button("controlPanelRuns");
+    auto* controlPanelAverageGainRun = button("controlPanelAverageGainRun");
+    auto* controlPanelConvergenceRun = button("controlPanelConvergenceRun");
+    auto* controlPanelImpedance = button("controlPanelImpedance");
+    auto* controlPanelGeometry = button("controlPanelGeometryView");
     const auto staleInitiallyHidden = controlPanelStale != nullptr && !controlPanelStale->isVisible();
     controlPanel.markResultsStale();
     application.processEvents();

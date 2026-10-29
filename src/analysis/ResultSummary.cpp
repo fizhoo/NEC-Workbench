@@ -53,11 +53,10 @@ auto datasetKindFor(const AnalysisResult& result, const RadiationSample& peak)
     return RadiationDatasetKind::Point;
 }
 
-auto makeGainSummary(const AnalysisResult& result, const RadiationSample& sample)
-    -> PeakGainSummary
+auto makeGainSummary(const AnalysisResult& result, const RadiationSample& sample) -> PeakGainSummary
 {
-    return {sample.frequencyMHz, sample.totalGainDb, sample.thetaDegrees,
-        sample.phiDegrees, sample.patternIndex, datasetKindFor(result, sample)};
+    return {sample.frequencyMHz, sample.totalGainDb, sample.thetaDegrees, sample.phiDegrees,
+        sample.patternIndex, datasetKindFor(result, sample)};
 }
 
 }

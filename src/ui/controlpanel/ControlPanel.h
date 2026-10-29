@@ -81,6 +81,7 @@ private:
     void refreshFooter();
     void refreshQuickResults();
     void refreshResultLauncher(Workspace workspace);
+    void setStudyAction(Study study, QAction* action);
     void setModelRow(Editor editor, const QString& value);
     [[nodiscard]] auto resultLauncher(Workspace workspace) -> ResultLauncher*;
 

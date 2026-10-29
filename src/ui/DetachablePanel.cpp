@@ -15,7 +15,6 @@
 #include <ranges>
 
 namespace necwb::ui {
-
 DetachablePanel::DetachablePanel(QString id, QString title, QWidget* parent)
     : DetachablePanel(std::move(id), std::move(title), parent, Options{})
 {
