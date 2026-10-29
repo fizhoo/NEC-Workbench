@@ -4978,6 +4978,8 @@ void MainWindow::clearDisplayedResults()
     const auto context = tr("No analysis run");
     averageGainResultsView_->clear();
     convergenceWorkspace_->clearResults();
+    dashboardPage_->clearAverageGain();
+    dashboardPage_->clearConvergence();
     analysisResultsView_->setResults(empty, context);
     visualizePlotsView_->setResults(empty, context);
     currentResultsView_->setModel({});

@@ -2475,6 +2475,11 @@ auto main(int argc, char* argv[]) -> int
     dashboard.setRecentRuns({recentRun});
     dashboard.setDocumentState(QStringLiteral("test.nec"), true);
     dashboard.setResults(result, QStringLiteral("Model: test.nec · Run: dashboard"), false);
+    dashboard.setAverageGainResult({1.0, 1.0, 1.0, 0.0,
+        necwb::analysis::AverageGainClassification::Pass}, 14.1);
+    dashboard.setConvergenceState(QStringLiteral("passed"));
+    dashboard.clearAverageGain();
+    dashboard.clearConvergence();
     dashboard.setResultWindowVisible(
         necwb::ui::DashboardPage::Workspace::Impedance, true);
     dashboard.show(); application.processEvents();
@@ -2489,6 +2494,10 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("controlPanelQuickResults"));
     const auto* dashboardFooter = dashboard.findChild<QLabel*>(
         QStringLiteral("controlPanelFooter"));
+    const auto* dashboardAverageGain = dashboard.findChild<QLabel*>(
+        QStringLiteral("controlPanelAverageGainState"));
+    const auto* dashboardConvergence = dashboard.findChild<QLabel*>(
+        QStringLiteral("controlPanelConvergenceState"));
     auto* dashboardRows = dashboard.findChild<QTableWidget*>(
         QStringLiteral("controlPanelModelRows"));
     auto* dashboardOpen = dashboard.findChild<QToolButton*>(
@@ -2525,7 +2534,11 @@ auto main(int argc, char* argv[]) -> int
         && dashboardExtrema->text().contains(QStringLiteral("Min SWR"))
         && dashboardExtrema->text().contains(QStringLiteral("Peak gain"))
         && dashboardFooter != nullptr
-        && dashboardFooter->text().contains(QStringLiteral("Last run"));
+        && dashboardFooter->text().contains(QStringLiteral("Last run"))
+        && dashboardAverageGain != nullptr
+        && dashboardAverageGain->text() == QStringLiteral("not run")
+        && dashboardConvergence != nullptr
+        && dashboardConvergence->text() == QStringLiteral("not run");
     const auto dashboardDenseLayout = dashboardRows != nullptr
         && dashboardRows->rowCount() == 9
         && dashboardRows->verticalHeader()->defaultSectionSize() <= 24

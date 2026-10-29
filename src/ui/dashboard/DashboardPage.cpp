@@ -272,12 +272,14 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     qualityGrid->setVerticalSpacing(2);
     qualityGrid->addWidget(new QLabel(tr("Avg gain test:"), panel), 0, 0);
     averageGainState_ = new QLabel(tr("not run"), panel);
+    averageGainState_->setObjectName(QStringLiteral("controlPanelAverageGainState"));
     averageGainButton_ = compactButton(tr("Run"), panel);
     averageGainButton_->setAutoRaise(true);
     qualityGrid->addWidget(averageGainState_, 0, 1);
     qualityGrid->addWidget(averageGainButton_, 0, 2);
     qualityGrid->addWidget(new QLabel(tr("Convergence:"), panel), 1, 0);
     convergenceState_ = new QLabel(tr("not run"), panel);
+    convergenceState_->setObjectName(QStringLiteral("controlPanelConvergenceState"));
     convergenceButton_ = compactButton(tr("Run"), panel);
     convergenceButton_->setAutoRaise(true);
     qualityGrid->addWidget(convergenceState_, 1, 1);
