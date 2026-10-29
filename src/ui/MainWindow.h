@@ -375,6 +375,7 @@ private:
     QTreeWidget* projectTree_{};
     QTreeWidget* diagnostics_{};
     QPlainTextEdit* solverOutput_{};
+    QDockWidget* projectDock_{};
     QDialog* modelCheckWindow_{};
     QDialog* runMonitorWindow_{};
     QLabel* validationSummary_{};

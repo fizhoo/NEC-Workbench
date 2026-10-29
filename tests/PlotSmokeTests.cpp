@@ -285,6 +285,7 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/analysis-setup"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/run-history"));
+    resultWindowSettings.remove(QStringLiteral("view/projectTreeVisible"));
     resultWindowSettings.sync();
     {
         necwb::ui::MainWindow mainWindow;
@@ -309,10 +310,12 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("run-historyStatusLabel"));
         auto* validationSummary = mainWindow.findChild<QLabel*>(
             QStringLiteral("validationOverviewSummary"));
+        const auto* optionalProjectDock = mainWindow.findChild<QWidget*>(
+            QStringLiteral("projectDock"));
         const auto compactPrimaryNavigation = mainWindow.findChild<QWidget*>(
             QStringLiteral("moduleNavigationToolbar")) == nullptr
             && mainWindow.findChild<QWidget*>(QStringLiteral("mainToolbar")) == nullptr
-            && mainWindow.findChild<QWidget*>(QStringLiteral("projectDock")) == nullptr;
+            && optionalProjectDock != nullptr && !optionalProjectDock->isVisible();
         auto* openValidation = mainWindow.findChild<QAction*>(
             QStringLiteral("openValidationResultsAction"));
         auto* openConvergence = mainWindow.findChild<QAction*>(

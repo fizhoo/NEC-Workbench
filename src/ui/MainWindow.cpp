@@ -2123,11 +2123,15 @@ void MainWindow::showAutoSegmentation()
 
 void MainWindow::createDocks()
 {
-    projectTree_ = new QTreeWidget(this);
+    projectDock_ = new QDockWidget(tr("Project Tree"), this);
+    projectDock_->setObjectName(QStringLiteral("projectDock"));
+    projectTree_ = new QTreeWidget(projectDock_);
     projectTree_->setObjectName(QStringLiteral("projectTree"));
     projectTree_->setHeaderHidden(true);
     projectTree_->setAlternatingRowColors(true);
-    projectTree_->hide();
+    projectDock_->setWidget(projectTree_);
+    addDockWidget(Qt::LeftDockWidgetArea, projectDock_);
+    projectDock_->hide();
 
     modelCheckWindow_ = new QDialog(this, Qt::Tool);
     modelCheckWindow_->setObjectName(QStringLiteral("modelCheckWindow"));
@@ -2328,6 +2332,12 @@ void MainWindow::createMenusAndToolbar()
         showRunHistory();
     });
     viewMenu->addSeparator();
+    auto* projectTreeAction = projectDock_->toggleViewAction();
+    projectTreeAction->setText(tr("Project Tree"));
+    viewMenu->addAction(projectTreeAction);
+    connect(projectTreeAction, &QAction::triggered, this, [](bool visible) {
+        QSettings{}.setValue(QStringLiteral("view/projectTreeVisible"), visible);
+    });
     viewMenu->addAction(modelCheckWindowAction_);
     viewMenu->addAction(runMonitorWindowAction_);
     viewMenu->addSeparator();
@@ -2379,6 +2389,8 @@ void MainWindow::createMenusAndToolbar()
 
 void MainWindow::resetWorkspaceLayout()
 {
+    projectDock_->hide();
+    QSettings{}.setValue(QStringLiteral("view/projectTreeVisible"), false);
     modelCheckWindow_->hide();
     runMonitorWindow_->hide();
     statusBar()->showMessage(tr("Workspace layout reset."), 4000);
@@ -5689,6 +5701,8 @@ void MainWindow::restoreWorkspaceLayout()
     }
     const auto savedState = settings.value(QStringLiteral("mainWindow/state")).toByteArray();
     restoreState(savedState);
+    projectDock_->setVisible(settings.value(
+        QStringLiteral("view/projectTreeVisible"), false).toBool());
     if (savedState.isEmpty()) resetWorkspaceLayout();
     const auto modelCheckGeometry = settings.value(
         QStringLiteral("modelCheckWindow/geometry")).toByteArray();
