@@ -450,6 +450,8 @@ MainWindow::MainWindow()
 
     modelFileStatus_ = new QLabel(this);
     modelFileStatus_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    modelFileStatus_->setMinimumWidth(0);
+    modelFileStatus_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     statusBar()->addPermanentWidget(modelFileStatus_, 1);
     checkStatus_ = new QLabel(tr("No model loaded"), this);
     statusBar()->addPermanentWidget(checkStatus_);
@@ -461,15 +463,12 @@ MainWindow::MainWindow()
     solverActivityProgress_ = new QProgressBar(solverActivityWidget_);
     solverActivityProgress_->setObjectName(QStringLiteral("solverActivityProgress"));
     solverActivityProgress_->setRange(0, 0);
-    solverActivityProgress_->setTextVisible(false);
-    solverActivityProgress_->setFixedWidth(72);
-    solverActivityLabel_ = new QLabel(solverActivityWidget_);
-    solverActivityLabel_->setObjectName(QStringLiteral("solverActivityLabel"));
-    solverActivityLabel_->setMinimumWidth(230);
+    solverActivityProgress_->setTextVisible(true);
+    solverActivityProgress_->setMinimumWidth(135);
+    solverActivityProgress_->setMaximumWidth(190);
     solverActivityCancelButton_ = new QPushButton(tr("Cancel"), solverActivityWidget_);
     solverActivityCancelButton_->setObjectName(QStringLiteral("solverActivityCancelButton"));
     solverActivityLayout->addWidget(solverActivityProgress_);
-    solverActivityLayout->addWidget(solverActivityLabel_);
     solverActivityLayout->addWidget(solverActivityCancelButton_);
     statusBar()->addPermanentWidget(solverActivityWidget_);
     solverActivityWidget_->hide();
@@ -2823,12 +2822,15 @@ void MainWindow::checkModel(bool presentReport)
     convergenceWorkspace_->setContext(editor_->toPlainText(), currentFile_,
         solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_,
         modelErrorCount_ == 0);
-    checkStatus_->setText(tr("Checked: %1 errors, %2 warnings, %3 wires, %4 patches, %5 cards")
+    const auto checkDetail = tr("Checked: %1 errors, %2 warnings, %3 wires, %4 patches, %5 cards")
         .arg(static_cast<qulonglong>(result.errorCount()))
         .arg(static_cast<qulonglong>(result.warningCount()))
         .arg(static_cast<qulonglong>(currentModel_.wireCount()))
         .arg(static_cast<qulonglong>(currentModel_.surfacePatchCount()))
-        .arg(static_cast<qulonglong>(document.cards().size())));
+        .arg(static_cast<qulonglong>(document.cards().size()));
+    checkStatus_->setText(tr("Check: %1E · %2W")
+        .arg(result.errorCount()).arg(result.warningCount()));
+    checkStatus_->setToolTip(checkDetail);
     if (presentReport || result.errorCount() != 0 || result.warningCount() != 0) {
         modelCheckWindow_->show();
         modelCheckWindow_->raise();
@@ -4131,7 +4133,7 @@ void MainWindow::updateSolverActivity()
     const QFileInfo output(currentRunOutputPath_);
     if (output.exists() && output.size() > 0)
         detail += tr(" · output %1").arg(formatByteSize(output.size()));
-    solverActivityLabel_->setText(detail);
+    solverActivityProgress_->setFormat(detail);
     if (runMonitorStatusLabel_ != nullptr) runMonitorStatusLabel_->setText(detail);
 }
 
@@ -5681,7 +5683,7 @@ void MainWindow::setCurrentFile(QString path)
     const auto name = currentFile_.isEmpty() ? tr("Untitled") : QFileInfo(currentFile_).fileName();
     setWindowTitle(tr("%1[*] — NEC Workbench").arg(name));
     const auto modelName = currentFile_.isEmpty() ? tr("Untitled model.nec") : name;
-    modelFileStatus_->setText(tr("Open model: %1").arg(modelName));
+    modelFileStatus_->setText(tr("Model: %1").arg(modelName));
     modelFileStatus_->setToolTip(currentFile_.isEmpty() ? tr("This model has not been saved yet.") : currentFile_);
     if (controlPanel_ != nullptr)
         controlPanel_->setDocumentState(currentFile_.isEmpty() ? QString{} : name,

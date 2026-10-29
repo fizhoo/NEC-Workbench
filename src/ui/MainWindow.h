@@ -388,7 +388,6 @@ private:
     QPushButton* runMonitorStopButton_{};
     QLabel* checkStatus_{};
     QWidget* solverActivityWidget_{};
-    QLabel* solverActivityLabel_{};
     QProgressBar* solverActivityProgress_{};
     QPushButton* solverActivityCancelButton_{};
     QLabel* modelFileStatus_{};
