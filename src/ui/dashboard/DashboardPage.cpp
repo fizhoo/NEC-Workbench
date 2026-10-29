@@ -142,15 +142,20 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     impedanceButton_ = compactButton(tr("Impedance / SWR"), panel);
     currentsButton_ = compactButton(tr("Currents"), panel);
     radiationButton_ = compactButton(tr("Radiation"), panel);
+    geometryViewButton_ = compactButton(tr("Antenna View"), panel);
     impedanceButton_->setObjectName(QStringLiteral("controlPanelImpedance"));
     currentsButton_->setObjectName(QStringLiteral("controlPanelCurrents"));
     radiationButton_->setObjectName(QStringLiteral("controlPanelRadiation"));
+    geometryViewButton_->setObjectName(QStringLiteral("controlPanelGeometryView"));
     impedanceButton_->setIcon(workbenchIcon("results"));
     currentsButton_->setIcon(workbenchIcon("currents"));
     radiationButton_->setIcon(workbenchIcon("radiation-pattern"));
-    for (auto* button : {impedanceButton_, currentsButton_, radiationButton_})
+    geometryViewButton_->setIcon(workbenchIcon("3d-view"));
+    for (auto* button : {impedanceButton_, currentsButton_, radiationButton_,
+             geometryViewButton_})
         button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    for (auto* button : {impedanceButton_, currentsButton_, radiationButton_})
+    for (auto* button : {impedanceButton_, currentsButton_, radiationButton_,
+             geometryViewButton_})
         commands->addWidget(button);
     commands->addSpacing(5);
     auto* runs = compactButton(tr("Runs…"), panel);
@@ -172,6 +177,9 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     });
     connect(radiationButton_, &QToolButton::clicked, this, [this] {
         if (openWorkspace_) openWorkspace_(Workspace::Radiation);
+    });
+    connect(geometryViewButton_, &QToolButton::clicked, this, [this] {
+        if (openWorkspace_) openWorkspace_(Workspace::GeometryView);
     });
     connect(runs, &QToolButton::clicked, this, [this] {
         if (openRunHistory_) openRunHistory_();
@@ -216,15 +224,6 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
         modelRows_->setItem(row, 1, new QTableWidgetItem(tr("—")));
         modelRows_->setItem(row, 2, new QTableWidgetItem(QStringLiteral("›")));
     }
-    geometryViewButton_ = compactButton(tr("Geometry View"), panel);
-    geometryViewButton_->setObjectName(QStringLiteral("controlPanelGeometryView"));
-    geometryViewButton_->setIcon(workbenchIcon("3d-view"));
-    geometryViewButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    geometryViewButton_->setAutoRaise(true);
-    geometryViewButton_->setToolTip(tr("Open or raise the reusable 2D/3D Geometry View"));
-    connect(geometryViewButton_, &QToolButton::clicked, this, [this] {
-        if (openWorkspace_) openWorkspace_(Workspace::GeometryView);
-    });
     connect(modelRows_, &QTableWidget::cellClicked, this, [this](int row, int) {
         if (openEditor_) openEditor_(static_cast<Editor>(row));
     });
@@ -283,11 +282,7 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     convergenceButton_->setAutoRaise(true);
     qualityGrid->addWidget(convergenceState_, 1, 1);
     qualityGrid->addWidget(convergenceButton_, 1, 2);
-    auto* modelHeadingRow = new QHBoxLayout;
-    modelHeadingRow->setSpacing(4);
-    modelHeadingRow->addWidget(modelHeading, 1);
-    modelHeadingRow->addWidget(geometryViewButton_);
-    modelArea->addLayout(modelHeadingRow);
+    modelArea->addWidget(modelHeading);
     modelArea->addWidget(modelRows_);
     modelArea->addSpacing(3);
     modelArea->addWidget(latestHeading);
@@ -635,7 +630,10 @@ void DashboardPage::refreshResultButton(Workspace workspace)
 void DashboardPage::refreshGeometryViewButton()
 {
     geometryViewButton_->setText(geometryViewVisible_
-        ? tr("● Geometry View") : tr("○ Geometry View"));
+        ? tr("● Antenna View") : tr("○ Antenna View"));
+    geometryViewButton_->setToolTip(geometryViewVisible_
+        ? tr("The reusable 2D/3D antenna view is open; click to raise it")
+        : tr("Open the reusable 2D/3D antenna view"));
 }
 
 void DashboardPage::setModelRow(Editor editor, const QString& value)
