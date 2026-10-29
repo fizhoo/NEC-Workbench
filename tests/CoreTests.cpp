@@ -243,9 +243,24 @@ void testControlPanelSummaries()
             && sweepSummary.peakGain->datasetKind
                 == necwb::analysis::RadiationDatasetKind::FullPattern,
         "result summary labels a peak from another frequency and full pattern dataset");
-    expect(sweepSummary.selectedGain && sweepSummary.selectedGain->frequencyMHz == 14.2
-            && sweepSummary.selectedGain->gainDb == 4.0,
-        "selected-frequency snapshot does not substitute the sweep-wide peak gain");
+    expect(!sweepSummary.selectedGain,
+        "selected-frequency gain hides a single-point radiation sample");
+
+    necwb::analysis::AnalysisResult mixedPattern;
+    mixedPattern.radiation = {
+        {14.0, 0.0, 0.0, 0.0, 0.0, -5.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 0},
+        {14.0, 90.0, 0.0, 0.0, 0.0, 3.1, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 0},
+        {14.35, 55.0, 0.0, 0.0, 0.0, 6.07, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 1},
+    };
+    const auto fullPatternSummary = necwb::analysis::summarizeResults(mixedPattern, 14.0);
+    const auto pointSummary = necwb::analysis::summarizeResults(mixedPattern, 14.35);
+    expect(fullPatternSummary.selectedGain && fullPatternSummary.selectedGain->gainDb == 3.1,
+        "selected-frequency gain uses the multi-angle radiation dataset");
+    expect(!pointSummary.selectedGain,
+        "selected-frequency gain does not present a point sample as a pattern peak");
 }
 
 void testOptimizationBaselineFingerprint()
