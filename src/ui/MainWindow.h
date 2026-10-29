@@ -137,6 +137,7 @@ private:
     void jumpRawOutputToSelectedFrequency();
     void findInRawOutput();
     void showEditor(EditorDestination destination, int geometryTab = 0);
+    void fitControlPanelWindow();
     void setDisplayLengthUnit(model::LengthUnit unit);
     void changeDeckLengthUnit(model::LengthUnit unit);
     void updateDeckUnitControls(const nec::DeckGeometryUnitInfo& info);

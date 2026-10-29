@@ -425,7 +425,8 @@ MainWindow::MainWindow()
 {
     setWindowTitle(tr("Untitled[*] — NEC Workbench"));
     setWindowModified(false);
-    resize(1280, 820);
+    setMinimumSize(520, 440);
+    resize(760, 600);
 
     solverRunner_ = new SolverProcessRunner(this);
     createActions();
@@ -2555,6 +2556,7 @@ void MainWindow::newModel()
     editor_->document()->setModified(false);
     showEditor(EditorDestination::RawSource);
     checkModel();
+    QTimer::singleShot(0, this, [this] { fitControlPanelWindow(); });
 }
 
 void MainWindow::openFile()
@@ -2591,6 +2593,17 @@ void MainWindow::openFileAtPath(const QString& path)
     editor_->document()->setModified(false);
     showEditor(EditorDestination::RawSource);
     checkModel();
+    QTimer::singleShot(0, this, [this] { fitControlPanelWindow(); });
+}
+
+void MainWindow::fitControlPanelWindow()
+{
+    if (isMaximized() || dashboardPage_ == nullptr) return;
+    const auto hint = dashboardPage_->sizeHint();
+    const auto frameHeight = menuBar()->sizeHint().height()
+        + statusBar()->sizeHint().height();
+    resize(std::clamp(hint.width(), 560, 640),
+        std::clamp(hint.height() + frameHeight, 440, 620));
 }
 
 void MainWindow::openExample()
@@ -5661,8 +5674,9 @@ void MainWindow::restoreWorkspaceLayout()
     } else {
         const auto normalGeometry = settings.value(QStringLiteral("mainWindow/normalGeometry")).toRect();
         if (normalGeometry.isValid()) setGeometry(normalGeometry);
-        else if (workspaceDensity_ == WorkspaceDensity::Compact) resize(1120, 720);
-        else if (workspaceDensity_ == WorkspaceDensity::Spacious) resize(1440, 900);
+        else if (workspaceDensity_ == WorkspaceDensity::Compact) resize(600, 500);
+        else if (workspaceDensity_ == WorkspaceDensity::Standard) resize(680, 560);
+        else resize(760, 620);
     }
     const auto savedState = settings.value(QStringLiteral("mainWindow/state")).toByteArray();
     restoreState(savedState);

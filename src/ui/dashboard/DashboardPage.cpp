@@ -78,6 +78,7 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
 
     auto* panel = new QWidget(this);
     panel->setObjectName(QStringLiteral("controlPanel"));
+    panel->setMinimumWidth(560);
     panel->setMaximumWidth(600);
     auto* panelLayout = new QVBoxLayout(panel);
     panelLayout->setContentsMargins(0, 0, 0, 0);
@@ -195,6 +196,7 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     modelRows_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     modelRows_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     modelRows_->setFixedHeight(9 * 24 + 2);
+    modelRows_->setMinimumWidth(365);
     const std::array labels{
         tr("Frequency"), tr("Wires"), tr("Sources"), tr("Loads"),
         tr("Trans. lines"), tr("Ground"), tr("Variables"), tr("Requests"), tr("Deck")};
@@ -207,11 +209,10 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
         modelRows_->setItem(row, 1, new QTableWidgetItem(tr("—")));
         modelRows_->setItem(row, 2, new QTableWidgetItem(QStringLiteral("›")));
     }
-    geometryViewButton_ = compactButton(tr("View"), modelRows_);
+    geometryViewButton_ = compactButton(tr("Geometry View"), panel);
     geometryViewButton_->setObjectName(QStringLiteral("controlPanelGeometryView"));
     geometryViewButton_->setAutoRaise(true);
     geometryViewButton_->setToolTip(tr("Open or raise the reusable 2D/3D Geometry View"));
-    modelRows_->setCellWidget(static_cast<int>(Editor::Wires), 2, geometryViewButton_);
     connect(geometryViewButton_, &QToolButton::clicked, this, [this] {
         if (openWorkspace_) openWorkspace_(Workspace::GeometryView);
     });
@@ -224,7 +225,11 @@ DashboardPage::DashboardPage(QWidget* parent) : QWidget(parent)
     latestResult_->setObjectName(QStringLiteral("controlPanelLatestResult"));
     latestResult_->setWordWrap(true);
     latestResult_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    modelArea->addWidget(modelHeading);
+    auto* modelHeadingRow = new QHBoxLayout;
+    modelHeadingRow->setSpacing(4);
+    modelHeadingRow->addWidget(modelHeading, 1);
+    modelHeadingRow->addWidget(geometryViewButton_);
+    modelArea->addLayout(modelHeadingRow);
     modelArea->addWidget(modelRows_);
     modelArea->addSpacing(3);
     modelArea->addWidget(latestHeading);
@@ -473,7 +478,9 @@ void DashboardPage::refreshGeometryViewButton()
 
 void DashboardPage::setModelRow(Editor editor, const QString& value)
 {
-    modelRows_->item(static_cast<int>(editor), 1)->setText(value);
+    auto* item = modelRows_->item(static_cast<int>(editor), 1);
+    item->setText(value);
+    item->setToolTip(value);
 }
 
 auto DashboardPage::resultButton(Workspace workspace) const -> QToolButton*
