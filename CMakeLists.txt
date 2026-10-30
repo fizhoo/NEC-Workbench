@@ -2,6 +2,14 @@ cmake_minimum_required(VERSION 3.21)
 
 project(NecWorkbench VERSION 0.1.0 LANGUAGES CXX)
 
+# Pre-release label shown to users (About box); leave empty for a final release.
+set(NECWB_VERSION_LABEL "alpha.2")
+if(NECWB_VERSION_LABEL)
+    set(NECWB_DISPLAY_VERSION "${PROJECT_VERSION}-${NECWB_VERSION_LABEL}")
+else()
+    set(NECWB_DISPLAY_VERSION "${PROJECT_VERSION}")
+endif()
+
 # Single-configuration builds without a type compile unoptimized, which makes the GUI
 # noticeably slower; default to an optimized build that keeps debug symbols.
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
@@ -219,6 +227,7 @@ if(NECWB_BUILD_GUI)
             resources/icons/variables.svg
     )
     target_link_libraries(necwb_ui PUBLIC necwb_core Qt6::Widgets)
+    target_compile_definitions(necwb_ui PUBLIC NECWB_DISPLAY_VERSION="${NECWB_DISPLAY_VERSION}")
     if(MSVC)
         target_compile_options(necwb_ui PRIVATE /W4 /permissive-)
     else()
