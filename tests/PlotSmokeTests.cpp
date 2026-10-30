@@ -76,6 +76,7 @@
 #include <QSettings>
 #include <QSplitter>
 #include <QStandardPaths>
+#include <QStatusBar>
 
 #include <cstdlib>
 #include <algorithm>
@@ -356,7 +357,12 @@ auto main(int argc, char* argv[]) -> int
             && recentModelsMenu != nullptr && !recentModelsMenu->actions().isEmpty()
             && validationSummary != nullptr
             && openValidation != nullptr && validateMenu->actions().contains(openValidation)
-            && reviewRuns != nullptr && runMenu->actions().contains(reviewRuns);
+            && reviewRuns != nullptr && runMenu->actions().contains(reviewRuns)
+            // The dashboard window is fixed to its content, and run progress lives in
+            // the Run Monitor window rather than the status bar.
+            && mainWindow.layout()->sizeConstraint() == QLayout::SetFixedSize
+            && !mainWindow.statusBar()->isSizeGripEnabled()
+            && mainWindow.findChild<QWidget*>(QStringLiteral("solverActivityWidget")) == nullptr;
         if (openValidation != nullptr) {
             openValidation->trigger();
             application.processEvents();
