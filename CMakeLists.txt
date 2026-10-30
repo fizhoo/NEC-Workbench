@@ -2,6 +2,12 @@ cmake_minimum_required(VERSION 3.21)
 
 project(NecWorkbench VERSION 0.1.0 LANGUAGES CXX)
 
+# Single-configuration builds without a type compile unoptimized, which makes the GUI
+# noticeably slower; default to an optimized build that keeps debug symbols.
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+endif()
+
 option(NECWB_BUILD_GUI "Build the Qt desktop application" ON)
 option(NECWB_BUILD_TESTS "Build automated tests" ON)
 

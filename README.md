@@ -48,6 +48,10 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+Without `-DCMAKE_BUILD_TYPE`, single-configuration builds default to `RelWithDebInfo`
+(optimized, with debug symbols). Pass `-DCMAKE_BUILD_TYPE=Debug` for an unoptimized
+build.
+
 Core-only builds do not require Qt:
 
 ```sh
