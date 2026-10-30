@@ -1759,6 +1759,21 @@ auto main(int argc, char* argv[]) -> int
             && candidateCount->geometry().left() - budgetLabel->geometry().right() > 4;
         sweepSelectionWorkspace.hide();
     }
+    // Applying a preset silences the objective controls while restoring them; afterwards an
+    // edit must still mark the objective Custom.
+    auto presetControlsLiveAfterRestore = false;
+    if (auto* preset = sweepSelectionWorkspace.findChild<QComboBox*>(
+            QStringLiteral("optimizationObjectivePreset"))) {
+        auto* swrWeight = sweepSelectionWorkspace.findChild<QDoubleSpinBox*>(
+            QStringLiteral("optimizationSwrWeight"));
+        preset->setCurrentText(QStringLiteral("Balance SWR and Gain"));
+        application.processEvents();
+        const auto presetApplied = preset->currentText() == QStringLiteral("Balance SWR and Gain");
+        if (swrWeight != nullptr) swrWeight->setValue(swrWeight->value() + 1.0);
+        application.processEvents();
+        presetControlsLiveAfterRestore = presetApplied && swrWeight != nullptr
+            && preset->currentText() == QStringLiteral("Custom");
+    }
     auto wheelProtected = false;
     if (optimizationCandidateCount != nullptr) {
         optimizationCandidateCount->clearFocus();
@@ -2038,6 +2053,7 @@ auto main(int argc, char* argv[]) -> int
         || !sweepControlsValid
         || !sweepSelectionValid
         || !compactSearchSectionValid
+        || !presetControlsLiveAfterRestore
         || !legacySessionLoaded
         || !wheelProtected
         || !compactSetupValid

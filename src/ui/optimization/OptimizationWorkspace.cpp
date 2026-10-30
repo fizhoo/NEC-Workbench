@@ -158,6 +158,10 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
         directionSetupReady_ = false;
     }
     const auto resolution = nec::NecSymbolResolver{}.resolve(source_.toStdString());
+    // Set before populateVariables, whose readiness refresh compares against the baseline.
+    resolvedDeck_ = resolution.ok() ? std::optional{resolution.generatedDeck} : std::nullopt;
+    modelFingerprint_ = resolvedDeck_
+        ? analysis::optimizationModelFingerprint(*resolvedDeck_) : std::string{};
     populateVariables(resolution);
     if (resolution.ok()) {
         const auto setup = nec::NecSetupConverter{}.convert(
@@ -620,11 +624,7 @@ auto OptimizationWorkspace::baselineRequirements(const StudySetup& setup) const
     -> analysis::OptimizationBaselineRequirements
 {
     analysis::OptimizationBaselineRequirements requirements;
-    const auto resolution = nec::NecSymbolResolver{}.resolve(source_.toStdString());
-    if (resolution.ok()) {
-        requirements.modelFingerprint = analysis::optimizationModelFingerprint(
-            resolution.generatedDeck);
-    }
+    requirements.modelFingerprint = modelFingerprint_;
     requirements.backend = backend_.toStdString();
     requirements.referenceImpedanceOhms = setup.objective.referenceImpedance;
     auto frequencies = setup.frequenciesMHz;
@@ -639,12 +639,12 @@ auto OptimizationWorkspace::baselineRequirements(const StudySetup& setup) const
         || setup.objective.frontToRearWeight > 0.0;
     if (radiationRequired) {
         requirements.radiationFrequenciesMHz = frequencies;
-        if (resolution.ok()) {
+        if (resolvedDeck_) {
             const analysis::FrequencyPlan frequencyPlan{
                 analysis::FrequencyPlanMode::Explicit, frequencies, {}};
             requirements.radiation = analysis::optimizationRadiationRequirements(
                 analysis::prepareOptimizationInput(
-                    resolution.generatedDeck, frequencyPlan, setup.objective));
+                    *resolvedDeck_, frequencyPlan, setup.objective));
         }
     }
     return requirements;

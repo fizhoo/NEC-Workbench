@@ -18,6 +18,7 @@
 #include <array>
 #include <functional>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -372,6 +373,10 @@ private:
     analysis::OptimizationBaselineCompatibility baselineCompatibility_;
     std::optional<FrequencySelectionState> activeFrequencySelection_;
     QString source_;
+    // The resolved deck and its fingerprint, computed once per source change in setContext;
+    // readiness checks compare them with the baseline many times per edit.
+    std::optional<std::string> resolvedDeck_;
+    std::string modelFingerprint_;
     QString sourceFile_;
     QString backend_;
     QString executable_;
