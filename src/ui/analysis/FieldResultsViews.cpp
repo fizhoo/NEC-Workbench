@@ -1,8 +1,10 @@
 #include "ui/analysis/FieldResultsViews.h"
 
 #include "analysis/FrequencyComparison.h"
+#include "analysis/SegmentCurrentDisplay.h"
 #include "model/WireGeometry.h"
 #include "ui/DisplayFormat.h"
+#include "ui/analysis/CurrentAntennaView.h"
 #include "ui/analysis/SweepPlotsView.h"
 
 #include <QComboBox>
@@ -23,6 +25,7 @@
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QStringList>
+#include <QTabWidget>
 #include <QTableWidget>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -1107,10 +1110,21 @@ CurrentDistributionView::CurrentDistributionView(QWidget* parent) : QWidget(pare
     auto* layout = new QVBoxLayout(this);
     frequency_ = new QComboBox(this); frequency_->hide();
     summary_ = new QLabel(tr("Run an analysis to populate segment currents."), this);
-    plot_ = new CurrentPlotWidget(this); table_ = new QTableWidget(0, 6, this);
-    table_->setHorizontalHeaderLabels({tr("Wire"), tr("Segment"), tr("Magnitude (A)"), tr("Phase (°)"), tr("Real"), tr("Imaginary")});
+    auto* views = new QTabWidget(this);
+    views->setObjectName(QStringLiteral("currentsViews"));
+    views->setDocumentMode(true);
+    antenna_ = new CurrentAntennaView(views);
+    plot_ = new CurrentPlotWidget(views); table_ = new QTableWidget(0, 7, views);
+    table_->setHorizontalHeaderLabels({tr("Wire"), tr("Segment"), tr("Magnitude (A)"), tr("Phase (°)"),
+        tr("Phase rel. feed (°)"), tr("Real"), tr("Imaginary")});
+    table_->horizontalHeaderItem(3)->setToolTip(tr("Phase as NEC reports it, for current flowing from wire end 1 to end 2."));
+    table_->horizontalHeaderItem(4)->setToolTip(tr("Phase relative to the feed current, with straight wires "
+        "taken as flowing toward +X, +Y or +Z so elements entered in opposite directions compare correctly."));
     table_->horizontalHeader()->setStretchLastSection(true); table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    layout->addWidget(summary_); layout->addWidget(plot_, 1); layout->addWidget(table_, 1);
+    views->addTab(antenna_, tr("Antenna"));
+    views->addTab(plot_, tr("Along Wire"));
+    views->addTab(table_, tr("Table"));
+    layout->addWidget(summary_); layout->addWidget(views, 1);
     connect(frequency_, &QComboBox::currentIndexChanged, this, [this] { refresh(); });
 }
 void CurrentDistributionView::setResults(const analysis::AnalysisResult& result, const QString& runDirectory)
@@ -1129,11 +1143,24 @@ void CurrentDistributionView::refresh()
             .arg(formatDecimal(selectedFrequency(frequency_)), runContext_)
         : tr("%1 MHz · %2 current segment(s) · %3")
             .arg(formatDecimal(selectedFrequency(frequency_))).arg(values.size()).arg(runContext_));
+    std::vector<analysis::FeedpointResult> feedpoints;
+    for (const auto& feed : result_.feedpoints)
+        if (nearlyEqual(feed.frequencyMHz, selectedFrequency(frequency_))) feedpoints.push_back(feed);
+    auto displayed = analysis::displayedCurrents(values, feedpoints, model_);
+    std::map<std::pair<int, int>, double> displayedPhase;
+    for (const auto& segment : displayed.segments)
+        displayedPhase[{segment.wireTag, segment.segment}] = segment.relativePhaseDegrees;
+    table_->horizontalHeaderItem(4)->setText(displayed.feedReferenced
+        ? tr("Phase rel. feed (°)") : tr("Phase, common direction (°)"));
+    antenna_->setCurrents(std::move(displayed), model_);
     plot_->setPaths(connectedCurrentPaths(values, model_)); table_->setRowCount(static_cast<int>(values.size()));
     for (auto row = 0; row < static_cast<int>(values.size()); ++row) {
+        const auto phase = displayedPhase.find({values[row].wireTag, values[row].segment});
         const QStringList cells{QString::number(values[row].wireTag),
             QString::number(values[row].segment), formatDecimal(values[row].magnitude),
-            formatDecimal(values[row].phaseDegrees), formatDecimal(values[row].current.real()),
+            formatDecimal(values[row].phaseDegrees),
+            phase == displayedPhase.end() ? tr("—") : formatDecimal(phase->second),
+            formatDecimal(values[row].current.real()),
             formatDecimal(values[row].current.imag())};
         for (auto column = 0; column < cells.size(); ++column) table_->setItem(row, column, new QTableWidgetItem(cells[column]));
     }

@@ -19,6 +19,7 @@ class QPushButton;
 
 namespace necwb::ui {
 
+class CurrentAntennaView;
 class CurrentPlotWidget;
 class RadiationPolarWidget;
 class RadiationSurfaceWidget;
@@ -44,6 +45,7 @@ private:
     model::AntennaModel model_;
     QComboBox* frequency_{};
     QLabel* summary_{};
+    CurrentAntennaView* antenna_{};
     CurrentPlotWidget* plot_{};
     QTableWidget* table_{};
     QString runContext_;

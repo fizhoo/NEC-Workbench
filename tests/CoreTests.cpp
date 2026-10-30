@@ -1,3 +1,4 @@
+#include "analysis/SegmentCurrentDisplay.h"
 #include "analysis/SolverCommand.h"
 #include "analysis/AdaptiveSearch.h"
 #include "analysis/AverageGainTest.h"
@@ -36,6 +37,7 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <numbers>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -2894,9 +2896,75 @@ void testSegmentationConvergencePreparation()
 
 }
 
+void testSegmentCurrentDisplay()
+{
+    using necwb::analysis::SegmentCurrentResult;
+    const auto segmentCurrent = [](int tag, int segment, double magnitude, double phase) {
+        SegmentCurrentResult current;
+        current.frequencyMHz = 14.0;
+        current.wireTag = tag;
+        current.segment = segment;
+        current.magnitude = magnitude;
+        current.phaseDegrees = phase;
+        current.current = std::polar(magnitude, phase * std::numbers::pi / 180.0);
+        return current;
+    };
+    necwb::analysis::FeedpointResult feed;
+    feed.frequencyMHz = 14.0;
+    feed.wireTag = 1;
+    feed.segment = 1;
+    feed.current = std::polar(2.0, 30.0 * std::numbers::pi / 180.0);
+
+    // Two parallel elements entered in opposite directions carry the same physical current;
+    // NEC reports them 180 degrees apart, the display must not.
+    necwb::model::AntennaModel parallel;
+    parallel.addWire({1, {0.0, -1.0, 0.0}, {0.0, 1.0, 0.0}, 1, 0.001, 1});
+    parallel.addWire({2, {0.5, 1.0, 0.0}, {0.5, -1.0, 0.0}, 1, 0.001, 2});
+    const std::array parallelCurrents{segmentCurrent(1, 1, 2.0, 30.0),
+        segmentCurrent(2, 1, 1.0, -150.0)};
+    const auto shown = necwb::analysis::displayedCurrents(parallelCurrents,
+        std::span{&feed, 1}, parallel);
+    expect(shown.feedReferenced && shown.segments.size() == 2
+            && std::abs(shown.maximumMagnitude - 2.0) < 1.0e-12,
+        "displayed currents keep every segment with model geometry");
+    expect(!shown.segments[0].reversed && std::abs(shown.segments[0].relativePhaseDegrees) < 1.0e-9,
+        "the feed segment is the phase reference");
+    expect(shown.segments[1].reversed && std::abs(shown.segments[1].relativePhaseDegrees) < 1.0e-9
+            && shown.segments[1].start.y < shown.segments[1].end.y,
+        "a wire entered against its main axis is shown in the common direction");
+
+    // A dipole built from two wires running outward from the center stays continuous.
+    necwb::model::AntennaModel dipole;
+    dipole.addWire({1, {0.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, 1, 0.001, 1});
+    dipole.addWire({2, {0.0, 0.0, 0.0}, {0.0, -1.0, 0.0}, 1, 0.001, 2});
+    const std::array dipoleCurrents{segmentCurrent(1, 1, 1.0, 10.0),
+        segmentCurrent(2, 1, 1.0, -170.0)};
+    const auto dipoleShown = necwb::analysis::displayedCurrents(dipoleCurrents, {}, dipole);
+    expect(!dipoleShown.feedReferenced
+            && std::abs(dipoleShown.segments[0].relativePhaseDegrees - 10.0) < 1.0e-9
+            && std::abs(dipoleShown.segments[1].relativePhaseDegrees - 10.0) < 1.0e-9,
+        "without a feed, phases are absolute and joined halves agree");
+
+    necwb::analysis::DisplayedSegmentCurrent instant;
+    instant.magnitude = 2.0;
+    instant.relativePhaseDegrees = 60.0;
+    expect(std::abs(necwb::analysis::instantaneousCurrent(instant, 0.0) - 1.0) < 1.0e-12
+            && std::abs(necwb::analysis::instantaneousCurrent(instant, 30.0)) < 1.0e-12
+            && std::abs(necwb::analysis::instantaneousCurrent(instant, 120.0) + 2.0) < 1.0e-12,
+        "instantaneous current follows |I| cos(phase + cycle)");
+
+    necwb::model::AntennaModel vertical;
+    vertical.addWire({1, {0.0, 0.0, 0.0}, {0.0, 0.0, 5.0}, 1, 0.001, 1});
+    expect(necwb::analysis::dominantProjectionPlane(parallel) == necwb::geometry::ProjectionPlane::XY
+            && necwb::analysis::dominantProjectionPlane(vertical)
+                == necwb::geometry::ProjectionPlane::XZ,
+        "the projection plane follows the antenna's largest extents");
+}
+
 auto main() -> int
 {
     testReferenceRunSelection();
+    testSegmentCurrentDisplay();
     testHistoricalOverlayCompatibility();
     testControlPanelSummaries();
     testOptimizationBaselineFingerprint();

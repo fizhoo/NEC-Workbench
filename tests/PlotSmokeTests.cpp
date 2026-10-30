@@ -40,6 +40,7 @@
 #include <QDebug>
 #include <QDoubleSpinBox>
 #include <QDialog>
+#include <QElapsedTimer>
 #include <QDir>
 #include <QFile>
 #include <QImage>
@@ -75,6 +76,7 @@
 #include <QScrollBar>
 #include <QScreen>
 #include <QSettings>
+#include <QSlider>
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QStatusBar>
@@ -83,6 +85,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <numbers>
 #include <vector>
 
 namespace {
@@ -2134,6 +2137,81 @@ auto main(int argc, char* argv[]) -> int
         || optimizationVariables->item(0, 4)->text() != QStringLiteral("114.000")
         || optimizationVariables->item(2, 1)->text() != QStringLiteral("HALF")) {
         return NECWB_SMOKE_FAILURE("optimization workspace");
+    }
+    {
+        // Two parallel elements entered in opposite directions with the same physical current:
+        // the Antenna tab and the relative-phase column must show them in phase.
+        necwb::model::AntennaModel parallelPair;
+        parallelPair.addWire({1, {0.0, -1.0, 0.0}, {0.0, 1.0, 0.0}, 2, 0.001, 1});
+        parallelPair.addWire({2, {0.5, 1.0, 0.0}, {0.5, -1.0, 0.0}, 2, 0.001, 2});
+        necwb::analysis::AnalysisResult pairResult;
+        const auto pairCurrent = [](int tag, int segment, double magnitude, double phase) {
+            return necwb::analysis::SegmentCurrentResult{.frequencyMHz = 14.0, .segment = segment,
+                .wireTag = tag, .current = std::polar(magnitude, phase * std::numbers::pi / 180.0),
+                .magnitude = magnitude, .phaseDegrees = phase};
+        };
+        pairResult.currents = {pairCurrent(1, 1, 1.0, 30.0), pairCurrent(1, 2, 1.0, 30.0),
+            pairCurrent(2, 1, 0.5, -150.0), pairCurrent(2, 2, 0.5, -150.0)};
+        necwb::analysis::FeedpointResult pairFeed;
+        pairFeed.frequencyMHz = 14.0;
+        pairFeed.wireTag = 1;
+        pairFeed.segment = 1;
+        pairFeed.current = std::polar(1.0, 30.0 * std::numbers::pi / 180.0);
+        pairResult.feedpoints = {pairFeed};
+        necwb::ui::CurrentDistributionView pairView;
+        pairView.resize(800, 600);
+        pairView.setModel(parallelPair);
+        pairView.setResults(pairResult, QStringLiteral("pair-run"));
+        pairView.setSelectedFrequency(14.0);
+        pairView.show();
+        application.processEvents();
+        auto* views = pairView.findChild<QTabWidget*>(QStringLiteral("currentsViews"));
+        auto* canvas = pairView.findChild<QWidget*>(QStringLiteral("currentsAntennaCanvas"));
+        auto* mode = pairView.findChild<QComboBox*>(QStringLiteral("currentsDisplayMode"));
+        auto* cycle = pairView.findChild<QSlider*>(QStringLiteral("currentsCycle"));
+        auto* play = pairView.findChild<QPushButton*>(QStringLiteral("currentsPlay"));
+        auto* table = pairView.findChild<QTableWidget*>();
+        auto antennaValid = views != nullptr && views->tabText(0) == QStringLiteral("Antenna")
+            && canvas != nullptr && canvas->property("segmentCount").toInt() == 4
+            && mode != nullptr && cycle != nullptr && play != nullptr && play->isHidden()
+            && table != nullptr && table->rowCount() == 4
+            && table->horizontalHeaderItem(4)->text() == QStringLiteral("Phase rel. feed (°)");
+        for (auto row = 0; antennaValid && row < table->rowCount(); ++row)
+            antennaValid = std::abs(table->item(row, 4)->text().toDouble()) < 1.0e-6;
+        if (antennaValid) {
+            mode->setCurrentIndex(2);
+            application.processEvents();
+            antennaValid = !play->isHidden() && cycle->value() == 0;
+            play->click();
+            QElapsedTimer animationTime;
+            animationTime.start();
+            while (cycle->value() == 0 && animationTime.elapsed() < 2000)
+                application.processEvents(QEventLoop::AllEvents, 50);
+            antennaValid = antennaValid && cycle->value() > 0 && play->text() == QStringLiteral("Pause");
+            play->click();
+            const QPointF middle(canvas->width() / 2.0, canvas->height() / 2.0);
+            QWheelEvent zoomIn(middle, canvas->mapToGlobal(middle), {}, {0, 240}, Qt::NoButton,
+                Qt::NoModifier, Qt::NoScrollPhase, false);
+            QApplication::sendEvent(canvas, &zoomIn);
+            antennaValid = antennaValid && canvas->property("zoom").toDouble() > 1.0;
+            QMouseEvent fit(QEvent::MouseButtonDblClick, middle, canvas->mapToGlobal(middle),
+                Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(canvas, &fit);
+            antennaValid = antennaValid && canvas->property("zoom").toDouble() == 1.0;
+            // Sweep the cursor across the view until it lands on a wire.
+            auto hoverText = QString{};
+            for (auto x = 0; x < canvas->width() && hoverText.isEmpty(); x += 2) {
+                const QPointF point(x, canvas->height() / 2.0);
+                QMouseEvent move(QEvent::MouseMove, point, canvas->mapToGlobal(point),
+                    Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+                QApplication::sendEvent(canvas, &move);
+                canvas->repaint();
+                hoverText = canvas->property("hoverReadout").toString();
+            }
+            antennaValid = antennaValid && hoverText.contains(QStringLiteral("rel. feed"))
+                && hoverText.contains(QStringLiteral("Phase 0.0°"));
+        }
+        if (!antennaValid) return NECWB_SMOKE_FAILURE("currents antenna view");
     }
     necwb::ui::CurrentDistributionView currents;
     necwb::ui::RadiationPatternView radiation2D;
