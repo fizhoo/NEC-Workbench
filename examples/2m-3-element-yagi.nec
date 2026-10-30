@@ -1,0 +1,17 @@
+CM 3-element 2 m Yagi in free space, direct 50-ohm feed
+CM Beam points toward +X; elements along Y; 6 mm tubing
+CM SWR under 1.4 from 144 to 148 MHz, about 7.4 dBi and 17-19 dB F/B
+CM The driven element is entered +Y to -Y, opposite to the others;
+CM the Currents view still shows all three elements in a common direction
+CE
+SY refl_half=0.51, drv_half=0.485, dir_half=0.43
+SY drv_x=0.5, dir_x=0.85
+SY rad=0.003
+GW 1 31 0 -refl_half 0 0 refl_half 0 rad
+GW 2 31 drv_x drv_half 0 drv_x -drv_half 0 rad
+GW 3 31 dir_x -dir_half 0 dir_x dir_half 0 rad
+GE 0
+EX 0 2 16 0 1 0
+FR 0 41 0 0 144 0.1
+RP 0 37 73 1000 0 0 5 5
+EN

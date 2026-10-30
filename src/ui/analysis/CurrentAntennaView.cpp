@@ -134,6 +134,10 @@ public:
         if (!sameAntenna) resetView();
         currents_ = std::move(currents);
         model_ = model;
+        // Auto keeps one plane per antenna so stepping frequency never flips the view.
+        if (!sameAntenna) autoPlane_.reset();
+        if (!autoPlane_ && !currents_.segments.empty())
+            autoPlane_ = analysis::dominantProjectionPlane(currents_.segments);
         // Segments grouped per wire in order, so each wire draws one continuous curve.
         std::ranges::sort(currents_.segments, {}, [](const auto& segment) {
             return std::pair{segment.wireTag, segment.segment};
@@ -152,7 +156,7 @@ public:
     void setCycleDegrees(double degrees) { cycleDegrees_ = degrees; update(); }
     [[nodiscard]] auto plane() const -> geometry::ProjectionPlane
     {
-        return plane_.value_or(analysis::dominantProjectionPlane(model_));
+        return plane_.value_or(autoPlane_.value_or(geometry::ProjectionPlane::XY));
     }
 
 protected:
@@ -453,6 +457,7 @@ private:
     model::AntennaModel model_;
     DisplayMode mode_{DisplayMode::Magnitude};
     std::optional<geometry::ProjectionPlane> plane_;
+    std::optional<geometry::ProjectionPlane> autoPlane_;
     double envelopeScale_{1.0};
     double cycleDegrees_{};
     double maximumOffset_{};

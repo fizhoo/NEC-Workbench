@@ -47,9 +47,9 @@ struct DisplayedCurrents {
 [[nodiscard]] auto instantaneousCurrent(const DisplayedSegmentCurrent& current,
     double cycleDegrees) noexcept -> double;
 
-// The plane the antenna mostly lies in: the one perpendicular to its smallest extent,
-// preferring a top view for flat horizontal antennas.
-[[nodiscard]] auto dominantProjectionPlane(const model::AntennaModel& model)
+// The plane that shows the most current: segment lengths as seen in each view, weighted by
+// current magnitude. Ties prefer a top view, so flat horizontal antennas are seen from above.
+[[nodiscard]] auto dominantProjectionPlane(std::span<const DisplayedSegmentCurrent> segments)
     -> geometry::ProjectionPlane;
 
 }
