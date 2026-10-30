@@ -354,8 +354,11 @@ The radiation frequency selector includes only frequencies with pattern data.
 - **Performance vs Frequency** shows available forward gain, F/B, and F/R metrics,
   with compatible historical curves shown dashed.
 
-F/B requires the physical direction 180° opposite the selected front direction.
-If that sample is absent, F/B is unavailable rather than substituted with minimum
+F/B in result windows uses the exact opposite direction through the antenna. Over
+ground, that direction is below the horizon for any elevated lobe, so F/B shows as
+unavailable there; the optimizer's tracked cuts measure F/B at the same elevation
+instead (see [Directional Metrics](optimization-math.md#directional-metrics)).
+If the opposite sample is absent, F/B is unavailable rather than substituted with minimum
 gain. F/R uses the documented rear azimuth cut and is not a full rear-hemisphere search.
 
 ### Runs and Historical Review
@@ -484,9 +487,12 @@ available, Workbench initially fills the slice from its maximum-gain direction.
 
 Tracked cuts use 5-degree samples. They can follow a lobe as geometry changes, but
 are more expensive than a specified direction and may switch between competing
-lobes. Candidate frequency details show the theta and phi actually selected. F/B
-continues to use the physical 180-degree opposite direction; F/R uses the strongest
-sample in the rear half of the requested cut.
+lobes. Candidate frequency details show the theta and phi actually selected. Tracked
+cuts measure F/B at the same elevation, turned 180° in azimuth; a specified direction
+uses the exact opposite direction through the antenna, which over ground is only
+available when the front direction is on the horizon. F/R uses the strongest sample in
+the rear half of the requested cut. See
+[Directional Metrics](optimization-math.md#directional-metrics) for the exact definitions.
 
 **Find Maximum Gain…** runs a temporary one-frequency, 5-degree radiation grid
 at the first optimization frequency and uses its peak to seed the default slice.
