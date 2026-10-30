@@ -163,6 +163,12 @@ private:
     void setDirection(analysis::DirectionalEvaluationMode mode, double thetaDegrees,
         double phiDegrees);
     [[nodiscard]] auto seedDirectionFromLatestPattern() -> bool;
+    void setLatestRadiation(std::vector<analysis::RadiationSample> radiation);
+    [[nodiscard]] auto latestPatternPeak(analysis::RadiationComponent component,
+        double frequencyMHz) -> const std::optional<analysis::RadiationPeak>&;
+    [[nodiscard]] auto latestTrackedCutMetrics(analysis::RadiationComponent component,
+        analysis::DirectionalEvaluationMode mode, double cutAngleDegrees)
+        -> const std::vector<analysis::RadiationFrequencyMetric>&;
     [[nodiscard]] auto directionalPresetRequiresSetup() const -> bool;
     void chooseDirectionStrategy();
     void useLatestPatternPeak();
@@ -333,6 +339,22 @@ private:
     std::vector<Candidate> candidates_;
     std::vector<double> modelFrequenciesMHz_;
     std::vector<analysis::RadiationSample> latestRadiation_;
+    // Scanning a full radiation pattern is expensive and the objective controls refresh
+    // many times per edit, so the last pattern-peak and tracked-cut results are kept
+    // until the pattern or the query changes.
+    struct LatestPatternPeak {
+        analysis::RadiationComponent component{};
+        double frequencyMHz{};
+        std::optional<analysis::RadiationPeak> peak;
+    };
+    struct LatestTrackedCut {
+        analysis::RadiationComponent component{};
+        analysis::DirectionalEvaluationMode mode{};
+        double cutAngleDegrees{};
+        std::vector<analysis::RadiationFrequencyMetric> metrics;
+    };
+    std::optional<LatestPatternPeak> latestPatternPeakCache_;
+    std::optional<LatestTrackedCut> latestTrackedCutCache_;
     analysis::DirectionalEvaluationMode directionalEvaluationMode_{
         analysis::DirectionalEvaluationMode::StrongestInAzimuthCut};
     double forwardThetaDegrees_{90.0};

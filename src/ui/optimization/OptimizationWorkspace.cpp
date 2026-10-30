@@ -152,7 +152,7 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
     maximumGainDirectionStale_ = patternDerivedFixedDirection
         || (!preserveStudy && preserveFrequencySelection
             && (maximumGainDirectionStale_ || !latestRadiation_.empty()));
-    latestRadiation_.clear();
+    setLatestRadiation({});
     if (!preserveDirectionalSetup) {
         directionSetupConfigured_ = false;
         directionSetupReady_ = false;
@@ -196,7 +196,7 @@ void OptimizationWorkspace::setLatestAnalysisResult(
     const analysis::AnalysisResult& result)
 {
     if (historicalSession_) return;
-    latestRadiation_ = result.radiation;
+    setLatestRadiation(result.radiation);
     maximumGainSearchRequested_ = false;
     maximumGainDirectionStale_ = false;
     const auto objective = selectedObjective();
