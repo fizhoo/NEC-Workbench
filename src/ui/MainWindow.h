@@ -412,6 +412,7 @@ private:
     QString solverActivityPhase_;
     QString currentSolverCommand_;
     QString currentRunDirectory_;
+    QString latestStoredRunDirectory_;
     QString currentRunOutputPath_;
     QString displayedRunDirectory_;
     QString activeModelResultsDirectory_;

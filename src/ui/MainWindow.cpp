@@ -2369,6 +2369,21 @@ void MainWindow::createMenusAndToolbar()
         showRunHistory();
     });
     runMenu->addAction(runMonitorWindowAction_);
+    auto* openRunFolderAction = runMenu->addAction(tr("Open Run Folder"));
+    openRunFolderAction->setObjectName(QStringLiteral("openRunFolderAction"));
+    // The run started in this session, otherwise the newest run in the history.
+    const auto runFolder = [this] {
+        return currentRunDirectory_.isEmpty() ? latestStoredRunDirectory_ : currentRunDirectory_;
+    };
+    connect(runMenu, &QMenu::aboutToShow, this, [openRunFolderAction, runFolder] {
+        const auto directory = runFolder();
+        openRunFolderAction->setEnabled(!directory.isEmpty() && QDir(directory).exists());
+        openRunFolderAction->setStatusTip(directory);
+    });
+    connect(openRunFolderAction, &QAction::triggered, this, [runFolder] {
+        const auto directory = runFolder();
+        if (!directory.isEmpty()) QDesktopServices::openUrl(QUrl::fromLocalFile(directory));
+    });
 
     auto* helpMenu = menuBar()->addMenu(tr("&Help"));
     helpMenu->setObjectName(QStringLiteral("helpMenu"));
@@ -4442,7 +4457,9 @@ void MainWindow::showRunHistory()
 
 void MainWindow::refreshDashboardRuns()
 {
-    if (controlPanel_ != nullptr) controlPanel_->setRecentRuns(runStore_.loadRecent(100));
+    const auto recentRuns = runStore_.loadRecent(100);
+    latestStoredRunDirectory_ = recentRuns.empty() ? QString{} : recentRuns.front().directory;
+    if (controlPanel_ != nullptr) controlPanel_->setRecentRuns(recentRuns);
 }
 
 void MainWindow::addRunRecord(const AnalysisRunRecord& record, bool prepend)
