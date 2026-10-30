@@ -713,16 +713,6 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         "Parameter Sweep varies the one checked parameter; the other methods change every "
         "checked parameter together. Double-click Minimum, Maximum, or Tolerance to edit it."));
 
-    objectiveControl_ = new QComboBox(this);
-    objectiveControl_->setObjectName(QStringLiteral("optimizationObjectiveControl"));
-    objectiveControl_->addItem(tr("Per-Criterion"),
-        static_cast<int>(analysis::OptimizationObjectiveKind::PerCriterion));
-    targetFrequencyControl_ = new FocusWheelDoubleSpinBox(this);
-    targetFrequencyControl_->setObjectName(QStringLiteral("optimizationTargetFrequency"));
-    targetFrequencyControl_->setRange(0.000001, 1.0e9);
-    targetFrequencyControl_->setDecimals(DisplayDecimalPlaces);
-    targetFrequencyControl_->setValue(14.175);
-    targetFrequencyControl_->setSuffix(tr(" MHz"));
     frequencyModeControl_ = new QComboBox(this);
     frequencyModeControl_->setObjectName(QStringLiteral("optimizationFrequencyMode"));
     frequencyModeControl_->addItem(tr("Use Model FR Sweep"),
@@ -851,33 +841,6 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     resistanceTargetControl_->setObjectName(QStringLiteral("optimizationResistanceTarget"));
     reactanceTargetControl_->setObjectName(QStringLiteral("optimizationReactanceTarget"));
 
-    forwardThetaControl_ = new FocusWheelDoubleSpinBox(this);
-    forwardThetaControl_->setObjectName(QStringLiteral("optimizationForwardTheta"));
-    forwardThetaControl_->setRange(-360.0, 360.0);
-    forwardThetaControl_->setDecimals(DisplayDecimalPlaces);
-    forwardThetaControl_->setValue(90.0);
-    forwardThetaControl_->setSuffix(QStringLiteral("°"));
-    forwardThetaControl_->setToolTip(tr(
-        "NEC theta is measured down from +Z. Theta 90° is the horizon."));
-    forwardPhiControl_ = new FocusWheelDoubleSpinBox(this);
-    forwardPhiControl_->setObjectName(QStringLiteral("optimizationForwardPhi"));
-    forwardPhiControl_->setRange(-360.0, 720.0);
-    forwardPhiControl_->setDecimals(DisplayDecimalPlaces);
-    forwardPhiControl_->setSuffix(QStringLiteral("°"));
-    directionalEvaluationModeControl_ = new QComboBox(this);
-    directionalEvaluationModeControl_->setObjectName(
-        QStringLiteral("optimizationDirectionalEvaluationMode"));
-    directionalEvaluationModeControl_->addItem(
-        tr("Track Peak in Azimuth Cut"),
-        static_cast<int>(analysis::DirectionalEvaluationMode::StrongestInAzimuthCut));
-    directionalEvaluationModeControl_->addItem(
-        tr("Track Peak in Elevation Cut"),
-        static_cast<int>(analysis::DirectionalEvaluationMode::StrongestInElevationCut));
-    directionalEvaluationModeControl_->addItem(
-        tr("Evaluate Fixed Direction"),
-        static_cast<int>(analysis::DirectionalEvaluationMode::SpecifiedDirection));
-    directionalEvaluationModeControl_->setToolTip(tr(
-        "Choose whether each candidate follows the strongest lobe in a 2D cut or evaluates one fixed physical direction."));
     radiationComponentControl_ = new QComboBox(this);
     radiationComponentControl_->setObjectName(QStringLiteral("optimizationRadiationComponent"));
     radiationComponentControl_->addItem(tr("Total"), static_cast<int>(analysis::RadiationComponent::Total));
@@ -921,14 +884,6 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     adaptiveMaximumEvaluationsControl_->setToolTip(tr(
         "Maximum solver candidates. Adaptive starts near the center and boundaries; "
         "Nelder–Mead starts with one simplex vertex per selected parameter plus one."));
-    adaptiveParameterToleranceControl_ = new FocusWheelDoubleSpinBox(this);
-    adaptiveParameterToleranceControl_->setObjectName(
-        QStringLiteral("optimizationAdaptiveParameterTolerance"));
-    adaptiveParameterToleranceControl_->setRange(0.001, 1.0e12);
-    adaptiveParameterToleranceControl_->setDecimals(DisplayDecimalPlaces);
-    adaptiveParameterToleranceControl_->setValue(0.010);
-    adaptiveParameterToleranceControl_->setToolTip(tr(
-        "Stop when no new candidate can be placed this far from the current best value."));
     adaptiveScoreToleranceControl_ = new FocusWheelDoubleSpinBox(this);
     adaptiveScoreToleranceControl_->setObjectName(
         QStringLiteral("optimizationAdaptiveScoreTolerance"));
@@ -1124,9 +1079,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         if (!objectName.isEmpty()) label->setObjectName(objectName);
         return label;
     };
-    for (auto* control : {adaptiveParameterToleranceControl_, adaptiveScoreToleranceControl_}) {
-        control->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    }
+    adaptiveScoreToleranceControl_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     pointsControl_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     adaptiveMaximumEvaluationsControl_->setSizePolicy(
         QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -1136,14 +1089,10 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     parameterGrid->addWidget(searchBudgetLabel_, 0, 0);
     parameterGrid->addWidget(pointsControl_, 0, 1);
     parameterGrid->addWidget(adaptiveMaximumEvaluationsControl_, 0, 1);
-    adaptiveParameterToleranceLabel_ = gridLabel(tr("Parameter tolerance"),
-        QStringLiteral("optimizationParameterToleranceLabel"));
     adaptiveScoreToleranceLabel_ = gridLabel(tr("Score tolerance"),
         QStringLiteral("optimizationScoreToleranceLabel"));
-    parameterGrid->addWidget(adaptiveParameterToleranceLabel_, 1, 0);
-    parameterGrid->addWidget(adaptiveParameterToleranceControl_, 1, 1);
-    parameterGrid->addWidget(adaptiveScoreToleranceLabel_, 2, 0);
-    parameterGrid->addWidget(adaptiveScoreToleranceControl_, 2, 1);
+    parameterGrid->addWidget(adaptiveScoreToleranceLabel_, 1, 0);
+    parameterGrid->addWidget(adaptiveScoreToleranceControl_, 1, 1);
 
     differentialEvolutionSettings_ = new QWidget(parameterSettings_);
     differentialEvolutionSettings_->setObjectName(
@@ -1173,14 +1122,14 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     addDifferentialEvolutionControl(5, tr("Random seed"),
         differentialEvolutionSeedControl_);
     differentialEvolutionGrid->setColumnStretch(1, 1);
-    parameterGrid->addWidget(differentialEvolutionSettings_, 0, 0, 3, 2);
+    parameterGrid->addWidget(differentialEvolutionSettings_, 0, 0, 2, 2);
 
     auto* resetSearchDefaultsButton = new QPushButton(tr("Reset Search Defaults"), parameterSettings_);
     resetSearchDefaultsButton->setObjectName(
         QStringLiteral("optimizationResetSearchDefaults"));
     resetSearchDefaultsButton->setToolTip(tr(
         "Restore the default sweep count or optimizer search settings without changing the variables, ranges, frequencies, or objective."));
-    parameterGrid->addWidget(resetSearchDefaultsButton, 3, 0, 1, 2, Qt::AlignRight);
+    parameterGrid->addWidget(resetSearchDefaultsButton, 2, 0, 1, 2, Qt::AlignRight);
     parameterGrid->setColumnStretch(1, 1);
 
     connect(resetSearchDefaultsButton, &QPushButton::clicked, this, [this] {
@@ -1193,7 +1142,6 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
             differentialEvolutionSeedControl_->setValue(5489);
         } else if (isMultivariable(selectedSearchMethod())) {
             adaptiveMaximumEvaluationsControl_->setValue(21);
-            adaptiveParameterToleranceControl_->setValue(0.010);
             adaptiveScoreToleranceControl_->setValue(0.001);
         } else {
             pointsControl_->setValue(7);
@@ -1285,20 +1233,7 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     presetSwrLimitControl_->setValue(2.0);
     presetSwrLimitLabel_ = new QLabel(tr("Target SWR"), objectiveSettings);
     objectiveForm->addRow(presetSwrLimitLabel_, presetSwrLimitControl_);
-    targetFrequencyLabel_ = new QLabel(tr("Selected frequency"), objectiveSettings);
-    targetFrequencyLabel_->setObjectName(
-        QStringLiteral("optimizationTargetFrequencyLabel"));
-    objectiveControl_->hide();
-    targetFrequencyLabel_->hide();
-    targetFrequencyControl_->hide();
     objectiveForm->addRow(tr("Reference impedance"), referenceImpedanceControl_);
-    forwardThetaLabel_ = new QLabel(tr("Azimuth-cut theta"), objectiveSettings);
-    forwardPhiLabel_ = new QLabel(tr("Forward phi"), objectiveSettings);
-    directionalEvaluationModeControl_->hide();
-    forwardThetaControl_->hide();
-    forwardPhiControl_->hide();
-    forwardThetaLabel_->hide();
-    forwardPhiLabel_->hide();
     directionSetupPanel_ = new QWidget(objectiveSettings);
     directionSetupPanel_->setObjectName(QStringLiteral("optimizationDirectionSetupPanel"));
     auto* directionSetupLayout = new QHBoxLayout(directionSetupPanel_);
@@ -1573,15 +1508,6 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         else
             applySelectedObjectivePreset();
     });
-    connect(directionalEvaluationModeControl_, &QComboBox::currentIndexChanged,
-        this, [this] { updateObjectiveControls(); });
-    connect(directionalEvaluationModeControl_, qOverload<int>(&QComboBox::activated),
-        this, [this](int) {
-            if (static_cast<analysis::DirectionalEvaluationMode>(
-                    directionalEvaluationModeControl_->currentData().toInt())
-                != analysis::DirectionalEvaluationMode::SpecifiedDirection)
-                (void)seedDirectionFromLatestPattern();
-        });
     for (auto* control : {swrWeightControl_, resistanceWeightControl_,
              reactanceWeightControl_, forwardGainWeightControl_,
              frontToBackWeightControl_,
@@ -1596,14 +1522,6 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
              frontToRearWeightControl_}) {
         connect(control, &QDoubleSpinBox::valueChanged,
             this, [this] { updateDirectionalSeedState(); });
-    }
-    for (auto* control : {forwardThetaControl_, forwardPhiControl_}) {
-        connect(control, &QDoubleSpinBox::valueChanged,
-            this, [this] {
-                updateObjectiveControls();
-                updateWorkload();
-                updateReadiness();
-            });
     }
     for (auto row = 0; row < 6; ++row) {
         connect(objectiveValueControls_[row], &QDoubleSpinBox::valueChanged,
@@ -1643,6 +1561,8 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         restoreObjectiveSetup(defaults);
         applyingObjectivePreset_ = false;
         updateObjectiveControls();
+        updateWorkload();
+        updateReadiness();
     });
     connect(radiationComponentControl_, &QComboBox::currentIndexChanged, this, [this] {
         if (!applyingObjectivePreset_ && directionalPresetRequiresSetup()) {
@@ -1794,8 +1714,7 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
     const auto preserveStudy = std::exchange(preserveStudyOnNextContextUpdate_, false);
     const auto sourceUnchanged = source_ == source && sourceFile_ == sourceFile;
     const auto preserveFrequencySelection = contextInitialized_ && sourceFile_ == sourceFile;
-    const auto directionMode = static_cast<analysis::DirectionalEvaluationMode>(
-        directionalEvaluationModeControl_->currentData().toInt());
+    const auto directionMode = directionalEvaluationMode_;
     const auto preserveDirectionalSetup = preserveStudy && directionSetupReady_
         && (directionSetupConfigured_
             || directionMode != analysis::DirectionalEvaluationMode::SpecifiedDirection);
@@ -1833,7 +1752,6 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
         referenceImpedanceControl_->setValue(model::referenceImpedanceOhms(setup));
         resistanceTargetControl_->setValue(model::referenceImpedanceOhms(setup));
         if (setup.frequency) {
-            targetFrequencyControl_->setValue(setup.frequency->startMHz);
             frequencyEntryControl_->setValue(setup.frequency->startMHz);
             populateModelFrequencies(*setup.frequency);
         } else {
@@ -1975,8 +1893,6 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
     activeSearchMethod_ = restoredSearchMethod;
     adaptiveMaximumEvaluationsControl_->setValue(sessionMetadata.value(
         QStringLiteral("candidateCount")).toInt(21));
-    adaptiveParameterToleranceControl_->setValue(sessionMetadata.value(
-        QStringLiteral("parameterTolerance")).toDouble(0.010));
     adaptiveScoreToleranceControl_->setValue(sessionMetadata.value(
         QStringLiteral("scoreTolerance")).toDouble(0.001));
     differentialEvolutionPopulationControl_->setValue(sessionMetadata.value(
@@ -2545,16 +2461,7 @@ void OptimizationWorkspace::updateObjectiveControls()
     const auto azimuthCut = objective.directionalEvaluationMode
         == analysis::DirectionalEvaluationMode::StrongestInAzimuthCut;
     const auto trackedCut = !fixedDirection;
-    directionalEvaluationModeControl_->setEnabled(directional && editable);
     directionSetupButton_->setEnabled(editable);
-    forwardThetaControl_->setEnabled(directional && editable
-        && (fixedDirection || azimuthCut));
-    forwardPhiControl_->setEnabled(directional && editable
-        && (fixedDirection || !azimuthCut));
-    forwardThetaLabel_->setText(azimuthCut
-        ? tr("Cut theta (90° = horizon)") : tr("Forward theta"));
-    forwardPhiLabel_->setText(!fixedDirection && !azimuthCut
-        ? tr("Elevation-cut phi") : tr("Forward phi"));
     QString directionDescription;
     if (azimuthCut) {
         directionDescription = tr("Azimuth pattern · strongest gain · elevation %1°")
@@ -2610,8 +2517,7 @@ void OptimizationWorkspace::updateLatestPatternPeakControls()
         && modelValid_ && static_cast<bool>(findMaximumGainCallback_)
         && !maximumGainSearchRequested_);
     useLatestPatternPeakButton_->setEnabled(editable && usable);
-    const auto mode = static_cast<analysis::DirectionalEvaluationMode>(
-        directionalEvaluationModeControl_->currentData().toInt());
+    const auto mode = directionalEvaluationMode_;
     useLatestPatternPeakButton_->setText(mode
             == analysis::DirectionalEvaluationMode::SpecifiedDirection
         ? tr("Use Latest Pattern Peak") : tr("Use Latest Peak to Set Cut"));
@@ -2625,7 +2531,7 @@ void OptimizationWorkspace::updateLatestPatternPeakControls()
         if (mode != analysis::DirectionalEvaluationMode::SpecifiedDirection) {
             const auto cutAngle = mode
                     == analysis::DirectionalEvaluationMode::StrongestInAzimuthCut
-                ? forwardThetaControl_->value() : forwardPhiControl_->value();
+                ? forwardThetaDegrees_ : forwardPhiDegrees_;
             const auto cutMetrics = analysis::radiationTrackedCutFrequencyMetrics(
                 latestRadiation_, component, mode, cutAngle);
             const auto nearest = std::ranges::min_element(cutMetrics, {},
@@ -2689,12 +2595,12 @@ auto OptimizationWorkspace::seedDirectionFromLatestPattern() -> bool
     const auto peak = analysis::radiationPeakAtNearestFrequency(
         latestRadiation_, component, setup.frequenciesMHz.front());
     if (!peak || peak->sampleCount <= 1) return false;
-    const auto mode = static_cast<analysis::DirectionalEvaluationMode>(
-        directionalEvaluationModeControl_->currentData().toInt());
-    if (mode != analysis::DirectionalEvaluationMode::StrongestInElevationCut)
-        forwardThetaControl_->setValue(peak->metrics.peakThetaDegrees);
-    if (mode != analysis::DirectionalEvaluationMode::StrongestInAzimuthCut)
-        forwardPhiControl_->setValue(peak->metrics.peakPhiDegrees);
+    const auto mode = directionalEvaluationMode_;
+    setDirection(mode,
+        mode != analysis::DirectionalEvaluationMode::StrongestInElevationCut
+            ? peak->metrics.peakThetaDegrees : forwardThetaDegrees_,
+        mode != analysis::DirectionalEvaluationMode::StrongestInAzimuthCut
+            ? peak->metrics.peakPhiDegrees : forwardPhiDegrees_);
     directionSetupReady_ = true;
     updateObjectiveControls();
     return true;
@@ -2705,31 +2611,33 @@ void OptimizationWorkspace::chooseDirectionStrategy()
     const auto wasConfigured = directionSetupConfigured_;
     if (!directionSetupConfigured_) (void)seedDirectionFromLatestPattern();
     const auto setup = currentStudySetup();
-    const auto targetFrequencyMHz = setup.frequenciesMHz.empty()
-        ? targetFrequencyControl_->value() : setup.frequenciesMHz.front();
+    const auto targetFrequencyMHz = !setup.frequenciesMHz.empty()
+        ? setup.frequenciesMHz.front()
+        : modelFrequenciesMHz_.empty() ? 0.0 : modelFrequenciesMHz_.front();
     DirectionStrategyDialog dialog(latestRadiation_, targetFrequencyMHz,
         static_cast<analysis::RadiationComponent>(
             radiationComponentControl_->currentData().toInt()),
-        static_cast<analysis::DirectionalEvaluationMode>(
-            directionalEvaluationModeControl_->currentData().toInt()),
-        forwardThetaControl_->value(), forwardPhiControl_->value(), objectiveDialog_);
-    const auto originalMode = static_cast<analysis::DirectionalEvaluationMode>(
-        directionalEvaluationModeControl_->currentData().toInt());
-    const auto originalTheta = forwardThetaControl_->value();
-    const auto originalPhi = forwardPhiControl_->value();
+        directionalEvaluationMode_, forwardThetaDegrees_, forwardPhiDegrees_,
+        objectiveDialog_);
     if (dialog.exec() != QDialog::Accepted) return;
-    const auto changed = dialog.mode() != originalMode
-            || !nearlyEqual(dialog.thetaDegrees(), originalTheta)
-            || !nearlyEqual(dialog.phiDegrees(), originalPhi);
+    const auto changed = dialog.mode() != directionalEvaluationMode_
+            || !nearlyEqual(dialog.thetaDegrees(), forwardThetaDegrees_)
+            || !nearlyEqual(dialog.phiDegrees(), forwardPhiDegrees_);
     directionSetupConfigured_ = dialog.usesLatestPatternPeak()
         ? false : changed || wasConfigured;
     directionSetupReady_ = true;
-    const auto modeIndex = directionalEvaluationModeControl_->findData(
-        static_cast<int>(dialog.mode()));
-    if (modeIndex >= 0) directionalEvaluationModeControl_->setCurrentIndex(modeIndex);
-    forwardThetaControl_->setValue(dialog.thetaDegrees());
-    forwardPhiControl_->setValue(dialog.phiDegrees());
+    setDirection(dialog.mode(), dialog.thetaDegrees(), dialog.phiDegrees());
+}
+
+void OptimizationWorkspace::setDirection(analysis::DirectionalEvaluationMode mode,
+    double thetaDegrees, double phiDegrees)
+{
+    directionalEvaluationMode_ = mode;
+    forwardThetaDegrees_ = thetaDegrees;
+    forwardPhiDegrees_ = phiDegrees;
     updateObjectiveControls();
+    updateWorkload();
+    updateReadiness();
 }
 
 void OptimizationWorkspace::useLatestPatternPeak()
@@ -2762,15 +2670,11 @@ void OptimizationWorkspace::updateSearchMethodControls()
     searchBudgetLabel_->setVisible(!differentialEvolution);
     pointsControl_->setVisible(!multivariable);
     adaptiveMaximumEvaluationsControl_->setVisible(multivariable && !differentialEvolution);
-    adaptiveParameterToleranceLabel_->setVisible(false);
-    adaptiveParameterToleranceControl_->setVisible(false);
     adaptiveScoreToleranceLabel_->setVisible(multivariable && !differentialEvolution);
     adaptiveScoreToleranceControl_->setVisible(multivariable && !differentialEvolution);
     differentialEvolutionSettings_->setVisible(differentialEvolution);
     pointsControl_->setEnabled(!multivariable && !isRunning() && !historicalSession_);
     adaptiveMaximumEvaluationsControl_->setEnabled(multivariable && !differentialEvolution && !isRunning()
-        && !historicalSession_);
-    adaptiveParameterToleranceControl_->setEnabled(multivariable && !isRunning()
         && !historicalSession_);
     adaptiveScoreToleranceControl_->setEnabled(multivariable && !differentialEvolution && !isRunning()
         && !historicalSession_);
@@ -3146,10 +3050,6 @@ void OptimizationWorkspace::editObjectiveSetup()
 void OptimizationWorkspace::restoreObjectiveSetup(
     const analysis::OptimizationObjectiveSpec& objective)
 {
-    const auto objectiveIndex = objectiveControl_->findData(
-        static_cast<int>(objective.kind));
-    if (objectiveIndex >= 0) objectiveControl_->setCurrentIndex(objectiveIndex);
-    targetFrequencyControl_->setValue(objective.targetFrequencyMHz);
     referenceImpedanceControl_->setValue(objective.referenceImpedance);
     swrWeightControl_->setValue(objective.swrWeight);
     resistanceWeightControl_->setValue(objective.resistanceWeight);
@@ -3178,12 +3078,9 @@ void OptimizationWorkspace::restoreObjectiveSetup(
         configureAggregationControl(objectiveAggregationControls_[row], goals[row],
             aggregations[row]);
     }
-    forwardThetaControl_->setValue(objective.forwardThetaDegrees);
-    forwardPhiControl_->setValue(objective.forwardPhiDegrees);
-    const auto directionModeIndex = directionalEvaluationModeControl_->findData(
-        static_cast<int>(objective.directionalEvaluationMode));
-    if (directionModeIndex >= 0)
-        directionalEvaluationModeControl_->setCurrentIndex(directionModeIndex);
+    directionalEvaluationMode_ = objective.directionalEvaluationMode;
+    forwardThetaDegrees_ = objective.forwardThetaDegrees;
+    forwardPhiDegrees_ = objective.forwardPhiDegrees;
     const auto componentIndex = radiationComponentControl_->findData(
         static_cast<int>(objective.radiationComponent));
     if (componentIndex >= 0) radiationComponentControl_->setCurrentIndex(componentIndex);
@@ -4035,7 +3932,6 @@ void OptimizationWorkspace::updateReadiness()
         == SearchMethod::DifferentialEvolution;
     adaptiveMaximumEvaluationsControl_->setEnabled(
         editable && multivariable && !differentialEvolution);
-    adaptiveParameterToleranceControl_->setEnabled(editable && multivariable);
     adaptiveScoreToleranceControl_->setEnabled(
         editable && multivariable && !differentialEvolution);
     differentialEvolutionSettings_->setEnabled(editable && differentialEvolution);
@@ -4052,13 +3948,6 @@ void OptimizationWorkspace::updateReadiness()
             && (goal == analysis::OptimizationGoal::Target
                 || goal == analysis::OptimizationGoal::GoodEnough));
     }
-    const auto directionMode = static_cast<analysis::DirectionalEvaluationMode>(
-        directionalEvaluationModeControl_->currentData().toInt());
-    forwardThetaControl_->setEnabled(editable && directional
-        && directionMode != analysis::DirectionalEvaluationMode::StrongestInElevationCut);
-    forwardPhiControl_->setEnabled(editable && directional
-        && directionMode != analysis::DirectionalEvaluationMode::StrongestInAzimuthCut);
-    directionalEvaluationModeControl_->setEnabled(editable && directional);
     radiationComponentControl_->setEnabled(editable && directional);
     updateLatestPatternPeakControls();
     const auto explicitMode = selectedFrequencyMode() == FrequencyMode::Explicit;
@@ -4130,7 +4019,6 @@ void OptimizationWorkspace::startSweep()
         {QStringLiteral("variables"), variableMetadata},
         {QStringLiteral("candidateCount"), candidateLimit},
         {QStringLiteral("searchMethod"), searchMethodId(activeSearchMethod_)},
-        {QStringLiteral("parameterTolerance"), setup.parameterTolerance},
         {QStringLiteral("scoreTolerance"), setup.scoreTolerance},
         {QStringLiteral("populationSize"), setup.populationSize},
         {QStringLiteral("maximumGenerations"), setup.maximumGenerations},
@@ -4908,7 +4796,6 @@ auto OptimizationWorkspace::selectedObjective() const -> analysis::OptimizationO
     return {
         .kind = analysis::OptimizationObjectiveKind::PerCriterion,
         .referenceImpedance = referenceImpedanceControl_->value(),
-        .targetFrequencyMHz = targetFrequencyControl_->value(),
         .swrWeight = swrWeightControl_->value(),
         .resistanceWeight = resistanceWeightControl_->value(),
         .resistanceTargetOhms = resistanceTargetControl_->value(),
@@ -4939,10 +4826,9 @@ auto OptimizationWorkspace::selectedObjective() const -> analysis::OptimizationO
         .forwardGainAggregation = selectedAggregation(objectiveAggregationControls_[3]),
         .frontToBackAggregation = selectedAggregation(objectiveAggregationControls_[4]),
         .frontToRearAggregation = selectedAggregation(objectiveAggregationControls_[5]),
-        .forwardThetaDegrees = forwardThetaControl_->value(),
-        .forwardPhiDegrees = forwardPhiControl_->value(),
-        .directionalEvaluationMode = static_cast<analysis::DirectionalEvaluationMode>(
-            directionalEvaluationModeControl_->currentData().toInt()),
+        .forwardThetaDegrees = forwardThetaDegrees_,
+        .forwardPhiDegrees = forwardPhiDegrees_,
+        .directionalEvaluationMode = directionalEvaluationMode_,
         .radiationComponent = static_cast<analysis::RadiationComponent>(
             radiationComponentControl_->currentData().toInt()),
     };
@@ -4960,10 +4846,6 @@ auto OptimizationWorkspace::selectedSearchMethod() const -> SearchMethod
 
 auto OptimizationWorkspace::selectedFrequencyPlan() const -> analysis::FrequencyPlan
 {
-    if (selectedObjective().kind == analysis::OptimizationObjectiveKind::SwrAtFrequency) {
-        return {analysis::FrequencyPlanMode::Explicit,
-            {targetFrequencyControl_->value()}, {}};
-    }
     switch (selectedFrequencyMode()) {
     case FrequencyMode::Explicit:
         return {analysis::FrequencyPlanMode::Explicit, explicitFrequencies(), {}};
@@ -5010,7 +4892,6 @@ auto OptimizationWorkspace::currentStudySetup() const -> StudySetup
                 * (differentialEvolutionGenerationControl_->value() + 1)
             : isMultivariable(searchMethod)
                 ? adaptiveMaximumEvaluationsControl_->value() : pointsControl_->value(),
-        .parameterTolerance = adaptiveParameterToleranceControl_->value(),
         .scoreTolerance = differentialEvolution
             ? differentialEvolutionScoreToleranceControl_->value()
             : adaptiveScoreToleranceControl_->value(),
