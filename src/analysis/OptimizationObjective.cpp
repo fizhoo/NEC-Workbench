@@ -163,7 +163,8 @@ auto evaluateObjective(const AnalysisResult& analysis,
         const auto nearest = std::ranges::min_element(frequencies, {}, [target = objective.targetFrequencyMHz](double frequency) {
             return std::abs(frequency - target);
         });
-        frequencies = {*nearest};
+        const auto nearestFrequency = *nearest;
+        frequencies.assign(1, nearestFrequency);
     }
 
     std::vector<double> swrValues;
@@ -385,7 +386,8 @@ auto diagnoseOptimizationObjectiveFailure(const AnalysisResult& analysis,
             [target = objective.targetFrequencyMHz](double frequency) {
                 return std::abs(frequency - target);
             });
-        frequencies = {*nearest};
+        const auto nearestFrequency = *nearest;
+        frequencies.assign(1, nearestFrequency);
     }
 
     const auto directionalMetrics = directionalEnabled
