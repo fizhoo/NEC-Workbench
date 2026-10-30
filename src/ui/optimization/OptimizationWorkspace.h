@@ -150,6 +150,7 @@ private:
     void connectFrequencySignals();
     void connectResultSignals();
     void populateVariables(const nec::SymbolResolution& resolution);
+    void fitVariablesTableHeight();
     [[nodiscard]] auto selectedVariables() const
         -> std::vector<StudySetup::VariableRange>;
     [[nodiscard]] auto candidateDescription(const Candidate& candidate) const -> QString;

@@ -350,8 +350,18 @@ void OptimizationWorkspace::populateVariables(const nec::SymbolResolution& resol
             variablesTable_->setItem(row, column, item);
         }
     }
+    fitVariablesTableHeight();
     updateWorkload();
     updateReadiness();
+}
+
+void OptimizationWorkspace::fitVariablesTableHeight()
+{
+    // Show up to eight parameters before scrolling, so short lists leave no blank band.
+    const auto visibleRows = std::clamp(variablesTable_->rowCount(), 3, 8);
+    variablesTable_->setFixedHeight(variablesTable_->horizontalHeader()->sizeHint().height()
+        + visibleRows * variablesTable_->verticalHeader()->defaultSectionSize()
+        + 2 * variablesTable_->frameWidth());
 }
 
 auto OptimizationWorkspace::selectedVariables() const

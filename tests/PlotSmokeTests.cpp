@@ -1723,6 +1723,28 @@ auto main(int argc, char* argv[]) -> int
             && !sweepSelectionRun->toolTip().contains(QStringLiteral("Check exactly one"))
             && sweepSelectionSummary->text().contains(QStringLiteral("HALF"));
     }
+    // Compact sidebar: short table headers, Method before the table in tab order, and a
+    // visible gap between the search budget label and its spin box.
+    auto compactSearchSectionValid = false;
+    if (sweepSelectionValid) {
+        sweepSelectionWorkspace.resize(900, 600);
+        sweepSelectionWorkspace.show();
+        application.processEvents();
+        auto* budgetLabel = sweepSelectionWorkspace.findChild<QLabel*>(
+            QStringLiteral("optimizationSearchBudgetLabel"));
+        auto* candidateCount = sweepSelectionWorkspace.findChild<QSpinBox*>(
+            QStringLiteral("optimizationCandidateCount"));
+        auto* focus = sweepSelectionMethod->nextInFocusChain();
+        while (focus != sweepSelectionVariables && focus != candidateCount
+            && focus != sweepSelectionMethod)
+            focus = focus->nextInFocusChain();
+        compactSearchSectionValid = focus == sweepSelectionVariables
+            && sweepSelectionVariables->horizontalHeaderItem(3)->text() == QStringLiteral("Min")
+            && sweepSelectionVariables->horizontalHeaderItem(5)->text() == QStringLiteral("Tol.")
+            && budgetLabel != nullptr && candidateCount != nullptr
+            && candidateCount->geometry().left() - budgetLabel->geometry().right() > 4;
+        sweepSelectionWorkspace.hide();
+    }
     auto wheelProtected = false;
     if (optimizationCandidateCount != nullptr) {
         optimizationCandidateCount->clearFocus();
@@ -2001,6 +2023,7 @@ auto main(int argc, char* argv[]) -> int
         || !nelderMeadControlsValid
         || !sweepControlsValid
         || !sweepSelectionValid
+        || !compactSearchSectionValid
         || !legacySessionLoaded
         || !wheelProtected
         || !compactSetupValid

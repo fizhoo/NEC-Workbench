@@ -217,32 +217,6 @@ void OptimizationWorkspace::buildConfigurationPanel()
 
 auto OptimizationWorkspace::buildSearchSection(QWidget* parent) -> QGroupBox*
 {
-    variablesTable_ = new QTableWidget(this);
-    variablesTable_->setObjectName(QStringLiteral("optimizationVariablesTable"));
-    variablesTable_->setColumnCount(6);
-    variablesTable_->setHorizontalHeaderLabels(
-        {tr("Use"), tr("Symbol"), tr("Value"), tr("Minimum"), tr("Maximum"), tr("Tolerance")});
-    variablesTable_->setEditTriggers(
-        QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
-    variablesTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    variablesTable_->setSelectionMode(QAbstractItemView::SingleSelection);
-    variablesTable_->verticalHeader()->hide();
-    variablesTable_->setTextElideMode(Qt::ElideRight);
-    variablesTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    variablesTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    for (auto column = 2; column < 6; ++column)
-        variablesTable_->horizontalHeader()->setSectionResizeMode(column, QHeaderView::Stretch);
-    variablesTable_->setToolTip(tr(
-        "Parameter Sweep varies the one checked parameter; the other methods change every "
-        "checked parameter together. Double-click Minimum, Maximum, or Tolerance to edit it."));
-
-    pointsControl_ = new FocusWheelSpinBox(this);
-    pointsControl_->setRange(2, 101);
-    pointsControl_->setObjectName(QStringLiteral("optimizationCandidateCount"));
-    pointsControl_->setValue(7);
-    pointsControl_->setToolTip(tr(
-        "Number of evenly spaced parameter values tested from Minimum through Maximum, "
-        "including both endpoints. Each candidate value is evaluated at every selected frequency."));
     searchMethodControl_ = new QComboBox(this);
     searchMethodControl_->setObjectName(QStringLiteral("optimizationSearchMethod"));
     searchMethodControl_->addItem(tr("Parameter Sweep"),
@@ -264,6 +238,38 @@ auto OptimizationWorkspace::buildSearchSection(QWidget* parent) -> QGroupBox*
     searchMethodControl_->setItemData(3, tr(
         "Explore one or more continuous parameters with a seeded population-based global search."),
         Qt::ToolTipRole);
+    variablesTable_ = new QTableWidget(this);
+    variablesTable_->setObjectName(QStringLiteral("optimizationVariablesTable"));
+    variablesTable_->setColumnCount(6);
+    variablesTable_->setHorizontalHeaderLabels(
+        {tr("Use"), tr("Symbol"), tr("Value"), tr("Min"), tr("Max"), tr("Tol.")});
+    variablesTable_->horizontalHeaderItem(3)->setToolTip(tr("Minimum value to search"));
+    variablesTable_->horizontalHeaderItem(4)->setToolTip(tr("Maximum value to search"));
+    variablesTable_->horizontalHeaderItem(5)->setToolTip(tr(
+        "Parameter tolerance: stop refining once candidates are this close"));
+    variablesTable_->setEditTriggers(
+        QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
+    variablesTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    variablesTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+    variablesTable_->verticalHeader()->hide();
+    variablesTable_->verticalHeader()->setDefaultSectionSize(22);
+    variablesTable_->setTextElideMode(Qt::ElideRight);
+    variablesTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    variablesTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    for (auto column = 2; column < 6; ++column)
+        variablesTable_->horizontalHeader()->setSectionResizeMode(column, QHeaderView::Stretch);
+    variablesTable_->setToolTip(tr(
+        "Parameter Sweep varies the one checked parameter; the other methods change every "
+        "checked parameter together. Double-click Min, Max, or Tol. to edit it."));
+    fitVariablesTableHeight();
+
+    pointsControl_ = new FocusWheelSpinBox(this);
+    pointsControl_->setRange(2, 101);
+    pointsControl_->setObjectName(QStringLiteral("optimizationCandidateCount"));
+    pointsControl_->setValue(7);
+    pointsControl_->setToolTip(tr(
+        "Number of evenly spaced parameter values tested from Minimum through Maximum, "
+        "including both endpoints. Each candidate value is evaluated at every selected frequency."));
 
     adaptiveMaximumEvaluationsControl_ = new FocusWheelSpinBox(this);
     adaptiveMaximumEvaluationsControl_->setObjectName(
@@ -345,28 +351,14 @@ auto OptimizationWorkspace::buildSearchSection(QWidget* parent) -> QGroupBox*
     variableSectionLayout->addLayout(searchMethodRow);
     variableSectionLayout->addWidget(variablesTable_, 1);
     variableSectionLayout->addWidget(parameterSettings_);
-    auto* parameterizationBar = new QWidget(variableSection);
-    parameterizationBar->setObjectName(QStringLiteral("optimizationParameterizationHint"));
-    auto* parameterizationLayout = new QHBoxLayout(parameterizationBar);
-    parameterizationLayout->setContentsMargins(0, 0, 0, 0);
-    parameterizationLayout->setSpacing(4);
-    auto* parameterizationHint = new QLabel(tr(
-        "Need another variable? Parameterize a numeric NEC field in Structured Cards."),
-        parameterizationBar);
-    parameterizationHint->setWordWrap(true);
-    auto* chooseParameterFields = new QPushButton(
-        tr("Choose Parameter Fields…"), parameterizationBar);
-    chooseParameterFields->setObjectName(
-        QStringLiteral("optimizationChooseParameterFields"));
-    chooseParameterFields->setToolTip(tr(
-        "Open Model → NEC Deck → Structured Cards. Right-click a numeric field to create "
-        "or link an SY parameter, then return here to optimize it."));
-    parameterizationLayout->addWidget(parameterizationHint, 1);
-    parameterizationLayout->addWidget(chooseParameterFields);
-    variableSectionLayout->addWidget(parameterizationBar);
-    auto* parameterGrid = new QGridLayout(parameterSettings_);
+    // Stack the shared settings grid, the Differential Evolution settings and the reset
+    // button; overlaying the hidden DE panel on the grid cancels the grid's column spacing.
+    auto* parameterLayout = new QVBoxLayout(parameterSettings_);
+    parameterLayout->setContentsMargins(0, 0, 0, 0);
+    parameterLayout->setSpacing(4);
+    auto* parameterGrid = new QGridLayout;
     parameterGrid->setContentsMargins(0, 0, 0, 0);
-    parameterGrid->setHorizontalSpacing(6);
+    parameterGrid->setHorizontalSpacing(8);
     parameterGrid->setVerticalSpacing(4);
     const auto gridLabel = [this](const QString& text,
                                const QString& objectName = {}) {
@@ -395,7 +387,7 @@ auto OptimizationWorkspace::buildSearchSection(QWidget* parent) -> QGroupBox*
         QStringLiteral("optimizationDifferentialEvolutionSettings"));
     auto* differentialEvolutionGrid = new QGridLayout(differentialEvolutionSettings_);
     differentialEvolutionGrid->setContentsMargins(0, 0, 0, 0);
-    differentialEvolutionGrid->setHorizontalSpacing(6);
+    differentialEvolutionGrid->setHorizontalSpacing(8);
     differentialEvolutionGrid->setVerticalSpacing(4);
     const auto addDifferentialEvolutionControl = [&](int row, const QString& text,
                                                      QWidget* control) {
@@ -418,15 +410,35 @@ auto OptimizationWorkspace::buildSearchSection(QWidget* parent) -> QGroupBox*
     addDifferentialEvolutionControl(5, tr("Random seed"),
         differentialEvolutionSeedControl_);
     differentialEvolutionGrid->setColumnStretch(1, 1);
-    parameterGrid->addWidget(differentialEvolutionSettings_, 0, 0, 2, 2);
+    parameterGrid->setColumnStretch(1, 1);
+    parameterLayout->addLayout(parameterGrid);
+    parameterLayout->addWidget(differentialEvolutionSettings_);
 
     auto* resetSearchDefaultsButton = new QPushButton(tr("Reset Search Defaults"), parameterSettings_);
     resetSearchDefaultsButton->setObjectName(
         QStringLiteral("optimizationResetSearchDefaults"));
     resetSearchDefaultsButton->setToolTip(tr(
         "Restore the default sweep count or optimizer search settings without changing the variables, ranges, frequencies, or objective."));
-    parameterGrid->addWidget(resetSearchDefaultsButton, 2, 0, 1, 2, Qt::AlignRight);
-    parameterGrid->setColumnStretch(1, 1);
+    parameterLayout->addWidget(resetSearchDefaultsButton, 0, Qt::AlignRight);
+    auto* parameterizationBar = new QWidget(variableSection);
+    parameterizationBar->setObjectName(QStringLiteral("optimizationParameterizationHint"));
+    auto* parameterizationLayout = new QVBoxLayout(parameterizationBar);
+    parameterizationLayout->setContentsMargins(0, 0, 0, 0);
+    parameterizationLayout->setSpacing(4);
+    auto* parameterizationHint = new QLabel(tr(
+        "Need another variable? Parameterize a numeric NEC field in Structured Cards."),
+        parameterizationBar);
+    parameterizationHint->setWordWrap(true);
+    auto* chooseParameterFields = new QPushButton(
+        tr("Choose Parameter Fields…"), parameterizationBar);
+    chooseParameterFields->setObjectName(
+        QStringLiteral("optimizationChooseParameterFields"));
+    chooseParameterFields->setToolTip(tr(
+        "Open Model → NEC Deck → Structured Cards. Right-click a numeric field to create "
+        "or link an SY parameter, then return here to optimize it."));
+    parameterizationLayout->addWidget(parameterizationHint);
+    parameterizationLayout->addWidget(chooseParameterFields, 0, Qt::AlignRight);
+    variableSectionLayout->addWidget(parameterizationBar);
 
     connect(resetSearchDefaultsButton, &QPushButton::clicked, this, [this] {
         if (selectedSearchMethod() == SearchMethod::DifferentialEvolution) {

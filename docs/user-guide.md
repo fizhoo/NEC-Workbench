@@ -359,8 +359,9 @@ and stopping rules.
 ### Variables and Bounds
 
 Choose the search **Method** at the top of the Search section, then check the
-parameters to search and set Minimum, Maximum, and Tolerance in the same table for
-every method. Bounds constrain proposed candidates. Parameter tolerance describes
+parameters to search and set **Min**, **Max**, and **Tol.** (parameter tolerance) in
+the same table for every method. The table shows up to eight parameters before it
+scrolls. Bounds constrain proposed candidates. Parameter tolerance describes
 spatial convergence; score tolerance describes objective improvement. They are
 different quantities.
 
