@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace necwb::ui {
 using namespace detail;
@@ -405,6 +406,23 @@ void OptimizationWorkspace::editObjectiveSetup()
 void OptimizationWorkspace::restoreObjectiveSetup(
     const analysis::OptimizationObjectiveSpec& objective)
 {
+    // Every caller refreshes once afterwards, so silence the ~24 per-control refreshes.
+    // One blocker per object: the resistance and reactance targets are value controls 1 and 2.
+    std::vector<QSignalBlocker> blockers;
+    for (QObject* control : {static_cast<QObject*>(referenceImpedanceControl_),
+             static_cast<QObject*>(swrWeightControl_),
+             static_cast<QObject*>(resistanceWeightControl_),
+             static_cast<QObject*>(reactanceWeightControl_),
+             static_cast<QObject*>(forwardGainWeightControl_),
+             static_cast<QObject*>(frontToBackWeightControl_),
+             static_cast<QObject*>(frontToRearWeightControl_),
+             static_cast<QObject*>(radiationComponentControl_)})
+        blockers.emplace_back(control);
+    for (auto row = 0; row < 6; ++row) {
+        blockers.emplace_back(objectiveGoalControls_[row]);
+        blockers.emplace_back(objectiveValueControls_[row]);
+        blockers.emplace_back(objectiveAggregationControls_[row]);
+    }
     referenceImpedanceControl_->setValue(objective.referenceImpedance);
     swrWeightControl_->setValue(objective.swrWeight);
     resistanceWeightControl_->setValue(objective.resistanceWeight);
@@ -414,6 +432,8 @@ void OptimizationWorkspace::restoreObjectiveSetup(
     forwardGainWeightControl_->setValue(objective.forwardGainWeight);
     frontToBackWeightControl_->setValue(objective.frontToBackWeight);
     frontToRearWeightControl_->setValue(objective.frontToRearWeight);
+    // The directional weight signals used to run this here, before the direction is restored.
+    updateDirectionalSeedState();
     const std::array goals{objective.swrGoal, objective.resistanceGoal,
         objective.reactanceGoal, objective.forwardGainGoal,
         objective.frontToBackGoal, objective.frontToRearGoal};
