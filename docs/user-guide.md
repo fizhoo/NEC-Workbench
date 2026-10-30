@@ -123,6 +123,9 @@ Raw Source and Structured Cards operate on the same document.
 - Use Raw Source for unrestricted deck editing and unsupported extensions.
 - Use Structured Cards for labels, choices, validation, and source mapping.
 - Double-click an editable cell to change it.
+- Long numbers, such as those written by geometry drags or the optimizer, are shown
+  at 6 significant figures to keep columns narrow. The deck keeps the exact value:
+  hover a cell to see it, and editing starts from it.
 - Right-click a numeric cell to parameterize it.
 - Selecting a structured row moves the raw-source cursor to the same card.
 

@@ -3,6 +3,7 @@
 #include "nec/NecCardCatalog.h"
 #include "nec/NecCardFieldEditor.h"
 #include "ui/ParameterFieldStyle.h"
+#include "ui/cards/CompactNumberDelegate.h"
 
 #include <QAbstractItemView>
 #include <QApplication>
@@ -349,9 +350,9 @@ auto semanticFieldError(const QString& mnemonic, const QStringList& fields, int 
     return {};
 }
 
-class CardFieldDelegate final : public QStyledItemDelegate {
+class CardFieldDelegate final : public CompactNumberDelegate {
 public:
-    using QStyledItemDelegate::QStyledItemDelegate;
+    using CompactNumberDelegate::CompactNumberDelegate;
 
     auto createEditor(QWidget* parent, const QStyleOptionViewItem& option,
         const QModelIndex& index) const -> QWidget* override
