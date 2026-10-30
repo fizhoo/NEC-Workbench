@@ -8,6 +8,7 @@
 #include "ui/analysis/AnalysisRunStore.h"
 
 #include <QWidget>
+#include <QStringList>
 
 #include <functional>
 #include <array>
@@ -16,6 +17,7 @@
 class QAction;
 class QComboBox;
 class QLabel;
+class QMenu;
 class QTableWidget;
 class QToolButton;
 
@@ -52,6 +54,9 @@ public:
     explicit ControlPanel(QWidget* parent = nullptr);
 
     void setFileActions(QAction* open, QAction* save);
+    void setRecentModels(const QStringList& paths,
+        std::function<void(const QString&)> openRecent,
+        std::function<void()> clearRecent);
     void setQuickActions(QAction* check, QAction* run, QAction* sweep, QAction* stop);
     void setAverageGainAction(QAction* action);
     void setConvergenceAction(QAction* action);
@@ -80,6 +85,7 @@ private:
     void refreshHeader();
     void refreshFooter();
     void refreshQuickResults();
+    void refreshOpenMenu();
     void refreshResultLauncher(Workspace workspace);
     void setStudyAction(Study study, QAction* action);
     void setModelRow(Editor editor, const QString& value);
@@ -88,6 +94,8 @@ private:
     QLabel* modelName_{};
     QToolButton* backendState_{};
     QToolButton* openButton_{};
+    QMenu* openMenu_{};
+    QAction* openFileAction_{};
     QToolButton* saveButton_{};
     QToolButton* runButton_{};
     QToolButton* sweepButton_{};
@@ -114,6 +122,9 @@ private:
     std::array<ResultLauncher, 4> resultLaunchers_{};
     std::function<void(Workspace)> openWorkspace_;
     std::function<void(Editor)> openEditor_;
+    std::function<void(const QString&)> openRecent_;
+    std::function<void()> clearRecent_;
+    QStringList recentModels_;
     QString fileName_{tr("Untitled model.nec")};
     QString backend_;
     QString modelStatus_{tr("Model not checked")};

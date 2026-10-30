@@ -10,10 +10,13 @@
 #include <QAction>
 #include <QFont>
 #include <QComboBox>
+#include <QDir>
+#include <QFileInfo>
 #include <QGridLayout>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMenu>
 #include <QSignalBlocker>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -86,8 +89,8 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     modelName_->setFont(modelFont);
     backendState_ = new QToolButton(panel);
     backendState_->setObjectName(QStringLiteral("controlPanelBackend"));
-    backendState_->setAutoRaise(true);
     backendState_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    backendState_->setToolTip(tr("Choose the calculation engine and configure its executable"));
     modelState_ = new QLabel(panel);
     modelState_->setObjectName(QStringLiteral("controlPanelModelState"));
     resultState_ = new QLabel(panel);
@@ -305,10 +308,56 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
 
 void ControlPanel::setFileActions(QAction* open, QAction* save)
 {
+    openFileAction_ = open;
     openButton_->setDefaultAction(open);
     saveButton_->setDefaultAction(save);
     openButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    openButton_->setPopupMode(QToolButton::MenuButtonPopup);
+    openMenu_ = new QMenu(openButton_);
+    openMenu_->setObjectName(QStringLiteral("controlPanelOpenMenu"));
+    openButton_->setMenu(openMenu_);
     saveButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    refreshOpenMenu();
+}
+
+void ControlPanel::setRecentModels(const QStringList& paths,
+    std::function<void(const QString&)> openRecent,
+    std::function<void()> clearRecent)
+{
+    recentModels_ = paths;
+    openRecent_ = std::move(openRecent);
+    clearRecent_ = std::move(clearRecent);
+    refreshOpenMenu();
+}
+
+void ControlPanel::refreshOpenMenu()
+{
+    if (openMenu_ == nullptr) return;
+    openMenu_->clear();
+    if (openFileAction_ != nullptr) openMenu_->addAction(openFileAction_);
+    openMenu_->addSeparator();
+    if (recentModels_.isEmpty()) {
+        auto* empty = openMenu_->addAction(tr("No Recent Models"));
+        empty->setEnabled(false);
+    } else {
+        for (const auto& path : recentModels_) {
+            const QFileInfo file(path);
+            auto* action = openMenu_->addAction(
+                tr("%1 — %2").arg(file.fileName(), file.dir().dirName()));
+            action->setData(path);
+            action->setToolTip(path);
+            connect(action, &QAction::triggered, this, [this, path] {
+                if (openRecent_) openRecent_(path);
+            });
+        }
+    }
+    openMenu_->addSeparator();
+    auto* clear = openMenu_->addAction(tr("Clear Recent Models"));
+    clear->setObjectName(QStringLiteral("controlPanelClearRecentModels"));
+    clear->setEnabled(!recentModels_.isEmpty());
+    connect(clear, &QAction::triggered, this, [this] {
+        if (clearRecent_) clearRecent_();
+    });
 }
 
 void ControlPanel::setQuickActions(
@@ -548,7 +597,8 @@ void ControlPanel::setOpenEditorCallback(std::function<void(Editor)> callback)
 void ControlPanel::refreshHeader()
 {
     modelName_->setText(modified_ ? tr("%1 *").arg(fileName_) : fileName_);
-    backendState_->setText(backend_.isEmpty() ? tr("Setup solver") : backend_);
+    backendState_->setText(backend_.isEmpty()
+        ? tr("Engine: Set up…") : tr("Engine: %1").arg(backend_));
     modelState_->setText(modelStatus_);
     resultState_->setText(resultStatus_);
 }
