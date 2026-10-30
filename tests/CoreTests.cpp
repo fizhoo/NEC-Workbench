@@ -2404,6 +2404,23 @@ void testOptimizationObjectives()
             && elevationCutMetrics.front().forwardPhiDegrees
             && *elevationCutMetrics.front().forwardPhiDegrees == 30.0,
         "tracked elevation-cut metrics consider only the requested vertical plane");
+    // The elevation cut spans theta -90..90 at one phi; negative theta is the opposite azimuth,
+    // so an elevated lobe's back sample is in the same cut.
+    const std::array elevatedElevationCut{
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = 45.0,
+            .phiDegrees = 30.0, .totalGainDb = 6.0},
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = -45.0,
+            .phiDegrees = 30.0, .totalGainDb = -4.0},
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = 0.0,
+            .phiDegrees = 30.0, .totalGainDb = 1.0},
+    };
+    const auto elevatedElevationMetrics = necwb::analysis::radiationTrackedCutFrequencyMetrics(
+        elevatedElevationCut, necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInElevationCut, 30.0);
+    expect(elevatedElevationMetrics.size() == 1
+            && elevatedElevationMetrics.front().frontToBackDb
+            && std::abs(*elevatedElevationMetrics.front().frontToBackDb - 10.0) < 1.0e-9,
+        "tracked elevation-cut F/B uses the opposite azimuth at the same elevation");
     auto trackedObjective = directionalObjective;
     trackedObjective.kind = necwb::analysis::OptimizationObjectiveKind::PerCriterion;
     trackedObjective.directionalEvaluationMode =
