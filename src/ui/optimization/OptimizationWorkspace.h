@@ -108,7 +108,6 @@ private:
         double minimum{};
         double maximum{};
         int candidateLimit{};
-        double parameterTolerance{};
         double scoreTolerance{};
         int populationSize{};
         int maximumGenerations{};
@@ -146,6 +145,8 @@ private:
     void markObjectiveCustom();
     void updateLatestPatternPeakControls();
     void updateDirectionalSeedState();
+    void setDirection(analysis::DirectionalEvaluationMode mode, double thetaDegrees,
+        double phiDegrees);
     [[nodiscard]] auto seedDirectionFromLatestPattern() -> bool;
     [[nodiscard]] auto directionalPresetRequiresSetup() const -> bool;
     void chooseDirectionStrategy();
@@ -217,11 +218,9 @@ private:
 
     QTableWidget* variablesTable_{};
     QWidget* parameterSettings_{};
-    QComboBox* objectiveControl_{};
     QComboBox* objectivePresetControl_{};
     QDoubleSpinBox* presetSwrLimitControl_{};
     QLabel* presetSwrLimitLabel_{};
-    QDoubleSpinBox* targetFrequencyControl_{};
     QTableWidget* objectiveCriteriaTable_{};
     QDoubleSpinBox* swrWeightControl_{};
     QDoubleSpinBox* resistanceWeightControl_{};
@@ -235,11 +234,6 @@ private:
     std::array<QDoubleSpinBox*, 6> objectiveValueControls_{};
     std::array<QComboBox*, 6> objectiveAggregationControls_{};
     QPushButton* resetObjectiveDefaultsButton_{};
-    QDoubleSpinBox* forwardThetaControl_{};
-    QDoubleSpinBox* forwardPhiControl_{};
-    QComboBox* directionalEvaluationModeControl_{};
-    QLabel* forwardThetaLabel_{};
-    QLabel* forwardPhiLabel_{};
     QLabel* directionSetupSummaryLabel_{};
     QWidget* directionSetupPanel_{};
     QLabel* directionSetupLabel_{};
@@ -271,10 +265,8 @@ private:
     QSpinBox* pointsControl_{};
     QComboBox* searchMethodControl_{};
     QLabel* searchBudgetLabel_{};
-    QLabel* adaptiveParameterToleranceLabel_{};
     QLabel* adaptiveScoreToleranceLabel_{};
     QSpinBox* adaptiveMaximumEvaluationsControl_{};
-    QDoubleSpinBox* adaptiveParameterToleranceControl_{};
     QDoubleSpinBox* adaptiveScoreToleranceControl_{};
     QWidget* differentialEvolutionSettings_{};
     QSpinBox* differentialEvolutionPopulationControl_{};
@@ -288,7 +280,6 @@ private:
     QLabel* objectiveSummaryLabel_{};
     QLabel* objectiveWarningLabel_{};
     QLabel* objectiveExplanationLabel_{};
-    QLabel* targetFrequencyLabel_{};
     QLabel* directionalFrequencyNote_{};
     QPushButton* editObjectiveButton_{};
     QDialog* objectiveDialog_{};
@@ -327,6 +318,10 @@ private:
     std::vector<Candidate> candidates_;
     std::vector<double> modelFrequenciesMHz_;
     std::vector<analysis::RadiationSample> latestRadiation_;
+    analysis::DirectionalEvaluationMode directionalEvaluationMode_{
+        analysis::DirectionalEvaluationMode::StrongestInAzimuthCut};
+    double forwardThetaDegrees_{90.0};
+    double forwardPhiDegrees_{};
     bool directionalObjectiveWasEnabled_{};
     bool directionSetupConfigured_{};
     bool directionSetupReady_{};

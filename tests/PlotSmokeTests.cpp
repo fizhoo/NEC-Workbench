@@ -884,8 +884,6 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationEditFrequencies"));
     auto* optimizationFrequencyDialog = optimization.findChild<QDialog*>(
         QStringLiteral("optimizationFrequencyDialog"));
-    auto* optimizationObjective = optimization.findChild<QComboBox*>(
-        QStringLiteral("optimizationObjectiveControl"));
     auto* optimizationSwrGoal = optimization.findChild<QComboBox*>(
         QStringLiteral("optimizationGoal0"));
     auto* optimizationGainGoal = optimization.findChild<QComboBox*>(
@@ -908,14 +906,8 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationEditObjective"));
     auto* optimizationObjectiveDialog = optimization.findChild<QDialog*>(
         QStringLiteral("optimizationObjectiveDialog"));
-    auto* optimizationTargetFrequency = optimization.findChild<QDoubleSpinBox*>(
-        QStringLiteral("optimizationTargetFrequency"));
-    auto* optimizationTargetFrequencyLabel = optimization.findChild<QLabel*>(
-        QStringLiteral("optimizationTargetFrequencyLabel"));
     auto* optimizationDirectionalFrequencyNote = optimization.findChild<QLabel*>(
         QStringLiteral("optimizationDirectionalFrequencyNote"));
-    auto* optimizationDirectionMode = optimization.findChild<QComboBox*>(
-        QStringLiteral("optimizationDirectionalEvaluationMode"));
     auto* optimizationDirectionSetupSummary = optimization.findChild<QLabel*>(
         QStringLiteral("optimizationDirectionSetupSummary"));
     auto* optimizationChooseDirection = optimization.findChild<QPushButton*>(
@@ -926,10 +918,6 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationUseLatestPatternPeak"));
     auto* optimizationLatestPatternPeakStatus = optimization.findChild<QLabel*>(
         QStringLiteral("optimizationLatestPatternPeakStatus"));
-    auto* optimizationForwardTheta = optimization.findChild<QDoubleSpinBox*>(
-        QStringLiteral("optimizationForwardTheta"));
-    auto* optimizationForwardPhi = optimization.findChild<QDoubleSpinBox*>(
-        QStringLiteral("optimizationForwardPhi"));
     auto* optimizationFrontToBackWeight = optimization.findChild<QDoubleSpinBox*>(
         QStringLiteral("optimizationFrontToBackWeight"));
     auto* optimizationFrontToRearWeight = optimization.findChild<QDoubleSpinBox*>(
@@ -956,8 +944,6 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationApplyBest"));
     auto* optimizationSearchMethods = optimization.findChild<QComboBox*>(
         QStringLiteral("optimizationSearchMethod"));
-    auto* optimizationParameterToleranceLabel = optimization.findChild<QLabel*>(
-        QStringLiteral("optimizationParameterToleranceLabel"));
     auto* optimizationScoreToleranceLabel = optimization.findChild<QLabel*>(
         QStringLiteral("optimizationScoreToleranceLabel"));
     auto* optimizationResetSearchDefaults = optimization.findChild<QPushButton*>(
@@ -966,8 +952,6 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationAdaptiveMaximumEvaluations"));
     auto* optimizationCandidateCount = optimization.findChild<QSpinBox*>(
         QStringLiteral("optimizationCandidateCount"));
-    auto* optimizationAdaptiveParameterTolerance = optimization.findChild<QDoubleSpinBox*>(
-        QStringLiteral("optimizationAdaptiveParameterTolerance"));
     auto* optimizationAdaptiveScoreTolerance = optimization.findChild<QDoubleSpinBox*>(
         QStringLiteral("optimizationAdaptiveScoreTolerance"));
     auto* optimizationDifferentialEvolutionSettings = optimization.findChild<QWidget*>(
@@ -1111,6 +1095,53 @@ auto main(int argc, char* argv[]) -> int
         && optimization.loadSession(historicalOptimization.id)
         && optimizationFrequencyTable != nullptr
         && optimizationFrequencyTable->count() == 2;
+    // Sessions written before the variable table recorded one sweep variable with
+    // top-level bounds, and candidates could use the retired SWR-at-frequency objective.
+    auto legacyOptimization = optimizationRunStore.create(QStringLiteral("nec2"),
+        QStringLiteral("legacy.nec"), QStringLiteral("optimization-session"));
+    legacyOptimization.status = QStringLiteral("Completed");
+    optimizationRunStore.save(legacyOptimization);
+    auto legacyCandidate = optimizationRunStore.create(QStringLiteral("nec2"),
+        QStringLiteral("legacy.nec"), QStringLiteral("optimization-candidate"),
+        legacyOptimization.id);
+    legacyCandidate.status = QStringLiteral("Completed");
+    optimizationRunStore.save(legacyCandidate);
+    QFile legacyMetadata(QDir(legacyOptimization.directory).filePath(
+        QStringLiteral("optimization-session.json")));
+    const auto legacyMetadataWritten = legacyMetadata.open(
+            QIODevice::WriteOnly | QIODevice::Truncate)
+        && legacyMetadata.write(
+            "{\"version\":4,\"variable\":\"HALF\",\"minimum\":4,\"maximum\":6,"
+            "\"parameterTolerance\":0.05,\"candidateCount\":5,"
+            "\"frequencyMode\":\"explicit\",\"frequenciesMHz\":[14.2]}") > 0;
+    legacyMetadata.close();
+    QFile legacyCandidateMetadata(QDir(legacyCandidate.directory).filePath(
+        QStringLiteral("optimization.json")));
+    const auto legacyCandidateWritten = legacyCandidateMetadata.open(
+            QIODevice::WriteOnly | QIODevice::Truncate)
+        && legacyCandidateMetadata.write(
+            "{\"variable\":\"HALF\",\"value\":5,\"objective\":\"swr-at-frequency\","
+            "\"targetFrequencyMHz\":14.2,\"referenceImpedance\":50,\"swrWeight\":1,"
+            "\"forwardThetaDegrees\":80,\"forwardPhiDegrees\":10,"
+            "\"directionalEvaluationMode\":2}") > 0;
+    legacyCandidateMetadata.close();
+    QFile legacyOutput(QDir(legacyCandidate.directory).filePath(QStringLiteral("model.out")));
+    const auto legacyOutputWritten = legacyOutput.open(
+            QIODevice::WriteOnly | QIODevice::Truncate)
+        && legacyOutput.write(candidateOutput) == candidateOutput.size();
+    legacyOutput.close();
+    necwb::ui::OptimizationWorkspace legacySessionWorkspace;
+    auto* legacySummary = legacySessionWorkspace.findChild<QLabel*>(
+        QStringLiteral("optimizationStudySummary"));
+    auto* legacyResults = legacySessionWorkspace.findChild<QTableWidget*>(
+        QStringLiteral("optimizationResultsTable"));
+    const auto legacySessionLoaded = legacyMetadataWritten && legacyCandidateWritten
+        && legacyOutputWritten
+        && legacySessionWorkspace.loadSession(legacyOptimization.id)
+        && legacySummary != nullptr
+        && legacySummary->text().contains(QStringLiteral("Variables: HALF"))
+        && legacySummary->text().contains(QStringLiteral("Objective: SWR"))
+        && legacyResults != nullptr && legacyResults->rowCount() == 1;
     QFile cachedCandidateMetadata(QDir(historicalCandidate.directory).filePath(
         QStringLiteral("optimization.json")));
     const auto historicalCandidateResultCached = cachedCandidateMetadata.open(
@@ -1471,8 +1502,9 @@ auto main(int argc, char* argv[]) -> int
     };
     optimization.setLatestAnalysisResult(latestPattern);
     application.processEvents();
-    const auto latestPatternPeakAutoSeeded = optimizationForwardTheta != nullptr
-        && optimizationForwardTheta->value() == 55.0;
+    const auto latestPatternPeakAutoSeeded = optimizationDirectionSetupSummary != nullptr
+        && optimizationDirectionSetupSummary->text().contains(
+            QStringLiteral("elevation 35.000°"));
     const auto automaticDirectionVisible = optimizationDirectionSetupSummary != nullptr
         && optimizationDirectionSetupSummary->text().contains(
             QStringLiteral("strongest gain · elevation 35.000°"));
@@ -1485,8 +1517,9 @@ auto main(int argc, char* argv[]) -> int
         directionalPresetReadyText = optimizationDirectionSetupSummary != nullptr
             && optimizationDirectionSetupSummary->text().contains(
                 QStringLiteral("Direction ready"));
-        directionalPresetPeakAngle = optimizationForwardTheta != nullptr
-            && optimizationForwardTheta->value() == 55.0;
+        directionalPresetPeakAngle = optimizationDirectionSetupSummary != nullptr
+            && optimizationDirectionSetupSummary->text().contains(
+                QStringLiteral("elevation 35.000°"));
         directionalPresetAutoSeeded = directionalPresetReadyText
             && directionalPresetPeakAngle;
         optimizationObjectivePreset->setCurrentText(QStringLiteral("Custom"));
@@ -1535,9 +1568,18 @@ auto main(int argc, char* argv[]) -> int
     if (optimizationChooseDirection != nullptr) optimizationChooseDirection->click();
     optimization.setLatestAnalysisResult(latestPattern);
     manualDirectionPreserved = manualDirectionPreserved
-        && optimizationForwardTheta != nullptr
-        && optimizationForwardTheta->value() == 70.0;
-    if (optimizationForwardTheta != nullptr) optimizationForwardTheta->setValue(90.0);
+        && optimizationDirectionSetupSummary != nullptr
+        && optimizationDirectionSetupSummary->text().contains(
+            QStringLiteral("Azimuth pattern · strongest gain · elevation 20.000°"));
+    QTimer::singleShot(0, &optimization, [] {
+        auto* dialog = topLevelDialog(QStringLiteral("optimizationDirectionStrategyDialog"));
+        if (dialog == nullptr) return;
+        auto* sliceAngle = dialog->findChild<QDoubleSpinBox*>(
+            QStringLiteral("directionSetupSliceAngle"));
+        if (sliceAngle != nullptr) sliceAngle->setValue(0.0);
+        dialog->accept();
+    });
+    if (optimizationChooseDirection != nullptr) optimizationChooseDirection->click();
     application.processEvents();
     const auto nullCutWarningVisible = optimizationLatestPatternPeakStatus != nullptr
         && optimizationLatestPatternPeakStatus->text().contains(
@@ -1548,21 +1590,13 @@ auto main(int argc, char* argv[]) -> int
         && optimizationUseLatestPatternPeak->isEnabled()
         && optimizationLatestPatternPeakStatus != nullptr
         && optimizationLatestPatternPeakStatus->text().contains(QStringLiteral("35.000"))
-        && optimizationForwardTheta != nullptr && optimizationForwardTheta->value() == 55.0
-        && optimizationForwardPhi != nullptr && optimizationForwardPhi->value() == 0.0
         && optimizationObjectiveSummary != nullptr
         && optimizationObjectiveSummary->text().contains(
             QStringLiteral("Track peak in azimuth cut at θ 55.000°"))
         && optimizationDirectionSetupSummary != nullptr
         && optimizationDirectionSetupSummary->text().contains(
             QStringLiteral("elevation 35.000°"));
-    const auto perCriterionDirectionalObjectiveValid = optimizationObjective != nullptr
-        && !optimizationObjective->isVisible()
-        && optimizationTargetFrequency != nullptr
-        && !optimizationTargetFrequency->isVisible()
-        && optimizationTargetFrequencyLabel != nullptr
-        && !optimizationTargetFrequencyLabel->isVisible()
-        && optimizationDirectionalFrequencyNote != nullptr
+    const auto perCriterionDirectionalObjectiveValid = optimizationDirectionalFrequencyNote != nullptr
         && optimizationDirectionalFrequencyNote->text().contains(
             QStringLiteral("Each criterion independently"))
         && patternRunPrerequisiteVisible && latestPatternPeakAutoSeeded
@@ -1582,8 +1616,6 @@ auto main(int argc, char* argv[]) -> int
     if (optimizationVariables != nullptr && optimizationVariables->rowCount() > 1)
         optimizationVariables->item(1, 0)->setCheckState(Qt::Checked);
     if (optimizationAdaptiveMaximum != nullptr) optimizationAdaptiveMaximum->setValue(35);
-    if (optimizationAdaptiveParameterTolerance != nullptr)
-        optimizationAdaptiveParameterTolerance->setValue(2.0);
     if (optimizationAdaptiveScoreTolerance != nullptr)
         optimizationAdaptiveScoreTolerance->setValue(3.0);
     if (optimizationResetSearchDefaults != nullptr) optimizationResetSearchDefaults->click();
@@ -1601,13 +1633,9 @@ auto main(int argc, char* argv[]) -> int
         && optimizationSearchMethods->itemText(1) == QStringLiteral("Adaptive Optimize")
         && optimizationSearchMethods->itemText(2) == QStringLiteral("Nelder-Mead")
         && optimizationSearchMethods->itemText(3) == QStringLiteral("Differential Evolution")
-        && optimizationParameterToleranceLabel != nullptr
-        && !optimizationParameterToleranceLabel->isVisible()
         && optimizationScoreToleranceLabel != nullptr
         && optimizationScoreToleranceLabel->isVisible()
         && optimizationAdaptiveMaximum != nullptr && optimizationAdaptiveMaximum->value() == 21
-        && optimizationAdaptiveParameterTolerance != nullptr
-        && optimizationAdaptiveParameterTolerance->value() == 0.010
         && optimizationAdaptiveScoreTolerance != nullptr
         && optimizationAdaptiveScoreTolerance->value() == 0.001
         && optimizationWorkload != nullptr
@@ -1653,9 +1681,7 @@ auto main(int argc, char* argv[]) -> int
     if (optimizationCandidateCount != nullptr) optimizationCandidateCount->setValue(12);
     if (optimizationResetSearchDefaults != nullptr) optimizationResetSearchDefaults->click();
     application.processEvents();
-    const auto sweepControlsValid = optimizationParameterToleranceLabel != nullptr
-        && !optimizationParameterToleranceLabel->isVisible()
-        && optimizationScoreToleranceLabel != nullptr
+    const auto sweepControlsValid = optimizationScoreToleranceLabel != nullptr
         && !optimizationScoreToleranceLabel->isVisible()
         && optimizationCandidateCount != nullptr
         && optimizationCandidateCount->value() == 7;
@@ -1883,16 +1909,9 @@ auto main(int argc, char* argv[]) -> int
         || optimizationCandidateDetails->columnCount() != 9
         || optimizationCandidateDetails->verticalHeader()->defaultSectionSize() > 24
         || optimizationResultsTable->verticalHeader()->defaultSectionSize() > 22
-        || optimizationDirectionMode == nullptr
-        || optimizationDirectionMode->count() != 3
-        || optimizationDirectionMode->currentText()
-            != QStringLiteral("Track Peak in Azimuth Cut")
-        || !optimizationDirectionMode->isHidden()
         || optimizationDirectionSetupSummary == nullptr
         || optimizationChooseDirection == nullptr
         || optimizationFindMaximumGain == nullptr
-        || !optimizationForwardTheta->isHidden()
-        || !optimizationForwardPhi->isHidden()
         || !optimizationCandidateDetailsWindow->isAncestorOf(
             optimizationCandidateDetails)
         || optimizationCandidateDetailViews == nullptr
@@ -1947,8 +1966,6 @@ auto main(int argc, char* argv[]) -> int
         || optimizationFrequencySummary->text().isEmpty()
         || optimizationEditFrequencies == nullptr
         || optimizationFrequencyDialog == nullptr
-        || optimizationObjective == nullptr
-        || optimizationObjective->count() != 1
         || optimizationObjectiveSummary == nullptr
         || optimizationObjectiveSummary->text().isEmpty()
         || optimizationEditObjective == nullptr
@@ -1965,7 +1982,6 @@ auto main(int argc, char* argv[]) -> int
         || optimizationResetObjectiveDefaults == nullptr
         || optimizationObjectiveExplanation == nullptr
         || !goalAwareBandEvaluationValid
-        || optimizationTargetFrequency == nullptr
         || optimizationFrontToRearWeight == nullptr
         || optimizationFrequencyTable == nullptr
         || optimizationAddAmateurBand == nullptr
@@ -1985,6 +2001,7 @@ auto main(int argc, char* argv[]) -> int
         || !nelderMeadControlsValid
         || !sweepControlsValid
         || !sweepSelectionValid
+        || !legacySessionLoaded
         || !wheelProtected
         || !compactSetupValid
         || !baselineOrchestrationValid
