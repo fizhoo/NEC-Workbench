@@ -31,7 +31,7 @@ public:
     enum class StudyState { NotRun, Running, Complete, Failed, Stale };
     enum class Workspace {
         Setup,
-        GeometryView,
+        GeometryEditor,
         Impedance,
         Currents,
         Radiation,

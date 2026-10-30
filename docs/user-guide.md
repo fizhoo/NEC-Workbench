@@ -37,13 +37,15 @@ only the archived `model.nec` sent directly to NEC2dXS is normalized.
 ## Application Layout
 
 The top workspace bar changes the main task. Home is the permanent operations base.
-Model and Setup open as reusable workspaces, while Impedance/SWR, Currents,
+Geometry Editor, NEC Deck, and Setup open as reusable workspaces, while Impedance/SWR, Currents,
 Radiation, and Run History use focused windows that can remain visible during edits
 and reruns. A compact navigator selects pages inside the larger workspaces; collapse
 it to icons when screen space is limited.
 
 The menu bar holds less-frequent commands. Important global actions include:
 
+- **Model → Geometry Editor**
+- **Model → NEC Deck**
 - **Model → Check Model**
 - **Model → Automatic Segmentation**
 - **Model → Average Gain Test**
@@ -66,13 +68,21 @@ duplicates. Historical Run Review remains a separate read-only window.
 
 With no model open, Home provides New, Open, recent files, and documentation.
 With a model open, it becomes a compact operations dashboard. **Check Model** and
-**Run Analysis** remain prominent, while launchers open or raise Model, Setup,
-Antenna View, Impedance/SWR, Currents, Radiation, Runs, and Optimize. Model and
-quick-result summaries, quality status, and recent runs remain visible without
-duplicating the full editor, antenna view, or result plots on Home. The footer
+**Run Analysis** remain prominent, while launchers open or raise the Geometry Editor,
+Impedance/SWR, Currents, Radiation, Runs, and Optimize. Click a Model row to open its
+editor: Wires opens the Geometry Editor, Deck and Variables open the NEC Deck window,
+and the setup rows open Setup. Model and quick-result summaries, quality status, and
+recent runs remain visible without duplicating the full editors or result plots on
+Home. The footer
 shows whether the model is ready and whether displayed results are current or stale.
 
 ## Model
+
+The model is edited in two windows, each of which remembers its own size and
+position: the **Geometry Editor** (2D and 3D geometry) and the **NEC Deck** window
+(Raw Source, Structured Cards, and Parameters). Keep the deck window small beside your
+runs and the Geometry Editor large for drawing; switching between them does not
+resize either one.
 
 ### Geometry
 
@@ -95,7 +105,7 @@ the evaluated number, not an inferred physical unit.
 
 To parameterize a field:
 
-1. Open **Model → NEC Deck → Structured Cards**.
+1. Open **Model → NEC Deck** and choose the **Structured Cards** tab.
 2. Right-click a continuous numeric cell.
 3. Create a new parameter or link an existing `SY` definition.
 

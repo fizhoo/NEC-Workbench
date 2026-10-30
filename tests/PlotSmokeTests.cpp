@@ -270,6 +270,7 @@ auto main(int argc, char* argv[]) -> int
     auto runHistoryWindowNavigation = false;
     auto validationWindowNavigation = false;
     auto modelWindowNavigation = false;
+    auto separateGeometryWindow = false;
     auto setupWindowNavigation = false;
     auto optimizationWindowNavigation = false;
     auto dialogDensityIsIncremental = false;
@@ -282,6 +283,7 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("resultWindows/impedance/overlayVisible"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/radiation/overlayVisible"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/model-editor"));
+    resultWindowSettings.remove(QStringLiteral("workspaceWindows/geometry-editor"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/analysis-setup"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/run-history"));
@@ -345,8 +347,8 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("radiationChooseHistoricalOverlay"));
         consolidatedSetupNavigation = setupModuleAction != nullptr
             && setupModuleAction->text() == QStringLiteral("&Setup")
-            && tabNames(modelWorkspace) == QStringList{QStringLiteral("Geometry"),
-                QStringLiteral("Parameters"), QStringLiteral("NEC Deck")}
+            && tabNames(modelWorkspace) == QStringList{QStringLiteral("NEC Deck"),
+                QStringLiteral("Parameters")}
             && tabNames(setupWorkspace) == QStringList{QStringLiteral("Frequency"),
                 QStringLiteral("Sources"), QStringLiteral("Loads && Transmission Lines"),
                 QStringLiteral("Environment"), QStringLiteral("Requests"), QStringLiteral("Solver")}
@@ -395,6 +397,28 @@ auto main(int argc, char* argv[]) -> int
                 && modelWorkspace->window() == modelEditorWindow
                 && resultWindowSettings.value(
                     QStringLiteral("workspaceWindows/model-editor/detached"), false).toBool();
+            // Geometry has its own window, so resizing it leaves the deck window alone.
+            auto* geometryEditorAction = mainWindow.findChild<QAction*>(
+                QStringLiteral("geometryEditorAction"));
+            auto* geometryWorkspace = mainWindow.findChild<QTabWidget*>(
+                QStringLiteral("geometryWorkspace"));
+            if (geometryEditorAction != nullptr && geometryWorkspace != nullptr
+                && modelEditorWindow != nullptr) {
+                const auto deckSize = modelEditorWindow->size();
+                geometryEditorAction->trigger();
+                application.processEvents();
+                auto* geometryEditorWindow = topLevelDialog(
+                    QStringLiteral("geometryEditorWindow"));
+                if (geometryEditorWindow != nullptr)
+                    geometryEditorWindow->resize(deckSize + QSize{300, 200});
+                application.processEvents();
+                separateGeometryWindow = geometryEditorAction->isEnabled()
+                    && geometryEditorWindow != nullptr && geometryEditorWindow->isVisible()
+                    && geometryWorkspace->window() == geometryEditorWindow
+                    && geometryEditorWindow != modelEditorWindow
+                    && !modelEditorWindow->isAncestorOf(geometryWorkspace)
+                    && modelEditorWindow->size() == deckSize;
+            }
             dialogDensityIsIncremental = modelEditorWindow != nullptr
                 && !modelEditorWindow->property("workspaceDensityId").toString().isEmpty()
                 && mainWindow.property("workspaceDensityId").toString()
@@ -485,6 +509,7 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("resultWindows/impedance/overlayVisible"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/radiation/overlayVisible"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/model-editor"));
+    resultWindowSettings.remove(QStringLiteral("workspaceWindows/geometry-editor"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/analysis-setup"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/run-history"));
@@ -499,6 +524,8 @@ auto main(int argc, char* argv[]) -> int
         return NECWB_SMOKE_FAILURE("validation window navigation");
     if (!modelWindowNavigation)
         return NECWB_SMOKE_FAILURE("model window navigation");
+    if (!separateGeometryWindow)
+        return NECWB_SMOKE_FAILURE("separate geometry editor window");
     if (!dialogDensityIsIncremental)
         return NECWB_SMOKE_FAILURE("incremental dialog workspace density");
     if (!setupWindowNavigation)
@@ -2582,7 +2609,7 @@ auto main(int argc, char* argv[]) -> int
             &controlPanelGeometryOpened](auto destination) {
         if (destination == Workspace::Runs) runHistoryOpened = true;
         if (destination == Workspace::Impedance) controlPanelWorkspaceOpened = true;
-        if (destination == Workspace::GeometryView) controlPanelGeometryOpened = true;
+        if (destination == Workspace::GeometryEditor) controlPanelGeometryOpened = true;
         });
     controlPanel.setOpenEditorCallback([&controlPanelEditorOpened](auto destination) {
         controlPanelEditorOpened = destination == necwb::ui::ControlPanel::Editor::Requests;
@@ -2638,7 +2665,7 @@ auto main(int argc, char* argv[]) -> int
     auto* controlPanelAverageGainRun = button("controlPanelAverageGainRun");
     auto* controlPanelConvergenceRun = button("controlPanelConvergenceRun");
     auto* controlPanelImpedance = button("controlPanelImpedance");
-    auto* controlPanelGeometry = button("controlPanelGeometryView");
+    auto* controlPanelGeometry = button("controlPanelGeometryEditor");
     auto* controlPanelOpenMenu = controlPanel.findChild<QMenu*>(
         QStringLiteral("controlPanelOpenMenu"));
     if (controlPanelOpenMenu != nullptr) {
