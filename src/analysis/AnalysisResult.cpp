@@ -21,6 +21,14 @@ auto unitDirection(double thetaDegrees, double phiDegrees) -> std::array<double,
     return {std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi), std::cos(theta)};
 }
 
+// F/B compares the front with the same elevation turned 180 degrees in azimuth, as amateur
+// modeling programs do. The exact antipode would lie below the horizon for any elevated
+// lobe, where an antenna over ground has no pattern.
+auto frontToBackDirection(double frontThetaDegrees, double frontPhiDegrees) -> std::array<double, 3>
+{
+    return unitDirection(frontThetaDegrees, frontPhiDegrees + 180.0);
+}
+
 auto directionDot(const std::array<double, 3>& first, const std::array<double, 3>& second) -> double
 {
     return first[0]*second[0] + first[1]*second[1] + first[2]*second[2];
@@ -164,9 +172,7 @@ auto radiationMetrics(std::span<const RadiationSample> samples,
             result.tiedPeaks.push_back(sample);
         }
     }
-    const auto frontDirection = unitDirection(peak->thetaDegrees, peak->phiDegrees);
-    const std::array<double, 3> backDirection{
-        -frontDirection[0], -frontDirection[1], -frontDirection[2]};
+    const auto backDirection = frontToBackDirection(peak->thetaDegrees, peak->phiDegrees);
     const RadiationSample* back{};
     auto bestDirectionDot = -1.0;
     for (const auto& sample : samples) {
@@ -227,8 +233,7 @@ auto radiationFrequencyMetrics(std::span<const RadiationSample> samples,
     frequencies.erase(duplicates.begin(), duplicates.end());
 
     const auto frontDirection = unitDirection(forwardThetaDegrees, forwardPhiDegrees);
-    const std::array<double, 3> backDirection{
-        -frontDirection[0], -frontDirection[1], -frontDirection[2]};
+    const auto backDirection = frontToBackDirection(forwardThetaDegrees, forwardPhiDegrees);
     std::vector<RadiationFrequencyMetric> result;
     result.reserve(frequencies.size());
     for (const auto frequencyMHz : frequencies) {
@@ -320,10 +325,9 @@ auto radiationTrackedCutFrequencyMetrics(std::span<const RadiationSample> sample
         metric.forwardThetaDegrees = front->thetaDegrees;
         metric.forwardPhiDegrees = front->phiDegrees;
         const auto frontDirection = unitDirection(front->thetaDegrees, front->phiDegrees);
-        // Tracked cuts measure F/B at the same elevation, turned 180 degrees in azimuth. Both
-        // cuts sample that direction, unlike the antipode, which lies below the horizon for
-        // any elevated lobe.
-        const auto backDirection = unitDirection(front->thetaDegrees, front->phiDegrees + 180.0);
+        // Both tracked cuts contain the back direction: an elevation cut's negative-theta half
+        // is the opposite azimuth.
+        const auto backDirection = frontToBackDirection(front->thetaDegrees, front->phiDegrees);
         if (const auto* back = directionalSample(samples, frequencyMHz, backDirection)) {
             const auto backGain = radiationGainDb(*back, component);
             if (std::isfinite(backGain) && backGain > -900.0) {
@@ -388,9 +392,7 @@ auto radiationCutMetrics(std::span<const RadiationCutPoint> samples, bool wraps)
         }
     }
 
-    const auto frontDirection = unitDirection(peak->thetaDegrees, peak->phiDegrees);
-    const std::array<double, 3> backDirection{
-        -frontDirection[0], -frontDirection[1], -frontDirection[2]};
+    const auto backDirection = frontToBackDirection(peak->thetaDegrees, peak->phiDegrees);
     const RadiationCutPoint* back{};
     auto bestDirectionDot = -1.0;
     for (const auto& sample : values) {

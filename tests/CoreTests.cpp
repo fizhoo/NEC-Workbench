@@ -2060,6 +2060,26 @@ void testNecOutputParsing()
             && std::abs(*metrics.frontToBackDb - 10.0) < 1.0e-12,
         "radiation metrics report peak direction and front-to-back ratio");
 
+    // Over ground an elevated lobe's antipode is below the horizon and never sampled; F/B
+    // uses the same elevation turned 180 degrees in azimuth.
+    const std::array elevatedPattern{
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = 60.0,
+            .phiDegrees = 0.0, .totalGainDb = 7.0},
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = 60.0,
+            .phiDegrees = 180.0, .totalGainDb = -5.0},
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = 90.0,
+            .phiDegrees = 180.0, .totalGainDb = -20.0},
+    };
+    const auto elevatedMetrics = necwb::analysis::radiationMetrics(elevatedPattern,
+        necwb::analysis::RadiationComponent::Total);
+    const auto elevatedSpecified = necwb::analysis::radiationFrequencyMetrics(elevatedPattern,
+        necwb::analysis::RadiationComponent::Total, 60.0, 0.0);
+    expect(elevatedMetrics.frontToBackDb
+            && std::abs(*elevatedMetrics.frontToBackDb - 12.0) < 1.0e-12
+            && elevatedSpecified.size() == 1 && elevatedSpecified.front().frontToBackDb
+            && std::abs(*elevatedSpecified.front().frontToBackDb - 12.0) < 1.0e-12,
+        "F/B of an elevated lobe uses the same elevation at the opposite azimuth");
+
     const std::vector<necwb::analysis::RadiationSample> frequencyPatterns{
         {.frequencyMHz = 14.0, .thetaDegrees = 55.0, .phiDegrees = 0.0,
             .totalGainDb = 6.2},
@@ -2099,20 +2119,21 @@ void testNecOutputParsing()
             && std::abs(*elevationMetrics.sampledBeamwidthDegrees - 13.0) < 1.0e-12
             && elevationMetrics.interpolatedBeamwidthDegrees
             && std::abs(*elevationMetrics.interpolatedBeamwidthDegrees - 14.6829135) < 1.0e-6
-            && !elevationMetrics.frontToBackDb,
-        "elevation-cut metrics retain tied peaks, interpolate HPBW, and require a physical back direction");
+            && elevationMetrics.frontToBackDb && std::abs(*elevationMetrics.frontToBackDb) < 1.0e-12,
+        "elevation-cut metrics retain tied peaks, interpolate HPBW, and take F/B at the same elevation");
 
     std::vector<necwb::analysis::RadiationCutPoint> horizontalCut;
     for (auto phi = 0; phi < 360; ++phi)
         horizontalCut.push_back({static_cast<double>(phi), 62.0,
             static_cast<double>(phi), phi == 0 ? 8.0 : -2.0});
     const auto offHorizonMetrics = necwb::analysis::radiationCutMetrics(horizontalCut, true);
-    expect(offHorizonMetrics.valid && !offHorizonMetrics.frontToBackDb
+    expect(offHorizonMetrics.valid && offHorizonMetrics.frontToBackDb
+            && std::abs(*offHorizonMetrics.frontToBackDb - 10.0) < 1.0e-12
             && offHorizonMetrics.sampledBeamwidthDegrees
             && *offHorizonMetrics.sampledBeamwidthDegrees == 0.0
             && offHorizonMetrics.interpolatedBeamwidthDegrees
             && std::abs(*offHorizonMetrics.interpolatedBeamwidthDegrees - 0.6) < 1.0e-12,
-        "off-horizon azimuth cut wraps HPBW across the seam without inventing F/B");
+        "off-horizon azimuth cut wraps HPBW across the seam and finds F/B in the cut");
     for (auto& sample : horizontalCut) sample.thetaDegrees = 90.0;
     const auto horizonMetrics = necwb::analysis::radiationCutMetrics(horizontalCut, true);
     expect(horizonMetrics.frontToBackDb
@@ -2555,6 +2576,13 @@ void testOptimizationObjectives()
             && elevationRequirements[0].directionFingerprint
                 != azimuthRequirements[0].directionFingerprint,
         "optimization radiation requirements distinguish elevation and azimuth grids");
+
+    const auto elevatedBackDeck = necwb::analysis::prepareDirectionalOptimizationInput(
+        "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nEN\n",
+        directionalFrequencies, 60.0, 30.0, true, false);
+    expect(elevatedBackDeck.find("RP 0 1 1 1000 60 210") != std::string::npos
+            && elevatedBackDeck.find("RP 0 1 1 1000 120") == std::string::npos,
+        "specified-direction F/B requests the same elevation at the opposite azimuth");
 
     const auto specifiedRearDeck = necwb::analysis::prepareDirectionalOptimizationInput(
         "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nEN\n",
