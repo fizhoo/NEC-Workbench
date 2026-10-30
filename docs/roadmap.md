@@ -9,6 +9,9 @@ Workbench remains solver-independent and does not bundle external NEC engines.
 
 - One source-backed document shared by Raw Source, Structured Cards, geometry,
   model setup, parameter editing, validation, and Undo/Redo
+- Separate Geometry Editor and NEC Deck windows, each with its own saved size
+- Structured Cards and Wires show long numbers at 6 significant figures while the
+  deck keeps full precision
 - Editable straight-wire geometry plus read-only display of supported generated
   wires, transformations, and surface patches
 - Structured frequency, source, environment, load, transmission-line, request,
@@ -17,12 +20,16 @@ Workbench remains solver-independent and does not bundle external NEC engines.
 
 ### Analysis and Results
 
-- Compact Home operations dashboard with reusable Model, Setup, result, and Run History windows
+- Fixed-size Home control panel with model summary, selected-frequency quick results,
+  model-quality status, recent models, and launchers for reusable work and result windows
 - `nec2c`, OpenNEC, and 4nec2 NEC2dXS process adapters with independent saved paths
 - Normal runs and temporary quick sweeps without rewriting the authored model
 - Durable run history with authored source, generated solver deck, output, logs,
-  metadata, and detached historical review
-- Impedance/SWR, segment-current, and 2D/3D radiation inspection
+  metadata, editable run notes, detached historical review, and Open Run Folder
+- Impedance/SWR and 2D/3D radiation inspection
+- Currents on a 2D view of the antenna as magnitude, feed-relative phase, or an
+  animated RF cycle, with a common straight-wire direction, along-wire plots, and a
+  segment table
 - One labeled historical overlay selected from Run History and shown independently
   in compatible impedance/SWR and radiation views
 - Static adequacy checks, Average Gain Test, and segmentation convergence
@@ -37,26 +44,35 @@ Workbench remains solver-independent and does not bundle external NEC engines.
   undoable application of a selected result
 - Automatic compatible baseline runs with detached candidate comparison for
   impedance, SWR, and available 2D radiation patterns
+- Unified search setup that states why a run cannot start, and cached pattern
+  results so switching objective presets is immediate
 
 ### Delivery
 
-- Automated Linux AppImage and Windows ZIP builds
+- Automated Linux AppImage and Windows ZIP builds (Windows without a console window)
+- Optimized `RelWithDebInfo` default build type
 - Automated core, plot, and optimization test suites; core logic remains Qt-free
 - In-application tooltips for detailed control behavior
 
 ## Current Milestone
 
 `v0.1.0-alpha.1` established the first public Linux AppImage and Windows ZIP baseline.
-The current milestone is an Alpha 2 stabilization candidate rather than broad feature
-expansion.
+`v0.1.0-alpha.2` delivers the compact Home control panel, separate work and result
+windows, run references and notes, the currents-on-antenna view, and a faster
+optimizer. Its remaining release steps:
 
-1. Exercise representative real decks across supported solver backends and platforms.
-2. Field-test the compact Home workflow, reusable windows, Run History, and historical overlays.
-3. Strengthen regression coverage around source edits, run generation, output parsing,
-   window restoration, and optimization session restoration.
-4. Keep card-support claims synchronized with validation, structured editing, and rendering.
-5. Download and smoke-test the Windows package on Windows before tagging Alpha 2.
-6. Fix reproducible release defects, then prepare a focused `v0.1.0-alpha.2` release.
+1. Smoke-test the Linux and Windows packages built from the release branch.
+2. Run the real 4nec2 NEC2dXS executable matrix on Windows.
+3. Merge to `main`, tag `v0.1.0-alpha.2`, and publish the packages with release notes.
+
+After Alpha 2, stabilization continues rather than broad feature expansion:
+
+- Exercise representative real decks across supported solver backends and platforms.
+- Field-test the Home workflow, reusable windows, Run History, historical overlays,
+  and the currents view.
+- Strengthen regression coverage around source edits, run generation, output parsing,
+  window restoration, and optimization session restoration.
+- Keep card-support claims synchronized with validation, structured editing, and rendering.
 
 The first imported-deck validation audit is complete and documented in the
 [NEC Validation Reference](nec-validation-reference.md). Follow-up work should focus
@@ -67,8 +83,7 @@ The Linux broad-deck pass now covers all 113 OpenNEC example decks through Workb
 validation plus available NEC2C and OpenNEC execution. Workbench blocked every deck
 that failed NEC2C and parsed every finite result report. Focused sequencing probes
 also confirm the combined OpenNEC fixes; remaining OpenNEC multiple-source behavior
-is documented as a backend issue. The next release gate is the real 4nec2 NEC2dXS
-matrix and compact-workspace smoke test on Windows.
+is documented as a backend issue.
 
 ## Near-Term Work
 
@@ -93,6 +108,8 @@ over the existing reproducible methods.
   a separate multi-run comparison workflow
 - Convergence plots for impedance, gain, and pattern changes
 - Input-power normalization for current and field amplitudes
+- Currents follow-ups: a 3D antenna view, phase along each wire in Along Wire, and a
+  selectable phase reference for multi-source arrays
 - Near-field parsing and visualization
 
 ### Modeling

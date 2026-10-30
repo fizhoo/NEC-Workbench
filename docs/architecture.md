@@ -53,29 +53,30 @@ same definitions.
 
 ## Workspaces
 
-The top-level destinations are Home, Model, Setup, Results, and Optimize. The UI is
-intentionally hybrid rather than a single deeply nested tab stack: Home remains the
-operations base, while focused editors and result views can stay open beside it.
+Home is the main window: a compact control panel (`ui/controlpanel`) whose layout is
+fixed to its content. It summarizes the active model, selected-frequency quick results,
+model quality, and the latest run, and launches the focused windows without
+duplicating their content. Every other workspace is a separate top-level window:
 
-- **Home** summarizes the active model, recent results, model quality, and recent runs,
-  and launches the focused workspaces without duplicating their full content.
-- **Model** owns geometry, parameters, and NEC source.
-- **Setup** owns frequency, sources, loads/networks, environment, solver configuration,
-  and output requests.
-- **Results** owns current or historical parsed output.
+- **Geometry Editor** owns the 2D and 3D geometry views.
+- **NEC Deck** owns Raw Source, Structured Cards, and Parameters.
+- **Setup** owns frequency, sources, loads/networks, environment, output requests,
+  and solver configuration.
+- **Impedance / SWR**, **Currents**, **Radiation**, **Raw Solver Output**, and
+  **Run History** present current or historical parsed output.
 - **Optimize** owns parameter studies and candidate review.
 
-The compact workspace navigator handles pages inside Model, Setup, and Results;
-menus expose the complete command set; the toolbar contains frequent global actions.
-Model and Setup use reusable detachable panels. Impedance, Currents, Radiation, and
-Run History use focused reusable windows so they can remain visible while the model
-is edited and rerun.
+Work windows are `DetachablePanel`s, and result windows are coordinated by
+`ResultWindowCoordinator`. Each window persists its own geometry, so resizing one
+never resizes another, and opening a window again raises the existing instance.
+Menus expose the complete command set; a compact navigator selects pages inside
+Setup and the NEC Deck window.
 
-Results and candidate details use reusable windows. A detached view is the same live
-content, not a copied result model. Historical Run Review is separate and read-only
-so opening archived output cannot silently replace the active editor. The Results
-historical-overlay controller selects at most one archived run and never changes the
-active result; each result window independently decides whether to display it.
+A detached view is the same live content, not a copied result model. Historical Run
+Review is separate and read-only so opening archived output cannot silently replace
+the active editor. The historical-overlay controller selects at most one archived run
+and never changes the active result; each result window independently decides whether
+to display it.
 
 ## Validation
 
@@ -164,6 +165,11 @@ radiation records. Views consume these records rather than reparsing output.
 
 - Impedance and SWR share the model reference impedance (`Z0`/`ZO`, default 50 Ω).
 - Current results retain wire, segment, complex current, magnitude, and phase.
+  `analysis/SegmentCurrentDisplay` prepares them for drawing: it orients straight
+  wires toward +X, +Y, or +Z (adding 180° where NEC's end-1-to-end-2 direction runs
+  the other way), references phase to the first feed current, and computes the
+  instantaneous current over the RF cycle. The Currents window's Antenna tab and the
+  table's relative-phase column both consume this core result.
 - Radiation datasets retain their frequency and request identity.
 - Historical views use the archived generated deck for the matching antenna overlay.
 
@@ -219,6 +225,11 @@ core fingerprint and coverage evaluator is Qt-free; widgets only present its sta
 and data. Optimization candidates are not injected into the live result windows;
 their historical-overlay controller remains exclusively run-to-run comparison.
 
+The optimization workspace resolves and fingerprints the active deck once per model
+change, and keeps the latest pattern's peak and tracked-cut metrics until a new
+pattern arrives, so frequent readiness refreshes and objective-preset changes do not
+re-parse source or rescan large patterns.
+
 Applying a candidate is an explicit source edit to active `SY` definitions. It is
 undoable and does not mutate archived candidate artifacts. Applying and running
 then uses the normal analysis pipeline to create an ordinary result.
@@ -229,9 +240,10 @@ then uses the normal analysis pipeline to create an ordinary result.
 paths using the platform's normal user settings location. Run artifacts remain in
 the application's local data directory.
 
-Common numeric presentation is centralized in `ui/DisplayFormat.h`. Display
-rounding never changes source text, archived solver output, exports, or internal
-calculation precision.
+Common numeric presentation is centralized in `ui/DisplayFormat.h`. Structured Cards
+and Wires use `CompactNumberDelegate` to show long numbers at 6 significant figures
+while editing starts from the exact source text. Display rounding never changes
+source text, archived solver output, exports, or internal calculation precision.
 
 See the [Roadmap](roadmap.md) for planned work and the
 [NEC Card Support](nec-card-support.md) matrix for card-level behavior.
