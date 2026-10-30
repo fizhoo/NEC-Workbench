@@ -145,6 +145,13 @@ if(NECWB_BUILD_GUI)
         src/ui/geometry/WirePropertiesDialog.h
         src/ui/optimization/OptimizationWorkspace.cpp
         src/ui/optimization/OptimizationWorkspace.h
+        src/ui/optimization/OptimizationWorkspaceCandidates.cpp
+        src/ui/optimization/OptimizationWorkspaceFrequencies.cpp
+        src/ui/optimization/OptimizationWorkspaceLayout.cpp
+        src/ui/optimization/OptimizationWorkspaceObjective.cpp
+        src/ui/optimization/OptimizationWorkspaceSession.cpp
+        src/ui/optimization/OptimizationWorkspaceSupport.cpp
+        src/ui/optimization/OptimizationWorkspaceSupport.h
         src/ui/optimization/OptimizationComparePanel.cpp
         src/ui/optimization/OptimizationComparePanel.h
         src/ui/optimization/CandidateEvaluator.cpp
