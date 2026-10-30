@@ -84,6 +84,7 @@ private:
     };
     void refreshHeader();
     void refreshFooter();
+    void fitModelRowsHeight();
     void refreshQuickResults();
     void refreshOpenMenu();
     void refreshResultLauncher(Workspace workspace);
