@@ -24,6 +24,8 @@
 class QComboBox;
 class QDialog;
 class QDoubleSpinBox;
+class QGroupBox;
+class QHBoxLayout;
 class QLabel;
 class QListWidget;
 class QPoint;
@@ -135,6 +137,18 @@ private:
         QString failureDetail;
     };
 
+    void buildHistoricalBanner();
+    void buildConfigurationPanel();
+    [[nodiscard]] auto buildSearchSection(QWidget* parent) -> QGroupBox*;
+    [[nodiscard]] auto buildFrequencySection(QWidget* parent) -> QGroupBox*;
+    [[nodiscard]] auto buildObjectiveSection(QWidget* parent) -> QGroupBox*;
+    [[nodiscard]] auto buildStudyHeader() -> QHBoxLayout*;
+    [[nodiscard]] auto buildResultsPanel() -> QWidget*;
+    void buildCandidateDetailsWindow();
+    void connectObjectiveSignals();
+    void connectSearchSignals();
+    void connectFrequencySignals();
+    void connectResultSignals();
     void populateVariables(const nec::SymbolResolution& resolution);
     [[nodiscard]] auto selectedVariables() const
         -> std::vector<StudySetup::VariableRange>;

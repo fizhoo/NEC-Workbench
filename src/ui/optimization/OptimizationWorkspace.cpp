@@ -679,6 +679,35 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(4, 4, 4, 4);
     layout->setSpacing(4);
+    buildHistoricalBanner();
+    buildConfigurationPanel();
+    auto* header = buildStudyHeader();
+    auto* resultsPanel = buildResultsPanel();
+
+    auto* workspaceSplitter = new QSplitter(Qt::Horizontal, this);
+    workspaceSplitter->setObjectName(QStringLiteral("optimizationWorkspaceSplitter"));
+    workspaceSplitter->addWidget(configurationPanel_);
+    workspaceSplitter->addWidget(resultsPanel);
+    workspaceSplitter->setChildrenCollapsible(false);
+    workspaceSplitter->setStretchFactor(0, 0);
+    workspaceSplitter->setStretchFactor(1, 1);
+    workspaceSplitter->setSizes({300, 780});
+
+    layout->addWidget(historicalBanner_);
+    layout->addLayout(header);
+    layout->addWidget(workspaceSplitter, 1);
+
+    connectObjectiveSignals();
+    connectSearchSignals();
+    connectFrequencySignals();
+    connectResultSignals();
+    applySelectedObjectivePreset();
+    updateFrequencyControls();
+    updateSearchMethodControls();
+}
+
+void OptimizationWorkspace::buildHistoricalBanner()
+{
     historicalBanner_ = new QFrame(this);
     historicalBanner_->setObjectName(QStringLiteral("optimizationHistoricalBanner"));
     static_cast<QFrame*>(historicalBanner_)->setFrameShape(QFrame::StyledPanel);
@@ -694,6 +723,43 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     historicalLayout->addWidget(historicalBannerTitle_, 1);
     historicalLayout->addWidget(returnToCurrentWorkButton_);
     historicalBanner_->hide();
+    connect(returnToCurrentWorkButton_, &QPushButton::clicked, this, [this] {
+        if (returnToCurrentWorkCallback_) returnToCurrentWorkCallback_();
+    });
+}
+
+void OptimizationWorkspace::buildConfigurationPanel()
+{
+    auto* setupContent = new QWidget(this);
+    setupContent->setObjectName(QStringLiteral("optimizationSetupContent"));
+    auto* setupLayout = new QVBoxLayout(setupContent);
+    setupLayout->setContentsMargins(4, 4, 4, 4);
+    setupLayout->setSpacing(4);
+    setupLayout->addWidget(buildSearchSection(setupContent));
+    setupLayout->addWidget(buildFrequencySection(setupContent));
+    setupLayout->addWidget(buildObjectiveSection(setupContent));
+    setupLayout->addStretch();
+
+    auto* configurationScrollArea = new QScrollArea(this);
+    configurationScrollArea->setObjectName(
+        QStringLiteral("optimizationConfigurationScrollArea"));
+    configurationScrollArea->setFrameShape(QFrame::NoFrame);
+    configurationScrollArea->setWidgetResizable(true);
+    configurationScrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    configurationScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    configurationScrollArea->setWidget(setupContent);
+
+    configurationPanel_ = new QWidget(this);
+    configurationPanel_->setObjectName(QStringLiteral("optimizationConfigurationPanel"));
+    auto* configurationLayout = new QVBoxLayout(configurationPanel_);
+    configurationLayout->setContentsMargins(0, 0, 0, 0);
+    configurationLayout->addWidget(configurationScrollArea, 1);
+    configurationPanel_->setMinimumWidth(260);
+    configurationPanel_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+}
+
+auto OptimizationWorkspace::buildSearchSection(QWidget* parent) -> QGroupBox*
+{
     variablesTable_ = new QTableWidget(this);
     variablesTable_->setObjectName(QStringLiteral("optimizationVariablesTable"));
     variablesTable_->setColumnCount(6);
@@ -713,6 +779,221 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         "Parameter Sweep varies the one checked parameter; the other methods change every "
         "checked parameter together. Double-click Minimum, Maximum, or Tolerance to edit it."));
 
+    pointsControl_ = new FocusWheelSpinBox(this);
+    pointsControl_->setRange(2, 101);
+    pointsControl_->setObjectName(QStringLiteral("optimizationCandidateCount"));
+    pointsControl_->setValue(7);
+    pointsControl_->setToolTip(tr(
+        "Number of evenly spaced parameter values tested from Minimum through Maximum, "
+        "including both endpoints. Each candidate value is evaluated at every selected frequency."));
+    searchMethodControl_ = new QComboBox(this);
+    searchMethodControl_->setObjectName(QStringLiteral("optimizationSearchMethod"));
+    searchMethodControl_->addItem(tr("Parameter Sweep"),
+        static_cast<int>(SearchMethod::ParameterSweep));
+    searchMethodControl_->addItem(tr("Adaptive Optimize"),
+        static_cast<int>(SearchMethod::Adaptive));
+    searchMethodControl_->addItem(tr("Nelder-Mead"),
+        static_cast<int>(SearchMethod::NelderMead));
+    searchMethodControl_->addItem(tr("Differential Evolution"),
+        static_cast<int>(SearchMethod::DifferentialEvolution));
+    searchMethodControl_->setItemData(0, tr(
+        "Exhaustively test evenly spaced values for one parameter."), Qt::ToolTipRole);
+    searchMethodControl_->setItemData(1, tr(
+        "Refine one or more parameters with transparent coordinate trials around the current best."),
+        Qt::ToolTipRole);
+    searchMethodControl_->setItemData(2, tr(
+        "Optimize one or more continuous parameters with a bounded derivative-free simplex search."),
+        Qt::ToolTipRole);
+    searchMethodControl_->setItemData(3, tr(
+        "Explore one or more continuous parameters with a seeded population-based global search."),
+        Qt::ToolTipRole);
+
+    adaptiveMaximumEvaluationsControl_ = new FocusWheelSpinBox(this);
+    adaptiveMaximumEvaluationsControl_->setObjectName(
+        QStringLiteral("optimizationAdaptiveMaximumEvaluations"));
+    adaptiveMaximumEvaluationsControl_->setRange(5, 101);
+    adaptiveMaximumEvaluationsControl_->setValue(21);
+    adaptiveMaximumEvaluationsControl_->setToolTip(tr(
+        "Maximum solver candidates. Adaptive starts near the center and boundaries; "
+        "Nelder–Mead starts with one simplex vertex per selected parameter plus one."));
+    adaptiveScoreToleranceControl_ = new FocusWheelDoubleSpinBox(this);
+    adaptiveScoreToleranceControl_->setObjectName(
+        QStringLiteral("optimizationAdaptiveScoreTolerance"));
+    adaptiveScoreToleranceControl_->setRange(0.0, 1.0e9);
+    adaptiveScoreToleranceControl_->setDecimals(DisplayDecimalPlaces);
+    adaptiveScoreToleranceControl_->setValue(0.001);
+    adaptiveScoreToleranceControl_->setToolTip(tr(
+        "Minimum required improvement in the best objective score between completed refinement rounds. "
+        "A round normally tests both a left and right midpoint; the search stops after two consecutive "
+        "rounds improve the best score by no more than this amount."));
+    differentialEvolutionPopulationControl_ = new FocusWheelSpinBox(this);
+    differentialEvolutionPopulationControl_->setObjectName(
+        QStringLiteral("optimizationDifferentialEvolutionPopulation"));
+    differentialEvolutionPopulationControl_->setRange(4, 50);
+    differentialEvolutionPopulationControl_->setValue(12);
+    differentialEvolutionPopulationControl_->setToolTip(tr(
+        "Number of candidate vectors retained in each generation. At least four are required."));
+    differentialEvolutionGenerationControl_ = new FocusWheelSpinBox(this);
+    differentialEvolutionGenerationControl_->setObjectName(
+        QStringLiteral("optimizationDifferentialEvolutionGenerations"));
+    differentialEvolutionGenerationControl_->setRange(1, 200);
+    differentialEvolutionGenerationControl_->setValue(20);
+    differentialEvolutionGenerationControl_->setToolTip(tr(
+        "Maximum evolved generations after the initial population is evaluated."));
+    differentialEvolutionMutationControl_ = new FocusWheelDoubleSpinBox(this);
+    differentialEvolutionMutationControl_->setObjectName(
+        QStringLiteral("optimizationDifferentialEvolutionMutation"));
+    differentialEvolutionMutationControl_->setRange(0.1, 2.0);
+    differentialEvolutionMutationControl_->setSingleStep(0.1);
+    differentialEvolutionMutationControl_->setDecimals(DisplayDecimalPlaces);
+    differentialEvolutionMutationControl_->setValue(0.8);
+    differentialEvolutionMutationControl_->setToolTip(tr(
+        "Differential mutation factor F. Larger values explore more aggressively."));
+    differentialEvolutionCrossoverControl_ = new FocusWheelDoubleSpinBox(this);
+    differentialEvolutionCrossoverControl_->setObjectName(
+        QStringLiteral("optimizationDifferentialEvolutionCrossover"));
+    differentialEvolutionCrossoverControl_->setRange(0.0, 1.0);
+    differentialEvolutionCrossoverControl_->setSingleStep(0.05);
+    differentialEvolutionCrossoverControl_->setDecimals(DisplayDecimalPlaces);
+    differentialEvolutionCrossoverControl_->setValue(0.9);
+    differentialEvolutionCrossoverControl_->setToolTip(tr(
+        "Binomial crossover probability CR applied independently to each parameter."));
+    differentialEvolutionScoreToleranceControl_ = new FocusWheelDoubleSpinBox(this);
+    differentialEvolutionScoreToleranceControl_->setObjectName(
+        QStringLiteral("optimizationDifferentialEvolutionScoreTolerance"));
+    differentialEvolutionScoreToleranceControl_->setRange(0.0, 1.0e9);
+    differentialEvolutionScoreToleranceControl_->setDecimals(DisplayDecimalPlaces);
+    differentialEvolutionScoreToleranceControl_->setValue(0.001);
+    differentialEvolutionScoreToleranceControl_->setToolTip(tr(
+        "Stop after three generations whose best-score improvement is no greater than this value."));
+    differentialEvolutionSeedControl_ = new FocusWheelSpinBox(this);
+    differentialEvolutionSeedControl_->setObjectName(
+        QStringLiteral("optimizationDifferentialEvolutionSeed"));
+    differentialEvolutionSeedControl_->setRange(0, std::numeric_limits<int>::max());
+    differentialEvolutionSeedControl_->setValue(5489);
+    differentialEvolutionSeedControl_->setToolTip(tr(
+        "Random seed. Reusing the same seed and settings reproduces the same candidate proposals."));
+
+    auto* variableSection = new QGroupBox(tr("Search"), parent);
+    variableSection->setObjectName(QStringLiteral("optimizationVariableSection"));
+    parameterSettings_ = new QWidget(variableSection);
+    parameterSettings_->setObjectName(QStringLiteral("optimizationParameterSettings"));
+    auto* variableSectionLayout = new QVBoxLayout(variableSection);
+    variableSectionLayout->setContentsMargins(5, 7, 5, 5);
+    variableSectionLayout->setSpacing(4);
+    auto* searchMethodRow = new QHBoxLayout;
+    searchMethodRow->setContentsMargins(0, 0, 0, 0);
+    searchMethodRow->addWidget(new QLabel(tr("Method"), variableSection));
+    searchMethodRow->addWidget(searchMethodControl_, 1);
+    variableSectionLayout->addLayout(searchMethodRow);
+    variableSectionLayout->addWidget(variablesTable_, 1);
+    variableSectionLayout->addWidget(parameterSettings_);
+    auto* parameterizationBar = new QWidget(variableSection);
+    parameterizationBar->setObjectName(QStringLiteral("optimizationParameterizationHint"));
+    auto* parameterizationLayout = new QHBoxLayout(parameterizationBar);
+    parameterizationLayout->setContentsMargins(0, 0, 0, 0);
+    parameterizationLayout->setSpacing(4);
+    auto* parameterizationHint = new QLabel(tr(
+        "Need another variable? Parameterize a numeric NEC field in Structured Cards."),
+        parameterizationBar);
+    parameterizationHint->setWordWrap(true);
+    auto* chooseParameterFields = new QPushButton(
+        tr("Choose Parameter Fields…"), parameterizationBar);
+    chooseParameterFields->setObjectName(
+        QStringLiteral("optimizationChooseParameterFields"));
+    chooseParameterFields->setToolTip(tr(
+        "Open Model → NEC Deck → Structured Cards. Right-click a numeric field to create "
+        "or link an SY parameter, then return here to optimize it."));
+    parameterizationLayout->addWidget(parameterizationHint, 1);
+    parameterizationLayout->addWidget(chooseParameterFields);
+    variableSectionLayout->addWidget(parameterizationBar);
+    auto* parameterGrid = new QGridLayout(parameterSettings_);
+    parameterGrid->setContentsMargins(0, 0, 0, 0);
+    parameterGrid->setHorizontalSpacing(6);
+    parameterGrid->setVerticalSpacing(4);
+    const auto gridLabel = [this](const QString& text,
+                               const QString& objectName = {}) {
+        auto* label = new QLabel(text, parameterSettings_);
+        label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        if (!objectName.isEmpty()) label->setObjectName(objectName);
+        return label;
+    };
+    adaptiveScoreToleranceControl_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    pointsControl_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    adaptiveMaximumEvaluationsControl_->setSizePolicy(
+        QSizePolicy::Expanding, QSizePolicy::Fixed);
+    searchBudgetLabel_ = new QLabel(tr("Candidate count"), parameterSettings_);
+    searchBudgetLabel_->setObjectName(QStringLiteral("optimizationSearchBudgetLabel"));
+    searchBudgetLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    parameterGrid->addWidget(searchBudgetLabel_, 0, 0);
+    parameterGrid->addWidget(pointsControl_, 0, 1);
+    parameterGrid->addWidget(adaptiveMaximumEvaluationsControl_, 0, 1);
+    adaptiveScoreToleranceLabel_ = gridLabel(tr("Score tolerance"),
+        QStringLiteral("optimizationScoreToleranceLabel"));
+    parameterGrid->addWidget(adaptiveScoreToleranceLabel_, 1, 0);
+    parameterGrid->addWidget(adaptiveScoreToleranceControl_, 1, 1);
+
+    differentialEvolutionSettings_ = new QWidget(parameterSettings_);
+    differentialEvolutionSettings_->setObjectName(
+        QStringLiteral("optimizationDifferentialEvolutionSettings"));
+    auto* differentialEvolutionGrid = new QGridLayout(differentialEvolutionSettings_);
+    differentialEvolutionGrid->setContentsMargins(0, 0, 0, 0);
+    differentialEvolutionGrid->setHorizontalSpacing(6);
+    differentialEvolutionGrid->setVerticalSpacing(4);
+    const auto addDifferentialEvolutionControl = [&](int row, const QString& text,
+                                                     QWidget* control) {
+        auto* label = new QLabel(text, differentialEvolutionSettings_);
+        label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        control->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        differentialEvolutionGrid->addWidget(label, row, 0);
+        differentialEvolutionGrid->addWidget(control, row, 1);
+    };
+    addDifferentialEvolutionControl(0, tr("Population"),
+        differentialEvolutionPopulationControl_);
+    addDifferentialEvolutionControl(1, tr("Generations"),
+        differentialEvolutionGenerationControl_);
+    addDifferentialEvolutionControl(2, tr("Mutation factor"),
+        differentialEvolutionMutationControl_);
+    addDifferentialEvolutionControl(3, tr("Crossover rate"),
+        differentialEvolutionCrossoverControl_);
+    addDifferentialEvolutionControl(4, tr("Score tolerance"),
+        differentialEvolutionScoreToleranceControl_);
+    addDifferentialEvolutionControl(5, tr("Random seed"),
+        differentialEvolutionSeedControl_);
+    differentialEvolutionGrid->setColumnStretch(1, 1);
+    parameterGrid->addWidget(differentialEvolutionSettings_, 0, 0, 2, 2);
+
+    auto* resetSearchDefaultsButton = new QPushButton(tr("Reset Search Defaults"), parameterSettings_);
+    resetSearchDefaultsButton->setObjectName(
+        QStringLiteral("optimizationResetSearchDefaults"));
+    resetSearchDefaultsButton->setToolTip(tr(
+        "Restore the default sweep count or optimizer search settings without changing the variables, ranges, frequencies, or objective."));
+    parameterGrid->addWidget(resetSearchDefaultsButton, 2, 0, 1, 2, Qt::AlignRight);
+    parameterGrid->setColumnStretch(1, 1);
+
+    connect(resetSearchDefaultsButton, &QPushButton::clicked, this, [this] {
+        if (selectedSearchMethod() == SearchMethod::DifferentialEvolution) {
+            differentialEvolutionPopulationControl_->setValue(12);
+            differentialEvolutionGenerationControl_->setValue(20);
+            differentialEvolutionMutationControl_->setValue(0.8);
+            differentialEvolutionCrossoverControl_->setValue(0.9);
+            differentialEvolutionScoreToleranceControl_->setValue(0.001);
+            differentialEvolutionSeedControl_->setValue(5489);
+        } else if (isMultivariable(selectedSearchMethod())) {
+            adaptiveMaximumEvaluationsControl_->setValue(21);
+            adaptiveScoreToleranceControl_->setValue(0.001);
+        } else {
+            pointsControl_->setValue(7);
+        }
+    });
+    connect(chooseParameterFields, &QPushButton::clicked, this, [this] {
+        if (parameterizationHelpCallback_) parameterizationHelpCallback_();
+    });
+    return variableSection;
+}
+
+auto OptimizationWorkspace::buildFrequencySection(QWidget* parent) -> QGroupBox*
+{
     frequencyModeControl_ = new QComboBox(this);
     frequencyModeControl_->setObjectName(QStringLiteral("optimizationFrequencyMode"));
     frequencyModeControl_->addItem(tr("Use Model FR Sweep"),
@@ -721,16 +1002,139 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         static_cast<int>(FrequencyMode::Explicit));
     frequencyModeControl_->addItem(tr("Custom Continuous Sweep"),
         static_cast<int>(FrequencyMode::Continuous));
-    pointsControl_ = new FocusWheelSpinBox(this);
+    explicitFrequencyPanel_ = new QWidget(this);
+    explicitFrequencyPanel_->setObjectName(QStringLiteral("optimizationExplicitFrequencyPanel"));
+    auto* frequencyLayout = new QVBoxLayout(explicitFrequencyPanel_);
+    frequencyLayout->setContentsMargins(0, 0, 0, 0);
+    frequencyTable_ = new QListWidget(explicitFrequencyPanel_);
+    frequencyTable_->setObjectName(QStringLiteral("optimizationFrequencyTable"));
+    frequencyTable_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    frequencyTable_->setViewMode(QListView::IconMode);
+    frequencyTable_->setFlow(QListView::LeftToRight);
+    frequencyTable_->setWrapping(true);
+    frequencyTable_->setResizeMode(QListView::Adjust);
+    frequencyTable_->setMovement(QListView::Static);
+    frequencyTable_->setUniformItemSizes(true);
+    frequencyTable_->setGridSize(QSize(92, 28));
+    frequencyTable_->setSpacing(2);
+    frequencyTable_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    frequencyTable_->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    frequencyEntryControl_ = new FocusWheelDoubleSpinBox(explicitFrequencyPanel_);
+    frequencyEntryControl_->setObjectName(QStringLiteral("optimizationFrequencyEntry"));
+    frequencyEntryControl_->setRange(0.000001, 1.0e9);
+    frequencyEntryControl_->setDecimals(DisplayDecimalPlaces);
+    frequencyEntryControl_->setValue(14.175);
+    frequencyEntryControl_->setSuffix(tr(" MHz"));
+    addFrequencyButton_ = new QPushButton(tr("Add Frequency"), explicitFrequencyPanel_);
+    addFrequencyButton_->setObjectName(QStringLiteral("optimizationAddFrequency"));
+    removeFrequencyButton_ = new QPushButton(tr("Remove"), explicitFrequencyPanel_);
+    removeFrequencyButton_->setObjectName(QStringLiteral("optimizationRemoveFrequency"));
+    pasteFrequencyButton_ = new QPushButton(tr("Paste List…"), explicitFrequencyPanel_);
+    pasteFrequencyButton_->setObjectName(QStringLiteral("optimizationPasteFrequencies"));
+    clearFrequencyButton_ = new QPushButton(tr("Clear All"), explicitFrequencyPanel_);
+    clearFrequencyButton_->setObjectName(QStringLiteral("optimizationClearFrequencies"));
+    addAmateurBandButton_ = new QPushButton(tr("Add Amateur Bands…"), explicitFrequencyPanel_);
+    addAmateurBandButton_->setObjectName(QStringLiteral("optimizationAddAmateurBand"));
+    addAmateurBandButton_->setToolTip(tr(
+        "Choose one or more common amateur-band engineering ranges."));
+    auto* frequencyActions = new QGridLayout;
+    frequencyActions->setContentsMargins(0, 0, 0, 0);
+    frequencyActions->addWidget(frequencyEntryControl_, 0, 0);
+    frequencyActions->addWidget(addFrequencyButton_, 0, 1);
+    frequencyActions->addWidget(addAmateurBandButton_, 1, 0, 1, 2);
+    auto* listActions = new QHBoxLayout;
+    listActions->setContentsMargins(0, 0, 0, 0);
+    listActions->addStretch();
+    listActions->addWidget(pasteFrequencyButton_);
+    listActions->addWidget(removeFrequencyButton_);
+    listActions->addWidget(clearFrequencyButton_);
+    frequencyActions->addLayout(listActions, 2, 0, 1, 2);
+    frequencyActions->setColumnStretch(0, 1);
+    auto* frequencyHeading = new QLabel(tr("Selected frequencies (MHz)"),
+        explicitFrequencyPanel_);
+    frequencyLayout->addLayout(frequencyActions);
+    frequencyLayout->addWidget(frequencyHeading);
+    frequencyLayout->addWidget(frequencyTable_, 1);
+
+    continuousFrequencyPanel_ = new QWidget(this);
+    continuousFrequencyPanel_->setObjectName(
+        QStringLiteral("optimizationContinuousFrequencyPanel"));
+    auto* continuousLayout = new QGridLayout(continuousFrequencyPanel_);
+    continuousLayout->setContentsMargins(0, 0, 0, 0);
+    continuousStartControl_ = new FocusWheelDoubleSpinBox(continuousFrequencyPanel_);
+    continuousStartControl_->setObjectName(
+        QStringLiteral("optimizationContinuousStart"));
+    continuousStopControl_ = new FocusWheelDoubleSpinBox(continuousFrequencyPanel_);
+    continuousStopControl_->setObjectName(
+        QStringLiteral("optimizationContinuousStop"));
+    continuousStepControl_ = new FocusWheelDoubleSpinBox(continuousFrequencyPanel_);
+    continuousStepControl_->setObjectName(
+        QStringLiteral("optimizationContinuousStep"));
+    for (auto* control : {continuousStartControl_, continuousStopControl_,
+             continuousStepControl_}) {
+        control->setRange(0.000001, 1.0e9);
+        control->setDecimals(DisplayDecimalPlaces);
+        control->setSuffix(tr(" MHz"));
+    }
+    continuousStartControl_->setValue(14.0);
+    continuousStopControl_->setValue(14.35);
+    continuousStepControl_->setValue(0.05);
+    continuousLayout->addWidget(new QLabel(tr("Start"), continuousFrequencyPanel_), 0, 0);
+    continuousLayout->addWidget(continuousStartControl_, 0, 1);
+    continuousLayout->addWidget(new QLabel(tr("Stop"), continuousFrequencyPanel_), 1, 0);
+    continuousLayout->addWidget(continuousStopControl_, 1, 1);
+    continuousLayout->addWidget(new QLabel(tr("Step"), continuousFrequencyPanel_), 2, 0);
+    continuousLayout->addWidget(continuousStepControl_, 2, 1);
+    continuousLayout->setColumnStretch(1, 1);
+    workloadLabel_ = new QLabel(this);
+    workloadLabel_->setObjectName(QStringLiteral("optimizationWorkload"));
+    workloadLabel_->setWordWrap(true);
+
+    auto* frequencySection = new QGroupBox(tr("Frequencies"), parent);
+    frequencySection->setObjectName(QStringLiteral("optimizationFrequencySection"));
+    auto* frequencyPageLayout = new QVBoxLayout(frequencySection);
+    frequencyPageLayout->setContentsMargins(5, 7, 5, 5);
+    frequencyPageLayout->setSpacing(4);
+    frequencySummaryLabel_ = new QLabel(frequencySection);
+    frequencySummaryLabel_->setObjectName(
+        QStringLiteral("optimizationFrequencySummary"));
+    frequencySummaryLabel_->setWordWrap(true);
+    editFrequencyButton_ = new QPushButton(tr("Edit…"), frequencySection);
+    editFrequencyButton_->setObjectName(
+        QStringLiteral("optimizationEditFrequencies"));
+    auto* frequencySummaryRow = new QHBoxLayout;
+    frequencySummaryRow->addWidget(frequencySummaryLabel_, 1);
+    frequencySummaryRow->addWidget(editFrequencyButton_, 0, Qt::AlignTop);
+    frequencyPageLayout->addLayout(frequencySummaryRow);
+    frequencyPageLayout->addWidget(workloadLabel_);
+
+    frequencyDialog_ = new QDialog(this);
+    frequencyDialog_->setObjectName(QStringLiteral("optimizationFrequencyDialog"));
+    frequencyDialog_->setWindowTitle(tr("Optimization Frequencies"));
+    frequencyDialog_->setModal(true);
+    frequencyDialog_->resize(720, 480);
+    auto* frequencyDialogLayout = new QVBoxLayout(frequencyDialog_);
+    auto* frequencyModeRow = new QHBoxLayout;
+    frequencyModeRow->addWidget(new QLabel(tr("Frequency source"), frequencyDialog_));
+    frequencyModeRow->addWidget(frequencyModeControl_, 1);
+    frequencyDialogLayout->addLayout(frequencyModeRow);
+    frequencyDialogLayout->addWidget(explicitFrequencyPanel_, 1);
+    frequencyDialogLayout->addWidget(continuousFrequencyPanel_);
+    auto* frequencyDialogButtons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, frequencyDialog_);
+    frequencyDialogLayout->addWidget(frequencyDialogButtons);
+    connect(frequencyDialogButtons, &QDialogButtonBox::accepted,
+        frequencyDialog_, &QDialog::accept);
+    connect(frequencyDialogButtons, &QDialogButtonBox::rejected,
+        frequencyDialog_, &QDialog::reject);
+    return frequencySection;
+}
+
+auto OptimizationWorkspace::buildObjectiveSection(QWidget* parent) -> QGroupBox*
+{
     referenceImpedanceControl_ = new FocusWheelDoubleSpinBox(this);
     referenceImpedanceControl_->setObjectName(
         QStringLiteral("optimizationReferenceImpedance"));
-    pointsControl_->setRange(2, 101);
-    pointsControl_->setObjectName(QStringLiteral("optimizationCandidateCount"));
-    pointsControl_->setValue(7);
-    pointsControl_->setToolTip(tr(
-        "Number of evenly spaced parameter values tested from Minimum through Maximum, "
-        "including both endpoints. Each candidate value is evaluated at every selected frequency."));
     referenceImpedanceControl_->setRange(1.0, 10000.0);
     referenceImpedanceControl_->setDecimals(DisplayDecimalPlaces);
     referenceImpedanceControl_->setValue(50.0);
@@ -854,338 +1258,8 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     for (auto row = 0; row < objectiveCriteriaTable_->rowCount(); ++row)
         criteriaHeight += objectiveCriteriaTable_->rowHeight(row);
     objectiveCriteriaTable_->setFixedHeight(criteriaHeight);
-    searchMethodControl_ = new QComboBox(this);
-    searchMethodControl_->setObjectName(QStringLiteral("optimizationSearchMethod"));
-    searchMethodControl_->addItem(tr("Parameter Sweep"),
-        static_cast<int>(SearchMethod::ParameterSweep));
-    searchMethodControl_->addItem(tr("Adaptive Optimize"),
-        static_cast<int>(SearchMethod::Adaptive));
-    searchMethodControl_->addItem(tr("Nelder-Mead"),
-        static_cast<int>(SearchMethod::NelderMead));
-    searchMethodControl_->addItem(tr("Differential Evolution"),
-        static_cast<int>(SearchMethod::DifferentialEvolution));
-    searchMethodControl_->setItemData(0, tr(
-        "Exhaustively test evenly spaced values for one parameter."), Qt::ToolTipRole);
-    searchMethodControl_->setItemData(1, tr(
-        "Refine one or more parameters with transparent coordinate trials around the current best."),
-        Qt::ToolTipRole);
-    searchMethodControl_->setItemData(2, tr(
-        "Optimize one or more continuous parameters with a bounded derivative-free simplex search."),
-        Qt::ToolTipRole);
-    searchMethodControl_->setItemData(3, tr(
-        "Explore one or more continuous parameters with a seeded population-based global search."),
-        Qt::ToolTipRole);
 
-    adaptiveMaximumEvaluationsControl_ = new FocusWheelSpinBox(this);
-    adaptiveMaximumEvaluationsControl_->setObjectName(
-        QStringLiteral("optimizationAdaptiveMaximumEvaluations"));
-    adaptiveMaximumEvaluationsControl_->setRange(5, 101);
-    adaptiveMaximumEvaluationsControl_->setValue(21);
-    adaptiveMaximumEvaluationsControl_->setToolTip(tr(
-        "Maximum solver candidates. Adaptive starts near the center and boundaries; "
-        "Nelder–Mead starts with one simplex vertex per selected parameter plus one."));
-    adaptiveScoreToleranceControl_ = new FocusWheelDoubleSpinBox(this);
-    adaptiveScoreToleranceControl_->setObjectName(
-        QStringLiteral("optimizationAdaptiveScoreTolerance"));
-    adaptiveScoreToleranceControl_->setRange(0.0, 1.0e9);
-    adaptiveScoreToleranceControl_->setDecimals(DisplayDecimalPlaces);
-    adaptiveScoreToleranceControl_->setValue(0.001);
-    adaptiveScoreToleranceControl_->setToolTip(tr(
-        "Minimum required improvement in the best objective score between completed refinement rounds. "
-        "A round normally tests both a left and right midpoint; the search stops after two consecutive "
-        "rounds improve the best score by no more than this amount."));
-    differentialEvolutionPopulationControl_ = new FocusWheelSpinBox(this);
-    differentialEvolutionPopulationControl_->setObjectName(
-        QStringLiteral("optimizationDifferentialEvolutionPopulation"));
-    differentialEvolutionPopulationControl_->setRange(4, 50);
-    differentialEvolutionPopulationControl_->setValue(12);
-    differentialEvolutionPopulationControl_->setToolTip(tr(
-        "Number of candidate vectors retained in each generation. At least four are required."));
-    differentialEvolutionGenerationControl_ = new FocusWheelSpinBox(this);
-    differentialEvolutionGenerationControl_->setObjectName(
-        QStringLiteral("optimizationDifferentialEvolutionGenerations"));
-    differentialEvolutionGenerationControl_->setRange(1, 200);
-    differentialEvolutionGenerationControl_->setValue(20);
-    differentialEvolutionGenerationControl_->setToolTip(tr(
-        "Maximum evolved generations after the initial population is evaluated."));
-    differentialEvolutionMutationControl_ = new FocusWheelDoubleSpinBox(this);
-    differentialEvolutionMutationControl_->setObjectName(
-        QStringLiteral("optimizationDifferentialEvolutionMutation"));
-    differentialEvolutionMutationControl_->setRange(0.1, 2.0);
-    differentialEvolutionMutationControl_->setSingleStep(0.1);
-    differentialEvolutionMutationControl_->setDecimals(DisplayDecimalPlaces);
-    differentialEvolutionMutationControl_->setValue(0.8);
-    differentialEvolutionMutationControl_->setToolTip(tr(
-        "Differential mutation factor F. Larger values explore more aggressively."));
-    differentialEvolutionCrossoverControl_ = new FocusWheelDoubleSpinBox(this);
-    differentialEvolutionCrossoverControl_->setObjectName(
-        QStringLiteral("optimizationDifferentialEvolutionCrossover"));
-    differentialEvolutionCrossoverControl_->setRange(0.0, 1.0);
-    differentialEvolutionCrossoverControl_->setSingleStep(0.05);
-    differentialEvolutionCrossoverControl_->setDecimals(DisplayDecimalPlaces);
-    differentialEvolutionCrossoverControl_->setValue(0.9);
-    differentialEvolutionCrossoverControl_->setToolTip(tr(
-        "Binomial crossover probability CR applied independently to each parameter."));
-    differentialEvolutionScoreToleranceControl_ = new FocusWheelDoubleSpinBox(this);
-    differentialEvolutionScoreToleranceControl_->setObjectName(
-        QStringLiteral("optimizationDifferentialEvolutionScoreTolerance"));
-    differentialEvolutionScoreToleranceControl_->setRange(0.0, 1.0e9);
-    differentialEvolutionScoreToleranceControl_->setDecimals(DisplayDecimalPlaces);
-    differentialEvolutionScoreToleranceControl_->setValue(0.001);
-    differentialEvolutionScoreToleranceControl_->setToolTip(tr(
-        "Stop after three generations whose best-score improvement is no greater than this value."));
-    differentialEvolutionSeedControl_ = new FocusWheelSpinBox(this);
-    differentialEvolutionSeedControl_->setObjectName(
-        QStringLiteral("optimizationDifferentialEvolutionSeed"));
-    differentialEvolutionSeedControl_->setRange(0, std::numeric_limits<int>::max());
-    differentialEvolutionSeedControl_->setValue(5489);
-    differentialEvolutionSeedControl_->setToolTip(tr(
-        "Random seed. Reusing the same seed and settings reproduces the same candidate proposals."));
-    explicitFrequencyPanel_ = new QWidget(this);
-    explicitFrequencyPanel_->setObjectName(QStringLiteral("optimizationExplicitFrequencyPanel"));
-    auto* frequencyLayout = new QVBoxLayout(explicitFrequencyPanel_);
-    frequencyLayout->setContentsMargins(0, 0, 0, 0);
-    frequencyTable_ = new QListWidget(explicitFrequencyPanel_);
-    frequencyTable_->setObjectName(QStringLiteral("optimizationFrequencyTable"));
-    frequencyTable_->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    frequencyTable_->setViewMode(QListView::IconMode);
-    frequencyTable_->setFlow(QListView::LeftToRight);
-    frequencyTable_->setWrapping(true);
-    frequencyTable_->setResizeMode(QListView::Adjust);
-    frequencyTable_->setMovement(QListView::Static);
-    frequencyTable_->setUniformItemSizes(true);
-    frequencyTable_->setGridSize(QSize(92, 28));
-    frequencyTable_->setSpacing(2);
-    frequencyTable_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    frequencyTable_->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    frequencyEntryControl_ = new FocusWheelDoubleSpinBox(explicitFrequencyPanel_);
-    frequencyEntryControl_->setObjectName(QStringLiteral("optimizationFrequencyEntry"));
-    frequencyEntryControl_->setRange(0.000001, 1.0e9);
-    frequencyEntryControl_->setDecimals(DisplayDecimalPlaces);
-    frequencyEntryControl_->setValue(14.175);
-    frequencyEntryControl_->setSuffix(tr(" MHz"));
-    addFrequencyButton_ = new QPushButton(tr("Add Frequency"), explicitFrequencyPanel_);
-    addFrequencyButton_->setObjectName(QStringLiteral("optimizationAddFrequency"));
-    removeFrequencyButton_ = new QPushButton(tr("Remove"), explicitFrequencyPanel_);
-    removeFrequencyButton_->setObjectName(QStringLiteral("optimizationRemoveFrequency"));
-    pasteFrequencyButton_ = new QPushButton(tr("Paste List…"), explicitFrequencyPanel_);
-    pasteFrequencyButton_->setObjectName(QStringLiteral("optimizationPasteFrequencies"));
-    clearFrequencyButton_ = new QPushButton(tr("Clear All"), explicitFrequencyPanel_);
-    clearFrequencyButton_->setObjectName(QStringLiteral("optimizationClearFrequencies"));
-    addAmateurBandButton_ = new QPushButton(tr("Add Amateur Bands…"), explicitFrequencyPanel_);
-    addAmateurBandButton_->setObjectName(QStringLiteral("optimizationAddAmateurBand"));
-    addAmateurBandButton_->setToolTip(tr(
-        "Choose one or more common amateur-band engineering ranges."));
-    auto* frequencyActions = new QGridLayout;
-    frequencyActions->setContentsMargins(0, 0, 0, 0);
-    frequencyActions->addWidget(frequencyEntryControl_, 0, 0);
-    frequencyActions->addWidget(addFrequencyButton_, 0, 1);
-    frequencyActions->addWidget(addAmateurBandButton_, 1, 0, 1, 2);
-    auto* listActions = new QHBoxLayout;
-    listActions->setContentsMargins(0, 0, 0, 0);
-    listActions->addStretch();
-    listActions->addWidget(pasteFrequencyButton_);
-    listActions->addWidget(removeFrequencyButton_);
-    listActions->addWidget(clearFrequencyButton_);
-    frequencyActions->addLayout(listActions, 2, 0, 1, 2);
-    frequencyActions->setColumnStretch(0, 1);
-    auto* frequencyHeading = new QLabel(tr("Selected frequencies (MHz)"),
-        explicitFrequencyPanel_);
-    frequencyLayout->addLayout(frequencyActions);
-    frequencyLayout->addWidget(frequencyHeading);
-    frequencyLayout->addWidget(frequencyTable_, 1);
-
-    continuousFrequencyPanel_ = new QWidget(this);
-    continuousFrequencyPanel_->setObjectName(
-        QStringLiteral("optimizationContinuousFrequencyPanel"));
-    auto* continuousLayout = new QGridLayout(continuousFrequencyPanel_);
-    continuousLayout->setContentsMargins(0, 0, 0, 0);
-    continuousStartControl_ = new FocusWheelDoubleSpinBox(continuousFrequencyPanel_);
-    continuousStartControl_->setObjectName(
-        QStringLiteral("optimizationContinuousStart"));
-    continuousStopControl_ = new FocusWheelDoubleSpinBox(continuousFrequencyPanel_);
-    continuousStopControl_->setObjectName(
-        QStringLiteral("optimizationContinuousStop"));
-    continuousStepControl_ = new FocusWheelDoubleSpinBox(continuousFrequencyPanel_);
-    continuousStepControl_->setObjectName(
-        QStringLiteral("optimizationContinuousStep"));
-    for (auto* control : {continuousStartControl_, continuousStopControl_,
-             continuousStepControl_}) {
-        control->setRange(0.000001, 1.0e9);
-        control->setDecimals(DisplayDecimalPlaces);
-        control->setSuffix(tr(" MHz"));
-    }
-    continuousStartControl_->setValue(14.0);
-    continuousStopControl_->setValue(14.35);
-    continuousStepControl_->setValue(0.05);
-    continuousLayout->addWidget(new QLabel(tr("Start"), continuousFrequencyPanel_), 0, 0);
-    continuousLayout->addWidget(continuousStartControl_, 0, 1);
-    continuousLayout->addWidget(new QLabel(tr("Stop"), continuousFrequencyPanel_), 1, 0);
-    continuousLayout->addWidget(continuousStopControl_, 1, 1);
-    continuousLayout->addWidget(new QLabel(tr("Step"), continuousFrequencyPanel_), 2, 0);
-    continuousLayout->addWidget(continuousStepControl_, 2, 1);
-    continuousLayout->setColumnStretch(1, 1);
-    workloadLabel_ = new QLabel(this);
-    workloadLabel_->setObjectName(QStringLiteral("optimizationWorkload"));
-    workloadLabel_->setWordWrap(true);
-
-    auto* setupContent = new QWidget(this);
-    setupContent->setObjectName(QStringLiteral("optimizationSetupContent"));
-    auto* setupLayout = new QVBoxLayout(setupContent);
-    setupLayout->setContentsMargins(4, 4, 4, 4);
-    setupLayout->setSpacing(4);
-
-    auto* variableSection = new QGroupBox(tr("Search"), setupContent);
-    variableSection->setObjectName(QStringLiteral("optimizationVariableSection"));
-    parameterSettings_ = new QWidget(variableSection);
-    parameterSettings_->setObjectName(QStringLiteral("optimizationParameterSettings"));
-    auto* variableSectionLayout = new QVBoxLayout(variableSection);
-    variableSectionLayout->setContentsMargins(5, 7, 5, 5);
-    variableSectionLayout->setSpacing(4);
-    auto* searchMethodRow = new QHBoxLayout;
-    searchMethodRow->setContentsMargins(0, 0, 0, 0);
-    searchMethodRow->addWidget(new QLabel(tr("Method"), variableSection));
-    searchMethodRow->addWidget(searchMethodControl_, 1);
-    variableSectionLayout->addLayout(searchMethodRow);
-    variableSectionLayout->addWidget(variablesTable_, 1);
-    variableSectionLayout->addWidget(parameterSettings_);
-    auto* parameterizationBar = new QWidget(variableSection);
-    parameterizationBar->setObjectName(QStringLiteral("optimizationParameterizationHint"));
-    auto* parameterizationLayout = new QHBoxLayout(parameterizationBar);
-    parameterizationLayout->setContentsMargins(0, 0, 0, 0);
-    parameterizationLayout->setSpacing(4);
-    auto* parameterizationHint = new QLabel(tr(
-        "Need another variable? Parameterize a numeric NEC field in Structured Cards."),
-        parameterizationBar);
-    parameterizationHint->setWordWrap(true);
-    auto* chooseParameterFields = new QPushButton(
-        tr("Choose Parameter Fields…"), parameterizationBar);
-    chooseParameterFields->setObjectName(
-        QStringLiteral("optimizationChooseParameterFields"));
-    chooseParameterFields->setToolTip(tr(
-        "Open Model → NEC Deck → Structured Cards. Right-click a numeric field to create "
-        "or link an SY parameter, then return here to optimize it."));
-    parameterizationLayout->addWidget(parameterizationHint, 1);
-    parameterizationLayout->addWidget(chooseParameterFields);
-    variableSectionLayout->addWidget(parameterizationBar);
-    auto* parameterGrid = new QGridLayout(parameterSettings_);
-    parameterGrid->setContentsMargins(0, 0, 0, 0);
-    parameterGrid->setHorizontalSpacing(6);
-    parameterGrid->setVerticalSpacing(4);
-    const auto gridLabel = [this](const QString& text,
-                               const QString& objectName = {}) {
-        auto* label = new QLabel(text, parameterSettings_);
-        label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        if (!objectName.isEmpty()) label->setObjectName(objectName);
-        return label;
-    };
-    adaptiveScoreToleranceControl_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    pointsControl_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    adaptiveMaximumEvaluationsControl_->setSizePolicy(
-        QSizePolicy::Expanding, QSizePolicy::Fixed);
-    searchBudgetLabel_ = new QLabel(tr("Candidate count"), parameterSettings_);
-    searchBudgetLabel_->setObjectName(QStringLiteral("optimizationSearchBudgetLabel"));
-    searchBudgetLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    parameterGrid->addWidget(searchBudgetLabel_, 0, 0);
-    parameterGrid->addWidget(pointsControl_, 0, 1);
-    parameterGrid->addWidget(adaptiveMaximumEvaluationsControl_, 0, 1);
-    adaptiveScoreToleranceLabel_ = gridLabel(tr("Score tolerance"),
-        QStringLiteral("optimizationScoreToleranceLabel"));
-    parameterGrid->addWidget(adaptiveScoreToleranceLabel_, 1, 0);
-    parameterGrid->addWidget(adaptiveScoreToleranceControl_, 1, 1);
-
-    differentialEvolutionSettings_ = new QWidget(parameterSettings_);
-    differentialEvolutionSettings_->setObjectName(
-        QStringLiteral("optimizationDifferentialEvolutionSettings"));
-    auto* differentialEvolutionGrid = new QGridLayout(differentialEvolutionSettings_);
-    differentialEvolutionGrid->setContentsMargins(0, 0, 0, 0);
-    differentialEvolutionGrid->setHorizontalSpacing(6);
-    differentialEvolutionGrid->setVerticalSpacing(4);
-    const auto addDifferentialEvolutionControl = [&](int row, const QString& text,
-                                                     QWidget* control) {
-        auto* label = new QLabel(text, differentialEvolutionSettings_);
-        label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        control->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        differentialEvolutionGrid->addWidget(label, row, 0);
-        differentialEvolutionGrid->addWidget(control, row, 1);
-    };
-    addDifferentialEvolutionControl(0, tr("Population"),
-        differentialEvolutionPopulationControl_);
-    addDifferentialEvolutionControl(1, tr("Generations"),
-        differentialEvolutionGenerationControl_);
-    addDifferentialEvolutionControl(2, tr("Mutation factor"),
-        differentialEvolutionMutationControl_);
-    addDifferentialEvolutionControl(3, tr("Crossover rate"),
-        differentialEvolutionCrossoverControl_);
-    addDifferentialEvolutionControl(4, tr("Score tolerance"),
-        differentialEvolutionScoreToleranceControl_);
-    addDifferentialEvolutionControl(5, tr("Random seed"),
-        differentialEvolutionSeedControl_);
-    differentialEvolutionGrid->setColumnStretch(1, 1);
-    parameterGrid->addWidget(differentialEvolutionSettings_, 0, 0, 2, 2);
-
-    auto* resetSearchDefaultsButton = new QPushButton(tr("Reset Search Defaults"), parameterSettings_);
-    resetSearchDefaultsButton->setObjectName(
-        QStringLiteral("optimizationResetSearchDefaults"));
-    resetSearchDefaultsButton->setToolTip(tr(
-        "Restore the default sweep count or optimizer search settings without changing the variables, ranges, frequencies, or objective."));
-    parameterGrid->addWidget(resetSearchDefaultsButton, 2, 0, 1, 2, Qt::AlignRight);
-    parameterGrid->setColumnStretch(1, 1);
-
-    connect(resetSearchDefaultsButton, &QPushButton::clicked, this, [this] {
-        if (selectedSearchMethod() == SearchMethod::DifferentialEvolution) {
-            differentialEvolutionPopulationControl_->setValue(12);
-            differentialEvolutionGenerationControl_->setValue(20);
-            differentialEvolutionMutationControl_->setValue(0.8);
-            differentialEvolutionCrossoverControl_->setValue(0.9);
-            differentialEvolutionScoreToleranceControl_->setValue(0.001);
-            differentialEvolutionSeedControl_->setValue(5489);
-        } else if (isMultivariable(selectedSearchMethod())) {
-            adaptiveMaximumEvaluationsControl_->setValue(21);
-            adaptiveScoreToleranceControl_->setValue(0.001);
-        } else {
-            pointsControl_->setValue(7);
-        }
-    });
-    auto* frequencySection = new QGroupBox(tr("Frequencies"), setupContent);
-    frequencySection->setObjectName(QStringLiteral("optimizationFrequencySection"));
-    auto* frequencyPageLayout = new QVBoxLayout(frequencySection);
-    frequencyPageLayout->setContentsMargins(5, 7, 5, 5);
-    frequencyPageLayout->setSpacing(4);
-    frequencySummaryLabel_ = new QLabel(frequencySection);
-    frequencySummaryLabel_->setObjectName(
-        QStringLiteral("optimizationFrequencySummary"));
-    frequencySummaryLabel_->setWordWrap(true);
-    editFrequencyButton_ = new QPushButton(tr("Edit…"), frequencySection);
-    editFrequencyButton_->setObjectName(
-        QStringLiteral("optimizationEditFrequencies"));
-    auto* frequencySummaryRow = new QHBoxLayout;
-    frequencySummaryRow->addWidget(frequencySummaryLabel_, 1);
-    frequencySummaryRow->addWidget(editFrequencyButton_, 0, Qt::AlignTop);
-    frequencyPageLayout->addLayout(frequencySummaryRow);
-    frequencyPageLayout->addWidget(workloadLabel_);
-
-    frequencyDialog_ = new QDialog(this);
-    frequencyDialog_->setObjectName(QStringLiteral("optimizationFrequencyDialog"));
-    frequencyDialog_->setWindowTitle(tr("Optimization Frequencies"));
-    frequencyDialog_->setModal(true);
-    frequencyDialog_->resize(720, 480);
-    auto* frequencyDialogLayout = new QVBoxLayout(frequencyDialog_);
-    auto* frequencyModeRow = new QHBoxLayout;
-    frequencyModeRow->addWidget(new QLabel(tr("Frequency source"), frequencyDialog_));
-    frequencyModeRow->addWidget(frequencyModeControl_, 1);
-    frequencyDialogLayout->addLayout(frequencyModeRow);
-    frequencyDialogLayout->addWidget(explicitFrequencyPanel_, 1);
-    frequencyDialogLayout->addWidget(continuousFrequencyPanel_);
-    auto* frequencyDialogButtons = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, frequencyDialog_);
-    frequencyDialogLayout->addWidget(frequencyDialogButtons);
-    connect(frequencyDialogButtons, &QDialogButtonBox::accepted,
-        frequencyDialog_, &QDialog::accept);
-    connect(frequencyDialogButtons, &QDialogButtonBox::rejected,
-        frequencyDialog_, &QDialog::reject);
-
-    auto* objectiveSection = new QGroupBox(tr("Objective"), setupContent);
+    auto* objectiveSection = new QGroupBox(tr("Objective"), parent);
     objectiveSection->setObjectName(QStringLiteral("optimizationObjectiveSection"));
     auto* objectiveLayout = new QVBoxLayout(objectiveSection);
     objectiveLayout->setContentsMargins(5, 7, 5, 5);
@@ -1303,37 +1377,27 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         objectiveDialog_, &QDialog::accept);
     connect(objectiveDialogButtons, &QDialogButtonBox::rejected,
         objectiveDialog_, &QDialog::reject);
+    return objectiveSection;
+}
 
-    setupLayout->addWidget(variableSection);
-    setupLayout->addWidget(frequencySection);
-    setupLayout->addWidget(objectiveSection);
-    setupLayout->addStretch();
-
+auto OptimizationWorkspace::buildStudyHeader() -> QHBoxLayout*
+{
     studySummaryLabel_ = new QLabel(this);
     studySummaryLabel_->setObjectName(QStringLiteral("optimizationStudySummary"));
     studySummaryLabel_->setWordWrap(true);
-    auto* configurationScrollArea = new QScrollArea(this);
-    configurationScrollArea->setObjectName(
-        QStringLiteral("optimizationConfigurationScrollArea"));
-    configurationScrollArea->setFrameShape(QFrame::NoFrame);
-    configurationScrollArea->setWidgetResizable(true);
-    configurationScrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    configurationScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    configurationScrollArea->setWidget(setupContent);
-
-    configurationPanel_ = new QWidget(this);
-    configurationPanel_->setObjectName(QStringLiteral("optimizationConfigurationPanel"));
-    auto* configurationLayout = new QVBoxLayout(configurationPanel_);
-    configurationLayout->setContentsMargins(0, 0, 0, 0);
-    configurationLayout->addWidget(configurationScrollArea, 1);
-    configurationPanel_->setMinimumWidth(260);
-    configurationPanel_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
-
     auto* buttons = new QHBoxLayout;
     runButton_ = new QPushButton(tr("Run Parameter Sweep"), this);
     runButton_->setObjectName(QStringLiteral("optimizationRun"));
     cancelButton_ = new QPushButton(tr("Stop"), this);
     cancelButton_->setEnabled(false);
+    buttons->addWidget(studySummaryLabel_, 1);
+    buttons->addWidget(runButton_);
+    buttons->addWidget(cancelButton_);
+    return buttons;
+}
+
+auto OptimizationWorkspace::buildResultsPanel() -> QWidget*
+{
     applyBestButton_ = new QPushButton(tr("Apply Best to Model"), this);
     applyBestButton_->setObjectName(QStringLiteral("optimizationApplyBest"));
     applyBestButton_->setEnabled(false);
@@ -1341,9 +1405,6 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         "Replace the selected SY expression with the best numeric value. This model edit is undoable."));
     progress_ = new QProgressBar(this);
     progress_->setTextVisible(true);
-    buttons->addWidget(studySummaryLabel_, 1);
-    buttons->addWidget(runButton_);
-    buttons->addWidget(cancelButton_);
 
     statusLabel_ = new QLabel(this);
     statusLabel_->setWordWrap(true);
@@ -1389,6 +1450,41 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         resultsTable_->selectRow(row);
         showCandidateDetails(candidateIndex);
     });
+    buildCandidateDetailsWindow();
+    resetCandidateDetails();
+
+    auto* resultsPanel = new QWidget(this);
+    resultsPanel->setObjectName(QStringLiteral("optimizationResultsPanel"));
+    auto* resultsLayout = new QVBoxLayout(resultsPanel);
+    resultsLayout->setContentsMargins(0, 0, 0, 0);
+    resultsLayout->setSpacing(4);
+    auto* resultStatusRow = new QHBoxLayout;
+    resultStatusRow->addWidget(bestLabel_, 1);
+    resultStatusRow->addWidget(applyBestButton_);
+    resultsLayout->addWidget(progress_);
+    resultsLayout->addWidget(statusLabel_);
+    resultsLayout->addLayout(resultStatusRow);
+    auto* candidateHint = new QLabel(tr(
+        "Double-click a completed candidate to open Candidate Results. While it is open, select another row to update it. Right-click to apply or run."),
+        resultsPanel);
+    candidateHint->setObjectName(QStringLiteral("optimizationCandidateHint"));
+    candidateHint->setWordWrap(true);
+    resultsLayout->addWidget(candidateHint);
+    auto* resultsSplitter = new QSplitter(Qt::Vertical, resultsPanel);
+    resultsSplitter->setObjectName(QStringLiteral("optimizationResultsSplitter"));
+    resultsSplitter->addWidget(resultsTable_);
+    resultsSplitter->addWidget(candidatePlots_);
+    resultsSplitter->setChildrenCollapsible(false);
+    resultsSplitter->setStretchFactor(0, 4);
+    resultsSplitter->setStretchFactor(1, 1);
+    resultsSplitter->setSizes({500, 160});
+    resultsLayout->addWidget(resultsSplitter, 1);
+    resultsPanel->setMinimumWidth(400);
+    return resultsPanel;
+}
+
+void OptimizationWorkspace::buildCandidateDetailsWindow()
+{
     candidateDetailsWindow_ = new CandidateReviewDialog(nullptr, Qt::Window);
     candidateDetailsWindow_->setObjectName(
         QStringLiteral("optimizationCandidateDetailsWindow"));
@@ -1451,49 +1547,10 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
     detailLayout->addWidget(candidateDetailLabel_);
     detailLayout->addWidget(candidateDetailViews_, 1);
     detailLayout->addLayout(candidateActionRow);
-    resetCandidateDetails();
+}
 
-    auto* resultsPanel = new QWidget(this);
-    resultsPanel->setObjectName(QStringLiteral("optimizationResultsPanel"));
-    auto* resultsLayout = new QVBoxLayout(resultsPanel);
-    resultsLayout->setContentsMargins(0, 0, 0, 0);
-    resultsLayout->setSpacing(4);
-    auto* resultStatusRow = new QHBoxLayout;
-    resultStatusRow->addWidget(bestLabel_, 1);
-    resultStatusRow->addWidget(applyBestButton_);
-    resultsLayout->addWidget(progress_);
-    resultsLayout->addWidget(statusLabel_);
-    resultsLayout->addLayout(resultStatusRow);
-    auto* candidateHint = new QLabel(tr(
-        "Double-click a completed candidate to open Candidate Results. While it is open, select another row to update it. Right-click to apply or run."),
-        resultsPanel);
-    candidateHint->setObjectName(QStringLiteral("optimizationCandidateHint"));
-    candidateHint->setWordWrap(true);
-    resultsLayout->addWidget(candidateHint);
-    auto* resultsSplitter = new QSplitter(Qt::Vertical, resultsPanel);
-    resultsSplitter->setObjectName(QStringLiteral("optimizationResultsSplitter"));
-    resultsSplitter->addWidget(resultsTable_);
-    resultsSplitter->addWidget(candidatePlots_);
-    resultsSplitter->setChildrenCollapsible(false);
-    resultsSplitter->setStretchFactor(0, 4);
-    resultsSplitter->setStretchFactor(1, 1);
-    resultsSplitter->setSizes({500, 160});
-    resultsLayout->addWidget(resultsSplitter, 1);
-    resultsPanel->setMinimumWidth(400);
-
-    auto* workspaceSplitter = new QSplitter(Qt::Horizontal, this);
-    workspaceSplitter->setObjectName(QStringLiteral("optimizationWorkspaceSplitter"));
-    workspaceSplitter->addWidget(configurationPanel_);
-    workspaceSplitter->addWidget(resultsPanel);
-    workspaceSplitter->setChildrenCollapsible(false);
-    workspaceSplitter->setStretchFactor(0, 0);
-    workspaceSplitter->setStretchFactor(1, 1);
-    workspaceSplitter->setSizes({300, 780});
-
-    layout->addWidget(historicalBanner_);
-    layout->addLayout(buttons);
-    layout->addWidget(workspaceSplitter, 1);
-
+void OptimizationWorkspace::connectObjectiveSignals()
+{
     connect(objectivePresetControl_, &QComboBox::currentIndexChanged,
         this, [this] { applySelectedObjectivePreset(); });
     connect(presetSwrLimitControl_, &QDoubleSpinBox::valueChanged, this, [this] {
@@ -1587,8 +1644,12 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
             updateLatestPatternPeakControls();
         }
     });
-    connect(frequencyModeControl_, &QComboBox::currentIndexChanged,
-        this, [this] { updateFrequencyControls(); });
+    connect(editObjectiveButton_, &QPushButton::clicked,
+        this, [this] { editObjectiveSetup(); });
+}
+
+void OptimizationWorkspace::connectSearchSignals()
+{
     connect(pointsControl_, &QSpinBox::valueChanged, this, [this] { updateWorkload(); });
     connect(searchMethodControl_, &QComboBox::currentIndexChanged,
         this, [this] { updateSearchMethodControls(); });
@@ -1609,6 +1670,31 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
             updateReadiness();
         });
     }
+    connect(variablesTable_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
+        // Parameter Sweep varies one parameter, so checking a row there replaces the previous choice.
+        if (item != nullptr && item->column() == 0 && item->checkState() == Qt::Checked
+            && selectedSearchMethod() == SearchMethod::ParameterSweep) {
+            const QSignalBlocker blocker(variablesTable_);
+            for (auto row = 0; row < variablesTable_->rowCount(); ++row) {
+                auto* useItem = variablesTable_->item(row, 0);
+                if (useItem != nullptr && useItem != item) useItem->setCheckState(Qt::Unchecked);
+            }
+        }
+        updateWorkload();
+        updateReadiness();
+    });
+    connect(runButton_, &QPushButton::clicked, this, [this] { requestOptimizationStart(); });
+    connect(cancelButton_, &QPushButton::clicked, this, [this] { cancelSweep(); });
+    connect(evaluator_, &CandidateEvaluator::finished, this,
+        [this](CandidateEvaluationResult result) {
+            finishCurrentCandidate(std::move(result));
+        });
+}
+
+void OptimizationWorkspace::connectFrequencySignals()
+{
+    connect(frequencyModeControl_, &QComboBox::currentIndexChanged,
+        this, [this] { updateFrequencyControls(); });
     connect(frequencyTable_, &QListWidget::itemChanged, this, [this] {
         updateWorkload();
         updateReadiness();
@@ -1631,8 +1717,6 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         this, [this] { clearExplicitFrequencies(); });
     connect(editFrequencyButton_, &QPushButton::clicked,
         this, [this] { editFrequencySetup(); });
-    connect(editObjectiveButton_, &QPushButton::clicked,
-        this, [this] { editObjectiveSetup(); });
     auto* deleteShortcut = new QShortcut(QKeySequence(Qt::Key_Delete), frequencyTable_);
     connect(deleteShortcut, &QShortcut::activated,
         this, [this] { removeSelectedFrequencies(); });
@@ -1642,6 +1726,10 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         this, [this] { removeSelectedFrequencies(); });
     connect(addAmateurBandButton_, &QPushButton::clicked,
         this, [this] { chooseAmateurBands(); });
+}
+
+void OptimizationWorkspace::connectResultSignals()
+{
     connect(resultsTable_, &QTableWidget::cellDoubleClicked,
         this, [this](int row, int) {
             const auto candidateIndex = candidateIndexAtTableRow(row);
@@ -1664,21 +1752,6 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         });
     connect(resultsTable_->horizontalHeader(), &QHeaderView::sectionClicked,
         this, [this](int column) { sortCandidateTable(column); });
-    connect(variablesTable_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
-        // Parameter Sweep varies one parameter, so checking a row there replaces the previous choice.
-        if (item != nullptr && item->column() == 0 && item->checkState() == Qt::Checked
-            && selectedSearchMethod() == SearchMethod::ParameterSweep) {
-            const QSignalBlocker blocker(variablesTable_);
-            for (auto row = 0; row < variablesTable_->rowCount(); ++row) {
-                auto* useItem = variablesTable_->item(row, 0);
-                if (useItem != nullptr && useItem != item) useItem->setCheckState(Qt::Unchecked);
-            }
-        }
-        updateWorkload();
-        updateReadiness();
-    });
-    connect(runButton_, &QPushButton::clicked, this, [this] { requestOptimizationStart(); });
-    connect(cancelButton_, &QPushButton::clicked, this, [this] { cancelSweep(); });
     connect(applyBestButton_, &QPushButton::clicked, this, [this] {
         applyCandidate(bestRow_, false);
     });
@@ -1686,19 +1759,6 @@ OptimizationWorkspace::OptimizationWorkspace(QWidget* parent)
         this, [this] { applyCandidate(detailCandidateRow_, false); });
     connect(applyCandidateAndRunButton_, &QPushButton::clicked,
         this, [this] { applyCandidate(detailCandidateRow_, true); });
-    connect(evaluator_, &CandidateEvaluator::finished, this,
-        [this](CandidateEvaluationResult result) {
-            finishCurrentCandidate(std::move(result));
-        });
-    connect(returnToCurrentWorkButton_, &QPushButton::clicked, this, [this] {
-        if (returnToCurrentWorkCallback_) returnToCurrentWorkCallback_();
-    });
-    connect(chooseParameterFields, &QPushButton::clicked, this, [this] {
-        if (parameterizationHelpCallback_) parameterizationHelpCallback_();
-    });
-    applySelectedObjectivePreset();
-    updateFrequencyControls();
-    updateSearchMethodControls();
 }
 
 OptimizationWorkspace::~OptimizationWorkspace()
