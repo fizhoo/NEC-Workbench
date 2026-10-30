@@ -188,7 +188,11 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     modelRows_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     modelRows_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     modelRows_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    modelRows_->setFixedHeight(9 * 24 + 2);
+    modelRows_->setWordWrap(false);
+    // Workspace density changes the row height, so follow the rows instead of a fixed size.
+    connect(modelRows_->verticalHeader(), &QHeaderView::sectionResized,
+        this, [this] { fitModelRowsHeight(); });
+    fitModelRowsHeight();
     const std::array labels{
         tr("Frequency"), tr("Wires"), tr("Sources"), tr("Loads"),
         tr("Trans. lines"), tr("Ground"), tr("Variables"), tr("Requests"), tr("Deck")};
@@ -601,6 +605,13 @@ void ControlPanel::refreshHeader()
         ? tr("Engine: Set up…") : tr("Engine: %1").arg(backend_));
     modelState_->setText(modelStatus_);
     resultState_->setText(resultStatus_);
+}
+
+void ControlPanel::fitModelRowsHeight()
+{
+    auto height = 2 * modelRows_->frameWidth();
+    for (auto row = 0; row < modelRows_->rowCount(); ++row) height += modelRows_->rowHeight(row);
+    modelRows_->setFixedHeight(height);
 }
 
 void ControlPanel::refreshFooter()
