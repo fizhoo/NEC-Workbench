@@ -213,8 +213,7 @@ void OptimizationWorkspace::updateLatestPatternPeakControls()
         ? 0.0 : setup.frequenciesMHz.front();
     const auto component = static_cast<analysis::RadiationComponent>(
         radiationComponentControl_->currentData().toInt());
-    const auto peak = analysis::radiationPeakAtNearestFrequency(
-        latestRadiation_, component, targetFrequencyMHz);
+    const auto peak = latestPatternPeak(component, targetFrequencyMHz);
     const auto editable = !isRunning() && !historicalSession_;
     const auto usable = peak && peak->sampleCount > 1;
     findMaximumGainButton_->setText(maximumGainSearchRequested_
@@ -240,8 +239,7 @@ void OptimizationWorkspace::updateLatestPatternPeakControls()
             const auto cutAngle = mode
                     == analysis::DirectionalEvaluationMode::StrongestInAzimuthCut
                 ? forwardThetaDegrees_ : forwardPhiDegrees_;
-            const auto cutMetrics = analysis::radiationTrackedCutFrequencyMetrics(
-                latestRadiation_, component, mode, cutAngle);
+            const auto& cutMetrics = latestTrackedCutMetrics(component, mode, cutAngle);
             const auto nearest = std::ranges::min_element(cutMetrics, {},
                 [targetFrequencyMHz](const auto& metrics) {
                     return std::abs(metrics.frequencyMHz - targetFrequencyMHz);
@@ -294,14 +292,45 @@ void OptimizationWorkspace::updateDirectionalSeedState()
         (void)seedDirectionFromLatestPattern();
 }
 
+void OptimizationWorkspace::setLatestRadiation(std::vector<analysis::RadiationSample> radiation)
+{
+    latestRadiation_ = std::move(radiation);
+    latestPatternPeakCache_.reset();
+    latestTrackedCutCache_.reset();
+}
+
+auto OptimizationWorkspace::latestPatternPeak(analysis::RadiationComponent component,
+    double frequencyMHz) -> const std::optional<analysis::RadiationPeak>&
+{
+    if (!latestPatternPeakCache_ || latestPatternPeakCache_->component != component
+        || latestPatternPeakCache_->frequencyMHz != frequencyMHz) {
+        latestPatternPeakCache_ = LatestPatternPeak{component, frequencyMHz,
+            analysis::radiationPeakAtNearestFrequency(latestRadiation_, component, frequencyMHz)};
+    }
+    return latestPatternPeakCache_->peak;
+}
+
+auto OptimizationWorkspace::latestTrackedCutMetrics(analysis::RadiationComponent component,
+    analysis::DirectionalEvaluationMode mode, double cutAngleDegrees)
+    -> const std::vector<analysis::RadiationFrequencyMetric>&
+{
+    if (!latestTrackedCutCache_ || latestTrackedCutCache_->component != component
+        || latestTrackedCutCache_->mode != mode
+        || latestTrackedCutCache_->cutAngleDegrees != cutAngleDegrees) {
+        latestTrackedCutCache_ = LatestTrackedCut{component, mode, cutAngleDegrees,
+            analysis::radiationTrackedCutFrequencyMetrics(
+                latestRadiation_, component, mode, cutAngleDegrees)};
+    }
+    return latestTrackedCutCache_->metrics;
+}
+
 auto OptimizationWorkspace::seedDirectionFromLatestPattern() -> bool
 {
     const auto setup = currentStudySetup();
     if (setup.frequenciesMHz.empty()) return false;
     const auto component = static_cast<analysis::RadiationComponent>(
         radiationComponentControl_->currentData().toInt());
-    const auto peak = analysis::radiationPeakAtNearestFrequency(
-        latestRadiation_, component, setup.frequenciesMHz.front());
+    const auto peak = latestPatternPeak(component, setup.frequenciesMHz.front());
     if (!peak || peak->sampleCount <= 1) return false;
     const auto mode = directionalEvaluationMode_;
     setDirection(mode,

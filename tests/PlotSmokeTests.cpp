@@ -1596,6 +1596,14 @@ auto main(int argc, char* argv[]) -> int
         && optimizationDirectionSetupSummary != nullptr
         && optimizationDirectionSetupSummary->text().contains(
             QStringLiteral("elevation 35.000°"));
+    // A new pattern must replace the cached pattern-peak result.
+    auto replacedPattern = latestPattern;
+    replacedPattern.radiation.front().thetaDegrees = 40.0;
+    optimization.setLatestAnalysisResult(replacedPattern);
+    application.processEvents();
+    const auto replacedPatternPeakShown = optimizationLatestPatternPeakStatus != nullptr
+        && optimizationLatestPatternPeakStatus->text().contains(
+            QStringLiteral("elevation 50.000°"));
     const auto perCriterionDirectionalObjectiveValid = optimizationDirectionalFrequencyNote != nullptr
         && optimizationDirectionalFrequencyNote->text().contains(
             QStringLiteral("Each criterion independently"))
@@ -1604,7 +1612,7 @@ auto main(int argc, char* argv[]) -> int
         && automaticDirectionVisible
         && manualDirectionPreserved
         && nullCutWarningVisible
-        && latestPatternPeakApplied && directionDialogStructured;
+        && latestPatternPeakApplied && replacedPatternPeakShown && directionDialogStructured;
     if (optimizationFrontToBackWeight != nullptr)
         optimizationFrontToBackWeight->setValue(0.0);
     const auto perCriterionFrequencyPlanValid = optimizationFrequencyMode != nullptr
