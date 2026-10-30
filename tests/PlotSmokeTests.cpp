@@ -17,6 +17,7 @@
 #include "ui/analysis/HistoricalOverlayControl.h"
 #include "ui/controlpanel/ControlPanel.h"
 #include "ui/cards/StructuredCardEditor.h"
+#include "ui/cards/CompactNumberDelegate.h"
 #include "ui/cards/WireCardEditor.h"
 #include "ui/editor/NecEditor.h"
 #include "ui/geometry/WirePropertiesDialog.h"
@@ -3092,6 +3093,41 @@ auto main(int argc, char* argv[]) -> int
     selectStructuredFamily(generatedGeometryFamilies, QStringLiteral("Other NEC-2 Geometry"));
     application.processEvents();
     const auto generatedCardsExcludedFromOther = generatedGeometryTable->rowCount() == 0;
+    {
+        // Long machine-written numbers display at 6 significant figures, but editing
+        // still gets the exact deck text.
+        using necwb::ui::compactNumberText;
+        const auto rulesValid = compactNumberText(QStringLiteral("0.498372615524837"))
+                == QStringLiteral("0.498373")
+            && compactNumberText(QStringLiteral("-0.520")) == QStringLiteral("-0.520")
+            && compactNumberText(QStringLiteral("0.00041")) == QStringLiteral("0.00041")
+            && compactNumberText(QStringLiteral("space_driv*2")) == QStringLiteral("space_driv*2");
+        necwb::ui::WireCardEditor compactWires;
+        compactWires.resize(900, 300);
+        necwb::model::AntennaModel compactModel;
+        compactModel.addWire({1, {0.498372615524837, -0.5, 0.0},
+            {0.498372615524837, 0.5, 0.0}, 11, 0.001, 1});
+        compactWires.setModel(compactModel);
+        compactWires.show();
+        application.processEvents();
+        auto* table = compactWires.findChild<QTableWidget*>(QStringLiteral("wireCardTable"));
+        auto editsExactText = false;
+        auto columnCompact = false;
+        if (table != nullptr) {
+            const auto index = table->model()->index(0, 2);
+            auto* delegate = table->itemDelegateForIndex(index);
+            auto* editor = delegate->createEditor(table->viewport(), QStyleOptionViewItem{}, index);
+            delegate->setEditorData(editor, index);
+            auto* line = qobject_cast<QLineEdit*>(editor);
+            editsExactText = line != nullptr
+                && line->text() == QStringLiteral("0.498372615524837");
+            columnCompact = table->columnWidth(2)
+                < table->fontMetrics().horizontalAdvance(QStringLiteral("0.498372615524837"));
+            delete editor;
+        }
+        if (!rulesValid || !editsExactText || !columnCompact)
+            return NECWB_SMOKE_FAILURE("compact card numbers");
+    }
     necwb::ui::WireCardEditor wireEditor;
     wireEditor.resize(900, 400);
     necwb::model::AntennaModel wireModel;

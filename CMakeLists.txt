@@ -124,6 +124,8 @@ if(NECWB_BUILD_GUI)
         src/ui/analysis/SweepPlotsView.h
         src/ui/analysis/FieldResultsViews.cpp
         src/ui/analysis/FieldResultsViews.h
+        src/ui/cards/CompactNumberDelegate.cpp
+        src/ui/cards/CompactNumberDelegate.h
         src/ui/cards/WireCardEditor.cpp
         src/ui/cards/WireCardEditor.h
         src/ui/cards/StructuredCardEditor.cpp
