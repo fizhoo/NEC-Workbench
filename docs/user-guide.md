@@ -329,10 +329,10 @@ segment, current, and phase.
 
 NEC reports current flowing from wire end 1 to end 2, so two parallel elements
 entered in opposite directions appear 180° apart even when their physical currents
-agree. The Antenna tab and the table's **Phase rel. feed** column therefore treat
+agree. The Antenna tab and the table's **Phase vs. feed** column therefore treat
 straight wires as flowing toward +X, +Y, or +Z, and measure phase from the feed
 current, so the feed segment reads 0° and other elements read as leading or lagging
-it. The table's **Phase** column keeps NEC's own convention: current from end 1 to
+it. The table's **NEC phase** column keeps the solver's own convention: current from end 1 to
 end 2, measured against the source voltage. With several sources, the first source
 NEC reports is the reference; with none, the column is labeled **Phase, common
 direction** and only the direction rule applies. Curved wires keep NEC's direction.
