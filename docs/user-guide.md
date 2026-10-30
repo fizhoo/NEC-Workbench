@@ -1,19 +1,20 @@
 # NEC Workbench User Guide
 
-NEC Workbench uses **Home** as its operating base. **Model**, **Setup**, and
-**Optimize** open reusable work windows; **Results** opens focused live-result
-windows and Run History. Controls provide tooltips; this guide focuses on workflow and
+NEC Workbench uses **Home**, a compact control panel, as its operating base. The
+Geometry Editor, NEC Deck, Setup, and Optimize open as reusable work windows, and the
+result launchers open focused live-result windows and Run History. Controls provide tooltips; this guide focuses on workflow and
 behavior that is not obvious from an individual control.
 
 ## Getting Started
 
 1. Create or open a `.nec` model from Home or the File menu.
-2. Edit geometry and electrical cards under Model.
+2. Edit wires in the **Geometry Editor** and cards in the **NEC Deck** window.
 3. Configure frequency, sources, loads, environment, requests, and solver under Setup.
 4. Run **Check Model** (`F7`) and resolve blocking errors.
-5. Select **Run Analysis**.
-6. Open focused impedance, current, radiation, or raw-output windows from **Results**.
-   Use Run History and Run Review for archived input and historical raw output.
+5. Select **Run Analysis** (`F5`).
+6. Open the Impedance / SWR, Currents, or Radiation windows from Home's RESULTS
+   launchers or **View → Result Windows**. Use Run History and Run Review for archived
+   input and historical raw output.
 
 NEC Workbench does not include an NEC solver. Configure a separately installed
 `nec2c`, OpenNEC, or 4nec2 NEC2dXS executable under **Setup → Solver**.
@@ -36,45 +37,55 @@ only the archived `model.nec` sent directly to NEC2dXS is normalized.
 
 ## Application Layout
 
-The top workspace bar changes the main task. Home is the permanent operations base.
-Geometry Editor, NEC Deck, and Setup open as reusable workspaces, while Impedance/SWR, Currents,
-Radiation, and Run History use focused windows that can remain visible during edits
-and reruns. A compact navigator selects pages inside the larger workspaces; collapse
-it to icons when screen space is limited.
+The main window is Home, which is fixed to the size of its content. Everything else
+opens in its own window: the Geometry Editor, NEC Deck, Setup, and Optimize work
+windows, plus the Impedance / SWR, Currents, Radiation, and Run History windows that
+can stay visible during edits and reruns. Each window remembers its own size and
+position, and opening one again raises the existing window rather than creating a
+duplicate. Historical Run Review remains a separate read-only window. Inside Setup and
+the NEC Deck window, a compact navigator selects pages; collapse it to icons when
+screen space is limited.
 
-The menu bar holds less-frequent commands. Important global actions include:
+The menu bar holds the complete command set. Important actions include:
 
-- **Model → Geometry Editor**
-- **Model → NEC Deck**
-- **Model → Check Model**
-- **Model → Automatic Segmentation**
-- **Model → Average Gain Test**
-- **Model → Segmentation Convergence**
-- **Run → Run Analysis**
-- **Run → Quick Frequency Sweep**
-- **Run → Stop**
-- **View → Workspace Density**
-- **View → Reset Layout**
+- **File → Open Recent**
+- **View → Result Windows** — Impedance & SWR, Currents, Radiation, Raw Solver
+  Output, and Run History
+- **View → Workspace Density**, **Project Tree**, and **Reset Layout**
+- **Model → Geometry Editor**, **NEC Deck**, and **Automatic Segmentation**
+- **Validate → Check Model**, **Average Gain Test**, **Segmentation Convergence**,
+  and **Open Validation Results**
+- **Run → Run Analysis**, **Quick Frequency Sweep**, and **Stop**
+- **Run → Review Run History** and **Open Run Folder**
 
 Workspace Density offers Compact, Standard, and Spacious spacing without changing
-the application font size. Use Compact on smaller displays; window sizes and layout
-choices are retained separately.
+the application font size. Use Compact on smaller displays.
 
-Project is hidden automatically in Results and Optimize when more horizontal room
-is useful. Opening a workspace again raises its existing window rather than creating
-duplicates. Historical Run Review remains a separate read-only window.
+The Project Tree is hidden by default; show it from the View menu when you want an
+outline of the model.
 
 ## Home
 
 With no model open, Home provides New, Open, recent files, and documentation.
-With a model open, it becomes a compact operations dashboard. **Check Model** and
-**Run Analysis** remain prominent, while launchers open or raise the Geometry Editor,
-Impedance/SWR, Currents, Radiation, Runs, and Optimize. Click a Model row to open its
-editor: Wires opens the Geometry Editor, Deck and Variables open the NEC Deck window,
-and the setup rows open Setup. Model and quick-result summaries, quality status, and
-recent runs remain visible without duplicating the full editors or result plots on
-Home. The footer
-shows whether the model is ready and whether displayed results are current or stale.
+With a model open, it becomes a compact control panel:
+
+- **Commands** — Open (its arrow lists recent models), Save, Run (`F5`), Frequency
+  Sweep, Stop, and Check Model. The header shows the model, its check status, and the
+  solver engine; click the engine to configure it.
+- **Geometry Editor** and the **RESULTS** launchers for Impedance / SWR, Currents,
+  and Radiation open or raise those windows; **Runs…** and **Optimize…** sit below.
+- **MODEL** lists frequency, wires, sources, loads, transmission lines, ground,
+  variables, requests, and deck size. Click a row to open its editor: Wires opens the
+  Geometry Editor, Deck and Variables open the NEC Deck window, and the setup rows
+  open Setup.
+- **QUICK RESULTS** shows Rin, Xin, SWR, gain, and F/B at the frequency chosen in
+  **At:**, plus the sweep's minimum SWR and peak gain. Click a value to open its result
+  window. **STALE** appears when the model has changed since the run.
+- **MODEL QUALITY** shows the Average Gain Test and segmentation convergence status,
+  each with its own Run button.
+
+The footer shows the last run and whether the displayed results are current or stale.
+Run progress appears in the Run Monitor rather than on Home.
 
 ## Model
 
@@ -216,7 +227,8 @@ The backend selection controls command-line or standard-input behavior; Workbenc
 does not infer protocol from the executable filename.
 
 The **Run** menu provides direct access to the reusable Run Monitor and archived
-Run History. The monitor is transient execution feedback; durable inputs, complete
+Run History. **Run → Open Run Folder** opens the folder of the run started in this
+session, or the newest stored run, in the system file browser. The monitor is transient execution feedback; durable inputs, complete
 raw output, notes, and read-only review remain in Run Review.
 
 ### Model Check
@@ -318,8 +330,12 @@ segment, current, and phase.
 NEC reports current flowing from wire end 1 to end 2, so two parallel elements
 entered in opposite directions appear 180° apart even when their physical currents
 agree. The Antenna tab and the table's **Phase rel. feed** column therefore treat
-straight wires as flowing toward +X, +Y, or +Z. The table's **Phase** column keeps
-NEC's own convention.
+straight wires as flowing toward +X, +Y, or +Z, and measure phase from the feed
+current, so the feed segment reads 0° and other elements read as leading or lagging
+it. The table's **Phase** column keeps NEC's own convention: current from end 1 to
+end 2, measured against the source voltage. With several sources, the first source
+NEC reports is the reference; with none, the column is labeled **Phase, common
+direction** and only the direction rule applies. Curved wires keep NEC's direction.
 
 ### Radiation
 

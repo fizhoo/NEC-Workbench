@@ -8,11 +8,14 @@ process protocols.
 ## Highlights
 
 - Raw and structured NEC editing over one authoritative source document
-- Synchronized 2D/3D geometry with wire editing, selection, units, and snapping
+- Separate Geometry Editor (synchronized 2D/3D wire editing, selection, units, and
+  snapping) and NEC Deck (raw source, structured cards, and parameters) windows
 - Structured sources, grounds, loads, transmission lines, frequencies, and requests
-- External-solver execution with live status, durable run artifacts, and history
-- SWR, impedance, currents, and interactive 2D/3D radiation results
-- Compact operations dashboard with reusable model, setup, result, and run windows
+- External-solver execution with live status, durable run artifacts, run notes, and history
+- SWR, impedance, and interactive 2D/3D radiation results
+- Currents drawn on the antenna as magnitude, phase relative to the feed, or an
+  animated RF cycle, plus along-wire plots and a segment table
+- Compact Home control panel with quick results and reusable setup, result, and run windows
 - Optional labeled historical overlays for impedance, SWR, and radiation results
 - Static model checks, Average Gain Test, and segmentation convergence studies
 - `SY` parameterization plus sweep, adaptive, Nelder–Mead, and Differential
@@ -59,6 +62,11 @@ cmake -S . -B build -DNECWB_BUILD_GUI=OFF
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+## Releases
+
+Packaged alpha releases are published on the repository's **Releases** page. The
+current release is `0.1.0-alpha.2`.
 
 ## Build Artifacts
 
