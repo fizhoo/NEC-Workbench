@@ -1115,11 +1115,13 @@ CurrentDistributionView::CurrentDistributionView(QWidget* parent) : QWidget(pare
     views->setDocumentMode(true);
     antenna_ = new CurrentAntennaView(views);
     plot_ = new CurrentPlotWidget(views); table_ = new QTableWidget(0, 7, views);
-    table_->setHorizontalHeaderLabels({tr("Wire"), tr("Segment"), tr("Magnitude (A)"), tr("Phase (°)"),
-        tr("Phase rel. feed (°)"), tr("Real"), tr("Imaginary")});
-    table_->horizontalHeaderItem(3)->setToolTip(tr("Phase as NEC reports it, for current flowing from wire end 1 to end 2."));
-    table_->horizontalHeaderItem(4)->setToolTip(tr("Phase relative to the feed current, with straight wires "
-        "taken as flowing toward +X, +Y or +Z so elements entered in opposite directions compare correctly."));
+    table_->setHorizontalHeaderLabels({tr("Wire"), tr("Segment"), tr("Magnitude (A)"), tr("NEC phase (°)"),
+        tr("Phase vs. feed (°)"), tr("Real"), tr("Imaginary")});
+    table_->horizontalHeaderItem(3)->setToolTip(tr("Phase as the solver printed it: current flowing from wire end 1 to end 2, "
+        "relative to the source voltage."));
+    table_->horizontalHeaderItem(4)->setToolTip(tr("Phase relative to the feed current (the first source), with straight wires "
+        "taken as flowing toward +X, +Y or +Z so elements entered in opposite directions compare correctly. "
+        "The Antenna tab shows this phase."));
     table_->horizontalHeader()->setStretchLastSection(true); table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     views->addTab(antenna_, tr("Antenna"));
     views->addTab(plot_, tr("Along Wire"));
@@ -1151,7 +1153,7 @@ void CurrentDistributionView::refresh()
     for (const auto& segment : displayed.segments)
         displayedPhase[{segment.wireTag, segment.segment}] = segment.relativePhaseDegrees;
     table_->horizontalHeaderItem(4)->setText(displayed.feedReferenced
-        ? tr("Phase rel. feed (°)") : tr("Phase, common direction (°)"));
+        ? tr("Phase vs. feed (°)") : tr("Phase, common direction (°)"));
     antenna_->setCurrents(std::move(displayed), model_);
     plot_->setPaths(connectedCurrentPaths(values, model_)); table_->setRowCount(static_cast<int>(values.size()));
     for (auto row = 0; row < static_cast<int>(values.size()); ++row) {

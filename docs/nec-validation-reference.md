@@ -174,6 +174,6 @@ accepted decks with available NEC2C and OpenNEC builds.
 
 This pass verifies Workbench validation, solver-deck handoff, and finite-result
 parsing. It does not claim numerical equivalence for every legacy example. The
-4nec2 NEC2dXS executable remains a Windows-only release check; its generated input
-format is covered by automated tests, but the real executable matrix must be run on
-Windows before Alpha 2.
+4nec2 NEC2dXS executable is a Windows-only check: its generated input format is
+covered by automated tests, and the Alpha 2 Windows package was smoke-tested with the
+real executable.

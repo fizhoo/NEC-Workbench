@@ -59,11 +59,9 @@ Workbench remains solver-independent and does not bundle external NEC engines.
 `v0.1.0-alpha.1` established the first public Linux AppImage and Windows ZIP baseline.
 `v0.1.0-alpha.2` delivers the compact Home control panel, separate work and result
 windows, run references and notes, the currents-on-antenna view, and a faster
-optimizer. Its remaining release steps:
-
-1. Smoke-test the Linux and Windows packages built from the release branch.
-2. Run the real 4nec2 NEC2dXS executable matrix on Windows.
-3. Merge to `main`, tag `v0.1.0-alpha.2`, and publish the packages with release notes.
+optimizer. The Linux and Windows packages, including direct 4nec2 NEC2dXS execution,
+have been smoke-tested on their platforms; the release is merged to `main`, tagged
+`v0.1.0-alpha.2`, and published with release notes.
 
 After Alpha 2, stabilization continues rather than broad feature expansion:
 

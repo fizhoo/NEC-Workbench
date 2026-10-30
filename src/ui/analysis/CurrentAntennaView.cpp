@@ -441,7 +441,7 @@ private:
         auto text = tr("Wire %1 · Segment %2 · |I| %3 · Phase %4° %5")
             .arg(hovered->wireTag).arg(hovered->segment).arg(amperes(hovered->magnitude))
             .arg(QString::number(hovered->relativePhaseDegrees, 'f', 1),
-                currents_.feedReferenced ? tr("rel. feed") : tr("absolute"));
+                currents_.feedReferenced ? tr("vs. feed") : tr("common direction"));
         if (mode_ == DisplayMode::Instantaneous)
             text += tr(" · now %1").arg(amperes(analysis::instantaneousCurrent(*hovered, cycleDegrees_)));
         setProperty("hoverReadout", text);

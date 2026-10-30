@@ -2175,7 +2175,7 @@ auto main(int argc, char* argv[]) -> int
             && canvas != nullptr && canvas->property("segmentCount").toInt() == 4
             && mode != nullptr && cycle != nullptr && play != nullptr && play->isHidden()
             && table != nullptr && table->rowCount() == 4
-            && table->horizontalHeaderItem(4)->text() == QStringLiteral("Phase rel. feed (°)");
+            && table->horizontalHeaderItem(4)->text() == QStringLiteral("Phase vs. feed (°)");
         for (auto row = 0; antennaValid && row < table->rowCount(); ++row)
             antennaValid = std::abs(table->item(row, 4)->text().toDouble()) < 1.0e-6;
         if (antennaValid) {
@@ -2208,7 +2208,7 @@ auto main(int argc, char* argv[]) -> int
                 canvas->repaint();
                 hoverText = canvas->property("hoverReadout").toString();
             }
-            antennaValid = antennaValid && hoverText.contains(QStringLiteral("rel. feed"))
+            antennaValid = antennaValid && hoverText.contains(QStringLiteral("vs. feed"))
                 && hoverText.contains(QStringLiteral("Phase 0.0°"));
         }
         if (!antennaValid) return NECWB_SMOKE_FAILURE("currents antenna view");
