@@ -174,9 +174,9 @@ radiation records. Views consume these records rather than reparsing output.
 - Historical views use the archived generated deck for the matching antenna overlay.
 
 Directional metrics share one non-widget implementation. Forward gain uses an
-explicit spherical direction. Specified-direction and result-window F/B use the
-physical antipodal direction, while tracked optimization cuts use the same elevation
-at the opposite azimuth; missing coverage produces an unavailable value rather than a
+explicit spherical direction. Every F/B uses one back direction, the same elevation
+at the opposite azimuth, which specified-direction requests sample explicitly and
+tracked cuts contain; missing coverage produces an unavailable value rather than a
 substitute. F/R compares the forward sample with the strongest sampled response in the
 rear half of the requested cut. [Directional Metrics](optimization-math.md#directional-metrics)
 defines each case.

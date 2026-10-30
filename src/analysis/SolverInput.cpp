@@ -47,19 +47,12 @@ auto joinLines(const std::vector<std::string>& lines) -> std::string
     return output.str();
 }
 
-auto oppositeDirection(double thetaDegrees, double phiDegrees) -> std::pair<double, double>
+// F/B's back direction: the same elevation turned 180 degrees in azimuth.
+auto frontToBackDirection(double thetaDegrees, double phiDegrees) -> std::pair<double, double>
 {
-    constexpr auto radiansPerDegree = std::numbers::pi / 180.0;
-    constexpr auto degreesPerRadian = 180.0 / std::numbers::pi;
-    const auto theta = thetaDegrees * radiansPerDegree;
-    const auto phi = phiDegrees * radiansPerDegree;
-    const auto x = -std::sin(theta) * std::cos(phi);
-    const auto y = -std::sin(theta) * std::sin(phi);
-    const auto z = -std::cos(theta);
-    const auto oppositeTheta = std::acos(std::clamp(z, -1.0, 1.0)) * degreesPerRadian;
-    auto oppositePhi = std::atan2(y, x) * degreesPerRadian;
-    if (oppositePhi < 0.0) oppositePhi += 360.0;
-    return {oppositeTheta, oppositePhi};
+    auto backPhi = std::fmod(phiDegrees + 180.0, 360.0);
+    if (backPhi < 0.0) backPhi += 360.0;
+    return {thetaDegrees, backPhi};
 }
 
 }
@@ -303,7 +296,7 @@ auto prepareDirectionalOptimizationInput(std::string_view source,
     front.phiCount = 1;
     front.thetaStart = thetaDegrees;
     front.phiStart = phiDegrees;
-    const auto [backTheta, backPhi] = oppositeDirection(thetaDegrees, phiDegrees);
+    const auto [backTheta, backPhi] = frontToBackDirection(thetaDegrees, phiDegrees);
     auto back = front;
     back.thetaStart = backTheta;
     back.phiStart = backPhi;
