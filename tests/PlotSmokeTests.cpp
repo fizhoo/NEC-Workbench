@@ -358,6 +358,8 @@ auto main(int argc, char* argv[]) -> int
             && validationSummary != nullptr
             && openValidation != nullptr && validateMenu->actions().contains(openValidation)
             && reviewRuns != nullptr && runMenu->actions().contains(reviewRuns)
+            && runMenu->actions().contains(mainWindow.findChild<QAction*>(
+                QStringLiteral("openRunFolderAction")))
             // The dashboard window is fixed to its content, and run progress lives in
             // the Run Monitor window rather than the status bar.
             && mainWindow.layout()->sizeConstraint() == QLayout::SetFixedSize
