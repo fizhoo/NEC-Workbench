@@ -45,6 +45,8 @@ add_library(necwb_core
     src/analysis/ReferenceRunSelection.cpp
     src/analysis/ReferenceRunSelection.h
     src/analysis/ResultSummary.cpp
+    src/analysis/SegmentCurrentDisplay.cpp
+    src/analysis/SegmentCurrentDisplay.h
     src/analysis/ResultSummary.h
     src/analysis/SegmentationConvergence.cpp
     src/analysis/SolverCommand.cpp
@@ -130,6 +132,8 @@ if(NECWB_BUILD_GUI)
         src/ui/analysis/SolverProcessRunner.h
         src/ui/analysis/SweepPlotsView.cpp
         src/ui/analysis/SweepPlotsView.h
+        src/ui/analysis/CurrentAntennaView.cpp
+        src/ui/analysis/CurrentAntennaView.h
         src/ui/analysis/FieldResultsViews.cpp
         src/ui/analysis/FieldResultsViews.h
         src/ui/cards/CompactNumberDelegate.cpp

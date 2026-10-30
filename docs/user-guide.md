@@ -292,6 +292,35 @@ whether that window can compare all, some, or none of its current data. Manual c
 may come from another antenna; Workbench only draws genuinely matching frequencies,
 feedpoints, cuts, and sample grids. Use **Clear Overlay** to remove the selection.
 
+### Currents
+
+The Currents window has three tabs. **Antenna** draws the segment currents on a 2D
+view of the solved antenna; **Along Wire** plots magnitude along connected wire paths;
+**Table** lists every segment.
+
+On the Antenna tab, **Show** selects:
+
+- **Magnitude** — a curve beside each wire whose distance from the wire shows how
+  strong the current gets.
+- **Phase** — wire color shows phase relative to the feed current on a circular
+  scale, so −180° and +180° share a color. Segments carrying under 5% of the peak
+  current are grey, because their phase is mostly numerical noise.
+- **Instantaneous** — the actual current at one moment of the RF cycle. The side of
+  the wire shows which way the current flows at that moment. Drag **Cycle** or press
+  **Play** to watch it change; the magnitude envelope stays faintly visible. At 0° the
+  feed current is at its positive peak.
+
+**View** chooses the plane; Auto picks the one the antenna mostly lies in. Scroll to
+zoom, drag to pan, and double-click to fit. **Scale** enlarges the curves, which are
+otherwise sized so neighboring elements do not overlap. Hover a segment for its wire,
+segment, current, and phase.
+
+NEC reports current flowing from wire end 1 to end 2, so two parallel elements
+entered in opposite directions appear 180° apart even when their physical currents
+agree. The Antenna tab and the table's **Phase rel. feed** column therefore treat
+straight wires as flowing toward +X, +Y, or +Z. The table's **Phase** column keeps
+NEC's own convention.
+
 ### Radiation
 
 The radiation frequency selector includes only frequencies with pattern data.
