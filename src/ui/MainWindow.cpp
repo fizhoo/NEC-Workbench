@@ -437,8 +437,8 @@ MainWindow::MainWindow()
     radiationPanel_->setVisibilityChangedCallback([this](bool visible) {
         controlPanel_->setResultWindowVisible(ControlPanel::Workspace::Radiation, visible);
     });
-    modelPanel_->setVisibilityChangedCallback([this](bool visible) {
-        controlPanel_->setResultWindowVisible(ControlPanel::Workspace::GeometryView, visible);
+    geometryPanel_->setVisibilityChangedCallback([this](bool visible) {
+        controlPanel_->setResultWindowVisible(ControlPanel::Workspace::GeometryEditor, visible);
     });
     createDocks();
     createMenusAndToolbar();
@@ -843,11 +843,8 @@ void MainWindow::createWorkspace()
         case ControlPanel::Workspace::Setup:
             showModule(analysisModuleIndex_);
             break;
-        case ControlPanel::Workspace::GeometryView:
-            if (showModule(modelModuleIndex_)) {
-                modelWorkspace_->setCurrentIndex(modelGeometryWorkspaceIndex_);
-                workspace_->setCurrentIndex(geometry3DTabIndex_);
-            }
+        case ControlPanel::Workspace::GeometryEditor:
+            showModule(geometryModuleIndex_);
             break;
         case ControlPanel::Workspace::Impedance:
             resultWindowCoordinator_->showImpedance();
@@ -964,7 +961,7 @@ void MainWindow::createWorkspace()
             detachFieldParameter(sourceLine, fieldIndex, fieldLabel);
         });
 
-    workspace_ = new QTabWidget(modelWorkspace_);
+    workspace_ = new QTabWidget(moduleStack_);
     workspace_->setObjectName(QStringLiteral("geometryWorkspace"));
     workspace_->setDocumentMode(true);
     workspace_->setMovable(true);
@@ -1112,7 +1109,14 @@ void MainWindow::createWorkspace()
     geometry3DTabIndex_ = workspace_->addTab(geometry3DPage, tr("3D Geometry"));
     workspace_->setTabIcon(geometryTabIndex_, workbenchIcon("geometry"));
     workspace_->setTabIcon(geometry3DTabIndex_, workbenchIcon("3d-view"));
-    modelGeometryWorkspaceIndex_ = modelWorkspace_->addTab(workspace_, tr("Geometry"));
+    // Geometry and the deck live in separate windows so each keeps its own size: the deck
+    // is usually small beside a run, while geometry work wants a large window.
+    geometryPanel_ = new DetachablePanel(QStringLiteral("geometry-editor"),
+        tr("Geometry Editor"), moduleStack_, {QStringLiteral("workspaceWindows"),
+            QStringLiteral("geometryEditorWindow"), QSize{1000, 760}});
+    geometryPanel_->setStatusText(tr("No model loaded"));
+    geometryPanel_->setContent(workspace_);
+    geometryModuleIndex_ = moduleStack_->addWidget(geometryPanel_);
 
     parameterEditor_ = new ParameterEditor(modelWorkspace_);
     connect(parameterEditor_, &ParameterEditor::parameterChanged, this,
@@ -1123,7 +1127,6 @@ void MainWindow::createWorkspace()
         [this](std::size_t sourceLine, QString name) { deleteParameter(sourceLine, name); });
     connect(parameterEditor_, &ParameterEditor::parameterSelected, this,
         [this](std::size_t sourceLine) { editor_->goToLine(sourceLine); });
-    modelParametersWorkspaceIndex_ = modelWorkspace_->addTab(parameterEditor_, tr("Parameters"));
 
     analysisWorkspace_ = new QTabWidget(moduleStack_);
     analysisWorkspace_->setObjectName(QStringLiteral("setupWorkspace"));
@@ -1188,13 +1191,14 @@ void MainWindow::createWorkspace()
     connect(loadNetworkEditor_, &LoadNetworkEditor::transmissionLineSelected, this,
         [this](std::size_t sourceLine) { selectTransmissionLine(sourceLine); });
     modelDeckWorkspaceIndex_ = modelWorkspace_->addTab(sourceWorkspace_, tr("NEC Deck"));
-    modelWorkspace_->setTabIcon(modelGeometryWorkspaceIndex_, workbenchIcon("geometry"));
+    modelParametersWorkspaceIndex_ = modelWorkspace_->addTab(parameterEditor_, tr("Parameters"));
     modelWorkspace_->setTabIcon(modelParametersWorkspaceIndex_, workbenchIcon("structured-cards"));
     modelWorkspace_->setTabIcon(modelDeckWorkspaceIndex_, workbenchIcon("nec-deck"));
     auto* modelNavigator = new WorkspaceNavigator(
         modelWorkspace_, QStringLiteral("model"), moduleStack_);
+    // Keeps the former Model Editor's settings key so its saved size carries over.
     modelPanel_ = new DetachablePanel(QStringLiteral("model-editor"),
-        tr("Model Editor"), moduleStack_, {QStringLiteral("workspaceWindows"),
+        tr("NEC Deck"), moduleStack_, {QStringLiteral("workspaceWindows"),
             QStringLiteral("modelEditorWindow")});
     modelPanel_->setStatusText(tr("No model loaded"));
     modelPanel_->setContent(modelNavigator);
@@ -1670,6 +1674,11 @@ auto MainWindow::showModule(int index) -> bool
     if (moduleStack_ == nullptr || index < 0 || index >= moduleStack_->count()) {
         return false;
     }
+    if (index == geometryModuleIndex_ && geometryPanel_ != nullptr) {
+        geometryPanel_->showWindow();
+        updateUndoActions();
+        return true;
+    }
     if (index == modelModuleIndex_ && modelPanel_ != nullptr) {
         modelPanel_->showWindow();
         const auto current = moduleStack_->currentIndex();
@@ -1796,8 +1805,7 @@ void MainWindow::showEditor(EditorDestination destination, int geometryTab)
         if (!showModule(modelModuleIndex_)) return;
         modelWorkspace_->setCurrentIndex(modelParametersWorkspaceIndex_);
     } else {
-        if (!showModule(modelModuleIndex_)) return;
-        modelWorkspace_->setCurrentIndex(modelGeometryWorkspaceIndex_);
+        if (!showModule(geometryModuleIndex_)) return;
         workspace_->setCurrentIndex(geometryTab);
     }
 }
@@ -2339,6 +2347,20 @@ void MainWindow::createMenusAndToolbar()
 
     auto* modelMenu = menuBar()->addMenu(tr("&Model"));
     modelMenu->setObjectName(QStringLiteral("modelMenu"));
+    auto* geometryEditorAction = modelMenu->addAction(
+        workbenchIcon("geometry"), tr("&Geometry Editor"));
+    geometryEditorAction->setObjectName(QStringLiteral("geometryEditorAction"));
+    connect(geometryEditorAction, &QAction::triggered,
+        this, [this] { showModule(geometryModuleIndex_); });
+    auto* necDeckAction = modelMenu->addAction(workbenchIcon("nec-deck"), tr("NEC &Deck"));
+    necDeckAction->setObjectName(QStringLiteral("necDeckAction"));
+    connect(necDeckAction, &QAction::triggered,
+        this, [this] { showEditor(EditorDestination::RawSource); });
+    for (auto* action : {geometryEditorAction, necDeckAction}) {
+        action->setEnabled(modelModuleAction_->isEnabled());
+        connect(modelModuleAction_, &QAction::enabledChanged, action, &QAction::setEnabled);
+    }
+    modelMenu->addSeparator();
     modelMenu->addAction(autoSegmentationAction_);
     modelMenu->addSeparator();
     modelMenu->addAction(geometrySettingsAction_);
@@ -5718,6 +5740,7 @@ void MainWindow::setCurrentFile(QString path)
         controlPanel_->setDocumentState(currentFile_.isEmpty() ? QString{} : name,
             editor_->document()->isModified());
     if (modelPanel_ != nullptr) modelPanel_->setStatusText(modelName);
+    if (geometryPanel_ != nullptr) geometryPanel_->setStatusText(modelName);
     if (setupPanel_ != nullptr) setupPanel_->setStatusText(modelName);
     if (optimizationPanel_ != nullptr) optimizationPanel_->setStatusText(
         tr("%1 · %2").arg(modelName,

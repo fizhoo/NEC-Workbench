@@ -329,6 +329,7 @@ private:
     DetachablePanel* validationPanel_{};
     DetachablePanel* runHistoryPanel_{};
     DetachablePanel* modelPanel_{};
+    DetachablePanel* geometryPanel_{};
     DetachablePanel* setupPanel_{};
     DetachablePanel* optimizationPanel_{};
     QComboBox* rawOutputFrequencyControl_{};
@@ -433,7 +434,7 @@ private:
     int loadNetworkTabIndex_{};
     int homeModuleIndex_{};
     int modelModuleIndex_{};
-    int modelGeometryWorkspaceIndex_{};
+    int geometryModuleIndex_{};
     int modelParametersWorkspaceIndex_{};
     int modelSourcesWorkspaceIndex_{};
     int modelEnvironmentWorkspaceIndex_{};
