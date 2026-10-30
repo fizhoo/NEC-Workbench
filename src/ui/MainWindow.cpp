@@ -838,10 +838,10 @@ void MainWindow::createWorkspace()
     welcomePage_ = new WelcomePage(newAction_, openAction_,
         [this](const QString& path) { openFileAtPath(path); },
         [this] { openExample(); }, [this] { clearRecentFiles(); }, dashboardStack_);
-    welcomePage_->setRecentFiles(recentFiles());
     dashboardStack_->addWidget(welcomePage_);
     controlPanel_ = new ControlPanel(dashboardStack_);
     controlPanel_->setFileActions(openAction_, saveAction_);
+    refreshRecentFileViews(recentFiles());
     controlPanel_->setQuickActions(
         checkAction_, runAction_, quickSweepAction_, stopAction_);
     controlPanel_->setAverageGainAction(averageGainAction_);
@@ -2271,6 +2271,9 @@ void MainWindow::createMenusAndToolbar()
     fileMenu->setObjectName(QStringLiteral("fileMenu"));
     fileMenu->addAction(newAction_);
     fileMenu->addAction(openAction_);
+    recentModelsMenu_ = fileMenu->addMenu(tr("Open &Recent"));
+    recentModelsMenu_->setObjectName(QStringLiteral("recentModelsMenu"));
+    refreshRecentFileViews(recentFiles());
     fileMenu->addSeparator();
     fileMenu->addAction(saveAction_);
     fileMenu->addAction(saveAsAction_);
@@ -2641,6 +2644,34 @@ auto MainWindow::recentFiles() const -> QStringList
     return result;
 }
 
+void MainWindow::refreshRecentFileViews(const QStringList& files)
+{
+    if (welcomePage_ != nullptr) welcomePage_->setRecentFiles(files);
+    if (controlPanel_ != nullptr) controlPanel_->setRecentModels(files,
+        [this](const QString& path) { openFileAtPath(path); },
+        [this] { clearRecentFiles(); });
+    if (recentModelsMenu_ == nullptr) return;
+    recentModelsMenu_->clear();
+    if (files.isEmpty()) {
+        auto* empty = recentModelsMenu_->addAction(tr("No Recent Models"));
+        empty->setEnabled(false);
+    } else {
+        for (const auto& path : files) {
+            const QFileInfo file(path);
+            auto* action = recentModelsMenu_->addAction(
+                tr("%1 — %2").arg(file.fileName(), file.dir().dirName()));
+            action->setData(path);
+            action->setToolTip(path);
+            connect(action, &QAction::triggered, this,
+                [this, path] { openFileAtPath(path); });
+        }
+    }
+    recentModelsMenu_->addSeparator();
+    auto* clear = recentModelsMenu_->addAction(tr("Clear Recent Models"));
+    clear->setEnabled(!files.isEmpty());
+    connect(clear, &QAction::triggered, this, [this] { clearRecentFiles(); });
+}
+
 void MainWindow::rememberRecentFile(const QString& path)
 {
     if (path.isEmpty()) return;
@@ -2650,13 +2681,13 @@ void MainWindow::rememberRecentFile(const QString& path)
     files.prepend(absolutePath);
     while (files.size() > 8) files.removeLast();
     QSettings{}.setValue(QStringLiteral("files/recentModels"), files);
-    if (welcomePage_ != nullptr) welcomePage_->setRecentFiles(files);
+    refreshRecentFileViews(files);
 }
 
 void MainWindow::clearRecentFiles()
 {
     QSettings{}.remove(QStringLiteral("files/recentModels"));
-    if (welcomePage_ != nullptr) welcomePage_->setRecentFiles({});
+    refreshRecentFileViews({});
 }
 
 auto MainWindow::saveFile() -> bool

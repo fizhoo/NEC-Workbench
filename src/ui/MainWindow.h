@@ -34,6 +34,7 @@ class QDoubleSpinBox;
 class QEvent;
 class QLabel;
 class QLineEdit;
+class QMenu;
 class QPlainTextEdit;
 class QProgressBar;
 class QPushButton;
@@ -151,6 +152,7 @@ private:
     void openFileAtPath(const QString& path);
     void openExample();
     [[nodiscard]] auto recentFiles() const -> QStringList;
+    void refreshRecentFileViews(const QStringList& files);
     void rememberRecentFile(const QString& path);
     void clearRecentFiles();
     auto saveFile() -> bool;
@@ -309,6 +311,7 @@ private:
     QAction* gettingStartedAction_{};
     QAction* userGuideAction_{};
     QAction* aboutAction_{};
+    QMenu* recentModelsMenu_{};
     QComboBox* lengthUnitControl_{};
     QComboBox* deckUnitControl_{};
     QLabel* deckScaleLabel_{};

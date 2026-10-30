@@ -238,7 +238,7 @@ public:
     explicit SweepPlotWidget(QWidget* parent = nullptr)
         : QWidget(parent)
     {
-        setMinimumHeight(110);
+        setMinimumHeight(240);
         setMouseTracking(true);
     }
 
@@ -780,6 +780,7 @@ SweepPlotsView::SweepPlotsView(QWidget* parent)
 
     impedancePlot_ = new SweepPlotWidget(splitter_);
     impedancePlot_->setObjectName(QStringLiteral("impedanceSweepPlot"));
+    impedancePlot_->setMinimumHeight(110);
 
     swrPanel_ = new QWidget(splitter_);
     auto* swrLayout = new QVBoxLayout(swrPanel_);
@@ -797,6 +798,7 @@ SweepPlotsView::SweepPlotsView(QWidget* parent)
     swrLayout->addLayout(swrControls);
     swrPlot_ = new SweepPlotWidget(swrPanel_);
     swrPlot_->setObjectName(QStringLiteral("swrSweepPlot"));
+    swrPlot_->setMinimumHeight(110);
     swrLayout->addWidget(swrPlot_, 1);
 
     splitter_->addWidget(impedancePlot_);

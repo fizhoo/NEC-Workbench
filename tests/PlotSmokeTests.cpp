@@ -300,6 +300,8 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("optimizationWorkspace"));
         auto* validateMenu = mainWindow.findChild<QMenu*>(QStringLiteral("validateMenu"));
         auto* runMenu = mainWindow.findChild<QMenu*>(QStringLiteral("runMenu"));
+        auto* recentModelsMenu = mainWindow.findChild<QMenu*>(
+            QStringLiteral("recentModelsMenu"));
         auto* validationWorkspace = mainWindow.findChild<QTabWidget*>(
             QStringLiteral("validationWorkspace"));
         auto* resultsWorkspace = mainWindow.findChild<QTabWidget*>(
@@ -350,7 +352,9 @@ auto main(int argc, char* argv[]) -> int
             && tabNames(validationWorkspace) == QStringList{QStringLiteral("Static Check"),
                 QStringLiteral("Average Gain Test"), QStringLiteral("Segmentation Convergence")}
             && compactPrimaryNavigation
-            && validateMenu != nullptr && runMenu != nullptr && validationSummary != nullptr
+            && validateMenu != nullptr && runMenu != nullptr
+            && recentModelsMenu != nullptr && !recentModelsMenu->actions().isEmpty()
+            && validationSummary != nullptr
             && openValidation != nullptr && validateMenu->actions().contains(openValidation)
             && reviewRuns != nullptr && runMenu->actions().contains(reviewRuns);
         if (openValidation != nullptr) {
@@ -1120,6 +1124,7 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationCandidateScorePlot"));
     const auto historicalObjectiveBreakdownLoaded = historicalFrequencySelectionLoaded
         && workspaceCandidateScorePlot != nullptr
+        && workspaceCandidateScorePlot->minimumHeight() >= 240
         && workspaceCandidateScorePlot->property("pointCount").toInt() == 2
         && workspaceCandidateScorePlot->property("seriesCount").toInt() == 3
         && workspaceCandidateScorePlot->property("xAxisLabel").toString()
@@ -2484,6 +2489,12 @@ auto main(int argc, char* argv[]) -> int
     QAction averageGainAction(QStringLiteral("Run Average Gain Test…"), &controlPanel),
         convergenceAction(QStringLiteral("Segmentation Convergence…"), &controlPanel);
     controlPanel.setFileActions(&openAction, &saveAction);
+    QString recentModelOpened;
+    auto recentModelsCleared = false;
+    controlPanel.setRecentModels(
+        {QStringLiteral("/tmp/first.nec"), QStringLiteral("/tmp/second.nec")},
+        [&recentModelOpened](const QString& path) { recentModelOpened = path; },
+        [&recentModelsCleared] { recentModelsCleared = true; });
     controlPanel.setQuickActions(&checkAction, &runAction, &sweepAction, &stopAction);
     controlPanel.setAverageGainAction(&averageGainAction);
     controlPanel.setConvergenceAction(&convergenceAction);
@@ -2535,6 +2546,7 @@ auto main(int argc, char* argv[]) -> int
         return controlPanel.findChild<QToolButton*>(QString::fromLatin1(name));
     };
     const auto* controlPanelName = label("controlPanelModelName");
+    const auto* controlPanelBackend = button("controlPanelBackend");
     const auto* controlPanelExtrema = label("controlPanelResultExtrema");
     const auto* controlPanelStale = label("controlPanelResultStale");
     const auto* controlPanelFooter = label("controlPanelFooter");
@@ -2555,6 +2567,16 @@ auto main(int argc, char* argv[]) -> int
     auto* controlPanelConvergenceRun = button("controlPanelConvergenceRun");
     auto* controlPanelImpedance = button("controlPanelImpedance");
     auto* controlPanelGeometry = button("controlPanelGeometryView");
+    auto* controlPanelOpenMenu = controlPanel.findChild<QMenu*>(
+        QStringLiteral("controlPanelOpenMenu"));
+    if (controlPanelOpenMenu != nullptr) {
+        for (auto* action : controlPanelOpenMenu->actions()) {
+            if (action->data().toString() == QStringLiteral("/tmp/second.nec"))
+                action->trigger();
+            if (action->objectName() == QStringLiteral("controlPanelClearRecentModels"))
+                action->trigger();
+        }
+    }
     const auto staleInitiallyHidden = controlPanelStale != nullptr && !controlPanelStale->isVisible();
     controlPanel.markResultsStale();
     application.processEvents();
@@ -2574,6 +2596,9 @@ auto main(int argc, char* argv[]) -> int
     const auto controlPanelStateVisible = controlPanelName != nullptr
         && controlPanelName->text().contains(QStringLiteral("test.nec"))
         && controlPanelName->text().contains(QLatin1Char('*'))
+        && controlPanelBackend != nullptr
+        && controlPanelBackend->text() == QStringLiteral("Engine: nec2")
+        && !controlPanelBackend->autoRaise()
         && controlPanelQuickResults != nullptr
         && controlPanelExtrema != nullptr
         && controlPanelExtrema->text().contains(QStringLiteral("Min SWR"))
@@ -2593,6 +2618,10 @@ auto main(int argc, char* argv[]) -> int
         && controlPanel.sizeHint().width() <= 700;
     const auto controlPanelActionsCorrect = controlPanelOpen != nullptr
         && controlPanelOpen->defaultAction() == &openAction
+        && controlPanelOpen->popupMode() == QToolButton::MenuButtonPopup
+        && controlPanelOpenMenu != nullptr
+        && recentModelOpened == QStringLiteral("/tmp/second.nec")
+        && recentModelsCleared
         && controlPanelSave != nullptr && controlPanelSave->defaultAction() == &saveAction
         && controlPanelCheck != nullptr && controlPanelCheck->defaultAction() == &checkAction
         && controlPanelRun != nullptr && controlPanelRun->defaultAction() == &runAction
