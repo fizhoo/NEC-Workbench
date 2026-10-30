@@ -358,12 +358,19 @@ and stopping rules.
 
 ### Variables and Bounds
 
-Enable the parameters to search and set Minimum, Maximum, and Tolerance. Bounds
-constrain proposed candidates. Parameter tolerance describes spatial convergence;
-score tolerance describes objective improvement. They are different quantities.
+Choose the search **Method** at the top of the Search section, then check the
+parameters to search and set Minimum, Maximum, and Tolerance in the same table for
+every method. Bounds constrain proposed candidates. Parameter tolerance describes
+spatial convergence; score tolerance describes objective improvement. They are
+different quantities.
 
-Parameter Sweep remains single-variable. The other methods support multiple enabled
-variables.
+Parameter Sweep varies exactly one parameter: checking a row in Sweep mode replaces
+the previous choice. The other methods change every checked parameter together.
+
+When the run button is unavailable, the status line under the progress bar states
+the first thing that must be fixed. An incomplete objective, such as a directional
+goal whose direction has not been set up, is also flagged in red under the Objective
+summary.
 
 ### Frequencies
 

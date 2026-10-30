@@ -64,7 +64,6 @@
 #include <QTextDocument>
 #include <QTableWidget>
 #include <QTabWidget>
-#include <QTabBar>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QToolButton>
@@ -869,12 +868,6 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationReactanceWeight"));
     auto* optimizationReactanceTarget = optimization.findChild<QDoubleSpinBox*>(
         QStringLiteral("optimizationReactanceTarget"));
-    auto* optimizationVariableControl = optimization.findChild<QComboBox*>(
-        QStringLiteral("optimizationVariableControl"));
-    auto* optimizationMinimum = optimization.findChild<QDoubleSpinBox*>(
-        QStringLiteral("optimizationMinimum"));
-    auto* optimizationMaximum = optimization.findChild<QDoubleSpinBox*>(
-        QStringLiteral("optimizationMaximum"));
     auto* optimizationSearchBudgetLabel = optimization.findChild<QLabel*>(
         QStringLiteral("optimizationSearchBudgetLabel"));
     auto* optimizationStudySummary = optimization.findChild<QLabel*>(
@@ -903,6 +896,8 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationResetObjectiveDefaults"));
     auto* optimizationObjectiveSummary = optimization.findChild<QLabel*>(
         QStringLiteral("optimizationObjectiveSummary"));
+    auto* optimizationObjectiveWarning = optimization.findChild<QLabel*>(
+        QStringLiteral("optimizationObjectiveWarning"));
     auto* optimizationObjectiveExplanation = optimization.findChild<QLabel*>(
         QStringLiteral("optimizationObjectiveExplanation"));
     auto* optimizationEditObjective = optimization.findChild<QPushButton*>(
@@ -955,8 +950,8 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationWorkload"));
     auto* optimizationApplyBest = optimization.findChild<QPushButton*>(
         QStringLiteral("optimizationApplyBest"));
-    auto* optimizationSearchMethods = optimization.findChild<QTabBar*>(
-        QStringLiteral("optimizationSearchMethodTabs"));
+    auto* optimizationSearchMethods = optimization.findChild<QComboBox*>(
+        QStringLiteral("optimizationSearchMethod"));
     auto* optimizationParameterToleranceLabel = optimization.findChild<QLabel*>(
         QStringLiteral("optimizationParameterToleranceLabel"));
     auto* optimizationScoreToleranceLabel = optimization.findChild<QLabel*>(
@@ -1399,6 +1394,10 @@ auto main(int argc, char* argv[]) -> int
                 QStringLiteral("Use Find Maximum Gain or Choose"))
             && optimizationRun != nullptr && !optimizationRun->isEnabled()
             && optimizationRun->toolTip().contains(
+                QStringLiteral("Direction setup required"))
+            && optimizationObjectiveWarning != nullptr
+            && !optimizationObjectiveWarning->isHidden()
+            && optimizationObjectiveWarning->text().contains(
                 QStringLiteral("Direction setup required"));
         optimizationObjectivePreset->setCurrentText(QStringLiteral("Keep SWR Below Limit"));
         application.processEvents();
@@ -1585,9 +1584,6 @@ auto main(int argc, char* argv[]) -> int
     if (optimizationResetSearchDefaults != nullptr) optimizationResetSearchDefaults->click();
     const auto adaptiveGridAligned = optimizationVariables != nullptr
         && optimizationVariables->isVisible()
-        && optimizationVariableControl != nullptr && !optimizationVariableControl->isVisible()
-        && optimizationMinimum != nullptr && !optimizationMinimum->isVisible()
-        && optimizationMaximum != nullptr && !optimizationMaximum->isVisible()
         && optimizationAdaptiveMaximum != nullptr && optimizationAdaptiveMaximum->isVisible()
         && optimizationAdaptiveScoreTolerance != nullptr
         && optimizationAdaptiveScoreTolerance->isVisible()
@@ -1596,10 +1592,10 @@ auto main(int argc, char* argv[]) -> int
             == (Qt::AlignRight | Qt::AlignVCenter);
     const auto adaptiveControlsValid = optimizationSearchMethods != nullptr
         && optimizationSearchMethods->count() == 4
-        && optimizationSearchMethods->tabText(0) == QStringLiteral("Parameter Sweep")
-        && optimizationSearchMethods->tabText(1) == QStringLiteral("Adaptive Optimize")
-        && optimizationSearchMethods->tabText(2) == QStringLiteral("Nelder-Mead")
-        && optimizationSearchMethods->tabText(3) == QStringLiteral("Differential Evolution")
+        && optimizationSearchMethods->itemText(0) == QStringLiteral("Parameter Sweep")
+        && optimizationSearchMethods->itemText(1) == QStringLiteral("Adaptive Optimize")
+        && optimizationSearchMethods->itemText(2) == QStringLiteral("Nelder-Mead")
+        && optimizationSearchMethods->itemText(3) == QStringLiteral("Differential Evolution")
         && optimizationParameterToleranceLabel != nullptr
         && !optimizationParameterToleranceLabel->isVisible()
         && optimizationScoreToleranceLabel != nullptr
@@ -1617,9 +1613,8 @@ auto main(int argc, char* argv[]) -> int
     if (optimizationSearchMethods != nullptr) optimizationSearchMethods->setCurrentIndex(2);
     application.processEvents();
     const auto nelderMeadControlsValid = optimizationSearchMethods != nullptr
-        && !optimizationSearchMethods->tabToolTip(2).isEmpty()
+        && !optimizationSearchMethods->itemData(2, Qt::ToolTipRole).toString().isEmpty()
         && optimizationVariables != nullptr && optimizationVariables->isVisible()
-        && optimizationVariableControl != nullptr && !optimizationVariableControl->isVisible()
         && optimizationAdaptiveMaximum != nullptr && optimizationAdaptiveMaximum->isVisible()
         && optimizationAdaptiveScoreTolerance != nullptr
         && optimizationAdaptiveScoreTolerance->isVisible()
@@ -1628,9 +1623,8 @@ auto main(int argc, char* argv[]) -> int
     if (optimizationSearchMethods != nullptr) optimizationSearchMethods->setCurrentIndex(3);
     application.processEvents();
     const auto differentialEvolutionControlsValid = optimizationSearchMethods != nullptr
-        && !optimizationSearchMethods->tabToolTip(3).isEmpty()
+        && !optimizationSearchMethods->itemData(3, Qt::ToolTipRole).toString().isEmpty()
         && optimizationVariables != nullptr && optimizationVariables->isVisible()
-        && optimizationVariableControl != nullptr && !optimizationVariableControl->isVisible()
         && optimizationDifferentialEvolutionSettings != nullptr
         && optimizationDifferentialEvolutionSettings->isVisible()
         && optimizationAdaptiveMaximum != nullptr && !optimizationAdaptiveMaximum->isVisible()
@@ -1660,6 +1654,44 @@ auto main(int argc, char* argv[]) -> int
         && !optimizationScoreToleranceLabel->isVisible()
         && optimizationCandidateCount != nullptr
         && optimizationCandidateCount->value() == 7;
+    necwb::ui::OptimizationWorkspace sweepSelectionWorkspace;
+    sweepSelectionWorkspace.setContext(optimizationSource,
+        QStringLiteral("symbol-units.nec"), QStringLiteral("nec2"), {}, 120, true);
+    application.processEvents();
+    auto* sweepSelectionMethod = sweepSelectionWorkspace.findChild<QComboBox*>(
+        QStringLiteral("optimizationSearchMethod"));
+    auto* sweepSelectionVariables = sweepSelectionWorkspace.findChild<QTableWidget*>(
+        QStringLiteral("optimizationVariablesTable"));
+    auto* sweepSelectionRun = sweepSelectionWorkspace.findChild<QPushButton*>(
+        QStringLiteral("optimizationRun"));
+    auto* sweepSelectionSummary = sweepSelectionWorkspace.findChild<QLabel*>(
+        QStringLiteral("optimizationStudySummary"));
+    auto sweepSelectionValid = sweepSelectionMethod != nullptr
+        && sweepSelectionVariables != nullptr && sweepSelectionRun != nullptr
+        && sweepSelectionSummary != nullptr
+        && sweepSelectionVariables->rowCount() == 3
+        && !sweepSelectionVariables->isHidden()
+        && sweepSelectionMethod->currentText() == QStringLiteral("Parameter Sweep")
+        && sweepSelectionSummary->text().contains(
+            QStringLiteral("Goal: Minimize Worst-Case SWR"));
+    if (sweepSelectionValid) {
+        sweepSelectionMethod->setCurrentIndex(1);
+        sweepSelectionVariables->item(1, 0)->setCheckState(Qt::Checked);
+        sweepSelectionMethod->setCurrentIndex(0);
+        application.processEvents();
+        sweepSelectionValid = sweepSelectionVariables->item(0, 0)->checkState() == Qt::Checked
+            && sweepSelectionVariables->item(1, 0)->checkState() == Qt::Checked
+            && !sweepSelectionRun->isEnabled()
+            && sweepSelectionRun->toolTip().contains(QStringLiteral("Check exactly one"));
+        sweepSelectionVariables->item(2, 0)->setCheckState(Qt::Checked);
+        application.processEvents();
+        sweepSelectionValid = sweepSelectionValid
+            && sweepSelectionVariables->item(0, 0)->checkState() == Qt::Unchecked
+            && sweepSelectionVariables->item(1, 0)->checkState() == Qt::Unchecked
+            && sweepSelectionVariables->item(2, 0)->checkState() == Qt::Checked
+            && !sweepSelectionRun->toolTip().contains(QStringLiteral("Check exactly one"))
+            && sweepSelectionSummary->text().contains(QStringLiteral("HALF"));
+    }
     auto wheelProtected = false;
     if (optimizationCandidateCount != nullptr) {
         optimizationCandidateCount->clearFocus();
@@ -1889,9 +1921,6 @@ auto main(int argc, char* argv[]) -> int
         || !optimizationResultsSplitter->isAncestorOf(optimizationResultsTable)
         || !optimizationResultsSplitter->isAncestorOf(optimizationCandidatePlots)
         || optimizationVariables == nullptr
-        || optimizationVariableControl == nullptr
-        || optimizationMinimum == nullptr
-        || optimizationMaximum == nullptr
         || optimizationSearchBudgetLabel == nullptr
         || !differentialEvolutionControlsValid
         || optimizationParameterSettings == nullptr
@@ -1950,6 +1979,7 @@ auto main(int argc, char* argv[]) -> int
         || !adaptiveControlsValid
         || !nelderMeadControlsValid
         || !sweepControlsValid
+        || !sweepSelectionValid
         || !wheelProtected
         || !compactSetupValid
         || !baselineOrchestrationValid
@@ -1997,8 +2027,7 @@ auto main(int argc, char* argv[]) -> int
         || optimizationVariables->item(0, 2)->text() != QStringLiteral("95.000")
         || optimizationVariables->item(0, 3)->text() != QStringLiteral("76.000")
         || optimizationVariables->item(0, 4)->text() != QStringLiteral("114.000")
-        || optimizationVariableControl->count() != 3
-        || optimizationVariableControl->findText(QStringLiteral("HALF")) < 0) {
+        || optimizationVariables->item(2, 1)->text() != QStringLiteral("HALF")) {
         return NECWB_SMOKE_FAILURE("optimization workspace");
     }
     necwb::ui::CurrentDistributionView currents;
