@@ -32,7 +32,6 @@ class QPushButton;
 class QSplitter;
 class QSpinBox;
 class QTableWidget;
-class QTabBar;
 class QTabWidget;
 
 namespace necwb::ui {
@@ -138,10 +137,9 @@ private:
     };
 
     void populateVariables(const nec::SymbolResolution& resolution);
-    [[nodiscard]] auto selectedAdaptiveVariables() const
+    [[nodiscard]] auto selectedVariables() const
         -> std::vector<StudySetup::VariableRange>;
     [[nodiscard]] auto candidateDescription(const Candidate& candidate) const -> QString;
-    void updateBounds();
     void updateObjectiveControls();
     void applySelectedObjectivePreset();
     void updateObjectivePresetControls();
@@ -177,6 +175,7 @@ private:
     [[nodiscard]] auto baselineRequirements(const StudySetup& setup) const
         -> analysis::OptimizationBaselineRequirements;
     void updateReadiness();
+    [[nodiscard]] auto readinessBlocker(const StudySetup& setup) const -> QString;
     void populateModelFrequencies(const model::FrequencyDefinition& frequency);
     void setExplicitFrequencies(const std::vector<double>& frequenciesMHz);
     void addExplicitFrequency(double frequencyMHz);
@@ -209,7 +208,6 @@ private:
     [[nodiscard]] auto currentStudySetup() const -> StudySetup;
     [[nodiscard]] auto captureFrequencySelection() const -> FrequencySelectionState;
     void restoreFrequencySelection(const FrequencySelectionState& state);
-    [[nodiscard]] auto objectiveName(analysis::OptimizationObjectiveKind kind) const -> QString;
     [[nodiscard]] static auto isMultivariable(SearchMethod method) noexcept -> bool;
     [[nodiscard]] auto searchMethodName(SearchMethod method) const -> QString;
     [[nodiscard]] static auto searchMethodId(SearchMethod method) -> QString;
@@ -219,10 +217,6 @@ private:
 
     QTableWidget* variablesTable_{};
     QWidget* parameterSettings_{};
-    QLabel* variableLabel_{};
-    QLabel* minimumLabel_{};
-    QLabel* maximumLabel_{};
-    QComboBox* variableControl_{};
     QComboBox* objectiveControl_{};
     QComboBox* objectivePresetControl_{};
     QDoubleSpinBox* presetSwrLimitControl_{};
@@ -274,10 +268,8 @@ private:
     QLabel* frequencySummaryLabel_{};
     QPushButton* editFrequencyButton_{};
     QDialog* frequencyDialog_{};
-    QDoubleSpinBox* minimumControl_{};
-    QDoubleSpinBox* maximumControl_{};
     QSpinBox* pointsControl_{};
-    QTabBar* searchMethodTabs_{};
+    QComboBox* searchMethodControl_{};
     QLabel* searchBudgetLabel_{};
     QLabel* adaptiveParameterToleranceLabel_{};
     QLabel* adaptiveScoreToleranceLabel_{};
@@ -294,6 +286,7 @@ private:
     QDoubleSpinBox* referenceImpedanceControl_{};
     QLabel* studySummaryLabel_{};
     QLabel* objectiveSummaryLabel_{};
+    QLabel* objectiveWarningLabel_{};
     QLabel* objectiveExplanationLabel_{};
     QLabel* targetFrequencyLabel_{};
     QLabel* directionalFrequencyNote_{};
@@ -359,6 +352,7 @@ private:
     std::size_t candidateIndex_{};
     double bestScore_{};
     QString searchStopReason_;
+    QString readinessMessage_;
     std::optional<analysis::AdaptiveVectorSearch> adaptiveVectorSearch_;
     std::optional<analysis::NelderMeadSearch> nelderMeadSearch_;
     std::optional<analysis::DifferentialEvolutionSearch> differentialEvolutionSearch_;
@@ -370,6 +364,7 @@ private:
     bool externalRunActive_{};
     bool cancelRequested_{};
     bool historicalSession_{};
+    bool symbolsResolved_{};
     bool contextInitialized_{};
     bool preserveStudyOnNextContextUpdate_{};
     bool baselineRunInProgress_{};
