@@ -427,6 +427,8 @@ private:
         analysis::AverageGainEnvironment::FreeSpace};
     double currentAverageGainFrequencyMHz_{};
     double currentPeakSearchFrequencyMHz_{};
+    // SWR reference requested by the optimization study whose baseline is running.
+    double currentBaselineReferenceImpedanceOhms_{50.0};
     int currentRunRow_{-1};
     int geometryTabIndex_{};
     int geometry3DTabIndex_{};

@@ -105,6 +105,8 @@ auto optimizationModelFingerprint(std::string_view resolvedDeck) -> std::string
     for (const auto& card : document.cards()) {
         if (card.kind == nec::NecCardKind::Blank || card.kind == nec::NecCardKind::Comment
             || card.kind == nec::NecCardKind::Symbol
+            // Solver decks drop Z0/ZO; the reference impedance is compared separately.
+            || card.kind == nec::NecCardKind::ReferenceImpedance
             || card.kind == nec::NecCardKind::Frequency
             || card.kind == nec::NecCardKind::RadiationPattern
             || card.kind == nec::NecCardKind::Execute) {

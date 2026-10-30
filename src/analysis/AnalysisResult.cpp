@@ -291,8 +291,14 @@ auto radiationTrackedCutFrequencyMetrics(std::span<const RadiationSample> sample
         for (const auto& sample : samples) {
             if (std::abs(sample.frequencyMHz - frequencyMHz) > frequencyToleranceMHz)
                 continue;
+            // An elevation cut is the vertical plane at phi = cut angle; negative theta and
+            // phi + 180 describe the same plane, so test the direction rather than the angles.
+            constexpr auto radiansPerDegree = std::numbers::pi / 180.0;
             const auto inPrimaryCut = mode == DirectionalEvaluationMode::StrongestInElevationCut
-                || std::abs(sample.thetaDegrees - cutAngleDegrees) <= angleToleranceDegrees;
+                ? std::abs(std::sin(sample.thetaDegrees * radiansPerDegree)
+                      * std::sin((sample.phiDegrees - cutAngleDegrees) * radiansPerDegree))
+                    <= 1.0e-6
+                : std::abs(sample.thetaDegrees - cutAngleDegrees) <= angleToleranceDegrees;
             if (!inPrimaryCut) continue;
             hasFrontCoverage = true;
             const auto gain = radiationGainDb(sample, component);

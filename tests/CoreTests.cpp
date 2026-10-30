@@ -299,6 +299,15 @@ void testOptimizationBaselineFingerprint()
             && necwb::analysis::optimizationModelFingerprint(firstResolution.generatedDeck)
                 != necwb::analysis::optimizationModelFingerprint(secondResolution.generatedDeck),
         "optimization fingerprints include resolved SY values");
+
+    // Solver decks omit the Workbench reference-impedance card, so an analysis of the same
+    // model must still match the study.
+    const std::string withReference =
+        "ZO 75\nGW 1 11 0 0 0 1 0 0 .001\nGE 0\nEX 0 1 6 0 1 0\nFR 0 1 0 0 14.2 0\nEN\n";
+    expect(necwb::analysis::optimizationModelFingerprint(withReference)
+            == necwb::analysis::optimizationModelFingerprint(
+                necwb::analysis::prepareImpedanceInput(withReference)),
+        "optimization fingerprints ignore the reference-impedance card removed from solver decks");
 }
 
 void testOptimizationBaselineCompatibility()
@@ -2378,6 +2387,23 @@ void testOptimizationObjectives()
             && elevatedCutMetrics.front().frontToBackDb
             && *elevatedCutMetrics.front().frontToBackDb == 15.0,
         "tracked azimuth-cut F/B uses the opposite azimuth at the same theta");
+    // A stronger lobe in another vertical plane must not be taken as the elevation-cut peak.
+    const std::array twoElevationCuts{
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = 60.0,
+            .phiDegrees = 30.0, .totalGainDb = 5.0},
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = -60.0,
+            .phiDegrees = 30.0, .totalGainDb = 3.0},
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = 60.0,
+            .phiDegrees = 120.0, .totalGainDb = 9.0, .patternIndex = 1},
+    };
+    const auto elevationCutMetrics = necwb::analysis::radiationTrackedCutFrequencyMetrics(
+        twoElevationCuts, necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInElevationCut, 30.0);
+    expect(elevationCutMetrics.size() == 1 && elevationCutMetrics.front().forwardGainDb
+            && *elevationCutMetrics.front().forwardGainDb == 5.0
+            && elevationCutMetrics.front().forwardPhiDegrees
+            && *elevationCutMetrics.front().forwardPhiDegrees == 30.0,
+        "tracked elevation-cut metrics consider only the requested vertical plane");
     auto trackedObjective = directionalObjective;
     trackedObjective.kind = necwb::analysis::OptimizationObjectiveKind::PerCriterion;
     trackedObjective.directionalEvaluationMode =

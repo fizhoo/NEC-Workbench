@@ -1651,6 +1651,7 @@ void MainWindow::createOptimizationWorkspace()
             if (modelErrorCount_ != 0 || !resolution.ok()) return false;
             const auto solverInput = analysis::prepareOptimizationInput(
                 resolution.generatedDeck, frequencyPlan, objective);
+            currentBaselineReferenceImpedanceOhms_ = objective.referenceImpedance;
             startAnalysisRun(std::string(cache.source()), solverInput,
                 QStringLiteral("optimization-baseline"),
                 tr("Optimization baseline · %1 frequencies")
@@ -4229,7 +4230,10 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
         analysisOutput_->setPlainText(QString::fromLocal8Bit(outputBytes));
         auto result = analysis::NecOutputParser{}.parse(std::string_view(
             outputBytes.constData(), static_cast<std::size_t>(outputBytes.size())));
-        result.referenceImpedanceOhms = model::referenceImpedanceOhms(currentSetup_);
+        // A baseline is judged against the study's reference, which may differ from the model's.
+        result.referenceImpedanceOhms = currentRunPurpose_ == SolverRunPurpose::OptimizationBaseline
+            ? currentBaselineReferenceImpedanceOhms_
+            : model::referenceImpedanceOhms(currentSetup_);
         if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
             if (!result.averagePowerGain) {
                 if (const auto integrated = analysis::integrateAverageGain(
