@@ -138,7 +138,7 @@ private:
     void jumpRawOutputToSelectedFrequency();
     void findInRawOutput();
     void showEditor(EditorDestination destination, int geometryTab = 0);
-    void fitControlPanelWindow();
+    void fitWindowToDashboard();
     void setDisplayLengthUnit(model::LengthUnit unit);
     void changeDeckLengthUnit(model::LengthUnit unit);
     void updateDeckUnitControls(const nec::DeckGeometryUnitInfo& info);
@@ -390,9 +390,6 @@ private:
     QProgressBar* runMonitorProgress_{};
     QPushButton* runMonitorStopButton_{};
     QLabel* checkStatus_{};
-    QWidget* solverActivityWidget_{};
-    QProgressBar* solverActivityProgress_{};
-    QPushButton* solverActivityCancelButton_{};
     QLabel* modelFileStatus_{};
     analysis::AnalysisResult displayedResults_;
     mutable nec::NecSourceCache activeSourceCache_;

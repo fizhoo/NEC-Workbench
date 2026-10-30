@@ -135,7 +135,6 @@
 namespace necwb::ui {
 namespace {
 
-constexpr QSize kControlPanelMinimum{520, 440};
 constexpr QSize kResultWindowSize{520, 380};
 
 constexpr auto ItemKindRole = Qt::UserRole;
@@ -423,7 +422,6 @@ MainWindow::MainWindow()
 {
     setWindowTitle(tr("Untitled[*] — NEC Workbench"));
     setWindowModified(false);
-    setMinimumSize(kControlPanelMinimum);
 
     solverRunner_ = new SolverProcessRunner(this);
     createActions();
@@ -444,6 +442,14 @@ MainWindow::MainWindow()
     });
     createDocks();
     createMenusAndToolbar();
+    // The main window only shows the dashboard (every module opens in its own window), and
+    // the dashboard does not stretch, so the window is fixed to its content instead of
+    // letting a short window squeeze sections over each other.
+    layout()->setSizeConstraint(QLayout::SetFixedSize);
+    statusBar()->setSizeGripEnabled(false);
+    connect(dashboardStack_, &QStackedWidget::currentChanged,
+        this, [this] { fitWindowToDashboard(); });
+    fitWindowToDashboard();
     qApp->installEventFilter(this);
     setWorkspaceDensity(workspaceDensityFromId(QSettings{}.value(
         QStringLiteral("appearance/workspaceDensity"), QStringLiteral("compact")).toString()));
@@ -455,25 +461,6 @@ MainWindow::MainWindow()
     statusBar()->addPermanentWidget(modelFileStatus_, 1);
     checkStatus_ = new QLabel(tr("No model loaded"), this);
     statusBar()->addPermanentWidget(checkStatus_);
-    solverActivityWidget_ = new QWidget(this);
-    solverActivityWidget_->setObjectName(QStringLiteral("solverActivityWidget"));
-    auto* solverActivityLayout = new QHBoxLayout(solverActivityWidget_);
-    solverActivityLayout->setContentsMargins(6, 0, 0, 0);
-    solverActivityLayout->setSpacing(6);
-    solverActivityProgress_ = new QProgressBar(solverActivityWidget_);
-    solverActivityProgress_->setObjectName(QStringLiteral("solverActivityProgress"));
-    solverActivityProgress_->setRange(0, 0);
-    solverActivityProgress_->setTextVisible(true);
-    solverActivityProgress_->setMinimumWidth(135);
-    solverActivityProgress_->setMaximumWidth(190);
-    solverActivityCancelButton_ = new QPushButton(tr("Cancel"), solverActivityWidget_);
-    solverActivityCancelButton_->setObjectName(QStringLiteral("solverActivityCancelButton"));
-    solverActivityLayout->addWidget(solverActivityProgress_);
-    solverActivityLayout->addWidget(solverActivityCancelButton_);
-    statusBar()->addPermanentWidget(solverActivityWidget_);
-    solverActivityWidget_->hide();
-    connect(solverActivityCancelButton_, &QPushButton::clicked,
-        this, [this] { cancelAnalysis(); });
     connect(solverRunner_, &SolverProcessRunner::started, this, [this] {
         solverActivityPhase_ = tr("Solving");
         updateSolverActivity();
@@ -541,6 +528,11 @@ MainWindow::MainWindow()
 
 auto MainWindow::eventFilter(QObject* watched, QEvent* event) -> bool
 {
+    // Dashboard content changes size (results, stale markers, density), so refit the
+    // window whenever the visible dashboard page asks for a new layout.
+    if (event->type() == QEvent::LayoutRequest && dashboardStack_ != nullptr
+        && watched == dashboardStack_->currentWidget())
+        QTimer::singleShot(0, this, [this] { fitWindowToDashboard(); });
     if (event->type() == QEvent::Show) {
         auto* dialog = qobject_cast<QDialog*>(watched);
         if (dialog != nullptr && dialog->isWindow()
@@ -2607,13 +2599,14 @@ void MainWindow::openFileAtPath(const QString& path)
     checkModel();
 }
 
-void MainWindow::fitControlPanelWindow()
+void MainWindow::fitWindowToDashboard()
 {
-    if (isMaximized() || controlPanel_ == nullptr) return;
-    const auto hint = controlPanel_->sizeHint();
-    const auto frameHeight = menuBar()->sizeHint().height()
-        + statusBar()->sizeHint().height();
-    resize(QSize{hint.width(), hint.height() + frameHeight}.expandedTo(kControlPanelMinimum));
+    auto* page = dashboardStack_ == nullptr ? nullptr : dashboardStack_->currentWidget();
+    if (page == nullptr) return;
+    if (isMaximized() || isFullScreen()) showNormal();
+    // The window is fixed to its layout (see the constructor), so sizing the central
+    // widget to the dashboard sizes the whole window, including any visible dock.
+    centralWidget()->setFixedSize(page->sizeHint().expandedTo(page->minimumSizeHint()));
 }
 
 void MainWindow::openExample()
@@ -4082,9 +4075,6 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
     solverActivityName_ = activity;
     solverActivityPhase_ = tr("Starting solver");
     solverElapsed_.start();
-    solverActivityProgress_->setRange(0, 0);
-    solverActivityCancelButton_->setEnabled(true);
-    solverActivityWidget_->show();
     updateSolverActivity();
     if (solverActivityTimer_ == nullptr) {
         solverActivityTimer_ = new QTimer(this);
@@ -4118,7 +4108,6 @@ void MainWindow::cancelAnalysis()
     if (!solverRunner_->isRunning()) return;
     stopAction_->setEnabled(false);
     solverActivityPhase_ = tr("Canceling");
-    solverActivityCancelButton_->setEnabled(false);
     runMonitorStopButton_->setEnabled(false);
     updateSolverActivity();
     appendSolverOutput(tr("\nCancellation requested; stopping solver.\n"));
@@ -4157,32 +4146,24 @@ void MainWindow::showRunMonitor(bool manuallyRequested)
 
 void MainWindow::updateSolverActivity()
 {
-    if (solverActivityWidget_ == nullptr || !solverActivityWidget_->isVisible()) return;
+    if (runMonitorStatusLabel_ == nullptr) return;
     auto detail = tr("%1 · %2 · %3 s")
         .arg(solverActivityName_, solverActivityPhase_)
         .arg(formatDecimal(solverElapsed_.isValid() ? solverElapsed_.elapsed() / 1000.0 : 0.0));
     const QFileInfo output(currentRunOutputPath_);
     if (output.exists() && output.size() > 0)
         detail += tr(" · output %1").arg(formatByteSize(output.size()));
-    solverActivityProgress_->setFormat(detail);
-    if (runMonitorStatusLabel_ != nullptr) runMonitorStatusLabel_->setText(detail);
+    runMonitorStatusLabel_->setText(detail);
 }
 
 void MainWindow::completeSolverActivity(const QString& status)
 {
     if (solverActivityTimer_ != nullptr) solverActivityTimer_->stop();
     solverActivityPhase_ = status;
-    solverActivityProgress_->setRange(0, 1);
-    solverActivityProgress_->setValue(status == tr("Completed") ? 1 : 0);
-    solverActivityCancelButton_->setEnabled(false);
     runMonitorProgress_->setRange(0, 1);
     runMonitorProgress_->setValue(status == tr("Completed") ? 1 : 0);
     runMonitorStopButton_->setEnabled(false);
     updateSolverActivity();
-    QTimer::singleShot(5000, this, [this] {
-        if (!solverRunner_->isRunning() && solverActivityWidget_ != nullptr)
-            solverActivityWidget_->hide();
-    });
     if (status == tr("Completed") && !runMonitorPinnedOpen_
         && runMonitorAutoHideTimer_ != nullptr) {
         runMonitorAutoHideTimer_->start();
@@ -5724,7 +5705,7 @@ void MainWindow::setCurrentFile(QString path)
     if (optimizationPanel_ != nullptr) optimizationPanel_->setStatusText(
         tr("%1 · %2").arg(modelName,
             optimizationWorkspace_->isRunning() ? tr("Running") : tr("Ready")));
-    if (hasNecModel_) QTimer::singleShot(0, this, [this] { fitControlPanelWindow(); });
+    if (hasNecModel_) QTimer::singleShot(0, this, [this] { fitWindowToDashboard(); });
 }
 
 void MainWindow::restoreWorkspaceLayout()
@@ -5736,7 +5717,6 @@ void MainWindow::restoreWorkspaceLayout()
     } else {
         const auto normalGeometry = settings.value(QStringLiteral("mainWindow/normalGeometry")).toRect();
         if (normalGeometry.isValid()) setGeometry(normalGeometry);
-        else resize(sizeHint().expandedTo(kControlPanelMinimum));
     }
     const auto savedState = settings.value(QStringLiteral("mainWindow/state")).toByteArray();
     restoreState(savedState);
