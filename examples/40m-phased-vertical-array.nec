@@ -1,0 +1,18 @@
+CM 40 m two-element phased vertical array over perfect ground
+CM Quarter-wave verticals a quarter wavelength apart along X, fed 90 degrees
+CM apart for a cardioid pattern toward +X (toward the lagging element)
+CM The EX voltages force equal currents in quadrature at 7.15 MHz despite
+CM mutual coupling; they were computed for these dimensions, so recompute
+CM them after changing vert_len or spacing. Note the unequal feed impedances.
+CE
+SY vert_len=10.2, spacing=10.48
+SY rad=0.0125
+GW 1 21 0 0 0 0 0 vert_len rad
+GW 2 21 spacing 0 0 spacing 0 vert_len rad
+GE 1
+GN 1
+EX 0 1 1 0 1.0 0.0
+EX 0 2 1 0 2.1154 -1.3339
+FR 0 31 0 0 7.0 0.01
+RP 0 19 73 1000 0 0 5 5
+EN

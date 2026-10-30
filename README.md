@@ -37,6 +37,20 @@ cards.
 
 Most individual controls also provide tooltips in the application.
 
+## Examples
+
+The [examples](examples) folder contains ready-to-run decks, including:
+
+- `2m-3-element-yagi.nec` — free-space Yagi with a direct 50 Ω feed; directional
+  results, F/B optimization, and element current phase
+- `40m-vertical-elevated-radials.nec` — quarter-wave vertical over average real ground
+  with drooping radials; takeoff angle and currents at a multi-wire junction
+- `40m-phased-vertical-array.nec` — two verticals fed in quadrature over perfect
+  ground; multiple sources, a cardioid pattern, and the animated currents view
+- `40m-symbolic-dipole.nec` — `SY` variables and expressions
+- `80-6 ocfd.nec`, the folded dipoles, and the `geometry-*` decks — off-center feeds,
+  transmission lines, and generated `GM`/`GR`/`GX` geometry
+
 ## Build
 
 Requirements:

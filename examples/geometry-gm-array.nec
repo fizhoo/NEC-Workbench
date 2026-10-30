@@ -1,0 +1,9 @@
+CM GM example: three successively rotated vertical wires
+CE
+GW 1 5 1 0 0 1 0 1 0.001
+GM 10 2 0 0 120 0 0 0 1
+GE 0
+EX 0 1 3 0 1 0
+FR 0 1 0 0 100 0
+RP 0 19 37 1000 0 0 5 10
+EN

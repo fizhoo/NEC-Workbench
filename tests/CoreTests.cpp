@@ -2953,12 +2953,23 @@ void testSegmentCurrentDisplay()
             && std::abs(necwb::analysis::instantaneousCurrent(instant, 120.0) + 2.0) < 1.0e-12,
         "instantaneous current follows |I| cos(phase + cycle)");
 
-    necwb::model::AntennaModel vertical;
-    vertical.addWire({1, {0.0, 0.0, 0.0}, {0.0, 0.0, 5.0}, 1, 0.001, 1});
-    expect(necwb::analysis::dominantProjectionPlane(parallel) == necwb::geometry::ProjectionPlane::XY
-            && necwb::analysis::dominantProjectionPlane(vertical)
+    // A vertical over radials wider than it is tall must still be seen from the side.
+    necwb::model::AntennaModel groundPlane;
+    groundPlane.addWire({1, {0.0, 0.0, 6.0}, {0.0, 0.0, 16.0}, 1, 0.001, 1});
+    groundPlane.addWire({2, {0.0, 0.0, 6.0}, {10.0, 0.0, 6.0}, 1, 0.001, 2});
+    groundPlane.addWire({3, {0.0, 0.0, 6.0}, {0.0, 10.0, 6.0}, 1, 0.001, 3});
+    groundPlane.addWire({4, {0.0, 0.0, 6.0}, {-10.0, 0.0, 6.0}, 1, 0.001, 4});
+    groundPlane.addWire({5, {0.0, 0.0, 6.0}, {0.0, -10.0, 6.0}, 1, 0.001, 5});
+    const std::array groundPlaneCurrents{segmentCurrent(1, 1, 1.0, 0.0),
+        segmentCurrent(2, 1, 0.25, 180.0), segmentCurrent(3, 1, 0.25, 180.0),
+        segmentCurrent(4, 1, 0.25, 180.0), segmentCurrent(5, 1, 0.25, 180.0)};
+    const auto groundPlaneShown = necwb::analysis::displayedCurrents(groundPlaneCurrents, {},
+        groundPlane);
+    expect(necwb::analysis::dominantProjectionPlane(shown.segments)
+                == necwb::geometry::ProjectionPlane::XY
+            && necwb::analysis::dominantProjectionPlane(groundPlaneShown.segments)
                 == necwb::geometry::ProjectionPlane::XZ,
-        "the projection plane follows the antenna's largest extents");
+        "the projection plane shows the most current");
 }
 
 auto main() -> int

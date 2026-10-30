@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <limits>
 #include <numbers>
 
 namespace necwb::analysis {
@@ -68,28 +67,26 @@ auto instantaneousCurrent(const DisplayedSegmentCurrent& current, double cycleDe
         * std::cos((current.relativePhaseDegrees + cycleDegrees) * std::numbers::pi / 180.0);
 }
 
-auto dominantProjectionPlane(const model::AntennaModel& model) -> geometry::ProjectionPlane
+auto dominantProjectionPlane(std::span<const DisplayedSegmentCurrent> segments)
+    -> geometry::ProjectionPlane
 {
-    constexpr auto infinity = std::numeric_limits<double>::infinity();
-    model::Point3D minimum{infinity, infinity, infinity};
-    model::Point3D maximum{-infinity, -infinity, -infinity};
-    const auto include = [&](const model::Point3D& point) {
-        minimum = {std::min(minimum.x, point.x), std::min(minimum.y, point.y),
-            std::min(minimum.z, point.z)};
-        maximum = {std::max(maximum.x, point.x), std::max(maximum.y, point.y),
-            std::max(maximum.z, point.z)};
-    };
-    for (const auto& wire : model.wires()) {
-        for (auto index = std::size_t{}; index < model::wirePathPointCount(wire); ++index)
-            include(model::wirePathPoint(wire, index));
+    // Segment length each view shows, weighted by current, so the strongest-carrying wires
+    // stay visible: a vertical over wide radials gets a side view, not a top view.
+    auto xy = 0.0;
+    auto xz = 0.0;
+    auto yz = 0.0;
+    for (const auto& segment : segments) {
+        const auto dx = segment.end.x - segment.start.x;
+        const auto dy = segment.end.y - segment.start.y;
+        const auto dz = segment.end.z - segment.start.z;
+        xy += segment.magnitude * std::hypot(dx, dy);
+        xz += segment.magnitude * std::hypot(dx, dz);
+        yz += segment.magnitude * std::hypot(dy, dz);
     }
-    if (minimum.x > maximum.x) return geometry::ProjectionPlane::XY;
-    const auto x = maximum.x - minimum.x;
-    const auto y = maximum.y - minimum.y;
-    const auto z = maximum.z - minimum.z;
-    if (z <= std::min(x, y)) return geometry::ProjectionPlane::XY;
-    if (y <= x) return geometry::ProjectionPlane::XZ;
-    return geometry::ProjectionPlane::YZ;
+    // Near-ties prefer the top view, then the front view.
+    constexpr auto tieTolerance = 1.0 - 1.0e-9;
+    if (xy >= std::max(xz, yz) * tieTolerance) return geometry::ProjectionPlane::XY;
+    return xz >= yz * tieTolerance ? geometry::ProjectionPlane::XZ : geometry::ProjectionPlane::YZ;
 }
 
 }
