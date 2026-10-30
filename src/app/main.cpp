@@ -21,6 +21,7 @@ auto main(int argc, char* argv[]) -> int
     QApplication application(argc, argv);
     QApplication::setApplicationName("NEC Workbench");
     QApplication::setOrganizationName("NEC Workbench");
+    QApplication::setApplicationVersion(QStringLiteral(NECWB_DISPLAY_VERSION));
     auto applicationFont = application.font();
     applicationFont.setPointSize(workspaceDensityFontSize());
     application.setFont(applicationFont);
