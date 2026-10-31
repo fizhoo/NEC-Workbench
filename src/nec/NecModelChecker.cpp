@@ -249,9 +249,9 @@ struct SegmentGraph {
         return false;
     }
 
-    [[nodiscard]] auto grounded(const GraphNode& node, bool groundPresent) const noexcept -> bool
+    [[nodiscard]] auto grounded(const GraphNode& node, bool groundsEnds) const noexcept -> bool
     {
-        return groundPresent && std::abs(node.point.z) <= tolerance;
+        return groundsEnds && std::abs(node.point.z) <= tolerance;
     }
 };
 
@@ -460,11 +460,16 @@ void checkUnconnectedContacts(const SegmentGraph& graph, ModelCheckResult& resul
 void checkGroundFit(const model::ModelSetup& setup, const SegmentGraph& graph,
     double wavelengthMeters, CompatibilityProfile profile, ModelCheckResult& result)
 {
+    // In NEC-2, GN alone defines the ground, and GE alone decides whether wire ends at z = 0
+    // attach to it: CONECT ties them to the ground image only for GE 1. With GE 0 or -1 such
+    // an end stays open and its current is forced to zero.
     const auto groundType = setup.ground ? setup.ground->type : model::GroundType::FreeSpace;
     const auto groundPresent = groundType != model::GroundType::FreeSpace;
+    const auto groundFlag = setup.ground ? setup.ground->geometryGroundFlag : 0;
+    const auto groundsEnds = groundFlag > 0;
     const auto tolerance = graph.tolerance;
     const auto wires = result.model.wires();
-    std::vector<const model::Wire*> groundedLooking;
+    std::vector<const model::Wire*> openAtGround;
 
     for (std::size_t wireIndex = 0; wireIndex < wires.size(); ++wireIndex) {
         const auto& wire = wires[wireIndex];
@@ -476,7 +481,21 @@ void checkGroundFit(const model::ModelSetup& setup, const SegmentGraph& graph,
             highest = std::max(highest, model::wirePathPoint(wire, point).z);
         }
         const auto tag = std::to_string(wire.tag);
-        if (groundPresent && usesNec2Kernel(profile)) {
+        const auto first = graph.firstSegment[wireIndex];
+        // GE 1 also makes NEC-2 stop on these, even without GN.
+        if ((groundPresent || groundsEnds) && usesNec2Kernel(profile)) {
+            const auto inGroundPlane = groundsEnds && first != SegmentGraph::npos
+                && std::any_of(graph.segments.begin() + static_cast<std::ptrdiff_t>(first),
+                    graph.segments.begin() + static_cast<std::ptrdiff_t>(first + static_cast<std::size_t>(wire.segments)),
+                    [tolerance](const GraphSegment& segment) {
+                        return std::abs(segment.start.z) <= tolerance
+                            && std::abs(segment.end.z) <= tolerance;
+                    });
+            if (inGroundPlane) {
+                addAdequacyDiagnostic(result, DiagnosticSeverity::Error, wire.sourceLine,
+                    "Wire tag " + tag + " has segments lying in the ground plane at z = 0; "
+                        "with GE 1, NEC-2 stops on this. Raise the wire above ground.");
+            }
             if (lowest < -tolerance && highest > tolerance) {
                 addAdequacyDiagnostic(result, DiagnosticSeverity::Error, wire.sourceLine,
                     "Wire tag " + tag + " runs from z = " + concise(lowest) + " m to z = "
@@ -490,33 +509,43 @@ void checkGroundFit(const model::ModelSetup& setup, const SegmentGraph& graph,
                           "or use a NEC-4 class solver.");
             }
         }
-        if (!groundPresent && (lowest < -tolerance || highest > tolerance)
-            && graph.firstSegment[wireIndex] != SegmentGraph::npos) {
-            const auto& firstSegment = graph.segments[graph.firstSegment[wireIndex]];
-            const auto& lastSegment = graph.segments[graph.firstSegment[wireIndex]
-                + static_cast<std::size_t>(wire.segments - 1)];
+        // Wires rising from z = 0 with an unconnected end there; wires lying flat are skipped.
+        if ((lowest < -tolerance || highest > tolerance) && first != SegmentGraph::npos) {
+            const auto& lastSegment = graph.segments[first + static_cast<std::size_t>(wire.segments - 1)];
             const auto freeAtGround = [&graph, tolerance](std::size_t nodeIndex) {
                 const auto& node = graph.nodes[nodeIndex];
                 return node.segmentCount == 1 && std::abs(node.point.z) <= tolerance;
             };
-            if (freeAtGround(firstSegment.startNode) || freeAtGround(lastSegment.endNode))
-                groundedLooking.push_back(&wire);
+            if (freeAtGround(graph.segments[first].startNode) || freeAtGround(lastSegment.endNode))
+                openAtGround.push_back(&wire);
         }
     }
-    if (!groundedLooking.empty()) {
+    if (!openAtGround.empty() && !(groundPresent && groundsEnds)) {
         // One finding on GE, where the fix goes, rather than one per wire of an array.
         const auto geometryEnd = setup.ground ? setup.ground->geometryEndSourceLine : 0;
-        auto tags = std::string(groundedLooking.size() == 1 ? "Wire tag " : "Wire tags ");
-        for (std::size_t index = 0; index < groundedLooking.size() && index < 5; ++index)
-            tags += (index == 0 ? "" : ", ") + std::to_string(groundedLooking[index]->tag);
-        if (groundedLooking.size() > 5)
-            tags += " and " + std::to_string(groundedLooking.size() - 5) + " more";
-        addAdequacyWarning(result, geometryEnd != 0 ? geometryEnd : groundedLooking.front()->sourceLine,
-            tags + (groundedLooking.size() == 1
-                    ? " ends at z = 0, but the model has no ground, so that end is open in free "
-                      "space. If it should connect to ground, add a GN card and use GE 1."
-                    : " end at z = 0, but the model has no ground, so those ends are open in "
-                      "free space. If they should connect to ground, add a GN card and use GE 1."));
+        const auto single = openAtGround.size() == 1;
+        auto tags = std::string(single ? "Wire tag " : "Wire tags ");
+        for (std::size_t index = 0; index < openAtGround.size() && index < 5; ++index)
+            tags += (index == 0 ? "" : ", ") + std::to_string(openAtGround[index]->tag);
+        if (openAtGround.size() > 5)
+            tags += " and " + std::to_string(openAtGround.size() - 5) + " more";
+        tags += single ? " ends at z = 0" : " end at z = 0";
+        const auto lineNumber = geometryEnd != 0 ? geometryEnd : openAtGround.front()->sourceLine;
+        if (groundsEnds) {
+            addAdequacyWarning(result, lineNumber,
+                tags + ", and GE 1 ties wire ends there to ground, but no GN card defines a "
+                       "ground, so NEC solves free space without the ground image. Add a GN "
+                       "card, or use GE 0 for a free-space model.");
+        } else if (groundPresent) {
+            addAdequacyWarning(result, lineNumber,
+                tags + " over the GN ground, but GE " + std::to_string(groundFlag)
+                    + " does not connect wire ends to ground, so NEC forces the current to zero "
+                      "there. Use GE 1 to connect them.");
+        } else {
+            addAdequacyWarning(result, lineNumber,
+                tags + ", but the model has no ground, so NEC treats each such end as open in "
+                       "free space. To connect to ground, add a GN card and use GE 1.");
+        }
     }
 
     if (groundType != model::GroundType::ReflectionApproximation) return;
@@ -652,7 +681,7 @@ struct InsertionFinding {
 
 // Why a segment is a poor place for a source, load, or transmission-line end, if it is.
 auto insertionRisk(const SegmentGraph& graph, const model::AntennaModel& model,
-    const model::SegmentReference& reference, bool groundPresent) -> InsertionFinding
+    const model::SegmentReference& reference, bool groundsEnds) -> InsertionFinding
 {
     if (reference.wire == nullptr) return {};
     const auto* segment = graph.find(model, *reference.wire, reference.segment);
@@ -665,18 +694,18 @@ auto insertionRisk(const SegmentGraph& graph, const model::AntennaModel& model,
             return {InsertionRisk::RadiusStep, &node};
         // A one-segment wire is the usual stub for a TL or NT terminal; its ends are expected.
         if (node.segmentCount == 1 && reference.wire->segments > 1
-            && !graph.grounded(node, groundPresent))
+            && !graph.grounded(node, groundsEnds))
             freeEnd = {InsertionRisk::FreeEnd, &node};
     }
     return freeEnd;
 }
 
 void reportInsertionRisk(ModelCheckResult& result, const SegmentGraph& graph,
-    bool groundPresent, std::string_view card, int wireTag, int segment, std::size_t lineNumber)
+    bool groundsEnds, std::string_view card, int wireTag, int segment, std::size_t lineNumber)
 {
     const auto reference = model::referencedSegment(result.model, wireTag, segment);
     if (!reference) return;
-    const auto finding = insertionRisk(graph, result.model, *reference, groundPresent);
+    const auto finding = insertionRisk(graph, result.model, *reference, groundsEnds);
     const auto isLine = card == "TL";
     const auto subject = std::string(isLine ? "TL end" : card) + " on wire tag "
         + std::to_string(wireTag) + " segment " + std::to_string(segment);
@@ -714,8 +743,9 @@ void checkStaticAdequacy(const model::ModelSetup& setup, CompatibilityProfile pr
     if (!std::isfinite(highestFrequencyMHz) || highestFrequencyMHz <= 0.0) return;
     const auto wavelengthMeters = 299.792458 / highestFrequencyMHz;
     const auto graph = buildSegmentGraph(result.model);
-    const auto groundPresent = setup.ground
-        && setup.ground->type != model::GroundType::FreeSpace;
+    // Only GE 1 ties wire ends at z = 0 to ground; otherwise they are free ends.
+    const auto groundsEnds = setup.ground
+        && setup.ground->geometryGroundFlag > 0;
 
     struct Endpoint {
         model::Point3D point;
@@ -784,7 +814,7 @@ void checkStaticAdequacy(const model::ModelSetup& setup, CompatibilityProfile pr
         const auto reference = model::referencedSegment(result.model, excitation.wireTag,
             excitation.segment);
         if (!reference || reference->wire == nullptr) continue;
-        reportInsertionRisk(result, graph, groundPresent, "EX", excitation.wireTag,
+        reportInsertionRisk(result, graph, groundsEnds, "EX", excitation.wireTag,
             excitation.segment, excitation.sourceLine);
         const auto* wire = reference->wire;
         if (wire->segments % 2 != 0) continue;
@@ -799,13 +829,13 @@ void checkStaticAdequacy(const model::ModelSetup& setup, CompatibilityProfile pr
         // Only single-segment lumped loads sit at one place; LD 5 and ranges are distributed.
         if (load.type == 5 || load.firstSegment < 1 || load.lastSegment != load.firstSegment)
             continue;
-        reportInsertionRisk(result, graph, groundPresent, "LD", load.wireTag, load.firstSegment,
+        reportInsertionRisk(result, graph, groundsEnds, "LD", load.wireTag, load.firstSegment,
             load.sourceLine);
     }
     for (const auto& line : setup.transmissionLines) {
-        reportInsertionRisk(result, graph, groundPresent, "TL", line.wireTag1, line.segment1,
+        reportInsertionRisk(result, graph, groundsEnds, "TL", line.wireTag1, line.segment1,
             line.sourceLine);
-        reportInsertionRisk(result, graph, groundPresent, "TL", line.wireTag2, line.segment2,
+        reportInsertionRisk(result, graph, groundsEnds, "TL", line.wireTag2, line.segment2,
             line.sourceLine);
         // A zero length tells NEC to use the straight-line distance.
         if (line.lengthMeters <= 0.0) continue;

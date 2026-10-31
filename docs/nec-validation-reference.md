@@ -124,13 +124,14 @@ and Segmentation Convergence for numerical validation.
 | Large multiwire junction | Warning | More than 30 wires |
 | Even-segment center-fed wire | Warning | `EX` on either middle segment of an even-segment wire |
 | Wires that cross or touch without connecting | Warning | Closest approach of two segments within the sum of their radii, unless they share a segment end or are one segment apart. A free wire end resting on another wire between its segment ends is reported as an unconnected T |
-| Wire below a defined ground | Error | Any point below z = 0 with `GN` 0, 1, or 2 (NEC-2 family backends) |
-| Wire passing through a defined ground | Error | One end above z = 0 and another point below it |
-| Free-space wire ending at z = 0 | Warning | No ground, a free wire end at z = 0, and the wire not lying in the z = 0 plane. Reported once on `GE` |
+| Wire below ground | Error | Any point below z = 0 with `GN` 0, 1, or 2, or with `GE 1` (NEC-2 family backends) |
+| Wire passing through ground | Error | One end above z = 0 and another point below it, under the same conditions |
+| Segment lying in the ground plane | Error | Both segment ends at z = 0 with `GE 1`; NEC-2 stops on this |
+| Wire end at z = 0 that is not tied to ground | Warning | A free wire end at z = 0 on a wire that does not lie in the z = 0 plane, unless the deck has both `GN` and `GE 1`. The message covers the three cases: no ground, `GN` with `GE 0`/`-1`, and `GE 1` without `GN`. Reported once on `GE` |
 | `GN 0` with low horizontal wires | Warning | Segment centers below 0.1 λ and within 30° of horizontal; suggests `GN 2` |
 | Unaligned closely spaced parallel wires | Warning | Straight wires within 5° of parallel, overlapping by at least a segment, closer than max(10 × the larger radius, 0.01 λ) but not touching, with segment junctions offset by more than 10% of the shorter segment. Applies to NEC-2 family backends only |
 | `EX`, `LD`, or `TL` end at a risky segment | Warning | The segment touches a junction of more than two segments, or a junction where radii differ by more than 10% |
-| `EX` or `LD` on a free wire end | Information | The segment touches an unconnected wire end that is not on a defined ground. One-segment wires (`TL`/`NT` stubs), `LD 5`, and segment-range loads are skipped |
+| `EX` or `LD` on a free wire end | Information | The segment touches an unconnected wire end that `GE 1` does not tie to ground. One-segment wires (`TL`/`NT` stubs), `LD 5`, and segment-range loads are skipped |
 | Transmission line shorter than its gap | Warning | Explicit nonzero `TL` length more than 1% below the straight-line distance between the two segment centers. A zero or omitted length is not checked, since NEC then uses that distance |
 
 The 0.1 λ `GN 0` height, the 5° parallel angle, the close-spacing limits, the 10%
@@ -139,6 +140,12 @@ alignment and radius-step limits, and the 1% `TL` tolerance are named constants 
 limits. The buried-wire and parallel-alignment checks reflect NEC-2 kernel limitations;
 every current backend uses that kernel, and both checks are gated on it so NEC-4 class
 backends can skip them later.
+
+Ground handling follows NEC-2's `CONECT`: `GN` alone defines the ground (`GN -1` or no
+`GN` means free space), and only `GE 1` ties wire ends at z = 0 to the ground image.
+With `GE 0` or `GE -1`, such an end stays open and NEC forces its current to zero.
+Workbench reads the first `GN` card; a later `GN` changes the ground for later
+execution requests in NEC but is not yet checked separately.
 
 `TL` lengths are compared in meters, as NEC reads them; a `GS` card scales the geometry
 but not the `TL` length.
