@@ -143,9 +143,8 @@ constexpr auto SourceLineRole = Qt::UserRole + 2;
 
 auto modelSegmentCount(const model::AntennaModel& model) -> int
 {
-    auto count = 0;
-    for (const auto& wire : model.wires()) count += wire.segments;
-    return count;
+    // Includes undrawn geometry such as flat spirals, which the solver still segments.
+    return model::referencedSegmentCount(model, 0);
 }
 
 auto historicalOverlayStatusText(analysis::HistoricalOverlayStatus status) -> QString
@@ -2043,6 +2042,13 @@ void MainWindow::showAutoSegmentation()
         || unsupportedExcitation != document.cards().end()) {
         QMessageBox::warning(this, tr("Automatic Segmentation"),
             tr("This deck contains an unsupported EX, LD, TL, or NT card. Supported EX 0, LD, and TL segment references are remapped automatically; NT networks remain unsupported."));
+        return;
+    }
+    if (model::hasCrossWireSegmentReferences(currentModel_, currentSetup_)) {
+        QMessageBox::warning(this, tr("Automatic Segmentation"),
+            tr("This deck uses one tag number on more than one wire, or refers to segments by "
+               "absolute number (tag 0). Automatic Segmentation cannot yet remap those references "
+               "safely. Give each wire its own tag to use it."));
         return;
     }
     const auto maximumFrequencyMHz = std::max(currentSetup_.frequency->startMHz,

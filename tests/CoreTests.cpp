@@ -998,7 +998,10 @@ void testGeneratedWireGeometryConversion()
 
     const auto spiral = necwb::nec::NecModelConverter{}.convert(necwb::nec::NecParser{}.parse(
         "GH 8 40 0.05 0 0.1 0.1 0.2 0.2 0.001\nGE 0\n"));
-    expect(spiral.model.empty() && spiral.issues.empty(),
+    expect(spiral.model.empty() && spiral.issues.empty()
+            && spiral.model.unrenderedSegments().size() == 1
+            && spiral.model.unrenderedSegments()[0].tag == 8
+            && spiral.model.unrenderedSegments()[0].segments == 40,
         "valid flat-spiral GH remains preserved without claiming graphical expansion");
 }
 
@@ -1212,6 +1215,117 @@ void testCardValidation()
     expect(result.errorCount() == 3, "invalid EX and FR values produce errors");
     expect(result.warningCount() == 1, "unknown card produces a warning");
     expect(result.diagnostics.front().lineNumber == 3, "card diagnostic retains source line");
+}
+
+void testSharedTagReferences()
+{
+    // NEC reads EX/LD/TL tag references as the m-th segment among all wires with that tag,
+    // and tag 0 as an absolute segment number.
+    const std::string deck =
+        "GW 1 11 0 -0.5 0 0 0.5 0 0.003\n"
+        "GW 1 11 0.2 0.5 0 0.2 -0.5 0 0.003\n"
+        "GW 0 5 0.4 -0.3 0 0.4 0.3 0 0.003\n"
+        "GE 0\n";
+    const auto check = [&deck](const std::string& cards) {
+        return necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
+            deck + cards + "FR 0 1 0 0 146 0\nEN\n"));
+    };
+    const auto shared = check("EX 0 1 17 0 1 0\nLD 0 1 12 22 50 0 0\nTL 1 6 0 25 50 0\n");
+    expect(shared.errorCount() == 0,
+        "segments past the first wire of a shared tag are valid references");
+    expect(check("EX 0 1 23 0 1 0\n").errorCount() == 1
+            && check("EX 0 0 28 0 1 0\n").errorCount() == 1
+            && check("TL 1 23 1 1 50 0\n").errorCount() == 1,
+        "references past every wire with the tag, or past the structure, are rejected");
+    expect(check("EX 0 0 27 0 1 0\n").errorCount() == 0,
+        "tag 0 refers to an absolute segment number");
+
+    const auto& model = shared.model;
+    const auto reference = necwb::model::referencedSegment(model, 1, 17);
+    const auto absolute = necwb::model::referencedSegment(model, 0, 24);
+    expect(reference && reference->wire == &model.wires()[1] && reference->segment == 6
+            && absolute && absolute->wire == &model.wires()[2] && absolute->segment == 2
+            && necwb::model::referencedSegmentCount(model, 1) == 22
+            && necwb::model::referencedSegmentCount(model, 0) == 27
+            && necwb::model::hasSharedWireTags(model),
+        "tag references resolve to the wire NEC uses");
+    const auto marker = necwb::model::wireSegmentPosition(model, 1, 17);
+    expect(marker && std::abs(marker->x - 0.2) < 1.0e-12 && std::abs(marker->y) < 1.0e-12,
+        "a source on the second wire of a shared tag is drawn on that wire");
+    necwb::model::AntennaModel separateTags;
+    separateTags.addWire({1, {0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, 3, 0.001, 1});
+    separateTags.addWire({2, {0.0, 1.0, 0.0}, {1.0, 1.0, 0.0}, 3, 0.001, 2});
+    necwb::model::ModelSetup globalLoad;
+    globalLoad.loads.push_back({.wireTag = 0});
+    necwb::model::ModelSetup rangedGlobalLoad;
+    rangedGlobalLoad.loads.push_back({.wireTag = 0, .firstSegment = 2, .lastSegment = 4});
+    expect(!necwb::model::hasCrossWireSegmentReferences(separateTags, globalLoad)
+            && necwb::model::hasCrossWireSegmentReferences(separateTags, rangedGlobalLoad)
+            && necwb::model::hasCrossWireSegmentReferences(model, {}),
+        "segment remapping is refused for shared tags and absolute tag-0 ranges");
+    expect(necwb::analysis::prepareSegmentationConvergenceInput(
+               deck + "EX 0 1 17 0 1 0\nFR 0 1 0 0 146 0\nEN\n", 146.0, 2.0).error
+               .find("share a tag") != std::string::npos,
+        "convergence testing refuses decks whose tag references it cannot remap");
+}
+
+void testUnrenderedSegmentNumbering()
+{
+    // NEC numbers a flat spiral's segments even though Workbench does not draw it, so the
+    // GW after a 40-segment spiral holds segments 41-43.
+    const std::string deck =
+        "GH 8 40 0.05 0 0.1 0.1 0.2 0.2 0.001\n"
+        "GW 1 3 0 -1 3 0 1 3 0.001\n"
+        "GE 0\n";
+    const auto check = [&deck](const std::string& cards) {
+        return necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
+            deck + cards + "FR 0 1 0 0 146 0\nEN\n"));
+    };
+    const auto spiralFirst = check("EX 0 0 42 0 1 0\n");
+    expect(spiralFirst.errorCount() == 0
+            && check("EX 0 8 40 0 1 0\n").errorCount() == 0
+            && check("EX 0 0 44 0 1 0\n").errorCount() == 1,
+        "absolute and spiral-tag references count the undrawn spiral's segments");
+    expect(std::ranges::count_if(spiralFirst.diagnostics, [](const auto& diagnostic) {
+        return diagnostic.message.find("Flat-spiral GH") != std::string::npos
+            && diagnostic.lineNumber == 1;
+    }) == 1, "a flat spiral is flagged as unreliable in many solvers");
+
+    const auto& model = spiralFirst.model;
+    const auto marker = necwb::model::wireSegmentPosition(model, 0, 42);
+    expect(necwb::model::referencedSegmentCount(model, 0) == 43
+            && marker && std::abs(marker->y) < 1.0e-12 && std::abs(marker->z - 3.0) < 1.0e-12
+            && !necwb::model::wireSegmentPosition(model, 8, 5)
+            && !necwb::model::hasSharedWireTags(model),
+        "a tag-0 marker after a spiral lands on the drawn wire, and none is drawn on the spiral");
+    const necwb::analysis::WireSegmentIndex index(model);
+    const auto located = index.locate(1, 41);
+    expect(located && located->wireIndex == 0 && located->segment == 1
+            && !index.locate(1, 1) && !index.locate(8, 5),
+        "the current index skips the spiral's segments before the first drawn wire");
+
+    // GM and GX copy the spiral along with the wire, so the copies keep NEC's order.
+    const auto copied = necwb::nec::NecModelConverter{}.convert(necwb::nec::NecParser{}.parse(
+        "GH 8 10 0.05 0 0.1 0.1 0.2 0.2 0.001\n"
+        "GW 1 3 1 -1 3 1 1 3 0.001\n"
+        "GM 10 1 0 0 0 0 0 1\n"
+        "GX 100 100\n"
+        "GE 0\n"));
+    const auto blocks = copied.model.segmentBlocks();
+    const std::array expectedTags{8, 1, 18, 11, 108, 101, 118, 111};
+    expect(copied.issues.empty() && copied.model.wireCount() == 4 && blocks.size() == 8
+            && std::ranges::equal(blocks, expectedTags, {}, &necwb::model::SegmentBlock::tag)
+            && necwb::model::referencedSegmentCount(copied.model, 0) == 52,
+        "copied spirals keep their place and tag in NEC's segment order");
+    const auto copiedWire = necwb::analysis::WireSegmentIndex(copied.model).locate(111, 51);
+    expect(copiedWire && copiedWire->wireIndex == 3 && copiedWire->segment == 2,
+        "segments after copied spirals map to the right drawn wire");
+
+    const auto sharedWithSpiral = necwb::nec::NecModelConverter{}.convert(
+        necwb::nec::NecParser{}.parse("GH 1 10 0.05 0 0.1 0.1 0.2 0.2 0.001\n"
+                                      "GW 1 3 0 -1 3 0 1 3 0.001\nGE 0\n"));
+    expect(necwb::model::hasSharedWireTags(sharedWithSpiral.model),
+        "a spiral sharing a wire's tag counts as a shared tag");
 }
 
 void testGenericKnownCardValidation()
@@ -2026,6 +2140,18 @@ void testNecOutputParsing()
     expect(result.currents[2].wireTag == 2 && result.currents[2].segment == 1
             && result.currents[2].magnitude == 0.0070711,
         "global NEC current segments map to local tag-relative segments");
+    expect(result.currents[0].necSegment == 1 && result.currents[2].necSegment == 3,
+        "NEC output parser keeps the absolute segment number");
+    const auto splitTag = necwb::analysis::NecOutputParser{}.parse(
+        " FREQUENCY : 1.4000E+01 MHz\n"
+        " CURRENTS AND LOCATION\n"
+        " 1 1 0 0 0 0.1 1.0E-02 0 1.0E-02 0\n"
+        " 2 2 0 0 0 0.1 1.0E-02 0 1.0E-02 0\n"
+        " 3 1 0 0 0 0.1 1.0E-02 0 1.0E-02 0\n"
+        "\n");
+    expect(splitTag.currents.size() == 3 && splitTag.currents[2].wireTag == 1
+            && splitTag.currents[2].segment == 2 && splitTag.currents[2].necSegment == 3,
+        "tag-relative segments count through wires that share a tag but are not adjacent");
     expect(result.radiation.size() == 5
             && result.radiation[1].thetaDegrees == 90.0
             && result.radiation[1].totalGainDb == 2.15
@@ -3041,6 +3167,91 @@ void testSegmentCurrentDisplay()
             && necwb::analysis::dominantProjectionPlane(groundPlaneShown.segments)
                 == necwb::geometry::ProjectionPlane::XZ,
         "the projection plane shows the most current");
+
+    // Wires that share a tag (tag 0 is common in imported decks) are told apart by NEC's
+    // absolute segment number, which runs through the wires in GW order.
+    necwb::model::AntennaModel sharedTags;
+    sharedTags.addWire({1, {0.0, -1.0, 0.0}, {0.0, 1.0, 0.0}, 3, 0.001, 1});
+    sharedTags.addWire({1, {0.5, 1.0, 0.0}, {0.5, -1.0, 0.0}, 3, 0.001, 2});
+    sharedTags.addWire({0, {1.0, -1.0, 0.0}, {1.0, 1.0, 0.0}, 2, 0.001, 3});
+    sharedTags.addWire({0, {1.5, -1.0, 0.0}, {1.5, 1.0, 0.0}, 2, 0.001, 4});
+    const auto necCurrent = [&segmentCurrent](int tag, int tagSegment, int necSegment,
+                                double phase) {
+        auto current = segmentCurrent(tag, tagSegment, 1.0, phase);
+        current.necSegment = necSegment;
+        return current;
+    };
+    const std::array sharedCurrents{necCurrent(1, 1, 1, 0.0), necCurrent(1, 2, 2, 0.0),
+        necCurrent(1, 3, 3, 0.0), necCurrent(1, 4, 4, 180.0), necCurrent(1, 5, 5, 180.0),
+        necCurrent(1, 6, 6, 180.0), necCurrent(0, 1, 7, 0.0), necCurrent(0, 2, 8, 0.0),
+        necCurrent(0, 3, 9, 0.0), necCurrent(0, 4, 10, 0.0)};
+    necwb::analysis::FeedpointResult sharedFeed;
+    sharedFeed.frequencyMHz = 14.0;
+    sharedFeed.wireTag = 1;
+    sharedFeed.segment = 5;
+    sharedFeed.current = std::polar(1.0, 180.0 * std::numbers::pi / 180.0);
+    const auto sharedShown = necwb::analysis::displayedCurrents(sharedCurrents,
+        std::span{&sharedFeed, 1}, sharedTags);
+    const auto shownAt = [&sharedShown](int necSegment) {
+        return *std::ranges::find(sharedShown.segments, necSegment,
+            &necwb::analysis::DisplayedSegmentCurrent::necSegment);
+    };
+    expect(sharedShown.segments.size() == 10
+            && shownAt(5).wireIndex == 1 && shownAt(5).segment == 2
+            && std::abs(shownAt(5).start.x - 0.5) < 1.0e-12
+            && shownAt(9).wireIndex == 3 && shownAt(9).segment == 1
+            && std::abs(shownAt(9).start.x - 1.5) < 1.0e-12,
+        "currents on wires that share a tag land on their own wire");
+    // The feed is on the second tag-1 wire, which runs against its axis, so its reference
+    // phase includes the 180-degree flip and both parallel elements read 0.
+    expect(sharedShown.feedReferenced
+            && std::abs(shownAt(2).relativePhaseDegrees) < 1.0e-9
+            && std::abs(shownAt(5).relativePhaseDegrees) < 1.0e-9,
+        "the feed on a shared-tag wire is found by its absolute segment");
+
+    // A feed segment the model does not have must not borrow the first wire with its tag:
+    // here that wire runs against its axis and would flip every phase by 180 degrees.
+    necwb::model::AntennaModel reversedFirst;
+    reversedFirst.addWire({1, {0.0, 1.0, 0.0}, {0.0, -1.0, 0.0}, 1, 0.001, 1});
+    reversedFirst.addWire({1, {0.5, -1.0, 0.0}, {0.5, 1.0, 0.0}, 1, 0.001, 2});
+    necwb::analysis::FeedpointResult unmatchedFeed;
+    unmatchedFeed.frequencyMHz = 14.0;
+    unmatchedFeed.wireTag = 1;
+    unmatchedFeed.segment = 9;
+    unmatchedFeed.current = std::polar(1.0, 0.0);
+    const std::array unmatchedCurrents{necCurrent(1, 2, 2, 0.0)};
+    const auto unmatchedShown = necwb::analysis::displayedCurrents(unmatchedCurrents,
+        std::span{&unmatchedFeed, 1}, reversedFirst);
+    expect(unmatchedShown.segments.size() == 1
+            && std::abs(unmatchedShown.segments[0].relativePhaseDegrees) < 1.0e-9,
+        "an unmatched feed segment does not take its orientation from another wire");
+
+    // A model that no longer matches the solved deck places nothing rather than a wrong wire.
+    const std::array staleCurrents{necCurrent(2, 1, 4, 0.0), necCurrent(1, 7, 11, 0.0)};
+    expect(necwb::analysis::displayedCurrents(staleCurrents, {}, sharedTags).segments.empty(),
+        "currents whose tag or segment does not match the model are skipped");
+
+    // nec2++ numbers a 40-segment flat spiral 1-40 and the following GW 41-43, feeding it at
+    // 42. The spiral is not drawn, but the GW's currents and feed must still be found.
+    const auto spiralFirst = necwb::nec::NecModelConverter{}.convert(necwb::nec::NecParser{}.parse(
+        "GH 8 40 0.05 0 0.1 0.1 0.2 0.2 0.001\nGW 1 3 0 -1 3 0 1 3 0.001\nGE 0\n")).model;
+    std::vector<necwb::analysis::SegmentCurrentResult> spiralCurrents;
+    for (auto segment = 1; segment <= 40; ++segment)
+        spiralCurrents.push_back(necCurrent(8, segment, segment, 97.0));
+    spiralCurrents.push_back(necCurrent(1, 1, 41, -82.765));
+    spiralCurrents.push_back(necCurrent(1, 2, 42, -61.700));
+    spiralCurrents.push_back(necCurrent(1, 3, 43, -82.765));
+    necwb::analysis::FeedpointResult spiralFeed;
+    spiralFeed.frequencyMHz = 14.0;
+    spiralFeed.wireTag = 1;
+    spiralFeed.segment = 42;
+    spiralFeed.current = std::polar(1.0, -61.700 * std::numbers::pi / 180.0);
+    const auto spiralShown = necwb::analysis::displayedCurrents(spiralCurrents,
+        std::span{&spiralFeed, 1}, spiralFirst);
+    expect(spiralShown.segments.size() == 3 && spiralShown.feedReferenced
+            && spiralShown.segments[1].necSegment == 42 && spiralShown.segments[1].segment == 2
+            && std::abs(spiralShown.segments[1].relativePhaseDegrees) < 1.0e-9,
+        "currents after an undrawn flat spiral are still shown on their wire");
 }
 
 auto main() -> int
@@ -3096,6 +3307,8 @@ auto main() -> int
     testFrequencyPlans();
     testAverageGainTestPreparation();
     testSegmentationConvergencePreparation();
+    testSharedTagReferences();
+    testUnrenderedSegmentNumbering();
 
     if (failures != 0) {
         std::cerr << failures << " test assertion(s) failed\n";

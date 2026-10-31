@@ -69,7 +69,7 @@ Graphical rendering is documented separately in [NEC Card Support](nec-card-supp
 | `GW` | Structured | Tag/segment and endpoint fields, nonzero length, positive radius or following valid `GC`; omitted radius defaults to zero |
 | `GC` | Understood | Numeric field shape; taper ratios and radii when attached to zero-radius `GW` |
 | `GA` | Structured | Tag, positive segment count/radius, distinct arc angles |
-| `GH` | Structured | Helix dimensions and endpoint radii; flat spirals are preserved but not rendered |
+| `GH` | Structured | Helix dimensions and endpoint radii; flat spirals are preserved but not rendered, still count toward absolute segment numbers, and get a reliability warning |
 | `SP`, `SM`, `SC` | Structured | Shape codes, required continuation, nonzero-area corners, positive grid counts |
 | `GM` | Understood | Tag increment, repetition count, and transform fields |
 | `GX` | Understood | Tag increment, reflection flags, and geometry reflection constraints |

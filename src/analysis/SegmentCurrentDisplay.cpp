@@ -23,16 +23,55 @@ auto wireRunsAgainstMainAxis(const model::Wire& wire) noexcept -> bool
     return false;
 }
 
+WireSegmentIndex::WireSegmentIndex(const model::AntennaModel& model)
+    : model_(&model), blocks_(model.segmentBlocks())
+{
+    firstSegments_.reserve(blocks_.size());
+    auto next = 1;
+    for (const auto& block : blocks_) {
+        firstSegments_.push_back(next);
+        next += std::max(block.segments, 0);
+    }
+}
+
+auto WireSegmentIndex::locate(int wireTag, int necSegment) const
+    -> std::optional<WireSegmentLocation>
+{
+    const auto after = std::ranges::upper_bound(firstSegments_, necSegment);
+    if (necSegment < 1 || after == firstSegments_.begin()) return std::nullopt;
+    const auto index = static_cast<std::size_t>(after - firstSegments_.begin() - 1);
+    const auto& block = blocks_[index];
+    const auto segment = necSegment - firstSegments_[index] + 1;
+    if (block.wire == nullptr || block.tag != wireTag || segment > block.segments)
+        return std::nullopt;
+    return WireSegmentLocation{block.wire, block.wireIndex, segment};
+}
+
+auto WireSegmentIndex::locate(const SegmentCurrentResult& current) const
+    -> std::optional<WireSegmentLocation>
+{
+    if (current.necSegment > 0) return locate(current.wireTag, current.necSegment);
+    const auto* wire = model_->wireByTag(current.wireTag);
+    if (wire == nullptr || current.segment < 1 || current.segment > wire->segments)
+        return std::nullopt;
+    return WireSegmentLocation{wire,
+        static_cast<std::size_t>(wire - model_->wires().data()), current.segment};
+}
+
 auto displayedCurrents(std::span<const SegmentCurrentResult> currents,
     std::span<const FeedpointResult> feedpoints, const model::AntennaModel& model)
     -> DisplayedCurrents
 {
     DisplayedCurrents result;
+    const WireSegmentIndex index(model);
     auto referencePhase = 0.0;
     if (!feedpoints.empty()) {
         const auto& feed = feedpoints.front();
         if (std::abs(feed.current) > 0.0) {
-            const auto* wire = model.wireByTag(feed.wireTag);
+            // The feed table reports NEC's absolute segment number. When it does not match
+            // the model, no wire is guessed: the first wire with a shared tag may be the wrong one.
+            const auto location = index.locate(feed.wireTag, feed.segment);
+            const auto* wire = location ? location->wire : nullptr;
             referencePhase = std::arg(feed.current) * 180.0 / std::numbers::pi
                 + (wire != nullptr && wireRunsAgainstMainAxis(*wire) ? 180.0 : 0.0);
             result.feedReferenced = true;
@@ -40,14 +79,17 @@ auto displayedCurrents(std::span<const SegmentCurrentResult> currents,
     }
     result.segments.reserve(currents.size());
     for (const auto& current : currents) {
-        const auto* wire = model.wireByTag(current.wireTag);
-        if (wire == nullptr) continue;
-        const auto endpoints = model::wireSegmentEndpoints(*wire, current.segment);
+        const auto location = index.locate(current);
+        if (!location) continue;
+        const auto& wire = *location->wire;
+        const auto endpoints = model::wireSegmentEndpoints(wire, location->segment);
         if (!endpoints) continue;
-        const auto reversed = wireRunsAgainstMainAxis(*wire);
+        const auto reversed = wireRunsAgainstMainAxis(wire);
         DisplayedSegmentCurrent shown;
         shown.wireTag = current.wireTag;
-        shown.segment = current.segment;
+        shown.segment = location->segment;
+        shown.wireIndex = location->wireIndex;
+        shown.necSegment = current.necSegment;
         shown.start = reversed ? endpoints->second : endpoints->first;
         shown.end = reversed ? endpoints->first : endpoints->second;
         shown.magnitude = current.magnitude;

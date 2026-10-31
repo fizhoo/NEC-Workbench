@@ -130,10 +130,14 @@ void checkStaticAdequacy(const model::ModelSetup& setup, ModelCheckResult& resul
     }
 
     for (const auto& excitation : setup.excitations) {
-        const auto* wire = result.model.wireByTag(excitation.wireTag);
-        if (excitation.type != 0 || wire == nullptr || wire->segments % 2 != 0) continue;
-        if (excitation.segment == wire->segments / 2
-            || excitation.segment == wire->segments / 2 + 1) {
+        if (excitation.type != 0) continue;
+        const auto reference = model::referencedSegment(result.model, excitation.wireTag,
+            excitation.segment);
+        if (!reference || reference->wire == nullptr) continue;
+        const auto* wire = reference->wire;
+        if (wire->segments % 2 != 0) continue;
+        if (reference->segment == wire->segments / 2
+            || reference->segment == wire->segments / 2 + 1) {
             addAdequacyWarning(result, excitation.sourceLine,
                 "Center-fed wire tag " + std::to_string(wire->tag)
                     + " has an even segment count; no segment lies exactly at its center");
@@ -164,11 +168,15 @@ void checkExcitation(const NecCard& card, ModelCheckResult& result)
     parseNumber(card.fields[1], wireTag);
     parseNumber(card.fields[2], segment);
     if (excitationType == 0) {
-        const auto* wire = result.model.wireByTag(wireTag);
-        if (wire == nullptr) {
+        // Tag 0 selects an absolute segment number; other tags count through every wire
+        // that carries them.
+        const auto count = model::referencedSegmentCount(result.model, wireTag);
+        if (wireTag != 0 && count == 0) {
             addError(result, card, "EX references a wire tag that does not exist");
-        } else if (segment < 1 || segment > wire->segments) {
-            addError(result, card, "EX segment is outside the referenced wire");
+        } else if (segment < 1 || segment > count) {
+            addError(result, card, wireTag == 0
+                ? "EX absolute segment number is outside the structure"
+                : "EX segment is outside the referenced wire");
         }
     }
 }
@@ -323,10 +331,11 @@ void checkLoad(const NecCard& card, CompatibilityProfile profile, ModelCheckResu
                 "Compatibility"});
         }
     }
-    const auto* wire = tag == 0 ? nullptr : result.model.wireByTag(tag);
-    if (tag != 0 && wire == nullptr) addError(result, card, "LD references a wire tag that does not exist");
-    else if (wire != nullptr && (first < 0 || last < 0 || first > wire->segments || last > wire->segments
-        || (first != 0 && last != 0 && first > last))) addError(result, card, "LD segment range is invalid");
+    // LD counts segments through every wire with its tag, or absolute segments for tag 0.
+    const auto count = model::referencedSegmentCount(result.model, tag);
+    if (tag != 0 && count == 0) addError(result, card, "LD references a wire tag that does not exist");
+    else if (first < 0 || last < 0 || first > count || last > count
+        || (first != 0 && last != 0 && first > last)) addError(result, card, "LD segment range is invalid");
     if (!std::ranges::all_of(card.fields.begin() + 4, card.fields.end(),
             [](const auto& field) { return isNumber<double>(field); }))
         addError(result, card, "LD values must be numeric");
@@ -342,8 +351,7 @@ void checkTransmissionLine(const NecCard& card, ModelCheckResult& result)
         parseNumber(card.fields[index], *integers[index]);
     }
     const auto validEnd = [&result](int tag, int segment) {
-        const auto* wire = result.model.wireByTag(tag);
-        return wire != nullptr && segment >= 1 && segment <= wire->segments;
+        return model::referencedSegment(result.model, tag, segment).has_value();
     };
     if (!validEnd(tag1, segment1) || !validEnd(tag2, segment2))
         addError(result, card, "TL endpoint references an invalid wire or segment");
@@ -668,6 +676,16 @@ auto NecModelChecker::check(const NecDocument& document, ModelCheckOptions optio
             break;
         default:
             break;
+        }
+    }
+    for (const auto& card : document.cards()) {
+        if (card.mnemonic != "GH") continue;
+        if (std::ranges::any_of(result.model.unrenderedSegments(),
+                [&card](const auto& spiral) { return spiral.sourceLine == card.lineNumber; })) {
+            result.diagnostics.push_back({DiagnosticSeverity::Warning, card.lineNumber,
+                "Flat-spiral GH (zero axial length) is not drawn, and many NEC-2 solvers do not "
+                "handle it reliably; check the results carefully",
+                "Compatibility"});
         }
     }
     const auto setup = NecSetupConverter{}.convert(document);
