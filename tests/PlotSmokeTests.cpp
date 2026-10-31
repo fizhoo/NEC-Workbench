@@ -2175,9 +2175,9 @@ auto main(int argc, char* argv[]) -> int
             && canvas != nullptr && canvas->property("segmentCount").toInt() == 4
             && mode != nullptr && cycle != nullptr && play != nullptr && play->isHidden()
             && table != nullptr && table->rowCount() == 4
-            && table->horizontalHeaderItem(4)->text() == QStringLiteral("Phase vs. feed (°)");
+            && table->horizontalHeaderItem(5)->text() == QStringLiteral("Phase vs. feed (°)");
         for (auto row = 0; antennaValid && row < table->rowCount(); ++row)
-            antennaValid = std::abs(table->item(row, 4)->text().toDouble()) < 1.0e-6;
+            antennaValid = std::abs(table->item(row, 5)->text().toDouble()) < 1.0e-6;
         if (antennaValid) {
             mode->setCurrentIndex(2);
             application.processEvents();
@@ -2239,6 +2239,22 @@ auto main(int argc, char* argv[]) -> int
         || currentPaths.front().back().segment != 2) {
         return NECWB_SMOKE_FAILURE("current distribution paths");
     }
+    // Two joined wires that share tag 0 stay two wires, chained into one path.
+    necwb::model::AntennaModel sharedTagAntenna;
+    sharedTagAntenna.addWire({0, {0.0, 0.0, 0.0}, {2.0, 0.0, 0.0}, 2, 0.001, 1});
+    sharedTagAntenna.addWire({0, {2.0, 0.0, 0.0}, {4.0, 0.0, 0.0}, 2, 0.001, 2});
+    const std::vector<necwb::analysis::SegmentCurrentResult> sharedTagCurrents{
+        {.segment = 3, .wireTag = 0, .magnitude = 3.0, .necSegment = 3},
+        {.segment = 1, .wireTag = 0, .magnitude = 1.0, .necSegment = 1},
+        {.segment = 4, .wireTag = 0, .magnitude = 4.0, .necSegment = 4},
+        {.segment = 2, .wireTag = 0, .magnitude = 2.0, .necSegment = 2}};
+    const auto sharedTagPaths = necwb::ui::connectedCurrentPaths(sharedTagCurrents, sharedTagAntenna);
+    auto sharedTagOrder = std::vector<int>{};
+    for (const auto& path : sharedTagPaths)
+        for (const auto& sample : path) sharedTagOrder.push_back(sample.necSegment);
+    if (sharedTagPaths.size() != 1 || (sharedTagOrder != std::vector{1, 2, 3, 4}
+            && sharedTagOrder != std::vector{4, 3, 2, 1}))
+        return NECWB_SMOKE_FAILURE("current paths for wires that share a tag");
     currents.setModel(currentAntenna);
     currents.setResults(result, QStringLiteral("test-run"));
     currents.setSelectedFrequency(14.1);

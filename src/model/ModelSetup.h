@@ -6,7 +6,7 @@
 #include <optional>
 #include <vector>
 
-namespace necwb::model { class AntennaModel; }
+namespace necwb::model { class AntennaModel; struct Wire; }
 
 namespace necwb::model {
 
@@ -118,6 +118,28 @@ struct ModelSetup {
 [[nodiscard]] auto frequencyEndMHz(const FrequencyDefinition& frequency) -> double;
 [[nodiscard]] auto frequencyPointCount(int steppingMode, double startMHz,
     double endMHz, double step) -> std::optional<int>;
+
+struct SegmentReference {
+    const Wire* wire{};
+    // Segment within the wire, counted from end 1.
+    int segment{};
+};
+
+// How NEC reads a tag and segment pair on EX, LD, TL and NT cards: the m-th segment among
+// all wires with that tag, in wire order, so wires may share a tag. Tag 0 means absolute
+// segment number m.
+[[nodiscard]] auto referencedSegment(const AntennaModel& model, int wireTag, int segment)
+    -> std::optional<SegmentReference>;
+// Segments a tag can reach under that rule: all wires with the tag, or the whole model for
+// tag 0. Zero when no wire carries the tag.
+[[nodiscard]] auto referencedSegmentCount(const AntennaModel& model, int wireTag) -> int;
+// True when more than one wire carries the same tag, including tag 0.
+[[nodiscard]] auto hasSharedWireTags(const AntennaModel& model) -> bool;
+// True when segment numbering is not per wire: wires share a tag, or EX, TL, or a ranged LD
+// uses tag 0 (an absolute segment number). Tools that remap segments wire by wire cannot
+// handle these references yet.
+[[nodiscard]] auto hasCrossWireSegmentReferences(const AntennaModel& model,
+    const ModelSetup& setup) -> bool;
 
 [[nodiscard]] auto excitationPosition(const AntennaModel& model, const Excitation& excitation)
     -> std::optional<Point3D>;

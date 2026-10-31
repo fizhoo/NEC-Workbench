@@ -366,17 +366,29 @@ auto connectedCurrentPaths(const std::vector<analysis::SegmentCurrentResult>& sa
         bool used{};
     };
 
-    std::map<int, CurrentPlotPath> samplesByTag;
-    for (const auto& sample : samples) samplesByTag[sample.wireTag].push_back(sample);
+    // Group by physical wire; wires that share a tag (tag 0 is common) stay separate.
+    const analysis::WireSegmentIndex index(model);
+    std::map<std::size_t, std::vector<std::pair<int, analysis::SegmentCurrentResult>>> samplesByWire;
+    std::map<int, CurrentPlotPath> unplacedByTag;
+    for (const auto& sample : samples) {
+        if (const auto location = index.locate(sample))
+            samplesByWire[location->wireIndex].emplace_back(location->segment, sample);
+        else
+            unplacedByTag[sample.wireTag].push_back(sample);
+    }
 
     std::vector<WireSeries> series;
-    series.reserve(samplesByTag.size());
-    for (auto& [tag, wireSamples] : samplesByTag) {
+    series.reserve(samplesByWire.size() + unplacedByTag.size());
+    for (auto& [wireIndex, located] : samplesByWire) {
+        std::ranges::sort(located, {}, &std::pair<int, analysis::SegmentCurrentResult>::first);
+        CurrentPlotPath wireSamples;
+        for (auto& entry : located) wireSamples.push_back(std::move(entry.second));
+        const auto& wire = model.wires()[wireIndex];
+        series.push_back({std::move(wireSamples), wire.start, wire.end, true});
+    }
+    for (auto& [tag, wireSamples] : unplacedByTag) {
         std::ranges::sort(wireSamples, {}, &analysis::SegmentCurrentResult::segment);
-        if (const auto* wire = model.wireByTag(tag))
-            series.push_back({std::move(wireSamples), wire->start, wire->end, true});
-        else
-            series.push_back({std::move(wireSamples), {}, {}, false});
+        series.push_back({std::move(wireSamples), {}, {}, false});
     }
 
     const auto tolerance = std::max(1.0, resultModelExtentFromOrigin(model)) * 1.0e-9;
@@ -1055,10 +1067,11 @@ private:
         QPointF hoveredStart;
         QPointF hoveredEnd;
         auto hoverDistance = 9.0;
+        const analysis::WireSegmentIndex index(model_);
         for (const auto& current : currents_) {
-            const auto* wire = model_.wireByTag(current.wireTag);
-            if (wire == nullptr || wire->segments <= 0 || current.segment < 1 || current.segment > wire->segments) continue;
-            const auto endpoints = model::wireSegmentEndpoints(*wire, current.segment);
+            const auto location = index.locate(current);
+            if (!location) continue;
+            const auto endpoints = model::wireSegmentEndpoints(*location->wire, location->segment);
             if (!endpoints) continue;
             const auto start = project(normalized(endpoints->first, extent), scale);
             const auto end = project(normalized(endpoints->second, extent), scale);
@@ -1114,12 +1127,15 @@ CurrentDistributionView::CurrentDistributionView(QWidget* parent) : QWidget(pare
     views->setObjectName(QStringLiteral("currentsViews"));
     views->setDocumentMode(true);
     antenna_ = new CurrentAntennaView(views);
-    plot_ = new CurrentPlotWidget(views); table_ = new QTableWidget(0, 7, views);
-    table_->setHorizontalHeaderLabels({tr("Wire"), tr("Segment"), tr("Magnitude (A)"), tr("NEC phase (°)"),
-        tr("Phase vs. feed (°)"), tr("Real"), tr("Imaginary")});
-    table_->horizontalHeaderItem(3)->setToolTip(tr("Phase as the solver printed it: current flowing from wire end 1 to end 2, "
+    plot_ = new CurrentPlotWidget(views); table_ = new QTableWidget(0, 8, views);
+    table_->setHorizontalHeaderLabels({tr("Wire"), tr("Segment"), tr("NEC segment"), tr("Magnitude (A)"),
+        tr("NEC phase (°)"), tr("Phase vs. feed (°)"), tr("Real"), tr("Imaginary")});
+    table_->horizontalHeaderItem(1)->setToolTip(tr("Segment within its wire, counted from end 1."));
+    table_->horizontalHeaderItem(2)->setToolTip(tr("The solver's segment number, counted through all wires. "
+        "It tells apart wires that share a tag number."));
+    table_->horizontalHeaderItem(4)->setToolTip(tr("Phase as the solver printed it: current flowing from wire end 1 to end 2, "
         "relative to the source voltage."));
-    table_->horizontalHeaderItem(4)->setToolTip(tr("Phase relative to the feed current (the first source), with straight wires "
+    table_->horizontalHeaderItem(5)->setToolTip(tr("Phase relative to the feed current (the first source), with straight wires "
         "taken as flowing toward +X, +Y or +Z so elements entered in opposite directions compare correctly. "
         "The Antenna tab shows this phase."));
     table_->horizontalHeader()->setStretchLastSection(true); table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -1149,17 +1165,22 @@ void CurrentDistributionView::refresh()
     for (const auto& feed : result_.feedpoints)
         if (nearlyEqual(feed.frequencyMHz, selectedFrequency(frequency_))) feedpoints.push_back(feed);
     auto displayed = analysis::displayedCurrents(values, feedpoints, model_);
-    std::map<std::pair<int, int>, double> displayedPhase;
+    std::map<std::pair<std::size_t, int>, double> displayedPhase;
     for (const auto& segment : displayed.segments)
-        displayedPhase[{segment.wireTag, segment.segment}] = segment.relativePhaseDegrees;
-    table_->horizontalHeaderItem(4)->setText(displayed.feedReferenced
+        displayedPhase[{segment.wireIndex, segment.segment}] = segment.relativePhaseDegrees;
+    table_->horizontalHeaderItem(5)->setText(displayed.feedReferenced
         ? tr("Phase vs. feed (°)") : tr("Phase, common direction (°)"));
     antenna_->setCurrents(std::move(displayed), model_);
     plot_->setPaths(connectedCurrentPaths(values, model_)); table_->setRowCount(static_cast<int>(values.size()));
+    const analysis::WireSegmentIndex index(model_);
     for (auto row = 0; row < static_cast<int>(values.size()); ++row) {
-        const auto phase = displayedPhase.find({values[row].wireTag, values[row].segment});
+        const auto location = index.locate(values[row]);
+        const auto phase = location
+            ? displayedPhase.find({location->wireIndex, location->segment}) : displayedPhase.end();
         const QStringList cells{QString::number(values[row].wireTag),
-            QString::number(values[row].segment), formatDecimal(values[row].magnitude),
+            QString::number(location ? location->segment : values[row].segment),
+            values[row].necSegment > 0 ? QString::number(values[row].necSegment) : tr("—"),
+            formatDecimal(values[row].magnitude),
             formatDecimal(values[row].phaseDegrees),
             phase == displayedPhase.end() ? tr("—") : formatDecimal(phase->second),
             formatDecimal(values[row].current.real()),

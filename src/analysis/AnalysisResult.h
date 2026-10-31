@@ -29,6 +29,9 @@ struct SegmentCurrentResult {
     std::complex<double> current;
     double magnitude{};
     double phaseDegrees{};
+    // NEC's absolute segment number. `segment` counts within the tag, which cannot tell
+    // apart wires that share a tag; this identifies the physical wire. 0 when unknown.
+    int necSegment{};
 };
 
 enum class PolarizationSense {

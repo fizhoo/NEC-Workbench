@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <set>
 
 namespace necwb::model {
 
@@ -53,25 +54,67 @@ auto excitationPosition(const AntennaModel& model, const Excitation& excitation)
     return wireSegmentPosition(model, excitation.wireTag, excitation.segment);
 }
 
+auto referencedSegment(const AntennaModel& model, int wireTag, int segment)
+    -> std::optional<SegmentReference>
+{
+    if (segment < 1) return std::nullopt;
+    auto remaining = segment;
+    for (const auto& wire : model.wires()) {
+        if (wireTag != 0 && wire.tag != wireTag) continue;
+        if (remaining <= wire.segments) return SegmentReference{&wire, remaining};
+        remaining -= std::max(wire.segments, 0);
+    }
+    return std::nullopt;
+}
+
+auto referencedSegmentCount(const AntennaModel& model, int wireTag) -> int
+{
+    auto count = 0;
+    for (const auto& wire : model.wires())
+        if (wireTag == 0 || wire.tag == wireTag) count += std::max(wire.segments, 0);
+    return count;
+}
+
+auto hasSharedWireTags(const AntennaModel& model) -> bool
+{
+    std::set<int> tags;
+    return std::ranges::any_of(model.wires(),
+        [&tags](const auto& wire) { return !tags.insert(wire.tag).second; });
+}
+
+auto hasCrossWireSegmentReferences(const AntennaModel& model, const ModelSetup& setup) -> bool
+{
+    return hasSharedWireTags(model)
+        || std::ranges::any_of(setup.excitations, [](const auto& value) { return value.wireTag == 0; })
+        || std::ranges::any_of(setup.loads, [](const auto& value) {
+               return value.wireTag == 0 && (value.firstSegment > 0 || value.lastSegment > 0);
+           })
+        || std::ranges::any_of(setup.transmissionLines,
+            [](const auto& value) { return value.wireTag1 == 0 || value.wireTag2 == 0; });
+}
+
 auto wireSegmentPosition(const AntennaModel& model, int wireTag, int segment)
     -> std::optional<Point3D>
 {
-    const auto* wire = model.wireByTag(wireTag);
-    return wire == nullptr ? std::nullopt : wireSegmentCenter(*wire, segment);
+    const auto reference = referencedSegment(model, wireTag, segment);
+    return reference ? wireSegmentCenter(*reference->wire, reference->segment) : std::nullopt;
 }
 
 auto loadPosition(const AntennaModel& model, const LoadDefinition& load)
     -> std::optional<Point3D>
 {
-    const auto* wire = model.wireByTag(load.wireTag);
-    if (wire == nullptr) return std::nullopt;
+    // A tag-0 load without a range covers the whole structure and has no single position.
+    if (load.wireTag == 0 && load.firstSegment == 0 && load.lastSegment == 0) return std::nullopt;
+    const auto count = referencedSegmentCount(model, load.wireTag);
     const auto first = load.firstSegment == 0 ? 1 : load.firstSegment;
-    const auto last = load.lastSegment == 0 ? wire->segments : load.lastSegment;
-    if (first < 1 || last < first || last > wire->segments) return std::nullopt;
+    const auto last = load.lastSegment == 0 ? count : load.lastSegment;
+    if (first < 1 || last < first || last > count) return std::nullopt;
     const auto total = first + last;
-    if (total % 2 == 0) return wireSegmentCenter(*wire, total / 2);
-    const auto lower = wireSegmentEndpoints(*wire, total / 2);
-    return lower ? std::optional{lower->second} : std::nullopt;
+    if (total % 2 == 0) return wireSegmentPosition(model, load.wireTag, total / 2);
+    const auto lower = referencedSegment(model, load.wireTag, total / 2);
+    if (!lower) return std::nullopt;
+    const auto endpoints = wireSegmentEndpoints(*lower->wire, lower->segment);
+    return endpoints ? std::optional{endpoints->second} : std::nullopt;
 }
 
 }

@@ -148,7 +148,7 @@ auto NecOutputParser::parse(std::string_view output) const -> AnalysisResult
     std::vector<double> frequencies;
     std::unordered_set<SourceResultKey, SourceResultKeyHash> feedpointKeys;
     std::unordered_set<SourceResultKey, SourceResultKeyHash> currentKeys;
-    std::unordered_map<int, int> firstGlobalSegmentByTag;
+    std::unordered_map<int, int> segmentsSeenByTag;
     std::unordered_map<int, int> nextPatternIndexByFrequency;
     int currentPatternIndex{};
     bool readingInputParameters{};
@@ -190,7 +190,7 @@ auto NecOutputParser::parse(std::string_view output) const -> AnalysisResult
             readingCurrents = true;
             readingRadiation = false;
             foundCurrentRow = false;
-            firstGlobalSegmentByTag.clear();
+            segmentsSeenByTag.clear();
             continue;
         }
         if (line.find("RADIATION PATTERNS") != std::string::npos) {
@@ -204,10 +204,10 @@ auto NecOutputParser::parse(std::string_view output) const -> AnalysisResult
         if (readingCurrents) {
             SegmentCurrentResult current;
             if (parseCurrent(line, frequencyMHz, current)) {
-                const auto globalSegment = current.segment;
-                const auto first = firstGlobalSegmentByTag.try_emplace(
-                    current.wireTag, globalSegment).first;
-                current.segment = globalSegment - first->second + 1;
+                // NEC lists segments in absolute order; counting per tag gives NEC's
+                // tag-relative number even when wires with one tag are not adjacent.
+                current.necSegment = current.segment;
+                current.segment = ++segmentsSeenByTag[current.wireTag];
                 if (currentKeys.insert({frequencyIndex, current.wireTag, current.segment}).second)
                     result.currents.push_back(current);
                 foundCurrentRow = true;
