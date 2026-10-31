@@ -1482,7 +1482,7 @@ void testBackendCompatibilityProfiles()
     const auto deck = necwb::nec::NecParser{}.parse(
         "GW 1 9 0 0 0 0 0 5 .001\nGE 0\n"
         "EX 0 1 5 0 1 0\nFR 0 1 0 0 14.2 0\n"
-        "LD 6 1 1 1 0.000001 0.00000000001 0\nXQ 0\nEN\n");
+        "LD 6 1 3 3 0.000001 0.00000000001 0\nXQ 0\nEN\n");
     const auto original = necwb::nec::NecModelChecker{}.check(deck,
         ModelCheckOptions{CompatibilityProfile::OriginalNec2});
     const auto fourNec2 = necwb::nec::NecModelChecker{}.check(deck,
