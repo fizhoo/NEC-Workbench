@@ -23,27 +23,28 @@ auto wireRunsAgainstMainAxis(const model::Wire& wire) noexcept -> bool
     return false;
 }
 
-WireSegmentIndex::WireSegmentIndex(const model::AntennaModel& model) : model_(&model)
+WireSegmentIndex::WireSegmentIndex(const model::AntennaModel& model)
+    : model_(&model), blocks_(model.segmentBlocks())
 {
-    firstSegments_.reserve(model.wires().size());
+    firstSegments_.reserve(blocks_.size());
     auto next = 1;
-    for (const auto& wire : model.wires()) {
+    for (const auto& block : blocks_) {
         firstSegments_.push_back(next);
-        next += std::max(wire.segments, 0);
+        next += std::max(block.segments, 0);
     }
 }
 
 auto WireSegmentIndex::locate(int wireTag, int necSegment) const
     -> std::optional<WireSegmentLocation>
 {
-    const auto wires = model_->wires();
     const auto after = std::ranges::upper_bound(firstSegments_, necSegment);
     if (necSegment < 1 || after == firstSegments_.begin()) return std::nullopt;
     const auto index = static_cast<std::size_t>(after - firstSegments_.begin() - 1);
-    const auto& wire = wires[index];
+    const auto& block = blocks_[index];
     const auto segment = necSegment - firstSegments_[index] + 1;
-    if (wire.tag != wireTag || segment > wire.segments) return std::nullopt;
-    return WireSegmentLocation{&wire, index, segment};
+    if (block.wire == nullptr || block.tag != wireTag || segment > block.segments)
+        return std::nullopt;
+    return WireSegmentLocation{block.wire, block.wireIndex, segment};
 }
 
 auto WireSegmentIndex::locate(const SegmentCurrentResult& current) const

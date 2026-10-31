@@ -15,7 +15,9 @@ enum class WireEndpoint {
 enum class WireGeometryKind {
     Straight,
     Arc,
-    Helix
+    Helix,
+    // Not drawn. Only used while converting a deck; the model keeps it as UnrenderedSegments.
+    FlatSpiral
 };
 
 struct Wire {

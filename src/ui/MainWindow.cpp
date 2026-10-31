@@ -143,9 +143,8 @@ constexpr auto SourceLineRole = Qt::UserRole + 2;
 
 auto modelSegmentCount(const model::AntennaModel& model) -> int
 {
-    auto count = 0;
-    for (const auto& wire : model.wires()) count += wire.segments;
-    return count;
+    // Includes undrawn geometry such as flat spirals, which the solver still segments.
+    return model::referencedSegmentCount(model, 0);
 }
 
 auto historicalOverlayStatusText(analysis::HistoricalOverlayStatus status) -> QString

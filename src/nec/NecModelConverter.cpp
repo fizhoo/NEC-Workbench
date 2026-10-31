@@ -147,11 +147,11 @@ auto convertHelix(const NecCard& card, model::Wire& wire) -> bool
     return true;
 }
 
-auto validUnrenderedSpiral(const NecCard& card) -> bool
+// A flat spiral is not drawn, but it still takes NEC segment numbers, so it is kept as a
+// placeholder that GM, GX and GR copy like any other wire.
+auto convertFlatSpiral(const NecCard& card, model::Wire& wire) -> bool
 {
     if (card.fields.size() < 9) return false;
-    int tag{};
-    int segments{};
     double turnSpacing{};
     double totalHeight{};
     double startRadiusX{};
@@ -159,8 +159,11 @@ auto validUnrenderedSpiral(const NecCard& card) -> bool
     double endRadiusX{};
     double endRadiusY{};
     double wireRadius{};
-    return parseNumber(card.fields[0], tag)
-        && parseNumber(card.fields[1], segments)
+    wire.sourceLine = card.lineNumber;
+    wire.geometryKind = model::WireGeometryKind::FlatSpiral;
+    wire.editable = false;
+    return parseNumber(card.fields[0], wire.tag)
+        && parseNumber(card.fields[1], wire.segments)
         && parseNumber(card.fields[2], turnSpacing)
         && parseNumber(card.fields[3], totalHeight)
         && parseNumber(card.fields[4], startRadiusX)
@@ -168,7 +171,7 @@ auto validUnrenderedSpiral(const NecCard& card) -> bool
         && parseNumber(card.fields[6], endRadiusX)
         && parseNumber(card.fields[7], endRadiusY)
         && parseNumber(card.fields[8], wireRadius)
-        && segments > 0 && turnSpacing != 0.0 && totalHeight == 0.0
+        && wire.segments > 0 && turnSpacing != 0.0 && totalHeight == 0.0
         && startRadiusX > 0.0 && startRadiusY > 0.0
         && endRadiusX > 0.0 && endRadiusY > 0.0 && wireRadius > 0.0;
 }
@@ -454,6 +457,7 @@ auto coordinate(const model::Point3D& point, ReflectionAxis axis) noexcept -> do
 
 auto crossesReflectionPlane(const model::Wire& wire, ReflectionAxis axis) noexcept -> bool
 {
+    if (wire.geometryKind == model::WireGeometryKind::FlatSpiral) return false;
     const auto pointCount = wire.path.size() >= 2 ? wire.path.size() : std::size_t{2};
     for (auto index = std::size_t{1}; index < pointCount; ++index) {
         const auto& first = wire.path.size() >= 2 ? wire.path[index - 1] : wire.start;
@@ -700,13 +704,13 @@ auto NecModelConverter::convert(const NecDocument& document) const -> ModelConve
         }
         if (card.mnemonic == "GH") {
             model::Wire wire;
-            if (!convertHelix(card, wire)) {
-                if (!validUnrenderedSpiral(card)) {
-                    result.issues.push_back({card.lineNumber,
-                        "GH requires a tag, positive segment count, nonzero turn spacing, nonnegative axial length, positive endpoint radii, and wire radius"});
-                }
-            } else {
+            if (convertHelix(card, wire)) {
                 wires.push_back(std::move(wire));
+            } else if (model::Wire spiral; convertFlatSpiral(card, spiral)) {
+                wires.push_back(std::move(spiral));
+            } else {
+                result.issues.push_back({card.lineNumber,
+                    "GH requires a tag, positive segment count, nonzero turn spacing, nonnegative axial length, positive endpoint radii, and wire radius"});
             }
             continue;
         }
@@ -738,7 +742,12 @@ auto NecModelConverter::convert(const NecDocument& document) const -> ModelConve
         }
         wires.push_back(std::move(wire));
     }
-    for (auto& wire : wires) result.model.addWire(std::move(wire));
+    for (auto& wire : wires) {
+        if (wire.geometryKind == model::WireGeometryKind::FlatSpiral)
+            result.model.addUnrenderedSegments(wire.tag, wire.segments, wire.sourceLine);
+        else
+            result.model.addWire(std::move(wire));
+    }
     for (auto& patch : patches) result.model.addSurfacePatch(std::move(patch));
     return result;
 }

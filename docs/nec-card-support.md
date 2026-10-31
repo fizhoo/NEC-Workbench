@@ -26,7 +26,7 @@ backend-specific options.
 | `GW` | Wire | Structured Editable | Yes |
 | `GC` | Tapered wire radius | Understood | Yes, as a tapered `GW` path |
 | `GA` | Wire arc | Structured Editable | Yes |
-| `GH` | Helix or spiral | Structured Editable | Yes for helices; flat spirals preserved but not rendered |
+| `GH` | Helix or spiral | Structured Editable | Yes for helices; flat spirals preserved but not rendered (their segments still count in NEC numbering, and Model Check warns that many solvers handle them unreliably) |
 | `SP` | Surface patch | Structured Editable | Yes |
 | `SM` | Multiple-patch surface | Structured Editable | Yes, expanded into grid cells |
 | `SC` | Patch continuation | Structured Editable | Yes, with its parent `SP`/`SM` |

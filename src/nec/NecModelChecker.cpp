@@ -133,7 +133,7 @@ void checkStaticAdequacy(const model::ModelSetup& setup, ModelCheckResult& resul
         if (excitation.type != 0) continue;
         const auto reference = model::referencedSegment(result.model, excitation.wireTag,
             excitation.segment);
-        if (!reference) continue;
+        if (!reference || reference->wire == nullptr) continue;
         const auto* wire = reference->wire;
         if (wire->segments % 2 != 0) continue;
         if (reference->segment == wire->segments / 2
@@ -676,6 +676,16 @@ auto NecModelChecker::check(const NecDocument& document, ModelCheckOptions optio
             break;
         default:
             break;
+        }
+    }
+    for (const auto& card : document.cards()) {
+        if (card.mnemonic != "GH") continue;
+        if (std::ranges::any_of(result.model.unrenderedSegments(),
+                [&card](const auto& spiral) { return spiral.sourceLine == card.lineNumber; })) {
+            result.diagnostics.push_back({DiagnosticSeverity::Warning, card.lineNumber,
+                "Flat-spiral GH (zero axial length) is not drawn, and many NEC-2 solvers do not "
+                "handle it reliably; check the results carefully",
+                "Compatibility"});
         }
     }
     const auto setup = NecSetupConverter{}.convert(document);
