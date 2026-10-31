@@ -1,0 +1,20 @@
+CM 40 m quarter-wave vertical with four elevated drooping radials
+CM Feedpoint 6 m above average real ground (Sommerfeld/Norton)
+CM Radials run 9.5 m out and drop 4 m (about 23 degrees), which raises the
+CM feed resistance to about 50 ohms; SWR under 1.7 across 7.0-7.3 MHz
+CE
+SY base_h=6, vert_len=10.3
+SY rad_run=9.5, rad_drop=4
+SY rad_end=base_h-rad_drop, top=base_h+vert_len
+SY rad=0.001
+GW 1 21 0 0 base_h 0 0 top rad
+GW 2 21 0 0 base_h rad_run 0 rad_end rad
+GW 3 21 0 0 base_h 0 rad_run rad_end rad
+GW 4 21 0 0 base_h -rad_run 0 rad_end rad
+GW 5 21 0 0 base_h 0 -rad_run rad_end rad
+GE 1
+GN 2 0 0 0 13 0.005
+EX 0 1 1 0 1 0
+FR 0 31 0 0 7.0 0.01
+RP 0 19 73 1000 0 0 5 5
+EN

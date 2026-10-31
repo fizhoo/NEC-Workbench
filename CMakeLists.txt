@@ -2,6 +2,20 @@ cmake_minimum_required(VERSION 3.21)
 
 project(NecWorkbench VERSION 0.1.0 LANGUAGES CXX)
 
+# Pre-release label shown to users (About box); leave empty for a final release.
+set(NECWB_VERSION_LABEL "alpha.2")
+if(NECWB_VERSION_LABEL)
+    set(NECWB_DISPLAY_VERSION "${PROJECT_VERSION}-${NECWB_VERSION_LABEL}")
+else()
+    set(NECWB_DISPLAY_VERSION "${PROJECT_VERSION}")
+endif()
+
+# Single-configuration builds without a type compile unoptimized, which makes the GUI
+# noticeably slower; default to an optimized build that keeps debug symbols.
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+endif()
+
 option(NECWB_BUILD_GUI "Build the Qt desktop application" ON)
 option(NECWB_BUILD_TESTS "Build automated tests" ON)
 
@@ -18,10 +32,22 @@ add_library(necwb_core
     src/analysis/DifferentialEvolutionSearch.h
     src/analysis/FrequencyPlan.cpp
     src/analysis/FrequencyComparison.h
+    src/analysis/HistoricalOverlayCompatibility.cpp
+    src/analysis/HistoricalOverlayCompatibility.h
     src/analysis/NecOutputParser.cpp
     src/analysis/NelderMeadSearch.cpp
     src/analysis/NelderMeadSearch.h
+    src/analysis/OptimizationBaseline.cpp
+    src/analysis/OptimizationBaseline.h
     src/analysis/OptimizationObjective.cpp
+    src/analysis/OptimizationPreset.cpp
+    src/analysis/OptimizationPreset.h
+    src/analysis/ReferenceRunSelection.cpp
+    src/analysis/ReferenceRunSelection.h
+    src/analysis/ResultSummary.cpp
+    src/analysis/SegmentCurrentDisplay.cpp
+    src/analysis/SegmentCurrentDisplay.h
+    src/analysis/ResultSummary.h
     src/analysis/SegmentationConvergence.cpp
     src/analysis/SolverCommand.cpp
     src/analysis/SolverInput.cpp
@@ -32,6 +58,8 @@ add_library(necwb_core
     src/model/AutoSegmentation.cpp
     src/model/LengthUnit.cpp
     src/model/ModelSetup.cpp
+    src/model/ModelSummary.cpp
+    src/model/ModelSummary.h
     src/model/WireGauge.cpp
     src/nec/NecDocument.cpp
     src/nec/NecCardCatalog.cpp
@@ -86,26 +114,36 @@ if(NECWB_BUILD_GUI)
         src/ui/analysis/AverageGainResultsView.h
         src/ui/analysis/ConvergenceWorkspace.cpp
         src/ui/analysis/ConvergenceWorkspace.h
+        src/ui/analysis/HistoricalOverlayControl.cpp
+        src/ui/analysis/HistoricalOverlayControl.h
         src/ui/analysis/ImpedanceResultsView.cpp
         src/ui/analysis/ImpedanceResultsView.h
         src/ui/analysis/QuickSweepDialog.cpp
         src/ui/analysis/QuickSweepDialog.h
         src/ui/analysis/ResultsSummaryView.cpp
         src/ui/analysis/ResultsSummaryView.h
+        src/ui/analysis/ResultReferenceController.cpp
+        src/ui/analysis/ResultReferenceController.h
+        src/ui/analysis/ResultWindowCoordinator.cpp
+        src/ui/analysis/ResultWindowCoordinator.h
         src/ui/analysis/RunReviewWindow.cpp
         src/ui/analysis/RunReviewWindow.h
         src/ui/analysis/SolverProcessRunner.cpp
         src/ui/analysis/SolverProcessRunner.h
         src/ui/analysis/SweepPlotsView.cpp
         src/ui/analysis/SweepPlotsView.h
+        src/ui/analysis/CurrentAntennaView.cpp
+        src/ui/analysis/CurrentAntennaView.h
         src/ui/analysis/FieldResultsViews.cpp
         src/ui/analysis/FieldResultsViews.h
+        src/ui/cards/CompactNumberDelegate.cpp
+        src/ui/cards/CompactNumberDelegate.h
         src/ui/cards/WireCardEditor.cpp
         src/ui/cards/WireCardEditor.h
         src/ui/cards/StructuredCardEditor.cpp
         src/ui/cards/StructuredCardEditor.h
-        src/ui/dashboard/DashboardPage.cpp
-        src/ui/dashboard/DashboardPage.h
+        src/ui/controlpanel/ControlPanel.cpp
+        src/ui/controlpanel/ControlPanel.h
         src/ui/editor/NecEditor.cpp
         src/ui/editor/NecEditor.h
         src/ui/editor/NecHighlighter.cpp
@@ -127,8 +165,19 @@ if(NECWB_BUILD_GUI)
         src/ui/geometry/WirePropertiesDialog.h
         src/ui/optimization/OptimizationWorkspace.cpp
         src/ui/optimization/OptimizationWorkspace.h
+        src/ui/optimization/OptimizationWorkspaceCandidates.cpp
+        src/ui/optimization/OptimizationWorkspaceFrequencies.cpp
+        src/ui/optimization/OptimizationWorkspaceLayout.cpp
+        src/ui/optimization/OptimizationWorkspaceObjective.cpp
+        src/ui/optimization/OptimizationWorkspaceSession.cpp
+        src/ui/optimization/OptimizationWorkspaceSupport.cpp
+        src/ui/optimization/OptimizationWorkspaceSupport.h
+        src/ui/optimization/OptimizationComparePanel.cpp
+        src/ui/optimization/OptimizationComparePanel.h
         src/ui/optimization/CandidateEvaluator.cpp
         src/ui/optimization/CandidateEvaluator.h
+        src/ui/optimization/DirectionStrategyDialog.cpp
+        src/ui/optimization/DirectionStrategyDialog.h
         src/ui/model/ParameterEditor.cpp
         src/ui/model/ParameterEditor.h
         src/ui/setup/SetupEditor.cpp
@@ -147,6 +196,7 @@ if(NECWB_BUILD_GUI)
             resources/icons/3d-view.svg
             resources/icons/analysis.svg
             resources/icons/check.svg
+            resources/icons/currents.svg
             resources/icons/delete.svg
             resources/icons/detach.svg
             resources/icons/edit.svg
@@ -155,6 +205,7 @@ if(NECWB_BUILD_GUI)
             resources/icons/fit.svg
             resources/icons/frequency-sweep.svg
             resources/icons/geometry.svg
+            resources/icons/ground.svg
             resources/icons/help.svg
             resources/icons/import.svg
             resources/icons/loads.svg
@@ -166,7 +217,9 @@ if(NECWB_BUILD_GUI)
             resources/icons/radiation-pattern.svg
             resources/icons/redo.svg
             resources/icons/results.svg
+            resources/icons/requests.svg
             resources/icons/run.svg
+            resources/icons/runs.svg
             resources/icons/save.svg
             resources/icons/settings.svg
             resources/icons/sources.svg
@@ -175,8 +228,10 @@ if(NECWB_BUILD_GUI)
             resources/icons/transmission-lines.svg
             resources/icons/undo.svg
             resources/icons/validate.svg
+            resources/icons/variables.svg
     )
     target_link_libraries(necwb_ui PUBLIC necwb_core Qt6::Widgets)
+    target_compile_definitions(necwb_ui PUBLIC NECWB_DISPLAY_VERSION="${NECWB_DISPLAY_VERSION}")
     if(MSVC)
         target_compile_options(necwb_ui PRIVATE /W4 /permissive-)
     else()
@@ -185,6 +240,9 @@ if(NECWB_BUILD_GUI)
 
     qt_add_executable(nec-workbench src/app/main.cpp)
     target_link_libraries(nec-workbench PRIVATE necwb_ui)
+    if(WIN32)
+        set_target_properties(nec-workbench PROPERTIES WIN32_EXECUTABLE TRUE)
+    endif()
 
     install(TARGETS nec-workbench
         BUNDLE DESTINATION .

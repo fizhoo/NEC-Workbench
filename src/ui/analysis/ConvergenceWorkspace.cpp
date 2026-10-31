@@ -7,6 +7,7 @@
 #include "analysis/NecOutputParser.h"
 #include "analysis/SegmentationConvergence.h"
 #include "analysis/SolverCommand.h"
+#include "analysis/SolverInput.h"
 #include "nec/NecSymbolResolver.h"
 #include "nec/NecParser.h"
 #include "nec/NecSetupConverter.h"
@@ -26,6 +27,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QStyle>
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -82,6 +84,21 @@ auto peakGain(const analysis::AnalysisResult& result, double frequencyMHz) -> st
         if (!peak || sample.totalGainDb > *peak) peak = sample.totalGainDb;
     }
     return peak;
+}
+
+auto conciseWarningStatus(const QString& warning) -> QString
+{
+    if (warning == QStringLiteral("Refinement produces segments shorter than 0.001 wavelength."))
+        return QObject::tr("Not run — segment < 0.001 λ");
+    if (warning == QStringLiteral(
+            "Refinement produces a segment-length/diameter ratio of 4 or less."))
+        return QObject::tr("Not run — segment/diameter ≤ 4");
+    return QObject::tr("Not run — outside recommended limits");
+}
+
+auto warningDetail(const QString& warning) -> QString
+{
+    return QObject::tr("This level was not run. %1").arg(warning);
 }
 
 }
@@ -171,9 +188,14 @@ ConvergenceWorkspace::ConvergenceWorkspace(QWidget* parent) : QWidget(parent)
     resultsTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     resultsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     resultsTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+    resultsTable_->setObjectName(QStringLiteral("convergenceResultsTable"));
     resultsTable_->verticalHeader()->hide();
     resultsTable_->horizontalHeader()->setSectionResizeMode(AssessmentColumn, QHeaderView::Stretch);
     resultsTable_->horizontalHeader()->setSectionResizeMode(RunColumn, QHeaderView::ResizeToContents);
+    assessmentDetailLabel_ = new QLabel(this);
+    assessmentDetailLabel_->setObjectName(QStringLiteral("convergenceAssessmentDetail"));
+    assessmentDetailLabel_->setWordWrap(true);
+    assessmentDetailLabel_->hide();
 
     layout->addWidget(historicalBanner_);
     layout->addWidget(heading);
@@ -183,10 +205,19 @@ ConvergenceWorkspace::ConvergenceWorkspace(QWidget* parent) : QWidget(parent)
     layout->addWidget(statusLabel_);
     layout->addWidget(conclusionLabel_);
     layout->addWidget(resultsTable_, 1);
+    layout->addWidget(assessmentDetailLabel_);
     connect(runButton_, &QPushButton::clicked, this, [this] { startStudy(); });
     connect(cancelButton_, &QPushButton::clicked, this, [this] { cancelStudy(); });
     connect(returnToCurrentWorkButton_, &QPushButton::clicked, this, [this] {
         if (returnToCurrentWorkCallback_) returnToCurrentWorkCallback_();
+    });
+    connect(resultsTable_, &QTableWidget::itemSelectionChanged, this, [this] {
+        const auto row = resultsTable_->currentRow();
+        const auto* assessment = row >= 0 ? resultsTable_->item(row, AssessmentColumn) : nullptr;
+        const auto detail = assessment == nullptr
+            ? QString{} : assessment->data(Qt::UserRole).toString();
+        assessmentDetailLabel_->setText(detail);
+        assessmentDetailLabel_->setVisible(!detail.isEmpty());
     });
     updateReadiness();
 }
@@ -394,7 +425,7 @@ void ConvergenceWorkspace::startNextStep()
         step.record.status = QStringLiteral("Skipped");
         step.record.summary = step.warning;
         runStore_.save(step.record);
-        setStepStatus(step.row, tr("Outside recommended limits · %1").arg(step.warning));
+        setStepStatus(step.row, conciseWarningStatus(step.warning), warningDetail(step.warning), true);
         ++stepIndex_;
         progress_->setValue(static_cast<int>(stepIndex_));
         QTimer::singleShot(0, this, [this] { startNextStep(); });
@@ -528,19 +559,31 @@ void ConvergenceWorkspace::finishStudy()
 auto ConvergenceWorkspace::writeStepFiles(Step& step, const std::string& deck) -> bool
 {
     const QDir directory(step.record.directory);
+    const auto backendDeck = analysis::formatSolverInputForBackend(
+        deck, backend_.toStdString());
     const QJsonObject metadata{{QStringLiteral("version"), 1},
         {QStringLiteral("scale"), step.scale}, {QStringLiteral("totalSegments"), step.totalSegments},
         {QStringLiteral("frequencyMHz"), frequencyControl_->value()},
         {QStringLiteral("warning"), step.warning}};
     return writeFile(directory.filePath(QStringLiteral("model.source.nec")), source_.toUtf8())
-        && writeFile(directory.filePath(QStringLiteral("model.nec")), QByteArray::fromStdString(deck))
+        && writeFile(directory.filePath(QStringLiteral("model.nec")),
+            QByteArray::fromStdString(backendDeck))
         && writeFile(directory.filePath(QStringLiteral("convergence.json")),
             QJsonDocument(metadata).toJson(QJsonDocument::Indented));
 }
 
-void ConvergenceWorkspace::setStepStatus(int row, const QString& status)
+void ConvergenceWorkspace::setStepStatus(
+    int row, const QString& status, const QString& detail, bool warning)
 {
-    resultsTable_->setItem(row, AssessmentColumn, new QTableWidgetItem(status));
+    auto* item = new QTableWidgetItem(status);
+    item->setData(Qt::UserRole, detail);
+    item->setToolTip(detail);
+    if (warning) item->setIcon(style()->standardIcon(QStyle::SP_MessageBoxWarning));
+    resultsTable_->setItem(row, AssessmentColumn, item);
+    if (resultsTable_->currentRow() == row) {
+        assessmentDetailLabel_->setText(detail);
+        assessmentDetailLabel_->setVisible(!detail.isEmpty());
+    }
     if (row >= 0 && static_cast<std::size_t>(row) < steps_.size()
         && !steps_[static_cast<std::size_t>(row)].record.id.isEmpty()) {
         resultsTable_->setItem(row, RunColumn,
@@ -552,6 +595,8 @@ void ConvergenceWorkspace::resetTable(int rows)
 {
     resultsTable_->clearContents();
     resultsTable_->setRowCount(rows);
+    assessmentDetailLabel_->clear();
+    assessmentDetailLabel_->hide();
 }
 
 auto ConvergenceWorkspace::loadSession(const QString& sessionId) -> bool
@@ -599,8 +644,12 @@ auto ConvergenceWorkspace::loadSession(const QString& sessionId) -> bool
             stepIndex_ = index;
             populateStepResult(step, outputFile.readAll());
         } else {
-            setStepStatus(step.row, step.warning.isEmpty() ? step.record.status
-                : tr("Outside recommended limits · %1").arg(step.warning));
+            if (step.warning.isEmpty()) {
+                setStepStatus(step.row, step.record.status);
+            } else {
+                setStepStatus(step.row, conciseWarningStatus(step.warning),
+                    warningDetail(step.warning), true);
+            }
         }
     }
     stepIndex_ = steps_.size();

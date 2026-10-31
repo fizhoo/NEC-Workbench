@@ -188,12 +188,17 @@ auto resolveCardLine(std::string_view line, std::size_t lineNumber,
     while (position < line.size() && !std::isspace(static_cast<unsigned char>(line[position])))
         result.push_back(line[position++]);
     while (position < line.size()) {
-        if (std::isspace(static_cast<unsigned char>(line[position]))) {
+        if (std::isspace(static_cast<unsigned char>(line[position]))
+            || line[position] == ',') {
             result.push_back(line[position++]);
             continue;
         }
         const auto start = position;
-        while (position < line.size() && !std::isspace(static_cast<unsigned char>(line[position]))) ++position;
+        while (position < line.size()
+            && !std::isspace(static_cast<unsigned char>(line[position]))
+            && line[position] != ',') {
+            ++position;
+        }
         const auto token = line.substr(start, position - start);
         if (!needsEvaluation(token)) {
             result.append(token);
@@ -208,6 +213,23 @@ auto resolveCardLine(std::string_view line, std::size_t lineNumber,
         }
     }
     return result;
+}
+
+auto generatedCardLine(const NecCard& card, std::string resolvedLine) -> std::string
+{
+    if (card.kind != NecCardKind::Frequency) return resolvedLine;
+    const auto resolvedDocument = NecParser{}.parse(resolvedLine);
+    if (resolvedDocument.cards().empty()) return resolvedLine;
+    const auto& resolvedCard = resolvedDocument.cards().front();
+    if (resolvedCard.fields.size() != 5) return resolvedLine;
+    int frequencyCount{};
+    const auto& countField = resolvedCard.fields[1];
+    const auto parsed = std::from_chars(countField.data(),
+        countField.data() + countField.size(), frequencyCount);
+    if (parsed.ec == std::errc{} && parsed.ptr == countField.data() + countField.size()
+        && frequencyCount == 1)
+        resolvedLine += " 0";
+    return resolvedLine;
 }
 
 void readDefinitions(const NecCard& card, std::unordered_map<std::string, double>& symbols,
@@ -294,7 +316,8 @@ auto NecSymbolResolver::resolve(std::string_view source,
             ? card.sourceText
             : resolveCardLine(card.sourceText, card.lineNumber, symbols, resolution.diagnostics);
         appendLine(resolution.resolvedSource, wroteResolvedLine, line);
-        appendLine(resolution.generatedDeck, wroteGeneratedLine, line);
+        appendLine(resolution.generatedDeck, wroteGeneratedLine,
+            generatedCardLine(card, line));
     }
     if (document.hasFinalLineEnding() && wroteResolvedLine)
         resolution.resolvedSource += document.lineEnding();

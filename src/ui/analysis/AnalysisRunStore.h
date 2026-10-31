@@ -1,5 +1,7 @@
 #pragma once
 
+#include "analysis/OptimizationBaseline.h"
+
 #include <QDateTime>
 #include <QString>
 
@@ -17,6 +19,7 @@ struct AnalysisRunRecord {
     QString runType{QStringLiteral("analysis")};
     QString parentId;
     QString summary;
+    QString userNote;
     int candidateCount{};
     double durationSeconds{};
     qint64 outputBytes{};
@@ -24,6 +27,10 @@ struct AnalysisRunRecord {
     bool hasImpedance{};
     bool hasCurrents{};
     bool hasRadiation{};
+    QString modelFingerprint;
+    double referenceImpedanceOhms{50.0};
+    std::vector<double> impedanceFrequenciesMHz;
+    std::vector<analysis::RadiationCoverage> radiationCoverage;
 };
 
 class AnalysisRunStore final {
@@ -34,6 +41,8 @@ public:
         const QString& runType = QStringLiteral("analysis"), const QString& parentId = {}) const
         -> AnalysisRunRecord;
     [[nodiscard]] auto load() const -> std::vector<AnalysisRunRecord>;
+    [[nodiscard]] auto loadRecent(std::size_t maximum) const
+        -> std::vector<AnalysisRunRecord>;
     auto save(const AnalysisRunRecord& record) const -> bool;
     auto remove(const QString& directory) const -> bool;
     auto removeGroup(const QString& id, const QString& directory) const -> bool;

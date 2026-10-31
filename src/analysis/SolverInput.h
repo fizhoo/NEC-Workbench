@@ -1,6 +1,8 @@
 #pragma once
 
+#include "analysis/AnalysisResult.h"
 #include "analysis/FrequencyPlan.h"
+#include "analysis/OptimizationObjective.h"
 #include "model/ModelSetup.h"
 
 #include <span>
@@ -17,6 +19,9 @@ enum class RadiationSweepMode {
 
 [[nodiscard]] auto normalizeSolverDeck(std::string_view source) -> std::string;
 
+[[nodiscard]] auto formatSolverInputForBackend(std::string_view source,
+    std::string_view backendId) -> std::string;
+
 [[nodiscard]] auto prepareSolverInput(std::string_view source,
     const model::ModelSetup& setup,
     RadiationSweepMode mode = RadiationSweepMode::CenterFrequencyOnly) -> std::string;
@@ -30,12 +35,23 @@ enum class RadiationSweepMode {
 [[nodiscard]] auto prepareExplicitFrequencyInput(std::string_view source,
     std::span<const double> frequenciesMHz) -> std::string;
 
+[[nodiscard]] auto prepareOptimizationInput(std::string_view source,
+    const FrequencyPlan& frequencyPlan,
+    const OptimizationObjectiveSpec& objective) -> std::string;
+
 [[nodiscard]] auto prepareDirectionalOptimizationInput(std::string_view source,
     double frequencyMHz, double thetaDegrees, double phiDegrees,
     bool includeOppositeDirection, bool includeRearRegion = false) -> std::string;
 [[nodiscard]] auto prepareDirectionalOptimizationInput(std::string_view source,
     std::span<const double> frequenciesMHz, double thetaDegrees, double phiDegrees,
     bool includeOppositeDirection, bool includeRearRegion = false) -> std::string;
+[[nodiscard]] auto prepareDirectionalCutOptimizationInput(std::string_view source,
+    std::span<const double> frequenciesMHz, DirectionalEvaluationMode mode,
+    double cutAngleDegrees, bool includeOppositeDirection,
+    bool includeRearRegion = false) -> std::string;
+
+[[nodiscard]] auto prepareMaximumGainSearchInput(std::string_view source,
+    double frequencyMHz, bool aboveGroundOnly) -> std::string;
 
 [[nodiscard]] auto prepareFrequencySweepInput(std::string_view source,
     const model::FrequencyDefinition& sweep, bool includeRadiationPatterns) -> std::string;

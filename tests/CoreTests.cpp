@@ -1,16 +1,23 @@
+#include "analysis/SegmentCurrentDisplay.h"
 #include "analysis/SolverCommand.h"
 #include "analysis/AdaptiveSearch.h"
 #include "analysis/AverageGainTest.h"
 #include "analysis/DifferentialEvolutionSearch.h"
 #include "analysis/FrequencyPlan.h"
+#include "analysis/HistoricalOverlayCompatibility.h"
 #include "analysis/NecOutputParser.h"
 #include "analysis/NelderMeadSearch.h"
+#include "analysis/OptimizationBaseline.h"
 #include "analysis/OptimizationObjective.h"
+#include "analysis/OptimizationPreset.h"
+#include "analysis/ReferenceRunSelection.h"
+#include "analysis/ResultSummary.h"
 #include "analysis/SegmentationConvergence.h"
 #include "analysis/SolverInput.h"
 #include "geometry/OrthographicProjection.h"
 #include "model/AutoSegmentation.h"
 #include "model/LengthUnit.h"
+#include "model/ModelSummary.h"
 #include "model/WireGeometry.h"
 #include "model/WireGauge.h"
 #include "nec/DeckGeometryUnits.h"
@@ -30,6 +37,7 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <numbers>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -57,6 +65,468 @@ void testRoundTripPreservesSource()
     expect(document.cards()[1].kind == necwb::nec::NecCardKind::Unknown, "unknown card is represented");
     expect(document.cards()[2].kind == necwb::nec::NecCardKind::Blank, "blank line is represented");
     expect(necwb::nec::NecWriter{}.write(document) == source, "writer preserves CRLF source exactly");
+}
+
+void testReferenceRunSelection()
+{
+    using necwb::analysis::ReferenceRunCandidate;
+    const std::vector<ReferenceRunCandidate> candidates{
+        {"older", "/models/dipole.nec", "analysis", "Completed", 10},
+        {"newer", "/models/dipole.nec", "quick-sweep", "Completed", 30},
+        {"active", "/models/dipole.nec", "analysis", "Completed", 40},
+        {"failed", "/models/dipole.nec", "analysis", "Failed", 50},
+        {"optimization", "/models/dipole.nec", "optimization-session", "Completed", 60},
+        {"other-model", "/models/yagi.nec", "analysis", "Completed", 70},
+    };
+    const auto selected = necwb::analysis::selectPreviousReferenceRun(
+        candidates, "active", "/models/dipole.nec");
+    expect(selected && candidates[*selected].id == "newer",
+        "reference selection chooses the newest eligible previous run");
+    expect(!necwb::analysis::selectPreviousReferenceRun(candidates, "active", {}),
+        "untitled models do not receive an automatic reference");
+    expect(!necwb::analysis::selectPreviousReferenceRun(
+        candidates, "active", "/models/missing.nec"),
+        "reference selection does not cross model identities");
+}
+
+void testHistoricalOverlayCompatibility()
+{
+    using necwb::analysis::AnalysisResult;
+    using necwb::analysis::FeedpointResult;
+    using necwb::analysis::HistoricalOverlayStatus;
+    using necwb::analysis::RadiationSample;
+
+    AnalysisResult current;
+    current.feedpoints = {
+        FeedpointResult{14.0, 1, 6},
+        FeedpointResult{14.1, 1, 6},
+    };
+    current.radiation = {
+        RadiationSample{14.0, 90.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 1},
+        RadiationSample{14.0, 90.0, 180.0, 0.0, 0.0, -5.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 1},
+        RadiationSample{14.1, 90.0, 0.0, 0.0, 0.0, 5.1, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 2},
+        RadiationSample{14.1, 90.0, 180.0, 0.0, 0.0, -5.1, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 2},
+    };
+    auto historical = current;
+    auto compatibility = necwb::analysis::evaluateHistoricalOverlayCompatibility(
+        current, historical);
+    expect(compatibility.impedance == HistoricalOverlayStatus::Compatible
+            && compatibility.radiation == HistoricalOverlayStatus::Compatible,
+        "historical overlay recognizes fully compatible results");
+
+    historical.feedpoints.pop_back();
+    historical.radiation.resize(2);
+    compatibility = necwb::analysis::evaluateHistoricalOverlayCompatibility(
+        current, historical);
+    expect(compatibility.impedance == HistoricalOverlayStatus::Partial
+            && compatibility.radiation == HistoricalOverlayStatus::Partial,
+        "historical overlay recognizes partial result coverage");
+
+    historical = current;
+    historical.referenceImpedanceOhms = 75.0;
+    compatibility = necwb::analysis::evaluateHistoricalOverlayCompatibility(
+        current, historical);
+    expect(compatibility.impedance == HistoricalOverlayStatus::Partial,
+        "historical overlay reports differing reference impedance as partial");
+
+    for (auto& sample : historical.feedpoints) sample.frequencyMHz += 10.0;
+    for (auto& sample : historical.radiation) sample.frequencyMHz += 10.0;
+    compatibility = necwb::analysis::evaluateHistoricalOverlayCompatibility(
+        current, historical);
+    expect(compatibility.impedance == HistoricalOverlayStatus::NoMatchingData
+            && compatibility.radiation == HistoricalOverlayStatus::NoMatchingData,
+        "historical overlay rejects unrelated result grids");
+}
+
+void testControlPanelSummaries()
+{
+    necwb::model::AntennaModel model;
+    model.addWire({1, {-5.0, 0.0, 10.0}, {0.0, 0.0, 10.0}, 11, 0.001, 3});
+    model.addWire({2, {0.0, 0.0, 10.0}, {5.0, 0.0, 10.0}, 9, 0.001, 4});
+    necwb::model::ModelSetup setup;
+    setup.frequency = necwb::model::FrequencyDefinition{0, 3, 14.0, 0.1, 6};
+    setup.ground = necwb::model::GroundDefinition{
+        necwb::model::GroundType::SommerfeldNorton};
+    setup.executionRequest = necwb::model::ExecutionRequest{0, 11};
+    setup.excitations = {{0, 2, 5, 1.0, 0.0, 7}};
+    setup.loads = {{0, 1, 1, 11, 50.0, 0.0, 0.0, 8}};
+    setup.transmissionLines = {{1, 11, 2, 1, 50.0, 2.0, 0.0, 0.0, 0.0, 0.0, 9}};
+    setup.radiationPatterns = {{19, 37, 0.0, 0.0, 5.0, 10.0, 10}};
+    const auto document = necwb::nec::NecParser{}.parse(
+        "CM summary model\nSY half=5\nGW 1 11 -5 0 10 0 0 10 .001\n"
+        "GW 2 9 0 0 10 5 0 10 .001\nGE 0\nFR 0 3 0 0 14 .1\n"
+        "EX 0 2 5 0 1 0\nLD 0 1 1 11 50 0 0\nTL 1 11 2 1 50 2\n"
+        "RP 0 19 37 1000 0 0 5 10\nXQ\nEN\n\n");
+    const auto modelSummary = necwb::model::summarizeModel(model, setup, document);
+    expect(modelSummary.wireCount == 2 && modelSummary.segmentCount == 20
+            && modelSummary.sources.size() == 1 && modelSummary.sources[0].wireTag == 2
+            && modelSummary.sources[0].segment == 5 && modelSummary.loadCount == 1
+            && modelSummary.transmissionLineCount == 1,
+        "model summary counts geometry and retains source location");
+    expect(modelSummary.frequency && modelSummary.frequency->startMHz == 14.0
+            && modelSummary.frequency->endMHz == 14.2
+            && modelSummary.frequency->pointCount == 3,
+        "model summary retains the authored frequency sweep");
+    expect(modelSummary.groundType == necwb::model::GroundType::SommerfeldNorton
+            && modelSummary.symbolCount == 1
+            && modelSummary.radiationRequests.size() == 1
+            && modelSummary.radiationRequests[0].thetaCount == 19
+            && modelSummary.radiationRequests[0].phiCount == 37
+            && modelSummary.executionRequestCount == 1
+            && modelSummary.cardCount == 12,
+        "model summary counts variables, requests, and nonblank deck cards");
+
+    const auto emptySummary = necwb::analysis::summarizeResults({}, 14.0);
+    expect(!emptySummary.selectedFeedpoint && !emptySummary.minimumSwr
+            && !emptySummary.peakGain,
+        "result summary represents an empty analysis without placeholder values");
+
+    necwb::analysis::AnalysisResult singleFrequency;
+    singleFrequency.feedpoints = {{7.1, 1, 11, {}, {}, {50.0, 0.0}, 0.5}};
+    singleFrequency.radiation = {
+        {7.1, 0.0, 0.0, 0.0, 0.0, -5.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 0},
+        {7.1, 90.0, 0.0, 0.0, 0.0, 6.2, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 0},
+    };
+    const auto singleSummary = necwb::analysis::summarizeResults(singleFrequency, 7.1);
+    expect(singleSummary.selectedFeedpoint && singleSummary.minimumSwr
+            && singleSummary.selectedFeedpoint->frequencyMHz == 7.1
+            && singleSummary.selectedFeedpoint->swr == 1.0
+            && singleSummary.minimumSwr->frequencyMHz == 7.1,
+        "result summary reports one-frequency impedance and minimum SWR consistently");
+    expect(singleSummary.peakGain && singleSummary.peakGain->frequencyMHz == 7.1
+            && singleSummary.peakGain->gainDb == 6.2
+            && singleSummary.peakGain->datasetKind
+                == necwb::analysis::RadiationDatasetKind::ElevationCut,
+        "result summary identifies peak gain and its elevation cut");
+    expect(singleSummary.selectedGain && singleSummary.selectedGain->frequencyMHz == 7.1
+            && singleSummary.selectedGain->gainDb == 6.2,
+        "selected-frequency gain matches the radiation peak at that frequency");
+
+    necwb::analysis::AnalysisResult sweep;
+    sweep.feedpoints = {
+        {14.0, 1, 6, {}, {}, {50.0, 0.0}},
+        {14.2, 1, 6, {}, {}, {75.0, 0.0}},
+        {14.0, 2, 6, {}, {}, {150.0, 0.0}},
+        {14.2, 2, 6, {}, {}, {100.0, 0.0}},
+    };
+    sweep.radiation = {
+        {14.0, 90.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 2},
+        {14.2, 90.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 3},
+        {21.0, 45.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 4},
+        {21.0, 45.0, 90.0, 0.0, 0.0, 6.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 4},
+        {21.0, 90.0, 0.0, 0.0, 0.0, 7.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 4},
+        {21.0, 90.0, 90.0, 0.0, 0.0, 8.0, 0.0, 0.0,
+            necwb::analysis::PolarizationSense::Unknown, 4},
+    };
+    const auto sweepSummary = necwb::analysis::summarizeResults(
+        sweep, 14.19, necwb::analysis::FeedpointIdentity{2, 6});
+    expect(sweepSummary.selectedFeedpoint && sweepSummary.minimumSwr
+            && sweepSummary.selectedFeedpoint->frequencyMHz == 14.2
+            && sweepSummary.selectedFeedpoint->source
+                == necwb::analysis::FeedpointIdentity{2, 6}
+            && sweepSummary.minimumSwr->frequencyMHz == 14.2
+            && sweepSummary.minimumSwr->source
+                == necwb::analysis::FeedpointIdentity{2, 6},
+        "result summary keeps selected and minimum SWR values on one source");
+    expect(sweepSummary.peakGain && sweepSummary.peakGain->frequencyMHz == 21.0
+            && sweepSummary.peakGain->gainDb == 8.0
+            && sweepSummary.peakGain->patternIndex == 4
+            && sweepSummary.peakGain->datasetKind
+                == necwb::analysis::RadiationDatasetKind::FullPattern,
+        "result summary labels a peak from another frequency and full pattern dataset");
+    expect(!sweepSummary.selectedGain, "selected gain hides a point sample");
+
+    necwb::analysis::AnalysisResult mixedPattern;
+    mixedPattern.radiation = {
+        {14.0, 0.0, 0.0, 0.0, 0.0, -5.0, 0.0, 0.0, {}, 0},
+        {14.0, 90.0, 0.0, 0.0, 0.0, 3.1, 0.0, 0.0, {}, 0},
+        {14.35, 55.0, 0.0, 0.0, 0.0, 6.07, 0.0, 0.0, {}, 1},
+    };
+    const auto fullPatternSummary = necwb::analysis::summarizeResults(mixedPattern, 14.0),
+        pointSummary = necwb::analysis::summarizeResults(mixedPattern, 14.35);
+    expect(fullPatternSummary.selectedGain && fullPatternSummary.selectedGain->gainDb == 3.1,
+        "multi-angle selected gain");
+    expect(!pointSummary.selectedGain, "point sample is not a pattern peak");
+}
+
+void testOptimizationBaselineFingerprint()
+{
+    const std::string first =
+        "CM first formatting\n"
+        "GW 1 11 0 0 0 1.0 0 0 .001\n"
+        "GE 0\n"
+        "EX 0 1 6 0 1 0\n"
+        "FR 0 3 0 0 7.0 .1\n"
+        "RP 0 1 1 1000 90 0 0 0\n"
+        "EN\n";
+    const std::string reformatted =
+        "CM different comment\n"
+        "GW,1,11,0,0,0,1e0,0,0,1e-3\n"
+        "GE 0\n"
+        "EX 0 1 6 0 1 0\n"
+        "FR 0 1 0 0 14.2 0\n"
+        "XQ 0\n"
+        "EN\n";
+    const std::string changed =
+        "GW 1 11 0 0 0 1.1 0 0 .001\n"
+        "GE 0\n"
+        "EX 0 1 6 0 1 0\n"
+        "EN\n";
+    const auto fingerprint = necwb::analysis::optimizationModelFingerprint(first);
+    expect(!fingerprint.empty() && fingerprint.size() == 32,
+        "optimization model fingerprints are stable identifiers");
+    expect(fingerprint == necwb::analysis::optimizationModelFingerprint(reformatted),
+        "optimization fingerprints ignore comments, formatting, and execution requests");
+    expect(fingerprint != necwb::analysis::optimizationModelFingerprint(changed),
+        "optimization fingerprints change with solver-effective model values");
+
+    const auto firstResolution = necwb::nec::NecSymbolResolver{}.resolve(
+        "SY length=1\nGW 1 11 0 0 0 length 0 0 .001\nGE 0\nEN\n");
+    const auto secondResolution = necwb::nec::NecSymbolResolver{}.resolve(
+        "SY length=1.1\nGW 1 11 0 0 0 length 0 0 .001\nGE 0\nEN\n");
+    expect(firstResolution.ok() && secondResolution.ok()
+            && necwb::analysis::optimizationModelFingerprint(firstResolution.generatedDeck)
+                != necwb::analysis::optimizationModelFingerprint(secondResolution.generatedDeck),
+        "optimization fingerprints include resolved SY values");
+
+    // Solver decks omit the Workbench reference-impedance card, so an analysis of the same
+    // model must still match the study.
+    const std::string withReference =
+        "ZO 75\nGW 1 11 0 0 0 1 0 0 .001\nGE 0\nEX 0 1 6 0 1 0\nFR 0 1 0 0 14.2 0\nEN\n";
+    expect(necwb::analysis::optimizationModelFingerprint(withReference)
+            == necwb::analysis::optimizationModelFingerprint(
+                necwb::analysis::prepareImpedanceInput(withReference)),
+        "optimization fingerprints ignore the reference-impedance card removed from solver decks");
+}
+
+void testOptimizationBaselineCompatibility()
+{
+    necwb::analysis::AnalysisResult result;
+    result.referenceImpedanceOhms = 50.0;
+    result.feedpoints = {
+        {.frequencyMHz = 14.0},
+        {.frequencyMHz = 14.2},
+    };
+    result.radiation = {
+        {.frequencyMHz = 14.0, .thetaDegrees = 90.0, .phiDegrees = 0.0,
+            .patternIndex = 1},
+        {.frequencyMHz = 14.0, .thetaDegrees = 90.0, .phiDegrees = 5.0,
+            .patternIndex = 1},
+    };
+    const auto coverage = necwb::analysis::optimizationResultCoverage(result);
+    expect(coverage.impedanceFrequenciesMHz.size() == 2
+            && coverage.radiation.size() == 1
+            && coverage.radiation.front().sampleCount == 2,
+        "optimization result coverage indexes impedance and radiation grids");
+
+    const necwb::analysis::OptimizationBaselineDescriptor baseline{
+        "model-a", "nec2c", coverage};
+    const necwb::analysis::OptimizationBaselineRequirements requirements{
+        "model-a", "nec2c", 50.0, {14.0, 14.2}, {14.0}, coverage.radiation};
+    expect(necwb::analysis::evaluateOptimizationBaseline(baseline, requirements).compatible(),
+        "matching optimization baseline metadata is compatible");
+    expect(necwb::analysis::evaluateOptimizationBaseline(std::nullopt, requirements).status
+            == necwb::analysis::OptimizationBaselineStatus::Missing,
+        "missing optimization baseline is reported");
+
+    auto changedModel = requirements;
+    changedModel.modelFingerprint = "model-b";
+    expect(necwb::analysis::evaluateOptimizationBaseline(baseline, changedModel).status
+            == necwb::analysis::OptimizationBaselineStatus::ModelChanged,
+        "changed model invalidates an optimization baseline");
+    auto changedBackend = requirements;
+    changedBackend.backend = "opennec";
+    expect(necwb::analysis::evaluateOptimizationBaseline(baseline, changedBackend).status
+            == necwb::analysis::OptimizationBaselineStatus::BackendChanged,
+        "changed solver backend invalidates an optimization baseline");
+    auto changedImpedance = requirements;
+    changedImpedance.referenceImpedanceOhms = 75.0;
+    expect(necwb::analysis::evaluateOptimizationBaseline(baseline, changedImpedance).status
+            == necwb::analysis::OptimizationBaselineStatus::ReferenceImpedanceChanged,
+        "changed reference impedance invalidates SWR baseline coverage");
+    auto missingFrequency = requirements;
+    missingFrequency.impedanceFrequenciesMHz.push_back(14.3);
+    const auto frequencyCompatibility = necwb::analysis::evaluateOptimizationBaseline(
+        baseline, missingFrequency);
+    expect(frequencyCompatibility.status
+            == necwb::analysis::OptimizationBaselineStatus::MissingImpedanceCoverage
+            && frequencyCompatibility.missingImpedanceFrequenciesMHz.size() == 1,
+        "missing impedance frequency is reported explicitly");
+    auto missingRadiationFrequency = requirements;
+    missingRadiationFrequency.radiationFrequenciesMHz.push_back(14.2);
+    const auto radiationFrequencyCompatibility =
+        necwb::analysis::evaluateOptimizationBaseline(
+            baseline, missingRadiationFrequency);
+    expect(radiationFrequencyCompatibility.status
+            == necwb::analysis::OptimizationBaselineStatus::MissingRadiationCoverage
+            && radiationFrequencyCompatibility.missingRadiationFrequenciesMHz.size() == 1,
+        "missing radiation frequency is reported explicitly");
+    auto missingPattern = requirements;
+    missingPattern.radiation.front().directionFingerprint = "different-grid";
+    const auto patternCompatibility = necwb::analysis::evaluateOptimizationBaseline(
+        baseline, missingPattern);
+    expect(patternCompatibility.status
+            == necwb::analysis::OptimizationBaselineStatus::MissingRadiationCoverage
+            && patternCompatibility.missingRadiation.size() == 1
+            && patternCompatibility.missingRadiationFrequenciesMHz.empty(),
+        "mismatched radiation grid invalidates pattern baseline coverage");
+
+    std::ranges::reverse(result.radiation);
+    expect(necwb::analysis::optimizationResultCoverage(result).radiation == coverage.radiation,
+        "radiation coverage fingerprints are independent of solver sample order");
+}
+
+void testOptimizationPresets()
+{
+    using namespace necwb::analysis;
+
+    const auto definitions = optimizationPresetDefinitions();
+    expect(definitions.size() == 8, "optimization preset catalog includes seven goals and Custom");
+    for (auto index = std::size_t{}; index < definitions.size(); ++index) {
+        const auto& definition = definitions[index];
+        expect(!definition.stableId.empty(), "optimization preset has a stable ID");
+        expect(optimizationPresetStableId(definition.id) == definition.stableId,
+            "optimization preset ID resolves to its stable ID");
+        for (auto other = index + 1; other < definitions.size(); ++other)
+            expect(definition.stableId != definitions[other].stableId,
+                "optimization preset stable IDs are unique");
+    }
+    expect(!optimizationPresetObjective(OptimizationPresetId::Custom),
+        "Custom does not replace the current objective");
+
+    const OptimizationPresetParameters parameters{75.0, 1.8};
+    const auto minimizeSwr = optimizationPresetObjective(
+        OptimizationPresetId::MinimizeSwr, parameters);
+    expect(minimizeSwr && minimizeSwr->referenceImpedance == 75.0
+            && minimizeSwr->swrWeight == 1.0
+            && minimizeSwr->swrGoal == OptimizationGoal::Minimize
+            && minimizeSwr->swrAggregation == OptimizationAggregation::Maximum
+            && minimizeSwr->resistanceWeight == 0.0
+            && minimizeSwr->forwardGainWeight == 0.0,
+        "minimize SWR preset continuously rewards lower worst-band SWR");
+
+    const auto swr = optimizationPresetObjective(OptimizationPresetId::SwrLimit, parameters);
+    expect(swr && swr->referenceImpedance == 75.0 && swr->swrWeight == 1.0
+            && swr->swrGoal == OptimizationGoal::GoodEnough && swr->swrTarget == 1.8
+            && swr->swrGoodEnoughDirection == GoodEnoughDirection::AtMost
+            && swr->swrAggregation == OptimizationAggregation::Maximum
+            && swr->resistanceWeight == 0.0 && swr->forwardGainWeight == 0.0,
+        "SWR limit preset configures only worst-band SWR compliance");
+
+    const auto match = optimizationPresetObjective(
+        OptimizationPresetId::FeedpointMatch, parameters);
+    expect(match && match->swrWeight == 0.0 && match->resistanceWeight == 1.0
+            && match->resistanceGoal == OptimizationGoal::Target
+            && match->resistanceTargetOhms == 75.0
+            && match->resistanceAggregation == OptimizationAggregation::Maximum
+            && match->reactanceWeight == 1.0
+            && match->reactanceGoal == OptimizationGoal::Target
+            && match->reactanceTargetOhms == 0.0
+            && match->reactanceAggregation == OptimizationAggregation::Maximum,
+        "feedpoint match preset targets reference resistance and zero reactance");
+
+    const auto gain = optimizationPresetObjective(OptimizationPresetId::PeakGain, parameters);
+    expect(gain && gain->forwardGainWeight == 1.0
+            && gain->forwardGainGoal == OptimizationGoal::Maximize
+            && gain->forwardGainAggregation == OptimizationAggregation::Minimum
+            && gain->directionalEvaluationMode == DirectionalEvaluationMode::StrongestInAzimuthCut,
+        "peak gain preset maximizes the weakest frequency in a tracked cut");
+
+    const auto frontToBack = optimizationPresetObjective(
+        OptimizationPresetId::FrontToBack, parameters);
+    expect(frontToBack && frontToBack->frontToBackWeight == 1.0
+            && frontToBack->frontToBackGoal == OptimizationGoal::Maximize
+            && frontToBack->frontToBackAggregation == OptimizationAggregation::Minimum,
+        "front-to-back preset maximizes the weakest frequency");
+
+    const auto frontToRear = optimizationPresetObjective(
+        OptimizationPresetId::FrontToRear, parameters);
+    expect(frontToRear && frontToRear->frontToRearWeight == 1.0
+            && frontToRear->frontToRearGoal == OptimizationGoal::Maximize
+            && frontToRear->frontToRearAggregation == OptimizationAggregation::Minimum,
+        "front-to-rear preset maximizes the weakest frequency");
+
+    const auto combined = optimizationPresetObjective(
+        OptimizationPresetId::SwrAndGain, parameters);
+    expect(combined && combined->swrWeight == 1.0
+            && combined->swrGoal == OptimizationGoal::GoodEnough
+            && combined->swrTarget == 1.8 && combined->forwardGainWeight == 1.0
+            && combined->forwardGainGoal == OptimizationGoal::Maximize
+            && combined->forwardGainAggregation == OptimizationAggregation::Minimum,
+        "combined preset balances SWR compliance and weakest-frequency gain");
+
+    for (const auto& definition : definitions) {
+        if (definition.id == OptimizationPresetId::Custom) continue;
+        const auto objective = optimizationPresetObjective(definition.id, parameters);
+        const auto directional = objective && (objective->forwardGainWeight > 0.0
+            || objective->frontToBackWeight > 0.0 || objective->frontToRearWeight > 0.0);
+        expect(directional == definition.requiresDirectionalSetup,
+            "preset directional requirement matches enabled criteria");
+    }
+}
+
+void testUtf8BomParsing()
+{
+    const std::string source = "\xEF\xBB\xBFGW 1 3 0 0 0 1 0 0 .001\nGE 0\nEN\n";
+    const auto document = necwb::nec::NecParser{}.parse(source);
+    expect(document.cards().size() == 3
+            && document.cards()[0].kind == necwb::nec::NecCardKind::GeometryWire
+            && document.cards()[0].mnemonic == "GW",
+        "UTF-8 BOM does not hide the first NEC card mnemonic");
+    expect(document.cards()[0].fields.size() == 9
+            && document.cards()[0].fields[0] == "1",
+        "UTF-8 BOM does not alter first-card fields");
+    expect(necwb::nec::NecWriter{}.write(document) == source,
+        "UTF-8 BOM is preserved by source round trips");
+}
+
+void testLegacyFreeFormatParsing()
+{
+    const std::string source =
+        "CM Dipolo per i 40m  ( i2kfx )\n"
+        "CM\n"
+        "CM\n"
+        "CMPP  1 0 0 0 0\n"
+        "CE\n"
+        "GW 1 21  0 -10.64 0  0  +10.64  0 0.004\n"
+        "GE 0\n"
+        "FR 0 0 0 0 7.05\n"
+        "EX 0 1 11 0 1.0 0.0\n"
+        "PT -1\n"
+        "RP  0, 1, 1,  1001, 90, 0, 0, 0\n"
+        "RP  0, 1, 1,  1001, 90,180, 0, 0\n"
+        "RP  0, 1, 361, 1001, 90, 0, 1, 1\n"
+        "RP  0, 361, 1, 1001, 0, 0, 1, 1\n"
+        "EN\n";
+    const auto document = necwb::nec::NecParser{}.parse(source);
+    const auto setup = necwb::nec::NecSetupConverter{}.convert(document);
+    const auto result = necwb::nec::NecModelChecker{}.check(document);
+    expect(document.cards().size() == 15
+            && document.cards()[3].kind == necwb::nec::NecCardKind::Comment,
+        "NEC card mnemonics use their first two characters");
+    expect(document.cards()[10].fields.size() == 8
+            && document.cards()[11].fields.size() == 8,
+        "free-format NEC fields accept mixed comma and whitespace separators");
+    expect(result.errorCount() == 0 && result.model.wireCount() == 1,
+        "legacy signed and comma-separated NEC deck passes model checking");
+    expect(setup.frequency && setup.frequency->count == 1
+            && setup.frequency->startMHz == 7.05,
+        "zero FR frequency count uses the NEC-2 single-frequency default");
+    expect(setup.radiationPatterns.size() == 4,
+        "all comma-separated RP requests convert to structured requests");
+    expect(necwb::nec::NecWriter{}.write(document) == source,
+        "legacy free-format parsing preserves authored source exactly");
 }
 
 void testSourceLineEditing()
@@ -308,6 +778,31 @@ void testSymbolResolution()
     expect(solverInput.find("SY ") == std::string::npos
             && solverInput.find("FR 0 1 0 0 14.175 0") != std::string::npos,
         "native solver input contains resolved numeric cards and no Workbench symbols");
+    const std::string tabbedFourNec2Input =
+        "CM G5RV Multiband Antenna\r\n"
+        "CE\r\n"
+        "GW\t1\t31\t0\t-15\t0\t0\t15\t0\t.003\r\n"
+        "GE\t0\r\n"
+        "GN\t-1\r\n"
+        "EK\r\n"
+        "EX\t0\t1\t16\t0\t1.0\t0\t0\t0\r\n"
+        "FR\t0\t0\t0\t0\t14.2\t0\r\n"
+        "XQ\r\n"
+        "EN\r\n";
+    const auto fourNec2Input = necwb::analysis::formatSolverInputForBackend(
+        tabbedFourNec2Input, "nec2dxs");
+    expect(fourNec2Input.find('\t') == std::string::npos
+            && fourNec2Input.find("GW 1 31 0 -15 0 0 15 0 .003\r\n")
+                != std::string::npos
+            && fourNec2Input.find("EX 0 1 16 0 1.0 0 0 0\r\n")
+                != std::string::npos
+            && fourNec2Input.ends_with("EN\r\n"),
+        "4nec2 NEC2dXS input uses canonical space-delimited fields and preserves line endings");
+    expect(necwb::analysis::formatSolverInputForBackend(
+               tabbedFourNec2Input, "nec2") == tabbedFourNec2Input
+            && necwb::analysis::formatSolverInputForBackend(
+                tabbedFourNec2Input, "opennec") == tabbedFourNec2Input,
+        "backend input formatting leaves NEC2C and OpenNEC decks unchanged");
     const auto overridden = necwb::nec::NecSymbolResolver{}.resolve(source, {{"HALF", 7.5}});
     expect(overridden.ok()
             && overridden.generatedDeck.find("GW 1 21 -7.5 0 6 7.5 0 6 0.001") != std::string::npos,
@@ -634,6 +1129,47 @@ void testValidModelCheck()
     expect(result.errorCount() == 0, "valid model has no errors");
     expect(result.warningCount() == 0, "valid model has no warnings");
     expect(result.model.wireCount() == 1, "model check returns semantic geometry");
+
+    const std::string omittedIncrementSource =
+        "GW 1 21 -5 0 10 5 0 10 .001\n"
+        "GE 0\n"
+        "EX 0 1 11 0 1 0\n"
+        "FR 0 1 0 0 14.175\n"
+        "EN\n";
+    const auto omittedIncrementResolution =
+        necwb::nec::NecSymbolResolver{}.resolve(omittedIncrementSource);
+    const auto omittedIncrementDocument = necwb::nec::NecParser{}.parse(
+        omittedIncrementResolution.resolvedSource);
+    const auto omittedIncrementResult =
+        necwb::nec::NecModelChecker{}.check(omittedIncrementDocument);
+    const auto omittedIncrementSetup =
+        necwb::nec::NecSetupConverter{}.convert(omittedIncrementDocument);
+    expect(omittedIncrementResult.diagnostics.empty(),
+        "single-frequency FR silently accepts an omitted increment");
+    expect(omittedIncrementSetup.frequency
+            && omittedIncrementSetup.frequency->startMHz == 14.175
+            && omittedIncrementSetup.frequency->step == 0.0,
+        "omitted single-frequency increment converts to zero");
+    expect(omittedIncrementResolution.resolvedSource == omittedIncrementSource,
+        "symbol resolution preserves the authored FR line without an increment");
+    expect(omittedIncrementResolution.generatedDeck.find("FR 0 1 0 0 14.175 0")
+            != std::string::npos,
+        "generated solver deck supplies zero for an omitted single-frequency increment");
+
+    const auto commaResolution = necwb::nec::NecSymbolResolver{}.resolve(
+        "GW 1,21,0,-10.64,0,0,+10.64,0,.004\nGE 0\n"
+        "EX 0,1,11,0,1\nFR 0,0,0,0,7.05\nEN\n");
+    expect(commaResolution.ok()
+            && necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
+                   commaResolution.resolvedSource)).errorCount() == 0,
+        "symbol preprocessing preserves valid comma-delimited NEC fields");
+
+    const auto missingSweepIncrement = necwb::nec::NecModelChecker{}.check(
+        necwb::nec::NecParser{}.parse(
+            "GW 1 21 -5 0 10 5 0 10 .001\nGE 0\nEX 0 1 11 0 1 0\n"
+            "FR 0 2 0 0 14.175\nEN\n"));
+    expect(missingSweepIncrement.errorCount() == 1,
+        "multi-frequency FR still requires an increment");
 }
 
 void testStaticModelAdequacyChecks()
@@ -667,10 +1203,11 @@ void testCardValidation()
         "GW 1 3 0 0 0 1 0 0 .001\n"
         "GE 0\n"
         "EX 0 1 bad 0 1 0\n"
-        "FR 0 0 0 0 -14 0\n"
+        "FR 0 -1 0 0 -14 0\n"
         "ZZ unsupported\n"
         "EX 0 1 2 0 1 0\n"
-        "FR 0 1 0 0 14 0\n";
+        "FR 0 1 0 0 14 0\n"
+        "EN\n";
     const auto result = necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(source));
     expect(result.errorCount() == 3, "invalid EX and FR values produce errors");
     expect(result.warningCount() == 1, "unknown card produces a warning");
@@ -710,6 +1247,156 @@ void testGeometryCardOrdering()
     expect(std::ranges::any_of(missingEnd.diagnostics, [](const auto& diagnostic) {
         return diagnostic.message.find("requires a GE card") != std::string::npos;
     }), "geometry checker requires GE after the final GW card");
+}
+
+void testDeckStructureValidation()
+{
+    const auto missingCommentEnd = necwb::nec::NecModelChecker{}.check(
+        necwb::nec::NecParser{}.parse(
+            "CMPP 3,0,0,0,0\n"
+            "GW 1 41 -10 0 0 10 0 0 .001\nGE 0\n"
+            "EX 0 1 21 0 1 0\nFR 0 1 0 0 28 0\nEN\n"));
+    expect(missingCommentEnd.errorCount() == 1
+            && missingCommentEnd.diagnostics.front().message.find("before CE")
+                != std::string::npos,
+        "a leading CM comment block requires CE before geometry");
+
+    const auto missingEnd = necwb::nec::NecModelChecker{}.check(
+        necwb::nec::NecParser{}.parse(
+            "GW 1 41 -10 0 0 10 0 0 .001\nGE 0\n"
+            "EX 0 1 21 0 1 0\nFR 0 1 0 0 28 0\n"));
+    expect(missingEnd.errorCount() == 1
+            && missingEnd.diagnostics.front().message.find("final EN")
+                != std::string::npos,
+        "a complete NEC deck requires an EN end card");
+
+    const auto cardsAfterEnd = necwb::nec::NecModelChecker{}.check(
+        necwb::nec::NecParser{}.parse(
+            "GW 1 41 -10 0 0 10 0 0 .001\nGE 0\n"
+            "EX 0 1 21 0 1 0\nFR 0 1 0 0 28 0\nEN\nPT -1\n"));
+    expect(cardsAfterEnd.errorCount() == 1
+            && cardsAfterEnd.diagnostics.back().message.find("EN must be the final")
+                != std::string::npos,
+        "EN must remain the final nonblank deck card");
+
+    const auto corrected = necwb::nec::NecModelChecker{}.check(
+        necwb::nec::NecParser{}.parse(
+            "CMPP 3,0,0,0,0\nCE\n"
+            "GW 1 41 -10 0 0 10 0 0 .001\nGE 0\n"
+            "EX 0 1 21 0 1 0\nFR 0 1 0 0 28 0\nEN\n\n"));
+    expect(corrected.errorCount() == 0,
+        "a CE-terminated comment block and final EN pass structural validation");
+}
+
+void testControlCardSequence()
+{
+    const auto check = [](std::string_view controls) {
+        return necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
+            "GW 1 9 0 0 0 0 0 5 .001\nGE 0\n" + std::string{controls} + "EN\n"));
+    };
+    const auto hasMessage = [](const auto& result, std::string_view text) {
+        return std::ranges::any_of(result.diagnostics, [text](const auto& diagnostic) {
+            return diagnostic.message.find(text) != std::string::npos;
+        });
+    };
+
+    const auto patternThenDivider = check(
+        "EX 0 1 5 0 1 0\nFR 0 3 0 0 14 0.1\n"
+        "RP 0 19 1 1000 0 0 5 0\nXQ 0\n");
+    expect(!hasMessage(patternThenDivider, "final frequency only"),
+        "blank XQ after RP remains a legal NEC-2 execution-group divider");
+
+    const auto sweepThenPattern = check(
+        "EX 0 1 5 0 1 0\nFR 0 3 0 0 14 0.1\n"
+        "XQ 0\nRP 0 19 1 1000 0 0 5 0\n");
+    expect(hasMessage(sweepThenPattern, "final frequency only"),
+        "a later RP without repeated FR reports NEC-2 final-frequency semantics");
+
+    const auto repeatedSweep = check(
+        "EX 0 1 5 0 1 0\nFR 0 3 0 0 14 0.1\nXQ 0\n"
+        "FR 0 3 0 0 14 0.1\nRP 0 19 1 1000 0 0 5 0\n");
+    expect(!hasMessage(repeatedSweep, "final frequency only"),
+        "repeating FR starts a new automatic frequency loop");
+
+    const auto missingExcitation = check(
+        "FR 0 1 0 0 14 0\nRP 0 19 1 1000 0 0 5 0\nEX 0 1 5 0 1 0\n");
+    expect(hasMessage(missingExcitation, "before an EX excitation"),
+        "execution requests require the NEC-2 excitation exception to be satisfied");
+
+    const auto unusedGround = check(
+        "EX 0 1 5 0 1 0\nFR 0 1 0 0 14 0\nXQ 0\nGN 1\n");
+    expect(hasMessage(unusedGround, "after the final execution request"),
+        "a parameter change after the final execution request is rejected as unused");
+
+    const auto repeatedExecution = check(
+        "EX 0 1 5 0 1 0\nFR 0 1 0 0 14 0\nXQ 0\nGN 1\nXQ 0\n");
+    expect(!hasMessage(repeatedExecution, "after the final execution request"),
+        "a later execution request consumes changed calculation parameters");
+
+    const auto unusedRadiationGround = check(
+        "EX 0 1 5 0 1 0\nFR 0 1 0 0 14 0\nGD 0 0 0 0 13 0.005\nXQ 0\n");
+    expect(hasMessage(unusedRadiationGround, "no later RP request"),
+        "XQ does not consume GD parameters intended for radiated-field calculations");
+
+    const auto pendingNearField = check(
+        "EX 0 1 5 0 1 0\nFR 0 3 0 0 14 0.1\n"
+        "NE 0 1 1 1 0 0 1 0 0 0\n");
+    expect(hasMessage(pendingNearField, "follow it with XQ or RP"),
+        "near-field requests in automatic stepping require a later execution card");
+
+    const auto groupedNearField = check(
+        "EX 0 1 5 0 1 0\nFR 0 3 0 0 14 0.1\n"
+        "NE 0 1 1 1 0 0 1 0 0 0\nRP 0 19 1 1000 0 0 5 0\n");
+    expect(!hasMessage(groupedNearField, "follow it with XQ or RP"),
+        "RP executes a preceding near-field request during automatic stepping");
+}
+
+void testBackendCompatibilityProfiles()
+{
+    using necwb::nec::CompatibilityProfile;
+    using necwb::nec::DiagnosticSeverity;
+    using necwb::nec::ModelCheckOptions;
+
+    expect(necwb::nec::compatibilityProfileForBackend("nec2")
+            == CompatibilityProfile::OriginalNec2
+            && necwb::nec::compatibilityProfileForBackend("nec2dxs")
+                == CompatibilityProfile::FourNec2
+            && necwb::nec::compatibilityProfileForBackend("opennec")
+                == CompatibilityProfile::OpenNec,
+        "solver backends map to their compatibility profiles");
+
+    const auto deck = necwb::nec::NecParser{}.parse(
+        "GW 1 9 0 0 0 0 0 5 .001\nGE 0\n"
+        "EX 0 1 5 0 1 0\nFR 0 1 0 0 14.2 0\n"
+        "LD 6 1 1 1 0.000001 0.00000000001 0\nXQ 0\nEN\n");
+    const auto original = necwb::nec::NecModelChecker{}.check(deck,
+        ModelCheckOptions{CompatibilityProfile::OriginalNec2});
+    const auto fourNec2 = necwb::nec::NecModelChecker{}.check(deck,
+        ModelCheckOptions{CompatibilityProfile::FourNec2});
+    const auto openNec = necwb::nec::NecModelChecker{}.check(deck,
+        ModelCheckOptions{CompatibilityProfile::OpenNec});
+    const auto hasMessage = [](const auto& result, std::string_view text) {
+        return std::ranges::any_of(result.diagnostics, [text](const auto& diagnostic) {
+            return diagnostic.message.find(text) != std::string::npos;
+        });
+    };
+    expect(original.errorCount() == 1
+            && hasMessage(original, "Original NEC-2 and NEC2C support LD types 0 through 5"),
+        "Original NEC-2 profile rejects the 4nec2 LD6 extension clearly");
+    expect(fourNec2.errorCount() == 1
+            && hasMessage(fourNec2, "does not yet convert it for direct NEC2dXS execution"),
+        "4nec2 profile recognizes LD6 but blocks the unimplemented direct-solver conversion");
+    expect(openNec.errorCount() == 0,
+        "OpenNEC profile accepts its supported 4nec2 LD6 extension");
+
+    const auto symbolInfo = necwb::nec::NecModelChecker{}.check(deck,
+        ModelCheckOptions{CompatibilityProfile::OpenNec, 2});
+    expect(symbolInfo.informationCount() == 1
+            && std::ranges::any_of(symbolInfo.diagnostics, [](const auto& diagnostic) {
+                return diagnostic.severity == DiagnosticSeverity::Information
+                    && diagnostic.message.find("2 SY symbols") != std::string::npos;
+            }),
+        "resolved SY symbols are reported as a non-blocking generated-deck conversion");
 }
 
 void testIncompleteModelCheck()
@@ -933,7 +1620,8 @@ void testStructuredModelSetup()
         "invalid source references and zero frequency steps are diagnosed");
 
     const auto fullWidthFrequency = necwb::nec::NecParser{}.parse(
-        "FR 0 101 0 0 3.00000E+00 5.00000E-02 8.00000E+00 0.00000E+00 0.00000E+00 0.00000E+00\n");
+        "FR 0 101 0 0 3.00000E+00 5.00000E-02 8.00000E+00 0.00000E+00 0.00000E+00 0.00000E+00\n"
+        "EN\n");
     const auto fullWidthSetup = necwb::nec::NecSetupConverter{}.convert(fullWidthFrequency);
     expect(necwb::nec::NecModelChecker{}.check(fullWidthFrequency).errorCount() == 0,
         "full-width FR cards accept all six floating-point fields");
@@ -1006,7 +1694,9 @@ void testAnalysisRequests()
         "valid XQ and RP requests pass model checking");
 
     const auto shortPattern = necwb::nec::NecParser{}.parse(
-        "RP 0 181 361 1000 0.000 0.000 1.000 1.000\n");
+        "GW 1 9 0 0 0 0 0 5 .001\nGE 0\n"
+        "EX 0 1 5 0 1 0\nFR 0 1 0 0 14.2 0\n"
+        "RP 0 181 361 1000 0.000 0.000 1.000 1.000\nEN\n");
     const auto shortSetup = necwb::nec::NecSetupConverter{}.convert(shortPattern);
     expect(necwb::nec::NecModelChecker{}.check(shortPattern).errorCount() == 0
             && shortSetup.radiationPatterns.size() == 1
@@ -1015,7 +1705,9 @@ void testAnalysisRequests()
         "RP accepts omitted optional distance and normalization fields");
 
     const auto invalid = necwb::nec::NecParser{}.parse(
-        "RP 0 0 2 1000 0 0 1 0 0 0\nXQ bad\nZO -50\n");
+        "GW 1 9 0 0 0 0 0 5 .001\nGE 0\n"
+        "EX 0 1 5 0 1 0\nFR 0 1 0 0 14.2 0\n"
+        "RP 0 0 2 1000 0 0 1 0 0 0\nXQ bad\nZO -50\nEN\n");
     expect(necwb::nec::NecModelChecker{}.check(invalid).errorCount() == 4,
         "invalid RP counts, XQ options, and reference impedance are diagnosed");
 }
@@ -1053,6 +1745,29 @@ void testLoadsAndTransmissionLines()
         "GW 1 9 0 0 0 0 0 1 .001\nGE 0\nTL 1 1 1 9 0 0 0 0 0 0\nEN\n");
     expect(necwb::nec::NecModelChecker{}.check(invalidLine).errorCount() == 1,
         "zero-impedance transmission lines are rejected");
+
+    const auto omittedTrailingValues = necwb::nec::NecParser{}.parse(
+        "GW 1 9 0 0 0 0 0 1\nGC 0 0 1 .001 .001\n"
+        "GW 2 9 1 0 0 1 0 1 .001\nGE 0\n"
+        "LD 5 0 0 0 3.72e7\nTL 1 5 2 5 50\n"
+        "EX 0 1 5 0 1\nFR 0 1 0 0 14\nEN\n");
+    const auto omittedSetup = necwb::nec::NecSetupConverter{}.convert(omittedTrailingValues);
+    const auto omittedModel = necwb::nec::NecModelConverter{}.convert(omittedTrailingValues);
+    expect(necwb::nec::NecModelChecker{}.check(omittedTrailingValues).errorCount() == 0,
+        "valid omitted trailing zero fields pass model checking");
+    expect(omittedModel.issues.empty() && omittedModel.model.wireCount() == 2,
+        "GW may omit its radius when a following GC supplies taper radii");
+    expect(omittedSetup.excitations.size() == 1
+            && omittedSetup.excitations[0].phaseDegrees == 0.0
+            && omittedSetup.loads.size() == 1
+            && omittedSetup.loads[0].wireTag == 0
+            && omittedSetup.loads[0].value2 == 0.0
+            && omittedSetup.loads[0].value3 == 0.0
+            && omittedSetup.transmissionLines.size() == 1
+            && omittedSetup.transmissionLines[0].lengthMeters == 0.0
+            && omittedSetup.transmissionLines[0].shuntReal1 == 0.0
+            && omittedSetup.transmissionLines[0].shuntImaginary2 == 0.0,
+        "omitted EX, LD, and TL trailing fields convert to zero defaults");
 }
 
 void testSolverCommand()
@@ -1260,6 +1975,8 @@ void testNecOutputParsing()
         " RADIATION PATTERNS\n"
         " 62 0 1.25 -999.99 1.25 0 0 LINEAR\n"
         "\n"
+        " RADIATION PATTERNS\n"
+        "\n"
         " FREQUENCY= 1.4300E+01 MHZ\n"
         " ANTENNA INPUT PARAMETERS\n"
         " 1 6 1.0E+00 0.0E+00 1.1E-02 0.0E+00 4.89630E+01-2.04710E+01 0 0 5.5E-03\n"
@@ -1280,6 +1997,22 @@ void testNecOutputParsing()
     expect(result.feedpoints[2].frequencyMHz == 14.3
             && result.feedpoints[2].impedance == std::complex<double>{48.963, -20.471},
         "parser accepts OpenNEC frequency and adjacent signed fields");
+
+    const std::string multipleSourceOutput =
+        " FREQUENCY : 1.4200E+01 MHz\n"
+        " --------- ANTENNA INPUT PARAMETERS ---------\n"
+        " 1 6 1.0E+00 0.0E+00 1.0E-02 0.0E+00 5.0E+01 0.0E+00 0 0 5.0E-03\n"
+        " 2 6 1.0E+00 0.0E+00 8.0E-03 1.0E-03 6.0E+01 -7.5E+00 0 0 4.0E-03\n"
+        "\n";
+    const auto multipleSourceResult = necwb::analysis::NecOutputParser{}.parse(
+        multipleSourceOutput);
+    expect(multipleSourceResult.feedpoints.size() == 2
+            && multipleSourceResult.feedpoints[0].wireTag == 1
+            && multipleSourceResult.feedpoints[1].wireTag == 2
+            && multipleSourceResult.feedpoints[1].frequencyMHz == 14.2
+            && multipleSourceResult.feedpoints[1].impedance
+                == std::complex<double>{60.0, -7.5},
+        "NEC output parser retains multiple source results at one frequency");
     expect(std::abs(necwb::analysis::standingWaveRatio({50.0, 0.0}) - 1.0) < 1.0e-12,
         "matched 50-ohm impedance has one-to-one SWR");
     expect(necwb::analysis::standingWaveRatio({0.0, 0.0})
@@ -1327,6 +2060,44 @@ void testNecOutputParsing()
             && std::abs(*metrics.frontToBackDb - 10.0) < 1.0e-12,
         "radiation metrics report peak direction and front-to-back ratio");
 
+    // Over ground an elevated lobe's antipode is below the horizon and never sampled; F/B
+    // uses the same elevation turned 180 degrees in azimuth.
+    const std::array elevatedPattern{
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = 60.0,
+            .phiDegrees = 0.0, .totalGainDb = 7.0},
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = 60.0,
+            .phiDegrees = 180.0, .totalGainDb = -5.0},
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = 90.0,
+            .phiDegrees = 180.0, .totalGainDb = -20.0},
+    };
+    const auto elevatedMetrics = necwb::analysis::radiationMetrics(elevatedPattern,
+        necwb::analysis::RadiationComponent::Total);
+    const auto elevatedSpecified = necwb::analysis::radiationFrequencyMetrics(elevatedPattern,
+        necwb::analysis::RadiationComponent::Total, 60.0, 0.0);
+    expect(elevatedMetrics.frontToBackDb
+            && std::abs(*elevatedMetrics.frontToBackDb - 12.0) < 1.0e-12
+            && elevatedSpecified.size() == 1 && elevatedSpecified.front().frontToBackDb
+            && std::abs(*elevatedSpecified.front().frontToBackDb - 12.0) < 1.0e-12,
+        "F/B of an elevated lobe uses the same elevation at the opposite azimuth");
+
+    const std::vector<necwb::analysis::RadiationSample> frequencyPatterns{
+        {.frequencyMHz = 14.0, .thetaDegrees = 55.0, .phiDegrees = 0.0,
+            .totalGainDb = 6.2},
+        {.frequencyMHz = 14.0, .thetaDegrees = 90.0, .phiDegrees = 0.0,
+            .totalGainDb = -999.99},
+        {.frequencyMHz = 14.3, .thetaDegrees = 60.0, .phiDegrees = 0.0,
+            .totalGainDb = 6.3},
+        {.frequencyMHz = 14.3, .thetaDegrees = 90.0, .phiDegrees = 0.0,
+            .totalGainDb = -999.99},
+    };
+    const auto nearestPeak = necwb::analysis::radiationPeakAtNearestFrequency(
+        frequencyPatterns, necwb::analysis::RadiationComponent::Total, 14.05);
+    expect(nearestPeak && nearestPeak->frequencyMHz == 14.0
+            && nearestPeak->sampleCount == 2
+            && nearestPeak->metrics.peakThetaDegrees == 55.0
+            && nearestPeak->metrics.peakPhiDegrees == 0.0,
+        "radiation peak selection uses the pattern nearest the requested frequency");
+
     std::vector<necwb::analysis::RadiationCutPoint> elevationCut;
     for (auto theta = -90; theta <= 90; ++theta)
         elevationCut.push_back({static_cast<double>(theta), static_cast<double>(theta), 90.0, -20.0});
@@ -1348,20 +2119,21 @@ void testNecOutputParsing()
             && std::abs(*elevationMetrics.sampledBeamwidthDegrees - 13.0) < 1.0e-12
             && elevationMetrics.interpolatedBeamwidthDegrees
             && std::abs(*elevationMetrics.interpolatedBeamwidthDegrees - 14.6829135) < 1.0e-6
-            && !elevationMetrics.frontToBackDb,
-        "elevation-cut metrics retain tied peaks, interpolate HPBW, and require a physical back direction");
+            && elevationMetrics.frontToBackDb && std::abs(*elevationMetrics.frontToBackDb) < 1.0e-12,
+        "elevation-cut metrics retain tied peaks, interpolate HPBW, and take F/B at the same elevation");
 
     std::vector<necwb::analysis::RadiationCutPoint> horizontalCut;
     for (auto phi = 0; phi < 360; ++phi)
         horizontalCut.push_back({static_cast<double>(phi), 62.0,
             static_cast<double>(phi), phi == 0 ? 8.0 : -2.0});
     const auto offHorizonMetrics = necwb::analysis::radiationCutMetrics(horizontalCut, true);
-    expect(offHorizonMetrics.valid && !offHorizonMetrics.frontToBackDb
+    expect(offHorizonMetrics.valid && offHorizonMetrics.frontToBackDb
+            && std::abs(*offHorizonMetrics.frontToBackDb - 10.0) < 1.0e-12
             && offHorizonMetrics.sampledBeamwidthDegrees
             && *offHorizonMetrics.sampledBeamwidthDegrees == 0.0
             && offHorizonMetrics.interpolatedBeamwidthDegrees
             && std::abs(*offHorizonMetrics.interpolatedBeamwidthDegrees - 0.6) < 1.0e-12,
-        "off-horizon azimuth cut wraps HPBW across the seam without inventing F/B");
+        "off-horizon azimuth cut wraps HPBW across the seam and finds F/B in the cut");
     for (auto& sample : horizontalCut) sample.thetaDegrees = 90.0;
     const auto horizonMetrics = necwb::analysis::radiationCutMetrics(horizontalCut, true);
     expect(horizonMetrics.frontToBackDb
@@ -1513,12 +2285,45 @@ void testOptimizationObjectives()
     expect(!necwb::analysis::evaluateOptimizationObjective(
             directional, directionalObjective),
         "directional F/B is unavailable when the physical opposite sample is absent");
+    const auto missingBack = necwb::analysis::diagnoseOptimizationObjectiveFailure(
+        directional, directionalObjective);
+    expect(missingBack.kind
+                == necwb::analysis::OptimizationObjectiveFailureKind::MissingBackDirection
+            && missingBack.frequencyMHz
+            && std::abs(*missingBack.frequencyMHz - 14.2) < 1.0e-12,
+        "objective diagnostics identify the frequency with missing antipodal F/B coverage");
     directional.radiation.front().frequencyMHz = 14.1;
     auto forwardOnlyObjective = directionalObjective;
     forwardOnlyObjective.frontToBackWeight = 0.0;
     expect(!necwb::analysis::evaluateOptimizationObjective(
             directional, forwardOnlyObjective),
         "directional gain is unavailable when the requested frequency is absent");
+
+    necwb::analysis::AnalysisResult nullPattern;
+    nullPattern.feedpoints = {
+        {.frequencyMHz = 14.2, .impedance = {75.0, 15.0}},
+    };
+    nullPattern.radiation = {
+        {.frequencyMHz = 14.2, .thetaDegrees = 90.0, .phiDegrees = 0.0,
+            .verticalGainDb = -999.99, .horizontalGainDb = -999.99,
+            .totalGainDb = -999.99},
+    };
+    auto mixedNullObjective = forwardOnlyObjective;
+    mixedNullObjective.swrWeight = 1.0;
+    const auto nullFailure = necwb::analysis::diagnoseOptimizationObjectiveFailure(
+        nullPattern, mixedNullObjective);
+    expect(nullFailure.kind
+                == necwb::analysis::OptimizationObjectiveFailureKind::NullForwardGain
+            && nullFailure.frequencyMHz
+            && std::abs(*nullFailure.frequencyMHz - 14.2) < 1.0e-12,
+        "objective diagnostics distinguish an NEC pattern null from missing coverage");
+    const auto nullMetrics = necwb::analysis::radiationFrequencyMetrics(
+        nullPattern.radiation, necwb::analysis::RadiationComponent::Total, 90.0, 0.0);
+    expect(nullMetrics.size() == 1
+            && nullMetrics.front().forwardAvailability
+                == necwb::analysis::RadiationMetricAvailability::PatternNull
+            && !nullMetrics.front().forwardGainDb,
+        "radiation metrics retain pattern-null availability without exposing invalid gain");
 
     const auto directionalDeck = necwb::analysis::prepareDirectionalOptimizationInput(
         "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nFR 0 3 0 0 14 .1\n"
@@ -1558,6 +2363,10 @@ void testOptimizationObjectives()
             .verticalGainDb = 0.0, .horizontalGainDb = -30.0, .totalGainDb = 0.0},
         {.frequencyMHz = 148.0, .thetaDegrees = 90.0, .phiDegrees = 90.0,
             .verticalGainDb = 1.0, .horizontalGainDb = -30.0, .totalGainDb = 1.0},
+        {.frequencyMHz = 148.0, .thetaDegrees = 90.0, .phiDegrees = 45.0,
+            .verticalGainDb = 7.0, .horizontalGainDb = -30.0, .totalGainDb = 7.0},
+        {.frequencyMHz = 148.0, .thetaDegrees = 90.0, .phiDegrees = 225.0,
+            .verticalGainDb = -3.0, .horizontalGainDb = -30.0, .totalGainDb = -3.0},
     };
     const auto directionalFrequencyMetrics = necwb::analysis::radiationFrequencyMetrics(
         directionalSweep.radiation, necwb::analysis::RadiationComponent::Total, 90.0, 0.0);
@@ -1570,6 +2379,83 @@ void testOptimizationObjectives()
             && directionalFrequencyMetrics.back().frontToRearDb
             && *directionalFrequencyMetrics.back().frontToRearDb == 4.0,
         "shared radiation frequency metrics retain gain, F/B, and F/R");
+
+    const auto trackedCutMetrics = necwb::analysis::radiationTrackedCutFrequencyMetrics(
+        directionalSweep.radiation, necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 90.0);
+    expect(trackedCutMetrics.size() == 2
+            && trackedCutMetrics.front().forwardGainDb
+            && *trackedCutMetrics.front().forwardGainDb == 8.0
+            && trackedCutMetrics.front().forwardPhiDegrees
+            && *trackedCutMetrics.front().forwardPhiDegrees == 0.0
+            && trackedCutMetrics.back().forwardGainDb
+            && *trackedCutMetrics.back().forwardGainDb == 7.0
+            && trackedCutMetrics.back().forwardPhiDegrees
+            && *trackedCutMetrics.back().forwardPhiDegrees == 45.0
+            && trackedCutMetrics.back().frontToBackDb
+            && *trackedCutMetrics.back().frontToBackDb == 10.0,
+        "tracked azimuth-cut metrics select the strongest sampled lobe per frequency");
+    const std::array elevatedAzimuthCut{
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = 55.0,
+            .phiDegrees = 0.0, .totalGainDb = 6.0},
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = 55.0,
+            .phiDegrees = 180.0, .totalGainDb = -9.0},
+    };
+    const auto elevatedCutMetrics = necwb::analysis::radiationTrackedCutFrequencyMetrics(
+        elevatedAzimuthCut, necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 55.0);
+    expect(elevatedCutMetrics.size() == 1
+            && elevatedCutMetrics.front().frontToBackDb
+            && *elevatedCutMetrics.front().frontToBackDb == 15.0,
+        "tracked azimuth-cut F/B uses the opposite azimuth at the same theta");
+    // A stronger lobe in another vertical plane must not be taken as the elevation-cut peak.
+    const std::array twoElevationCuts{
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = 60.0,
+            .phiDegrees = 30.0, .totalGainDb = 5.0},
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = -60.0,
+            .phiDegrees = 30.0, .totalGainDb = 3.0},
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = 60.0,
+            .phiDegrees = 120.0, .totalGainDb = 9.0, .patternIndex = 1},
+    };
+    const auto elevationCutMetrics = necwb::analysis::radiationTrackedCutFrequencyMetrics(
+        twoElevationCuts, necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInElevationCut, 30.0);
+    expect(elevationCutMetrics.size() == 1 && elevationCutMetrics.front().forwardGainDb
+            && *elevationCutMetrics.front().forwardGainDb == 5.0
+            && elevationCutMetrics.front().forwardPhiDegrees
+            && *elevationCutMetrics.front().forwardPhiDegrees == 30.0,
+        "tracked elevation-cut metrics consider only the requested vertical plane");
+    // The elevation cut spans theta -90..90 at one phi; negative theta is the opposite azimuth,
+    // so an elevated lobe's back sample is in the same cut.
+    const std::array elevatedElevationCut{
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = 45.0,
+            .phiDegrees = 30.0, .totalGainDb = 6.0},
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = -45.0,
+            .phiDegrees = 30.0, .totalGainDb = -4.0},
+        necwb::analysis::RadiationSample{.frequencyMHz = 14.2, .thetaDegrees = 0.0,
+            .phiDegrees = 30.0, .totalGainDb = 1.0},
+    };
+    const auto elevatedElevationMetrics = necwb::analysis::radiationTrackedCutFrequencyMetrics(
+        elevatedElevationCut, necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInElevationCut, 30.0);
+    expect(elevatedElevationMetrics.size() == 1
+            && elevatedElevationMetrics.front().frontToBackDb
+            && std::abs(*elevatedElevationMetrics.front().frontToBackDb - 10.0) < 1.0e-9,
+        "tracked elevation-cut F/B uses the opposite azimuth at the same elevation");
+    auto trackedObjective = directionalObjective;
+    trackedObjective.kind = necwb::analysis::OptimizationObjectiveKind::PerCriterion;
+    trackedObjective.directionalEvaluationMode =
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut;
+    const auto trackedScore = necwb::analysis::evaluateOptimizationObjective(
+        directionalSweep, trackedObjective);
+    expect(trackedScore && trackedScore->frequencyMetrics.size() == 2
+            && trackedScore->frequencyMetrics.back().forwardGainDb
+            && *trackedScore->frequencyMetrics.back().forwardGainDb == 7.0
+            && trackedScore->frequencyMetrics.back().forwardThetaDegrees
+            && *trackedScore->frequencyMetrics.back().forwardThetaDegrees == 90.0
+            && trackedScore->frequencyMetrics.back().forwardPhiDegrees
+            && *trackedScore->frequencyMetrics.back().forwardPhiDegrees == 45.0,
+        "optimization objectives retain the direction selected by tracked cuts");
     auto directionalMinimax = directionalObjective;
     directionalMinimax.kind = necwb::analysis::OptimizationObjectiveKind::WorstPointAcrossFrequencies;
     directionalMinimax.swrWeight = 1.0;
@@ -1653,6 +2539,96 @@ void testOptimizationObjectives()
                 != std::string::npos
             && std::count(directionalSweepDeck.begin(), directionalSweepDeck.end(), '\n') >= 9,
         "directional optimization deck executes exact front/back requests at every study frequency");
+
+    const auto azimuthCutDeck = necwb::analysis::prepareDirectionalCutOptimizationInput(
+        "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nFR 0 1 0 0 146 0\nEN\n",
+        directionalFrequencies,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut,
+        55.0, true, true);
+    expect(azimuthCutDeck.find("RP 0 1 72 1000 55 0 0 5") != std::string::npos
+            && azimuthCutDeck.find("RP 0 1 72 1000 125 0 0 5") == std::string::npos
+            && std::count(azimuthCutDeck.begin(), azimuthCutDeck.end(), '\n') >= 7,
+        "azimuth tracking uses one complete fixed-theta cut at every frequency");
+    const auto azimuthRequirements =
+        necwb::analysis::optimizationRadiationRequirements(azimuthCutDeck);
+    expect(azimuthRequirements.size() == 2
+            && azimuthRequirements[0].frequencyMHz == 144.0
+            && azimuthRequirements[1].frequencyMHz == 148.0
+            && azimuthRequirements[0].patternIndex == 0
+            && azimuthRequirements[1].patternIndex == 0
+            && azimuthRequirements[0].sampleCount == 72
+            && azimuthRequirements[0].directionFingerprint
+                == azimuthRequirements[1].directionFingerprint,
+        "optimization radiation requirements preserve each generated azimuth cut grid");
+    const auto elevationCutDeck = necwb::analysis::prepareDirectionalCutOptimizationInput(
+        "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nEN\n",
+        directionalFrequencies,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInElevationCut,
+        30.0, true, true);
+    expect(elevationCutDeck.find("RP 0 37 1 1000 -90 30 5 0") != std::string::npos,
+        "elevation tracking requests a complete fixed-phi cut");
+    const auto elevationRequirements =
+        necwb::analysis::optimizationRadiationRequirements(elevationCutDeck);
+    expect(elevationRequirements.size() == 2
+            && elevationRequirements[0].sampleCount == 37
+            && elevationRequirements[0].directionFingerprint
+                == elevationRequirements[1].directionFingerprint
+            && elevationRequirements[0].directionFingerprint
+                != azimuthRequirements[0].directionFingerprint,
+        "optimization radiation requirements distinguish elevation and azimuth grids");
+
+    const auto elevatedBackDeck = necwb::analysis::prepareDirectionalOptimizationInput(
+        "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nEN\n",
+        directionalFrequencies, 60.0, 30.0, true, false);
+    expect(elevatedBackDeck.find("RP 0 1 1 1000 60 210") != std::string::npos
+            && elevatedBackDeck.find("RP 0 1 1 1000 120") == std::string::npos,
+        "specified-direction F/B requests the same elevation at the opposite azimuth");
+
+    const auto specifiedRearDeck = necwb::analysis::prepareDirectionalOptimizationInput(
+        "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nEN\n",
+        directionalFrequencies, 90.0, 0.0, true, true);
+    const auto specifiedRearRequirements =
+        necwb::analysis::optimizationRadiationRequirements(specifiedRearDeck);
+    expect(specifiedRearRequirements.size() == 76
+            && specifiedRearRequirements[0].frequencyMHz == 144.0
+            && specifiedRearRequirements[0].patternIndex == 0
+            && specifiedRearRequirements[37].patternIndex == 37
+            && specifiedRearRequirements[38].frequencyMHz == 148.0
+            && specifiedRearRequirements[38].patternIndex == 0
+            && std::ranges::all_of(specifiedRearRequirements,
+                [](const auto& requirement) { return requirement.sampleCount == 1; }),
+        "specified-direction F/R requirements retain every rear-region request per frequency");
+    const auto changedGeometryRearDeck =
+        necwb::analysis::prepareDirectionalOptimizationInput(
+            "GW 1 3 0 0 0 2 0 0 .001\nGE 0\nEN\n",
+            directionalFrequencies, 90.0, 0.0, true, true);
+    expect(necwb::analysis::optimizationRadiationRequirements(changedGeometryRearDeck)
+            == specifiedRearRequirements,
+        "candidate geometry changes do not alter the required directional sample grid");
+
+    const auto maximumGainDeck = necwb::analysis::prepareMaximumGainSearchInput(
+        "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nFR 0 3 0 0 14 .1\n"
+        "XQ 0\nRP 0 1 1 1000 90 0 0 0\nEN\n",
+        14.2, true);
+    const auto maximumGainSetup = necwb::nec::NecSetupConverter{}.convert(
+        necwb::nec::NecParser{}.parse(maximumGainDeck));
+    expect(maximumGainSetup.frequency && maximumGainSetup.frequency->count == 1
+            && std::abs(maximumGainSetup.frequency->startMHz - 14.2) < 1.0e-12
+            && maximumGainSetup.executionRequest.has_value()
+            && maximumGainSetup.radiationPatterns.size() == 1
+            && maximumGainSetup.radiationPatterns.front().thetaCount == 19
+            && maximumGainSetup.radiationPatterns.front().phiCount == 72
+            && maximumGainSetup.radiationPatterns.front().thetaStep == 5.0
+            && maximumGainSetup.radiationPatterns.front().phiStep == 5.0,
+        "maximum-gain search replaces authored requests with a one-frequency hemisphere grid");
+    const auto freeSpaceMaximumGainDeck = necwb::analysis::prepareMaximumGainSearchInput(
+        "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nEN\n", 28.5, false);
+    const auto freeSpaceMaximumGainSetup = necwb::nec::NecSetupConverter{}.convert(
+        necwb::nec::NecParser{}.parse(freeSpaceMaximumGainDeck));
+    expect(freeSpaceMaximumGainSetup.radiationPatterns.size() == 1
+            && freeSpaceMaximumGainSetup.radiationPatterns.front().thetaCount == 37
+            && freeSpaceMaximumGainSetup.radiationPatterns.front().phiCount == 72,
+        "maximum-gain search covers the full sphere for a free-space model");
 }
 
 void testAdaptiveSearch()
@@ -1991,9 +2967,94 @@ void testSegmentationConvergencePreparation()
 
 }
 
+void testSegmentCurrentDisplay()
+{
+    using necwb::analysis::SegmentCurrentResult;
+    const auto segmentCurrent = [](int tag, int segment, double magnitude, double phase) {
+        SegmentCurrentResult current;
+        current.frequencyMHz = 14.0;
+        current.wireTag = tag;
+        current.segment = segment;
+        current.magnitude = magnitude;
+        current.phaseDegrees = phase;
+        current.current = std::polar(magnitude, phase * std::numbers::pi / 180.0);
+        return current;
+    };
+    necwb::analysis::FeedpointResult feed;
+    feed.frequencyMHz = 14.0;
+    feed.wireTag = 1;
+    feed.segment = 1;
+    feed.current = std::polar(2.0, 30.0 * std::numbers::pi / 180.0);
+
+    // Two parallel elements entered in opposite directions carry the same physical current;
+    // NEC reports them 180 degrees apart, the display must not.
+    necwb::model::AntennaModel parallel;
+    parallel.addWire({1, {0.0, -1.0, 0.0}, {0.0, 1.0, 0.0}, 1, 0.001, 1});
+    parallel.addWire({2, {0.5, 1.0, 0.0}, {0.5, -1.0, 0.0}, 1, 0.001, 2});
+    const std::array parallelCurrents{segmentCurrent(1, 1, 2.0, 30.0),
+        segmentCurrent(2, 1, 1.0, -150.0)};
+    const auto shown = necwb::analysis::displayedCurrents(parallelCurrents,
+        std::span{&feed, 1}, parallel);
+    expect(shown.feedReferenced && shown.segments.size() == 2
+            && std::abs(shown.maximumMagnitude - 2.0) < 1.0e-12,
+        "displayed currents keep every segment with model geometry");
+    expect(!shown.segments[0].reversed && std::abs(shown.segments[0].relativePhaseDegrees) < 1.0e-9,
+        "the feed segment is the phase reference");
+    expect(shown.segments[1].reversed && std::abs(shown.segments[1].relativePhaseDegrees) < 1.0e-9
+            && shown.segments[1].start.y < shown.segments[1].end.y,
+        "a wire entered against its main axis is shown in the common direction");
+
+    // A dipole built from two wires running outward from the center stays continuous.
+    necwb::model::AntennaModel dipole;
+    dipole.addWire({1, {0.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, 1, 0.001, 1});
+    dipole.addWire({2, {0.0, 0.0, 0.0}, {0.0, -1.0, 0.0}, 1, 0.001, 2});
+    const std::array dipoleCurrents{segmentCurrent(1, 1, 1.0, 10.0),
+        segmentCurrent(2, 1, 1.0, -170.0)};
+    const auto dipoleShown = necwb::analysis::displayedCurrents(dipoleCurrents, {}, dipole);
+    expect(!dipoleShown.feedReferenced
+            && std::abs(dipoleShown.segments[0].relativePhaseDegrees - 10.0) < 1.0e-9
+            && std::abs(dipoleShown.segments[1].relativePhaseDegrees - 10.0) < 1.0e-9,
+        "without a feed, phases are absolute and joined halves agree");
+
+    necwb::analysis::DisplayedSegmentCurrent instant;
+    instant.magnitude = 2.0;
+    instant.relativePhaseDegrees = 60.0;
+    expect(std::abs(necwb::analysis::instantaneousCurrent(instant, 0.0) - 1.0) < 1.0e-12
+            && std::abs(necwb::analysis::instantaneousCurrent(instant, 30.0)) < 1.0e-12
+            && std::abs(necwb::analysis::instantaneousCurrent(instant, 120.0) + 2.0) < 1.0e-12,
+        "instantaneous current follows |I| cos(phase + cycle)");
+
+    // A vertical over radials wider than it is tall must still be seen from the side.
+    necwb::model::AntennaModel groundPlane;
+    groundPlane.addWire({1, {0.0, 0.0, 6.0}, {0.0, 0.0, 16.0}, 1, 0.001, 1});
+    groundPlane.addWire({2, {0.0, 0.0, 6.0}, {10.0, 0.0, 6.0}, 1, 0.001, 2});
+    groundPlane.addWire({3, {0.0, 0.0, 6.0}, {0.0, 10.0, 6.0}, 1, 0.001, 3});
+    groundPlane.addWire({4, {0.0, 0.0, 6.0}, {-10.0, 0.0, 6.0}, 1, 0.001, 4});
+    groundPlane.addWire({5, {0.0, 0.0, 6.0}, {0.0, -10.0, 6.0}, 1, 0.001, 5});
+    const std::array groundPlaneCurrents{segmentCurrent(1, 1, 1.0, 0.0),
+        segmentCurrent(2, 1, 0.25, 180.0), segmentCurrent(3, 1, 0.25, 180.0),
+        segmentCurrent(4, 1, 0.25, 180.0), segmentCurrent(5, 1, 0.25, 180.0)};
+    const auto groundPlaneShown = necwb::analysis::displayedCurrents(groundPlaneCurrents, {},
+        groundPlane);
+    expect(necwb::analysis::dominantProjectionPlane(shown.segments)
+                == necwb::geometry::ProjectionPlane::XY
+            && necwb::analysis::dominantProjectionPlane(groundPlaneShown.segments)
+                == necwb::geometry::ProjectionPlane::XZ,
+        "the projection plane shows the most current");
+}
+
 auto main() -> int
 {
+    testReferenceRunSelection();
+    testSegmentCurrentDisplay();
+    testHistoricalOverlayCompatibility();
+    testControlPanelSummaries();
+    testOptimizationBaselineFingerprint();
+    testOptimizationBaselineCompatibility();
+    testOptimizationPresets();
     testRoundTripPreservesSource();
+    testUtf8BomParsing();
+    testLegacyFreeFormatParsing();
     testSourceLineEditing();
     testSourceDocumentCache();
     testKnownCardsAreRecognized();
@@ -2011,6 +3072,9 @@ auto main() -> int
     testCardValidation();
     testGenericKnownCardValidation();
     testGeometryCardOrdering();
+    testDeckStructureValidation();
+    testControlCardSequence();
+    testBackendCompatibilityProfiles();
     testIncompleteModelCheck();
     testOrthographicProjection();
     testWireLookupAndWriting();

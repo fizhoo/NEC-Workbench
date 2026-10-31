@@ -3,10 +3,10 @@
 #include "nec/NecCardCatalog.h"
 #include "nec/NecModelConverter.h"
 #include "nec/NecSetupConverter.h"
+#include "nec/ParseNumber.h"
 #include "model/WireGeometry.h"
 
 #include <algorithm>
-#include <charconv>
 #include <cmath>
 #include <iomanip>
 #include <sstream>
@@ -20,14 +20,20 @@ template<typename Value>
 auto isNumber(std::string_view text) -> bool
 {
     Value value{};
-    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
-    return error == std::errc{} && end == text.data() + text.size();
+    return parseNumber(text, value);
 }
 
 void addError(ModelCheckResult& result, const NecCard& card, std::string message)
 {
     result.diagnostics.push_back(
         {DiagnosticSeverity::Error, card.lineNumber, std::move(message), "Card validation"});
+}
+
+void addSequenceDiagnostic(ModelCheckResult& result, DiagnosticSeverity severity,
+    const NecCard& card, std::string message)
+{
+    result.diagnostics.push_back(
+        {severity, card.lineNumber, std::move(message), "Control sequence"});
 }
 
 void addAdequacyWarning(ModelCheckResult& result, std::size_t lineNumber, std::string message)
@@ -137,8 +143,8 @@ void checkStaticAdequacy(const model::ModelSetup& setup, ModelCheckResult& resul
 
 void checkExcitation(const NecCard& card, ModelCheckResult& result)
 {
-    if (card.fields.size() < 6) {
-        addError(result, card, "EX requires at least four integer fields and two numeric fields");
+    if (card.fields.size() < 5) {
+        addError(result, card, "EX requires four integer fields and at least one numeric field");
         return;
     }
 
@@ -154,9 +160,9 @@ void checkExcitation(const NecCard& card, ModelCheckResult& result)
     int excitationType{};
     int wireTag{};
     int segment{};
-    std::from_chars(card.fields[0].data(), card.fields[0].data() + card.fields[0].size(), excitationType);
-    std::from_chars(card.fields[1].data(), card.fields[1].data() + card.fields[1].size(), wireTag);
-    std::from_chars(card.fields[2].data(), card.fields[2].data() + card.fields[2].size(), segment);
+    parseNumber(card.fields[0], excitationType);
+    parseNumber(card.fields[1], wireTag);
+    parseNumber(card.fields[2], segment);
     if (excitationType == 0) {
         const auto* wire = result.model.wireByTag(wireTag);
         if (wire == nullptr) {
@@ -169,8 +175,8 @@ void checkExcitation(const NecCard& card, ModelCheckResult& result)
 
 void checkFrequency(const NecCard& card, ModelCheckResult& result)
 {
-    if (card.fields.size() < 6) {
-        addError(result, card, "FR requires four integer fields and at least two numeric fields");
+    if (card.fields.size() < 5) {
+        addError(result, card, "FR requires four integer fields and a start frequency");
         return;
     }
 
@@ -187,20 +193,23 @@ void checkFrequency(const NecCard& card, ModelCheckResult& result)
         return;
     }
 
-    std::from_chars(card.fields[0].data(), card.fields[0].data() + card.fields[0].size(), steppingMode);
-    std::from_chars(card.fields[1].data(), card.fields[1].data() + card.fields[1].size(), frequencyCount);
-    std::from_chars(card.fields[4].data(), card.fields[4].data() + card.fields[4].size(), startFrequency);
-    std::from_chars(card.fields[5].data(), card.fields[5].data() + card.fields[5].size(), frequencyStep);
+    parseNumber(card.fields[0], steppingMode);
+    parseNumber(card.fields[1], frequencyCount);
+    parseNumber(card.fields[4], startFrequency);
+    if (card.fields.size() >= 6)
+        parseNumber(card.fields[5], frequencyStep);
     if (steppingMode != 0 && steppingMode != 1) {
         addError(result, card, "FR stepping mode must be 0 (linear) or 1 (multiplicative)");
     }
-    if (frequencyCount <= 0) {
-        addError(result, card, "FR frequency count must be positive");
+    if (frequencyCount < 0) {
+        addError(result, card, "FR frequency count cannot be negative");
     }
     if (startFrequency <= 0.0) {
         addError(result, card, "FR start frequency must be positive");
     }
-    if (frequencyCount > 1 && frequencyStep <= 0.0) {
+    if (frequencyCount > 1 && card.fields.size() < 6) {
+        addError(result, card, "FR increment is required when multiple frequencies are requested");
+    } else if (frequencyCount > 1 && frequencyStep <= 0.0) {
         addError(result, card, "FR step must be positive when multiple frequencies are requested");
     }
 }
@@ -212,7 +221,7 @@ void checkGround(const NecCard& card, ModelCheckResult& result)
         return;
     }
     int groundType{};
-    std::from_chars(card.fields[0].data(), card.fields[0].data() + card.fields[0].size(), groundType);
+    parseNumber(card.fields[0], groundType);
     if (groundType < -1 || groundType > 2) {
         addError(result, card, "GN ground type must be -1, 0, 1, or 2");
         return;
@@ -228,8 +237,8 @@ void checkGround(const NecCard& card, ModelCheckResult& result)
             addError(result, card, "GN dielectric constant and conductivity must be numeric");
             return;
         }
-        std::from_chars(card.fields[4].data(), card.fields[4].data() + card.fields[4].size(), relativePermittivity);
-        std::from_chars(card.fields[5].data(), card.fields[5].data() + card.fields[5].size(), conductivity);
+        parseNumber(card.fields[4], relativePermittivity);
+        parseNumber(card.fields[5], conductivity);
         if (relativePermittivity <= 0.0 || conductivity < 0.0) {
             addError(result, card, "GN dielectric constant must be positive and conductivity cannot be negative");
         }
@@ -255,10 +264,10 @@ void checkRadiationPattern(const NecCard& card, ModelCheckResult& result)
     int phiCount{};
     double thetaStep{};
     double phiStep{};
-    std::from_chars(card.fields[1].data(), card.fields[1].data() + card.fields[1].size(), thetaCount);
-    std::from_chars(card.fields[2].data(), card.fields[2].data() + card.fields[2].size(), phiCount);
-    std::from_chars(card.fields[6].data(), card.fields[6].data() + card.fields[6].size(), thetaStep);
-    std::from_chars(card.fields[7].data(), card.fields[7].data() + card.fields[7].size(), phiStep);
+    parseNumber(card.fields[1], thetaCount);
+    parseNumber(card.fields[2], phiCount);
+    parseNumber(card.fields[6], thetaStep);
+    parseNumber(card.fields[7], phiStep);
     if (thetaCount <= 0 || phiCount <= 0) {
         addError(result, card, "RP theta and phi counts must be positive");
     }
@@ -281,28 +290,43 @@ void checkReferenceImpedance(const NecCard& card, ModelCheckResult& result)
         return;
     }
     double impedance{};
-    std::from_chars(card.fields[0].data(), card.fields[0].data() + card.fields[0].size(), impedance);
+    parseNumber(card.fields[0], impedance);
     if (impedance <= 0.0)
         addError(result, card, "Z0/ZO reference impedance must be positive");
 }
 
-void checkLoad(const NecCard& card, ModelCheckResult& result)
+void checkLoad(const NecCard& card, CompatibilityProfile profile, ModelCheckResult& result)
 {
-    if (card.fields.size() < 7) { addError(result, card, "LD requires four integer and three numeric fields"); return; }
+    if (card.fields.size() < 5) { addError(result, card, "LD requires four integer fields and at least one numeric field"); return; }
     int type{}, tag{}, first{}, last{};
     if (!isNumber<int>(card.fields[0]) || !isNumber<int>(card.fields[1])
         || !isNumber<int>(card.fields[2]) || !isNumber<int>(card.fields[3])) {
         addError(result, card, "LD integer fields are invalid"); return;
     }
-    std::from_chars(card.fields[0].data(), card.fields[0].data() + card.fields[0].size(), type);
-    std::from_chars(card.fields[1].data(), card.fields[1].data() + card.fields[1].size(), tag);
-    std::from_chars(card.fields[2].data(), card.fields[2].data() + card.fields[2].size(), first);
-    std::from_chars(card.fields[3].data(), card.fields[3].data() + card.fields[3].size(), last);
-    if (type < 0 || type > 5) addError(result, card, "LD type must be 0 through 5");
-    const auto* wire = result.model.wireByTag(tag);
-    if (wire == nullptr) addError(result, card, "LD references a wire tag that does not exist");
-    else if (first < 0 || last < 0 || first > wire->segments || last > wire->segments
-        || (first != 0 && last != 0 && first > last)) addError(result, card, "LD segment range is invalid");
+    parseNumber(card.fields[0], type);
+    parseNumber(card.fields[1], tag);
+    parseNumber(card.fields[2], first);
+    parseNumber(card.fields[3], last);
+    if (type < 0 || type > 6) {
+        addError(result, card, "LD type must be 0 through 5 for NEC-2, or type 6 for a supported extended backend");
+    } else if (type == 6) {
+        if (profile == CompatibilityProfile::OriginalNec2) {
+            result.diagnostics.push_back({DiagnosticSeverity::Error, card.lineNumber,
+                "LD type 6 is a 4nec2 LC-trap extension. Original NEC-2 and NEC2C support "
+                "LD types 0 through 5 and cannot process this card as written.",
+                "Compatibility"});
+        } else if (profile == CompatibilityProfile::FourNec2) {
+            result.diagnostics.push_back({DiagnosticSeverity::Error, card.lineNumber,
+                "LD type 6 is recognized as a 4nec2 LC-trap extension, but NEC Workbench does "
+                "not yet convert it for direct NEC2dXS execution. Select OpenNEC or replace "
+                "the trap with standard NEC-2 loading.",
+                "Compatibility"});
+        }
+    }
+    const auto* wire = tag == 0 ? nullptr : result.model.wireByTag(tag);
+    if (tag != 0 && wire == nullptr) addError(result, card, "LD references a wire tag that does not exist");
+    else if (wire != nullptr && (first < 0 || last < 0 || first > wire->segments || last > wire->segments
+        || (first != 0 && last != 0 && first > last))) addError(result, card, "LD segment range is invalid");
     if (!std::ranges::all_of(card.fields.begin() + 4, card.fields.end(),
             [](const auto& field) { return isNumber<double>(field); }))
         addError(result, card, "LD values must be numeric");
@@ -310,12 +334,12 @@ void checkLoad(const NecCard& card, ModelCheckResult& result)
 
 void checkTransmissionLine(const NecCard& card, ModelCheckResult& result)
 {
-    if (card.fields.size() < 10) { addError(result, card, "TL requires four integer and six numeric fields"); return; }
+    if (card.fields.size() < 5) { addError(result, card, "TL requires four integer fields and an impedance"); return; }
     int tag1{}, segment1{}, tag2{}, segment2{};
     int* integers[]{&tag1, &segment1, &tag2, &segment2};
     for (auto index = 0; index < 4; ++index) {
         if (!isNumber<int>(card.fields[index])) { addError(result, card, "TL integer fields are invalid"); return; }
-        std::from_chars(card.fields[index].data(), card.fields[index].data() + card.fields[index].size(), *integers[index]);
+        parseNumber(card.fields[index], *integers[index]);
     }
     const auto validEnd = [&result](int tag, int segment) {
         const auto* wire = result.model.wireByTag(tag);
@@ -329,7 +353,7 @@ void checkTransmissionLine(const NecCard& card, ModelCheckResult& result)
         return;
     }
     double impedance{};
-    std::from_chars(card.fields[4].data(), card.fields[4].data() + card.fields[4].size(), impedance);
+    parseNumber(card.fields[4], impedance);
     if (impedance == 0.0) addError(result, card, "TL characteristic impedance must be nonzero");
 }
 
@@ -391,6 +415,158 @@ void checkCardOrdering(const NecDocument& document, ModelCheckResult& result)
     }
 }
 
+void checkDeckStructure(const NecDocument& document, ModelCheckResult& result)
+{
+    const NecCard* lastCard{};
+    auto leadingSection = true;
+    auto commentBlockOpen = false;
+    auto endSeen = false;
+
+    for (const auto& card : document.cards()) {
+        if (card.kind == NecCardKind::Blank) continue;
+        lastCard = &card;
+
+        if (leadingSection) {
+            if (card.mnemonic == "CM") {
+                commentBlockOpen = true;
+            } else if (card.mnemonic == "CE") {
+                commentBlockOpen = false;
+                leadingSection = false;
+            } else {
+                if (commentBlockOpen) {
+                    addError(result, card, card.mnemonic
+                        + " appears before CE; terminate the leading CM comment block with CE");
+                    commentBlockOpen = false;
+                }
+                leadingSection = false;
+            }
+        }
+
+        if (card.kind == NecCardKind::End) {
+            if (endSeen) addError(result, card, "Only one EN end card is allowed");
+            endSeen = true;
+        } else if (endSeen) {
+            addError(result, card, "EN must be the final nonblank card in the deck");
+        }
+    }
+
+    if (!endSeen) {
+        if (lastCard != nullptr) {
+            addError(result, *lastCard, "Deck requires a final EN end card");
+        } else {
+            result.diagnostics.push_back({DiagnosticSeverity::Error, 0,
+                "Deck requires a final EN end card", "Card validation"});
+        }
+    }
+}
+
+auto changesCalculationState(const NecCard& card) -> bool
+{
+    switch (card.kind) {
+    case NecCardKind::Excitation:
+    case NecCardKind::Load:
+    case NecCardKind::Ground:
+    case NecCardKind::Frequency:
+    case NecCardKind::TransmissionLine:
+    case NecCardKind::Network:
+        return true;
+    case NecCardKind::ControlOther:
+        return card.mnemonic == "EK" || card.mnemonic == "KH" || card.mnemonic == "PQ"
+            || card.mnemonic == "PT";
+    default:
+        return false;
+    }
+}
+
+auto isNearFieldRequest(const NecCard& card) -> bool
+{
+    return card.kind == NecCardKind::ControlOther
+        && (card.mnemonic == "NE" || card.mnemonic == "NH");
+}
+
+void checkControlSequence(const NecDocument& document, ModelCheckResult& result)
+{
+    auto excitationDefined = false;
+    auto executionOccurred = false;
+    auto frequencyCount = 1;
+    auto multiFrequencyLoopCompleted = false;
+    std::string lastExecution;
+    std::vector<const NecCard*> settingsAwaitingExecution;
+    std::vector<const NecCard*> radiationSettingsAwaitingPattern;
+    std::vector<const NecCard*> nearFieldsAwaitingExecution;
+
+    for (const auto& card : document.cards()) {
+        if (card.kind == NecCardKind::Excitation) excitationDefined = true;
+        if (card.kind == NecCardKind::Frequency) {
+            frequencyCount = 1;
+            if (card.fields.size() > 1 && isNumber<int>(card.fields[1])) {
+                parseNumber(card.fields[1], frequencyCount);
+                if (frequencyCount == 0) frequencyCount = 1;
+            }
+            multiFrequencyLoopCompleted = false;
+        }
+
+        if (changesCalculationState(card)) {
+            settingsAwaitingExecution.push_back(&card);
+        }
+        if (card.kind == NecCardKind::ControlOther && card.mnemonic == "GD") {
+            radiationSettingsAwaitingPattern.push_back(&card);
+        }
+
+        const auto nearField = isNearFieldRequest(card);
+        if (nearField && frequencyCount > 1) {
+            nearFieldsAwaitingExecution.push_back(&card);
+        }
+        const auto executionRequest = card.kind == NecCardKind::Execute
+            || card.kind == NecCardKind::RadiationPattern
+            || (nearField && frequencyCount == 1);
+        if (!executionRequest) continue;
+
+        if (!excitationDefined) {
+            addSequenceDiagnostic(result, DiagnosticSeverity::Error, card,
+                card.mnemonic + " requests execution before an EX excitation is defined");
+        }
+
+        const auto dividerAfterFieldRequest = card.kind == NecCardKind::Execute
+            && (lastExecution == "RP" || lastExecution == "NE" || lastExecution == "NH")
+            && settingsAwaitingExecution.empty() && nearFieldsAwaitingExecution.empty();
+        if (frequencyCount > 1 && multiFrequencyLoopCompleted && !dividerAfterFieldRequest) {
+            addSequenceDiagnostic(result, DiagnosticSeverity::Warning, card,
+                card.mnemonic
+                    + " follows a completed multi-frequency request without a repeated FR; "
+                      "NEC-2 evaluates this request at the final frequency only");
+        }
+
+        settingsAwaitingExecution.clear();
+        nearFieldsAwaitingExecution.clear();
+        if (card.kind == NecCardKind::RadiationPattern) {
+            radiationSettingsAwaitingPattern.clear();
+        }
+        executionOccurred = true;
+        if (frequencyCount > 1) multiFrequencyLoopCompleted = true;
+        lastExecution = card.mnemonic;
+    }
+
+    if (executionOccurred) {
+        for (const auto* card : settingsAwaitingExecution) {
+            addSequenceDiagnostic(result, DiagnosticSeverity::Error, *card,
+                card->mnemonic
+                    + " changes calculation state after the final execution request; "
+                      "move it before that request or add a later execution request");
+        }
+        for (const auto* card : radiationSettingsAwaitingPattern) {
+            addSequenceDiagnostic(result, DiagnosticSeverity::Error, *card,
+                "GD changes radiated-field parameters but no later RP request uses them");
+        }
+    }
+    for (const auto* card : nearFieldsAwaitingExecution) {
+        addSequenceDiagnostic(result, DiagnosticSeverity::Error, *card,
+            card->mnemonic
+                + " does not execute during automatic frequency stepping; "
+                  "follow it with XQ or RP");
+    }
+}
+
 }
 
 auto ModelCheckResult::errorCount() const noexcept -> std::size_t
@@ -407,7 +583,36 @@ auto ModelCheckResult::warningCount() const noexcept -> std::size_t
     }));
 }
 
-auto NecModelChecker::check(const NecDocument& document) const -> ModelCheckResult
+auto ModelCheckResult::informationCount() const noexcept -> std::size_t
+{
+    return static_cast<std::size_t>(std::ranges::count_if(diagnostics, [](const auto& diagnostic) {
+        return diagnostic.severity == DiagnosticSeverity::Information;
+    }));
+}
+
+auto compatibilityProfileForBackend(std::string_view backendId) noexcept
+    -> CompatibilityProfile
+{
+    if (backendId == "opennec") return CompatibilityProfile::OpenNec;
+    if (backendId == "nec2dxs") return CompatibilityProfile::FourNec2;
+    return CompatibilityProfile::OriginalNec2;
+}
+
+auto compatibilityProfileName(CompatibilityProfile profile) noexcept -> std::string_view
+{
+    switch (profile) {
+    case CompatibilityProfile::FourNec2:
+        return "4nec2 NEC2dXS";
+    case CompatibilityProfile::OpenNec:
+        return "OpenNEC";
+    case CompatibilityProfile::OriginalNec2:
+    default:
+        return "Original NEC-2 / NEC2C";
+    }
+}
+
+auto NecModelChecker::check(const NecDocument& document, ModelCheckOptions options) const
+    -> ModelCheckResult
 {
     auto conversion = NecModelConverter{}.convert(document);
     ModelCheckResult result{std::move(conversion.model), {}};
@@ -416,7 +621,9 @@ auto NecModelChecker::check(const NecDocument& document) const -> ModelCheckResu
             std::move(issue.message), "Geometry"});
     }
 
+    checkDeckStructure(document, result);
     checkCardOrdering(document, result);
+    checkControlSequence(document, result);
 
     for (const auto& card : document.cards()) {
         switch (card.kind) {
@@ -436,7 +643,7 @@ auto NecModelChecker::check(const NecDocument& document) const -> ModelCheckResu
             checkExecute(card, result);
             break;
         case NecCardKind::Load:
-            checkLoad(card, result);
+            checkLoad(card, options.compatibility, result);
             break;
         case NecCardKind::TransmissionLine:
             checkTransmissionLine(card, result);
@@ -475,6 +682,14 @@ auto NecModelChecker::check(const NecDocument& document) const -> ModelCheckResu
     if (setup.excitations.empty()) {
         result.diagnostics.push_back({DiagnosticSeverity::Warning, 0,
             "Incomplete analysis setup: no supported EX voltage source", "Readiness"});
+    }
+    if (options.expandedSymbolCount != 0) {
+        result.diagnostics.push_back({DiagnosticSeverity::Information, 0,
+            std::to_string(options.expandedSymbolCount)
+                + (options.expandedSymbolCount == 1
+                        ? " SY symbol was resolved and expanded in the generated solver deck"
+                        : " SY symbols were resolved and expanded in the generated solver deck"),
+            "Compatibility"});
     }
     checkStaticAdequacy(setup, result);
     std::ranges::sort(result.diagnostics, {}, &ModelDiagnostic::lineNumber);

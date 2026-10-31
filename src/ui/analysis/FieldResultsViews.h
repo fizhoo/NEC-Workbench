@@ -19,6 +19,7 @@ class QPushButton;
 
 namespace necwb::ui {
 
+class CurrentAntennaView;
 class CurrentPlotWidget;
 class RadiationPolarWidget;
 class RadiationSurfaceWidget;
@@ -44,6 +45,7 @@ private:
     model::AntennaModel model_;
     QComboBox* frequency_{};
     QLabel* summary_{};
+    CurrentAntennaView* antenna_{};
     CurrentPlotWidget* plot_{};
     QTableWidget* table_{};
     QString runContext_;
@@ -54,6 +56,10 @@ public:
     using SettingsChangedCallback = std::function<void(const analysis::RadiationDisplaySettings&)>;
     explicit RadiationPatternView(QWidget* parent = nullptr);
     void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
+    void setReferenceResults(const analysis::AnalysisResult& result, QString label);
+    void clearReferenceResults();
+    void setReferenceVisible(bool visible);
+    void setReferenceControlVisible(bool visible);
     void setSelectedFrequency(double frequencyMHz);
     void setDisplaySettings(const analysis::RadiationDisplaySettings& settings);
     void setComponent(analysis::RadiationComponent component);
@@ -76,6 +82,9 @@ private:
     void exportData();
     void settingsChanged();
     analysis::AnalysisResult result_;
+    std::optional<analysis::AnalysisResult> referenceResult_;
+    QString referenceLabel_;
+    QCheckBox* referenceControl_{};
     QComboBox* frequency_{};
     QComboBox* dataset_{};
     QComboBox* phi_{};
@@ -101,6 +110,10 @@ public:
     using SettingsChangedCallback = std::function<void(const analysis::RadiationDisplaySettings&)>;
     explicit Radiation3DView(QWidget* parent = nullptr);
     void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
+    void setReferenceResults(const analysis::AnalysisResult& result, QString label);
+    void clearReferenceResults();
+    void setReferenceVisible(bool visible);
+    void setReferenceControlVisible(bool visible);
     void setModel(const model::AntennaModel& model);
     void setSelectedFrequency(double frequencyMHz);
     void setDisplaySettings(const analysis::RadiationDisplaySettings& settings);
@@ -115,6 +128,8 @@ private:
     void exportImage();
     void exportData();
     analysis::AnalysisResult result_;
+    std::optional<analysis::AnalysisResult> referenceResult_;
+    QString referenceLabel_;
     model::AntennaModel model_;
     QComboBox* frequency_{};
     QComboBox* dataset_{};
@@ -127,6 +142,7 @@ private:
     QCheckBox* antennaControl_{};
     QCheckBox* currentControl_{};
     QCheckBox* radiationControl_{};
+    QCheckBox* referenceControl_{};
     QPushButton* exportImageButton_{};
     QPushButton* exportDataButton_{};
     RadiationSurfaceWidget* surface_{};
@@ -140,21 +156,32 @@ public:
     using ComponentChangedCallback = std::function<void(analysis::RadiationComponent)>;
     explicit RadiationPerformanceView(QWidget* parent = nullptr);
     void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
+    void setReferenceResults(const analysis::AnalysisResult& result, QString label);
+    void clearReferenceResults();
+    void setReferenceVisible(bool visible);
+    void setReferenceControlVisible(bool visible);
     void setSelectedFrequency(double frequencyMHz);
     void setComponent(analysis::RadiationComponent component);
     void setComponentChangedCallback(ComponentChangedCallback callback);
 
 private:
+    void seedDirectionFromPatternPeak();
     void refresh();
     analysis::AnalysisResult result_;
+    std::optional<analysis::AnalysisResult> referenceResult_;
+    QString referenceLabel_;
     QComboBox* component_{};
-    QDoubleSpinBox* forwardTheta_{};
-    QDoubleSpinBox* forwardPhi_{};
+    QDoubleSpinBox* forwardElevation_{};
+    QDoubleSpinBox* forwardAzimuth_{};
+    QPushButton* usePatternPeak_{};
     QLabel* summary_{};
+    QCheckBox* referenceControl_{};
     DirectionalMetricsView* plot_{};
     QString runContext_;
     std::optional<double> selectedFrequencyMHz_;
     ComponentChangedCallback componentChangedCallback_;
+    bool directionCustomized_{};
+    bool updatingDirection_{};
 };
 
 }

@@ -50,6 +50,8 @@ struct OptimizationFrequencyMetrics {
     std::optional<double> forwardGainDb;
     std::optional<double> frontToBackDb;
     std::optional<double> frontToRearDb;
+    std::optional<double> forwardThetaDegrees;
+    std::optional<double> forwardPhiDegrees;
 };
 
 struct OptimizationObjectiveSpec {
@@ -88,6 +90,8 @@ struct OptimizationObjectiveSpec {
     OptimizationAggregation frontToRearAggregation{OptimizationAggregation::Minimum};
     double forwardThetaDegrees{90.0};
     double forwardPhiDegrees{};
+    DirectionalEvaluationMode directionalEvaluationMode{
+        DirectionalEvaluationMode::SpecifiedDirection};
     RadiationComponent radiationComponent{RadiationComponent::Total};
 };
 
@@ -104,6 +108,8 @@ struct OptimizationObjectiveResult {
     double frontToRearComponent{};
     std::optional<double> forwardGainDb;
     std::optional<double> forwardGainFrequencyMHz;
+    std::optional<double> forwardThetaDegrees;
+    std::optional<double> forwardPhiDegrees;
     std::optional<double> backGainDb;
     std::optional<double> frontToBackDb;
     std::optional<double> frontToBackFrequencyMHz;
@@ -118,9 +124,30 @@ struct OptimizationObjectiveResult {
     std::optional<FeedpointResult> feedpoint;
 };
 
+enum class OptimizationObjectiveFailureKind {
+    InvalidConfiguration,
+    NoFrequencyResults,
+    MissingImpedance,
+    InvalidStandingWaveRatio,
+    MissingForwardDirection,
+    NullForwardGain,
+    MissingBackDirection,
+    NullBackGain,
+    MissingRearCoverage,
+    NullRearGain,
+    Unknown
+};
+
+struct OptimizationObjectiveFailure {
+    OptimizationObjectiveFailureKind kind{OptimizationObjectiveFailureKind::Unknown};
+    std::optional<double> frequencyMHz;
+};
+
 [[nodiscard]] auto evaluateOptimizationObjective(std::span<const FeedpointResult> feedpoints,
     const OptimizationObjectiveSpec& objective) -> std::optional<OptimizationObjectiveResult>;
 [[nodiscard]] auto evaluateOptimizationObjective(const AnalysisResult& analysis,
     const OptimizationObjectiveSpec& objective) -> std::optional<OptimizationObjectiveResult>;
+[[nodiscard]] auto diagnoseOptimizationObjectiveFailure(const AnalysisResult& analysis,
+    const OptimizationObjectiveSpec& objective) -> OptimizationObjectiveFailure;
 
 }

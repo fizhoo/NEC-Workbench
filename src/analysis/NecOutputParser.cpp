@@ -159,6 +159,9 @@ auto NecOutputParser::parse(std::string_view output) const -> AnalysisResult
     bool foundRadiationRow{};
     while (std::getline(lines, line)) {
         if (parseFrequency(line, frequencyMHz)) {
+            readingInputParameters = false;
+            readingCurrents = false;
+            readingRadiation = false;
             const auto existing = std::ranges::find_if(frequencies, [frequencyMHz](double value) {
                 return nearlyEqual(value, frequencyMHz);
             });
@@ -177,16 +180,22 @@ auto NecOutputParser::parse(std::string_view output) const -> AnalysisResult
             result.averagingSolidAnglePi = solidAnglePi;
         if (line.find("ANTENNA INPUT PARAMETERS") != std::string::npos) {
             readingInputParameters = true;
+            readingCurrents = false;
+            readingRadiation = false;
             foundInputRow = false;
             continue;
         }
         if (line.find("CURRENTS AND LOCATION") != std::string::npos) {
+            readingInputParameters = false;
             readingCurrents = true;
+            readingRadiation = false;
             foundCurrentRow = false;
             firstGlobalSegmentByTag.clear();
             continue;
         }
         if (line.find("RADIATION PATTERNS") != std::string::npos) {
+            readingInputParameters = false;
+            readingCurrents = false;
             readingRadiation = true;
             foundRadiationRow = false;
             currentPatternIndex = nextPatternIndexByFrequency[frequencyIndex]++;

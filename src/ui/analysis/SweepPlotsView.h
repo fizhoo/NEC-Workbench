@@ -9,8 +9,10 @@
 #include <optional>
 #include <vector>
 
-class QLabel;
 class QComboBox;
+class QCheckBox;
+class QLabel;
+class QSplitter;
 
 namespace necwb::ui {
 
@@ -49,13 +51,27 @@ public:
     explicit SweepPlotsView(QWidget* parent = nullptr);
 
     void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
+    void setReferenceResults(const analysis::AnalysisResult& result, QString label);
+    void clearReferenceResults();
+    void setReferenceVisible(bool visible);
+    void setReferenceControlVisible(bool visible);
     void setSelectedFrequency(double frequencyMHz);
+    void configureForCompactReview();
 
 private:
+    void refreshPlots();
+
     QLabel* summary_{};
+    QCheckBox* referenceControl_{};
     QComboBox* swrScaleControl_{};
     SweepPlotWidget* impedancePlot_{};
     SweepPlotWidget* swrPlot_{};
+    QSplitter* splitter_{};
+    QWidget* swrPanel_{};
+    std::optional<analysis::AnalysisResult> result_;
+    std::optional<analysis::AnalysisResult> referenceResult_;
+    QString runDirectory_;
+    QString referenceLabel_;
 };
 
 class DirectionalMetricsView final : public QWidget {
@@ -63,12 +79,20 @@ public:
     explicit DirectionalMetricsView(QWidget* parent = nullptr);
 
     void setResults(const analysis::OptimizationObjectiveResult& result);
+    void setReferenceResults(const analysis::OptimizationObjectiveResult& result,
+        QString label);
     void setMetrics(const std::vector<DirectionalPlotPoint>& metrics);
+    void setReferenceMetrics(const std::vector<DirectionalPlotPoint>& metrics, QString label);
+    void clearReferenceMetrics();
     void setSelectedFrequency(double frequencyMHz);
 
 private:
+    void refresh();
     QLabel* summary_{};
     SweepPlotWidget* plot_{};
+    std::vector<DirectionalPlotPoint> metrics_;
+    std::vector<DirectionalPlotPoint> referenceMetrics_;
+    QString referenceLabel_;
 };
 
 }

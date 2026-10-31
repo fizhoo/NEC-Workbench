@@ -12,7 +12,7 @@ guide and architecture rather than this list.
 - Display normalization from solved excitation to a selected accepted input power,
   with peak/RMS labeling and original values retained
 - CSV export for impedance, SWR, current, gain, and directional tables
-- Deliberate two-run overlays, starting with impedance and SWR
+- Optional dedicated multi-run comparison workspace if one historical overlay proves insufficient
 
 ## Visualization
 
@@ -31,7 +31,6 @@ guide and architecture rather than this list.
 - Per-frequency or per-band importance
 - Explicit pass/fail constraints in addition to weighted preferences
 - Two-variable grid sweeps and objective heat maps
-- Baseline-versus-finalist comparison
 - Staged impedance filtering before expensive directional evaluation
 - Revisit whether **Apply This Candidate and Run** adds enough value beyond Apply
   and the normal Run command

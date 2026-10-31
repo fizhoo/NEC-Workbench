@@ -26,7 +26,7 @@ enum class CandidateEvaluationStatus {
     SolverFailed,
     TimedOut,
     Canceled,
-    NoImpedance
+    ObjectiveUnavailable
 };
 
 struct CandidateEvaluationRequest {
@@ -45,6 +45,7 @@ struct CandidateEvaluationResult {
     QString detail;
     analysis::AnalysisResult analysis;
     std::optional<analysis::OptimizationObjectiveResult> objective;
+    std::optional<analysis::OptimizationObjectiveResult> availableMeasurements;
     double durationSeconds{};
     qint64 outputBytes{};
     int frequencyCount{};

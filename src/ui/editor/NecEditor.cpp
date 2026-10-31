@@ -160,9 +160,12 @@ void NecEditor::updateExtraSelections()
             continue;
         }
         QTextEdit::ExtraSelection selection;
-        selection.format.setBackground(diagnostic.severity == nec::DiagnosticSeverity::Error
-                ? QColor(255, 215, 215)
-                : QColor(255, 244, 206));
+        const auto background = diagnostic.severity == nec::DiagnosticSeverity::Error
+            ? QColor(255, 215, 215)
+            : diagnostic.severity == nec::DiagnosticSeverity::Warning
+                ? QColor(255, 244, 206)
+                : QColor(220, 235, 255);
+        selection.format.setBackground(background);
         selection.format.setProperty(QTextFormat::FullWidthSelection, true);
         selection.cursor = QTextCursor(block);
         selection.cursor.clearSelection();
