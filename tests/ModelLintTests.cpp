@@ -150,6 +150,27 @@ void testGroundFit()
     expect(count(check(deck("GW 1 11 -5 0 0 5 0 0 .001\n")), "no ground") == 0,
         "a free-space model drawn in the z = 0 plane is not reported");
 
+    // NEC-2 CONECT ties ends at z = 0 to ground only for GE 1; GN alone does not.
+    for (const auto* flag : {"0", "-1"}) {
+        expect(count(check(deck("GW 1 11 0 0 0 0 0 5 .001\n", "EX 0 1 6 0 1 0\n",
+                       std::string("GE ") + flag + "\nGN 1\n")),
+                   std::string("over the GN ground, but GE ") + flag
+                       + " does not connect wire ends to ground") == 1,
+            "a wire on z = 0 over GN without GE 1 is left unconnected");
+    }
+    expect(count(check(deck("GW 1 11 0 0 0 0 0 5 .001\n", "EX 0 1 6 0 1 0\n", "GE 1\n")),
+               "no GN card defines a ground") == 1,
+        "GE 1 without GN grounds ends with no ground image");
+    expect(count(check(deck("GW 1 11 -5 0 -1 5 0 -1 .001\n", "EX 0 1 6 0 1 0\n", "GE 1\n")),
+               "is below ground", DiagnosticSeverity::Error) == 1,
+        "GE 1 makes NEC-2 stop on wires below ground even without GN");
+    expect(count(check(deck("GW 1 11 -5 0 0 5 0 0 .001\n", "EX 0 1 6 0 1 0\n",
+                   "GE 1\nGN 1\n")), "lying in the ground plane", DiagnosticSeverity::Error) == 1,
+        "GE 1 makes NEC-2 stop on segments lying in the ground plane");
+    expect(count(check(deck("GW 1 11 -5 0 0 5 0 0 .001\n", "EX 0 1 6 0 1 0\n",
+                   "GE 0\nGN 1\n")), "lying in the ground plane", DiagnosticSeverity::Error) == 0,
+        "without GE 1, NEC-2 does not stop on a wire lying on z = 0");
+
     const auto lowReflection = check(deck("GW 1 11 -5 0 1 5 0 1 .001\n", "EX 0 1 6 0 1 0\n",
         "GE 0\nGN 0 0 0 0 13 0.005\n"));
     expect(count(lowReflection, "Use GN 2") == 1,
@@ -219,6 +240,10 @@ void testInsertionSegments()
     expect(count(check(deck("GW 1 11 0 0 0 0 0 5 .001\n", "EX 0 1 1 0 1 0\n",
                    "GE 1\nGN 1\n")), "on wire tag 1", DiagnosticSeverity::Information) == 0,
         "a base feed on a wire connected to ground is not a free end");
+    expect(count(check(deck("GW 1 11 0 0 0 0 0 5 .001\n", "EX 0 1 1 0 1 0\n",
+                   "GE 0\nGN 1\n")), "EX on wire tag 1 segment 1 is on the end segment",
+               DiagnosticSeverity::Information) == 1,
+        "a base feed over GN with GE 0 sits on an open end");
     expect(count(check(deck(dipole + "GW 2 1 0 0 1 0 0 1.1 .001\n",
                    "EX 0 2 1 0 1 0\nTL 1 6 2 1 50 0\n")), "on wire tag 2",
                DiagnosticSeverity::Information) == 0,
