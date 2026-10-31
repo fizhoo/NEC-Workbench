@@ -15,6 +15,11 @@ void AntennaModel::addSurfacePatch(SurfacePatch patch)
     surfacePatches_.push_back(std::move(patch));
 }
 
+void AntennaModel::addUnrenderedSegments(int tag, int segments, std::size_t sourceLine)
+{
+    unrenderedSegments_.push_back({wires_.size(), tag, segments, sourceLine});
+}
+
 void AntennaModel::scale(double factor) noexcept
 {
     for (auto& wire : wires_) {
@@ -61,6 +66,25 @@ auto AntennaModel::wires() const noexcept -> std::span<const Wire>
 auto AntennaModel::surfacePatches() const noexcept -> std::span<const SurfacePatch>
 {
     return surfacePatches_;
+}
+
+auto AntennaModel::unrenderedSegments() const noexcept -> std::span<const UnrenderedSegments>
+{
+    return unrenderedSegments_;
+}
+
+auto AntennaModel::segmentBlocks() const -> std::vector<SegmentBlock>
+{
+    std::vector<SegmentBlock> blocks;
+    blocks.reserve(wires_.size() + unrenderedSegments_.size());
+    auto unrendered = unrenderedSegments_.begin();
+    for (auto index = std::size_t{}; index <= wires_.size(); ++index) {
+        for (; unrendered != unrenderedSegments_.end() && unrendered->beforeWire == index; ++unrendered)
+            blocks.push_back({nullptr, index, unrendered->tag, unrendered->segments});
+        if (index < wires_.size())
+            blocks.push_back({&wires_[index], index, wires_[index].tag, wires_[index].segments});
+    }
+    return blocks;
 }
 
 auto AntennaModel::empty() const noexcept -> bool

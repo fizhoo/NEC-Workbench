@@ -61,7 +61,8 @@ public:
 
 private:
     const model::AntennaModel* model_{};
-    // NEC number of each wire's first segment, in wire order.
+    // Wires and unrendered geometry in NEC order, with each block's first NEC segment number.
+    std::vector<model::SegmentBlock> blocks_;
     std::vector<int> firstSegments_;
 };
 

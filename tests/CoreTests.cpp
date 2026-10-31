@@ -998,7 +998,10 @@ void testGeneratedWireGeometryConversion()
 
     const auto spiral = necwb::nec::NecModelConverter{}.convert(necwb::nec::NecParser{}.parse(
         "GH 8 40 0.05 0 0.1 0.1 0.2 0.2 0.001\nGE 0\n"));
-    expect(spiral.model.empty() && spiral.issues.empty(),
+    expect(spiral.model.empty() && spiral.issues.empty()
+            && spiral.model.unrenderedSegments().size() == 1
+            && spiral.model.unrenderedSegments()[0].tag == 8
+            && spiral.model.unrenderedSegments()[0].segments == 40,
         "valid flat-spiral GH remains preserved without claiming graphical expansion");
 }
 
@@ -1264,6 +1267,65 @@ void testSharedTagReferences()
                deck + "EX 0 1 17 0 1 0\nFR 0 1 0 0 146 0\nEN\n", 146.0, 2.0).error
                .find("share a tag") != std::string::npos,
         "convergence testing refuses decks whose tag references it cannot remap");
+}
+
+void testUnrenderedSegmentNumbering()
+{
+    // NEC numbers a flat spiral's segments even though Workbench does not draw it, so the
+    // GW after a 40-segment spiral holds segments 41-43.
+    const std::string deck =
+        "GH 8 40 0.05 0 0.1 0.1 0.2 0.2 0.001\n"
+        "GW 1 3 0 -1 3 0 1 3 0.001\n"
+        "GE 0\n";
+    const auto check = [&deck](const std::string& cards) {
+        return necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
+            deck + cards + "FR 0 1 0 0 146 0\nEN\n"));
+    };
+    const auto spiralFirst = check("EX 0 0 42 0 1 0\n");
+    expect(spiralFirst.errorCount() == 0
+            && check("EX 0 8 40 0 1 0\n").errorCount() == 0
+            && check("EX 0 0 44 0 1 0\n").errorCount() == 1,
+        "absolute and spiral-tag references count the undrawn spiral's segments");
+    expect(std::ranges::count_if(spiralFirst.diagnostics, [](const auto& diagnostic) {
+        return diagnostic.message.find("Flat-spiral GH") != std::string::npos
+            && diagnostic.lineNumber == 1;
+    }) == 1, "a flat spiral is flagged as unreliable in many solvers");
+
+    const auto& model = spiralFirst.model;
+    const auto marker = necwb::model::wireSegmentPosition(model, 0, 42);
+    expect(necwb::model::referencedSegmentCount(model, 0) == 43
+            && marker && std::abs(marker->y) < 1.0e-12 && std::abs(marker->z - 3.0) < 1.0e-12
+            && !necwb::model::wireSegmentPosition(model, 8, 5)
+            && !necwb::model::hasSharedWireTags(model),
+        "a tag-0 marker after a spiral lands on the drawn wire, and none is drawn on the spiral");
+    const necwb::analysis::WireSegmentIndex index(model);
+    const auto located = index.locate(1, 41);
+    expect(located && located->wireIndex == 0 && located->segment == 1
+            && !index.locate(1, 1) && !index.locate(8, 5),
+        "the current index skips the spiral's segments before the first drawn wire");
+
+    // GM and GX copy the spiral along with the wire, so the copies keep NEC's order.
+    const auto copied = necwb::nec::NecModelConverter{}.convert(necwb::nec::NecParser{}.parse(
+        "GH 8 10 0.05 0 0.1 0.1 0.2 0.2 0.001\n"
+        "GW 1 3 1 -1 3 1 1 3 0.001\n"
+        "GM 10 1 0 0 0 0 0 1\n"
+        "GX 100 100\n"
+        "GE 0\n"));
+    const auto blocks = copied.model.segmentBlocks();
+    const std::array expectedTags{8, 1, 18, 11, 108, 101, 118, 111};
+    expect(copied.issues.empty() && copied.model.wireCount() == 4 && blocks.size() == 8
+            && std::ranges::equal(blocks, expectedTags, {}, &necwb::model::SegmentBlock::tag)
+            && necwb::model::referencedSegmentCount(copied.model, 0) == 52,
+        "copied spirals keep their place and tag in NEC's segment order");
+    const auto copiedWire = necwb::analysis::WireSegmentIndex(copied.model).locate(111, 51);
+    expect(copiedWire && copiedWire->wireIndex == 3 && copiedWire->segment == 2,
+        "segments after copied spirals map to the right drawn wire");
+
+    const auto sharedWithSpiral = necwb::nec::NecModelConverter{}.convert(
+        necwb::nec::NecParser{}.parse("GH 1 10 0.05 0 0.1 0.1 0.2 0.2 0.001\n"
+                                      "GW 1 3 0 -1 3 0 1 3 0.001\nGE 0\n"));
+    expect(necwb::model::hasSharedWireTags(sharedWithSpiral.model),
+        "a spiral sharing a wire's tag counts as a shared tag");
 }
 
 void testGenericKnownCardValidation()
@@ -3168,6 +3230,28 @@ void testSegmentCurrentDisplay()
     const std::array staleCurrents{necCurrent(2, 1, 4, 0.0), necCurrent(1, 7, 11, 0.0)};
     expect(necwb::analysis::displayedCurrents(staleCurrents, {}, sharedTags).segments.empty(),
         "currents whose tag or segment does not match the model are skipped");
+
+    // nec2++ numbers a 40-segment flat spiral 1-40 and the following GW 41-43, feeding it at
+    // 42. The spiral is not drawn, but the GW's currents and feed must still be found.
+    const auto spiralFirst = necwb::nec::NecModelConverter{}.convert(necwb::nec::NecParser{}.parse(
+        "GH 8 40 0.05 0 0.1 0.1 0.2 0.2 0.001\nGW 1 3 0 -1 3 0 1 3 0.001\nGE 0\n")).model;
+    std::vector<necwb::analysis::SegmentCurrentResult> spiralCurrents;
+    for (auto segment = 1; segment <= 40; ++segment)
+        spiralCurrents.push_back(necCurrent(8, segment, segment, 97.0));
+    spiralCurrents.push_back(necCurrent(1, 1, 41, -82.765));
+    spiralCurrents.push_back(necCurrent(1, 2, 42, -61.700));
+    spiralCurrents.push_back(necCurrent(1, 3, 43, -82.765));
+    necwb::analysis::FeedpointResult spiralFeed;
+    spiralFeed.frequencyMHz = 14.0;
+    spiralFeed.wireTag = 1;
+    spiralFeed.segment = 42;
+    spiralFeed.current = std::polar(1.0, -61.700 * std::numbers::pi / 180.0);
+    const auto spiralShown = necwb::analysis::displayedCurrents(spiralCurrents,
+        std::span{&spiralFeed, 1}, spiralFirst);
+    expect(spiralShown.segments.size() == 3 && spiralShown.feedReferenced
+            && spiralShown.segments[1].necSegment == 42 && spiralShown.segments[1].segment == 2
+            && std::abs(spiralShown.segments[1].relativePhaseDegrees) < 1.0e-9,
+        "currents after an undrawn flat spiral are still shown on their wire");
 }
 
 auto main() -> int
@@ -3224,6 +3308,7 @@ auto main() -> int
     testAverageGainTestPreparation();
     testSegmentationConvergencePreparation();
     testSharedTagReferences();
+    testUnrenderedSegmentNumbering();
 
     if (failures != 0) {
         std::cerr << failures << " test assertion(s) failed\n";
