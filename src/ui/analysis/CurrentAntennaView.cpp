@@ -68,7 +68,7 @@ auto parallelWireSpacing(const std::vector<analysis::DisplayedSegmentCurrent>& s
     geometry::ProjectionPlane plane) -> double
 {
     struct Projected {
-        int wireTag{};
+        std::size_t wireIndex{};
         double x{};
         double y{};
         double directionX{};
@@ -85,7 +85,7 @@ auto parallelWireSpacing(const std::vector<analysis::DisplayedSegmentCurrent>& s
         const auto dy = end.vertical - start.vertical;
         const auto length = std::hypot(dx, dy);
         if (length <= 0.0) continue;
-        projected.push_back({segments[index].wireTag, (start.horizontal + end.horizontal) / 2.0,
+        projected.push_back({segments[index].wireIndex, (start.horizontal + end.horizontal) / 2.0,
             (start.vertical + end.vertical) / 2.0, dx / length, dy / length, length});
     }
     auto spacing = std::numeric_limits<double>::infinity();
@@ -93,7 +93,7 @@ auto parallelWireSpacing(const std::vector<analysis::DisplayedSegmentCurrent>& s
         for (auto second = first + 1; second < projected.size(); ++second) {
             const auto& a = projected[first];
             const auto& b = projected[second];
-            if (a.wireTag == b.wireTag
+            if (a.wireIndex == b.wireIndex
                 || std::abs(a.directionX * b.directionX + a.directionY * b.directionY) < 0.95)
                 continue;
             const auto dx = b.x - a.x;
@@ -140,7 +140,7 @@ public:
             autoPlane_ = analysis::dominantProjectionPlane(currents_.segments);
         // Segments grouped per wire in order, so each wire draws one continuous curve.
         std::ranges::sort(currents_.segments, {}, [](const auto& segment) {
-            return std::pair{segment.wireTag, segment.segment};
+            return std::pair{segment.wireIndex, segment.segment};
         });
         setProperty("segmentCount", static_cast<int>(currents_.segments.size()));
         updateSpacing();
@@ -302,12 +302,12 @@ private:
     template <typename ToScreen>
     void drawSegments(QPainter& painter, ToScreen toScreen)
     {
-        std::map<int, std::vector<ScreenSegment>> wires;
+        std::map<std::size_t, std::vector<ScreenSegment>> wires;
         for (const auto& current : currents_.segments)
-            wires[current.wireTag].push_back(screenSegment(current, toScreen));
+            wires[current.wireIndex].push_back(screenSegment(current, toScreen));
 
         if (mode_ == DisplayMode::Phase) {
-            for (const auto& [tag, segments] : wires) {
+            for (const auto& [wireIndex, segments] : wires) {
                 for (const auto& segment : segments) {
                     const auto weak = segment.current->magnitude
                         < WeakCurrentRatio * currents_.maximumMagnitude;
@@ -323,7 +323,7 @@ private:
         const auto instantaneous = mode_ == DisplayMode::Instantaneous;
         const QColor positive = instantaneous ? QColor(222, 112, 38) : QColor(44, 132, 218);
         const QColor negative(44, 132, 218);
-        for (const auto& [tag, segments] : wires) {
+        for (const auto& [wireIndex, segments] : wires) {
             std::vector<QPointF> base;
             std::vector<QPointF> curve;
             std::vector<QPointF> envelope;
@@ -386,6 +386,7 @@ private:
         auto header = tr("%1 · peak |I| %2 at wire %3, segment %4")
             .arg(planeName(plane), amperes(peak->magnitude))
             .arg(peak->wireTag).arg(peak->segment);
+        if (peak->necSegment > 0) header += tr(" (NEC %1)").arg(peak->necSegment);
         if (mode_ == DisplayMode::Instantaneous)
             header += tr(" · cycle %1°").arg(qRound(cycleDegrees_));
         // A backing strip keeps the text readable when a zoomed antenna runs underneath.
@@ -438,8 +439,11 @@ private:
         if (hovered == nullptr) return;
         painter.setPen(QPen(palette().color(QPalette::Highlight), 3.0));
         painter.drawLine(toScreen(hovered->start), toScreen(hovered->end));
-        auto text = tr("Wire %1 · Segment %2 · |I| %3 · Phase %4° %5")
-            .arg(hovered->wireTag).arg(hovered->segment).arg(amperes(hovered->magnitude))
+        const auto segmentText = hovered->necSegment > 0
+            ? tr("Segment %1 (NEC %2)").arg(hovered->segment).arg(hovered->necSegment)
+            : tr("Segment %1").arg(hovered->segment);
+        auto text = tr("Wire %1 · %2 · |I| %3 · Phase %4° %5")
+            .arg(QString::number(hovered->wireTag), segmentText, amperes(hovered->magnitude))
             .arg(QString::number(hovered->relativePhaseDegrees, 'f', 1),
                 currents_.feedReferenced ? tr("vs. feed") : tr("common direction"));
         if (mode_ == DisplayMode::Instantaneous)

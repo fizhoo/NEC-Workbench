@@ -186,7 +186,9 @@ additional NEC cards may appear afterward.
 Automatic Segmentation previews proposed segment counts using the highest modeled
 frequency and selected segments per wavelength. Applying the preview is one
 undoable model edit. Supported source, load, and transmission-line references are
-remapped by relative position; unsupported references block the operation.
+remapped by relative position; unsupported references block the operation. Decks
+that use one tag number on more than one wire, or that refer to segments by absolute
+number (tag 0), are also blocked for now, as is segmentation convergence testing.
 
 ### Average Gain Test
 
@@ -336,6 +338,13 @@ it. The table's **NEC phase** column keeps the solver's own convention: current 
 end 2, measured against the source voltage. With several sources, the first source
 NEC reports is the reference; with none, the column is labeled **Phase, common
 direction** and only the direction rule applies. Curved wires keep NEC's direction.
+
+Several wires may share a tag number; tag 0 is common in imported decks. The table's
+**Segment** column counts within each wire, and **NEC segment** is the solver's own
+number, counted through all wires, which tells such wires apart. The Antenna tab, Along
+Wire, and the hover readout place every segment on its own wire. Model Check follows
+NEC's rule for `EX`, `LD`, and `TL` references: a segment number counts through every
+wire with that tag in deck order, and tag 0 means an absolute segment number.
 
 ### Radiation
 

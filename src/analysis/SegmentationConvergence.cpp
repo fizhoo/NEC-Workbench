@@ -71,6 +71,12 @@ auto prepareSegmentationConvergenceInput(std::string_view source, double frequen
         return result;
     }
 
+    if (model::hasCrossWireSegmentReferences(conversion.model, setup)) {
+        result.error = "Wires that share a tag number, or segments referenced by absolute number "
+            "(tag 0), cannot yet be remapped safely for convergence testing.";
+        return result;
+    }
+
     std::unordered_map<int, int> segmentCounts;
     const auto wavelengthMeters = 299.792458 / frequencyMHz;
     for (const auto& wire : conversion.model.wires()) {

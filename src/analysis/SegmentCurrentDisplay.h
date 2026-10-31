@@ -4,6 +4,8 @@
 #include "geometry/OrthographicProjection.h"
 #include "model/AntennaModel.h"
 
+#include <cstddef>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -13,7 +15,12 @@ namespace necwb::analysis {
 // physical direction, and phased relative to the feed.
 struct DisplayedSegmentCurrent {
     int wireTag{};
+    // Segment within its wire, counted from end 1.
     int segment{};
+    // Position of the wire in GW order, which tells apart wires that share a tag.
+    std::size_t wireIndex{};
+    // NEC's absolute segment number, 0 when the run did not report one.
+    int necSegment{};
     // Segment endpoints ordered in the displayed current direction.
     model::Point3D start;
     model::Point3D end;
@@ -28,6 +35,34 @@ struct DisplayedCurrents {
     std::vector<DisplayedSegmentCurrent> segments;
     double maximumMagnitude{};
     bool feedReferenced{};
+};
+
+struct WireSegmentLocation {
+    const model::Wire* wire{};
+    std::size_t wireIndex{};
+    // Segment within the wire, counted from end 1.
+    int segment{};
+};
+
+// Maps solver segment numbers to model wires. NEC numbers segments consecutively through the
+// wires in the order they are generated, which is the model's wire order, so the absolute
+// number identifies the wire even when several wires share a tag (tag 0 is common). The
+// located wire must also carry the reported tag, so a model that no longer matches the
+// solved deck finds nothing rather than the wrong wire. The model must outlive the index.
+class WireSegmentIndex {
+public:
+    explicit WireSegmentIndex(const model::AntennaModel& model);
+
+    [[nodiscard]] auto locate(int wireTag, int necSegment) const -> std::optional<WireSegmentLocation>;
+    // Uses the absolute segment number when the current has one, otherwise the segment
+    // within the first wire with that tag.
+    [[nodiscard]] auto locate(const SegmentCurrentResult& current) const
+        -> std::optional<WireSegmentLocation>;
+
+private:
+    const model::AntennaModel* model_{};
+    // NEC number of each wire's first segment, in wire order.
+    std::vector<int> firstSegments_;
 };
 
 // NEC reports current flowing from end 1 to end 2, so two wires entered in opposite

@@ -2045,6 +2045,13 @@ void MainWindow::showAutoSegmentation()
             tr("This deck contains an unsupported EX, LD, TL, or NT card. Supported EX 0, LD, and TL segment references are remapped automatically; NT networks remain unsupported."));
         return;
     }
+    if (model::hasCrossWireSegmentReferences(currentModel_, currentSetup_)) {
+        QMessageBox::warning(this, tr("Automatic Segmentation"),
+            tr("This deck uses one tag number on more than one wire, or refers to segments by "
+               "absolute number (tag 0). Automatic Segmentation cannot yet remap those references "
+               "safely. Give each wire its own tag to use it."));
+        return;
+    }
     const auto maximumFrequencyMHz = std::max(currentSetup_.frequency->startMHz,
         model::frequencyEndMHz(*currentSetup_.frequency));
     AutoSegmentationDialog dialog(currentModel_, currentSetup_.excitations,
