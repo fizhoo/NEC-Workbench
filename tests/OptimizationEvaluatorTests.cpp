@@ -31,6 +31,10 @@ auto writeSolverOutput(const QString& path) -> bool
 
 auto main(int argc, char* argv[]) -> int
 {
+    if (QFileInfo::exists(QStringLiteral("solver-failure-test.marker"))) {
+        std::fprintf(stderr, "Memory reallocation failed\n");
+        return EXIT_FAILURE;
+    }
     if (argc == 3 && QByteArray(argv[1]).startsWith("-i")
         && QByteArray(argv[2]).startsWith("-o")) {
         return writeSolverOutput(QString::fromLocal8Bit(argv[2] + 2))
@@ -139,5 +143,80 @@ auto main(int argc, char* argv[]) -> int
     };
     valid = valid && evaluateBackend(QStringLiteral("opennec"))
         && evaluateBackend(QStringLiteral("nec2dxs"));
+
+    QTemporaryDir partialDirectory;
+    if (!partialDirectory.isValid()) return EXIT_FAILURE;
+    necwb::ui::CandidateEvaluator partialEvaluator;
+    necwb::ui::CandidateEvaluationResult partialResult;
+    auto partialFinished = false;
+    QEventLoop partialLoop;
+    QObject::connect(&partialEvaluator, &necwb::ui::CandidateEvaluator::finished,
+        [&partialResult, &partialFinished, &partialLoop](auto result) {
+            partialResult = std::move(result);
+            partialFinished = true;
+            partialLoop.quit();
+        });
+    partialEvaluator.start({
+        .authoredSource = QStringLiteral(
+            "GW 1 21 -5 0 8 5 0 8 0.001\nGE 0\n"
+            "EX 0 1 11 0 1 0\nFR 0 2 0 0 7 7\nXQ 0\nEN\n"),
+        .frequencyPlan = {necwb::analysis::FrequencyPlanMode::Explicit, {7.0, 14.0}, {}},
+        .objective = {.kind = necwb::analysis::OptimizationObjectiveKind::PerCriterion,
+            .referenceImpedance = 50.0, .swrWeight = 1.0, .forwardGainWeight = 1.0,
+            .forwardThetaDegrees = 90.0, .forwardPhiDegrees = 0.0},
+        .backend = QStringLiteral("nec2"),
+        .executable = QCoreApplication::applicationFilePath(),
+        .directory = partialDirectory.path(),
+        .timeoutSeconds = 2,
+    });
+    QTimer::singleShot(2000, &partialLoop, &QEventLoop::quit);
+    partialLoop.exec();
+    valid = valid && partialFinished
+        && partialResult.status
+            == necwb::ui::CandidateEvaluationStatus::ObjectiveUnavailable
+        && !partialResult.objective && partialResult.availableMeasurements
+        && partialResult.availableMeasurements->feedpoint
+        && partialResult.availableMeasurements->frequencyMetrics.size() == 2
+        && partialResult.detail.contains(QStringLiteral("Forward gain is unavailable"))
+        && partialResult.detail.contains(QStringLiteral("theta 90.000"))
+        && partialResult.detail.contains(QStringLiteral("phi 0.000"));
+
+    QTemporaryDir failureDirectory;
+    if (!failureDirectory.isValid()) return EXIT_FAILURE;
+    QFile failureMarker(QDir(failureDirectory.path()).filePath(
+        QStringLiteral("solver-failure-test.marker")));
+    if (!failureMarker.open(QIODevice::WriteOnly)) return EXIT_FAILURE;
+    failureMarker.close();
+    necwb::ui::CandidateEvaluator failureEvaluator;
+    necwb::ui::CandidateEvaluationResult failureResult;
+    auto failureFinished = false;
+    QEventLoop failureLoop;
+    QObject::connect(&failureEvaluator, &necwb::ui::CandidateEvaluator::finished,
+        [&failureResult, &failureFinished, &failureLoop](auto result) {
+            failureResult = std::move(result);
+            failureFinished = true;
+            failureLoop.quit();
+        });
+    failureEvaluator.start({
+        .authoredSource = QStringLiteral(
+            "GW 1 21 -5 0 8 5 0 8 0.001\nGE 0\n"
+            "EX 0 1 11 0 1 0\nFR 0 1 0 0 14 0\nXQ 0\nEN\n"),
+        .frequencyPlan = {necwb::analysis::FrequencyPlanMode::Explicit, {14.0}, {}},
+        .objective = {.kind = necwb::analysis::OptimizationObjectiveKind::SwrAtFrequency,
+            .referenceImpedance = 50.0, .targetFrequencyMHz = 14.0},
+        .backend = QStringLiteral("nec2"),
+        .executable = QCoreApplication::applicationFilePath(),
+        .directory = failureDirectory.path(),
+        .timeoutSeconds = 2,
+    });
+    QTimer::singleShot(2000, &failureLoop, &QEventLoop::quit);
+    failureLoop.exec();
+    QFile solverLog(QDir(failureDirectory.path()).filePath(QStringLiteral("solver.log")));
+    const auto solverLogText = solverLog.open(QIODevice::ReadOnly)
+        ? QString::fromLocal8Bit(solverLog.readAll()) : QString{};
+    valid = valid && failureFinished
+        && failureResult.status == necwb::ui::CandidateEvaluationStatus::SolverFailed
+        && failureResult.detail.contains(QStringLiteral("Memory reallocation failed"))
+        && solverLogText.contains(QStringLiteral("Memory reallocation failed"));
     return valid ? EXIT_SUCCESS : EXIT_FAILURE;
 }

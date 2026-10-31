@@ -1,6 +1,7 @@
 #include "ui/cards/WireCardEditor.h"
 
 #include "ui/ParameterFieldStyle.h"
+#include "ui/cards/CompactNumberDelegate.h"
 
 #include "model/WireGauge.h"
 
@@ -51,7 +52,7 @@ WireCardEditor::WireCardEditor(QWidget* parent)
     : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setContentsMargins(6, 6, 6, 6);
     layout->setSpacing(6);
 
     auto* heading = new QLabel(tr("Wires (GW)"), this);
@@ -73,6 +74,7 @@ WireCardEditor::WireCardEditor(QWidget* parent)
 
     table_ = new QTableWidget(this);
     table_->setObjectName(QStringLiteral("wireCardTable"));
+    table_->setItemDelegate(new CompactNumberDelegate(table_));
     table_->setColumnCount(ColumnCount);
     table_->setAlternatingRowColors(true);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);

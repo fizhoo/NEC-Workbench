@@ -1,8 +1,10 @@
 #include "ui/analysis/SweepPlotsView.h"
 
+#include "analysis/FrequencyComparison.h"
 #include "ui/DisplayFormat.h"
 
 #include <QComboBox>
+#include <QCheckBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
@@ -63,6 +65,8 @@ struct PlotSeries {
     AxisSide axis{AxisSide::Left};
     std::vector<QPointF> points;
     Qt::PenStyle lineStyle{Qt::SolidLine};
+    bool showMarkers{true};
+    bool reference{};
 };
 
 struct AxisTick {
@@ -80,15 +84,6 @@ struct PlotAxis {
     std::vector<AxisTick> ticks;
     bool valid{};
 };
-
-auto formatAxisValue(double value) -> QString
-{
-    if (std::abs(value) >= 10000.0 || (std::abs(value) > 0.0 && std::abs(value) < 0.01))
-        return QString::number(value, 'g', 3);
-    if (std::abs(value - std::round(value)) < 1.0e-9)
-        return QString::number(static_cast<qlonglong>(std::llround(value)));
-    return QString::number(value, 'f', std::abs(value) < 2.0 ? 1 : 0);
-}
 
 auto transformed(double value, AxisScale scale) -> double
 {
@@ -254,6 +249,7 @@ public:
         series_ = std::move(series);
         plotKind_ = PlotKind::Impedance;
         rebuildAxes();
+        setSeriesProperties();
         clearHover();
         update();
     }
@@ -266,6 +262,7 @@ public:
         series_ = std::move(series);
         plotKind_ = PlotKind::Swr;
         rebuildAxes();
+        setSeriesProperties();
         clearHover();
         update();
     }
@@ -300,7 +297,7 @@ public:
         clearHover();
         setProperty("pointCount", series_.empty()
             ? 0 : static_cast<int>(series_.front().points.size()));
-        setProperty("seriesCount", static_cast<int>(series_.size()));
+        setSeriesProperties();
         QStringList seriesStyles;
         for (const auto& item : series_)
             seriesStyles.append(QString::number(static_cast<int>(item.lineStyle)));
@@ -428,6 +425,18 @@ protected:
     }
 
 private:
+    void setSeriesProperties()
+    {
+        setProperty("seriesCount", static_cast<int>(series_.size()));
+        setProperty("referenceSeriesCount", static_cast<int>(std::ranges::count_if(
+            series_, [](const auto& series) { return series.reference; })));
+        setProperty("referenceSeriesAreGhosted", std::ranges::all_of(series_, [](const auto& series) {
+            return !series.reference
+                || (series.lineStyle == Qt::DashLine && !series.showMarkers
+                    && series.color.alpha() < 255);
+        }));
+    }
+
     void rebuildAxes()
     {
         const auto text = palette().color(QPalette::Text);
@@ -484,17 +493,30 @@ private:
 
     void drawLegend(QPainter& painter)
     {
-        auto legendX = plotRect_.left();
+        if (series_.empty()) {
+            setProperty("legendFits", true);
+            setProperty("legendLabels", QStringList{});
+            return;
+        }
         const auto legendY = 48.0;
-        for (const auto& series : series_) {
+        const auto entryWidth = plotRect_.width() / static_cast<double>(series_.size());
+        QStringList visibleLabels;
+        for (auto index = std::size_t{}; index < series_.size(); ++index) {
+            const auto& series = series_[index];
+            const auto legendX = plotRect_.left() + entryWidth * static_cast<double>(index);
             painter.setPen(QPen(series.color, 2, series.lineStyle));
             painter.drawLine(QPointF(legendX, legendY), QPointF(legendX + 18, legendY));
             painter.setPen(palette().color(QPalette::Text));
-            const auto textWidth = painter.fontMetrics().horizontalAdvance(series.name) + 30;
-            painter.drawText(QRectF(legendX + 23, legendY - 9, textWidth, 18),
-                Qt::AlignLeft | Qt::AlignVCenter, series.name);
-            legendX += textWidth + 30;
+            const auto labelWidth = std::max(1, static_cast<int>(entryWidth) - 27);
+            const auto label = painter.fontMetrics().elidedText(
+                series.name, Qt::ElideRight, labelWidth);
+            painter.drawText(QRectF(legendX + 23, legendY - 9,
+                std::max(1.0, entryWidth - 27.0), 18),
+                Qt::AlignLeft | Qt::AlignVCenter, label);
+            visibleLabels.push_back(label);
         }
+        setProperty("legendFits", true);
+        setProperty("legendLabels", visibleLabels);
     }
 
     void drawAxes(QPainter& painter)
@@ -514,13 +536,18 @@ private:
 
         painter.setPen(palette().color(QPalette::Text));
         painter.drawRect(plotRect_);
+        const auto xTickStep = (xMaximum_ - xMinimum_) / xTickCount;
+        QStringList xTickLabels;
         for (auto tick = 0; tick <= xTickCount; ++tick) {
             const auto fraction = static_cast<double>(tick) / xTickCount;
             const auto xValue = xMinimum_ + fraction * (xMaximum_ - xMinimum_);
             const auto x = plotRect_.left() + fraction * plotRect_.width();
+            const auto label = formatAxisTick(xValue, xTickStep);
+            xTickLabels.push_back(label);
             painter.drawText(QRectF(x - 42, plotRect_.bottom() + 5, 84, 20),
-                Qt::AlignHCenter | Qt::AlignTop, formatAxisValue(xValue));
+                Qt::AlignHCenter | Qt::AlignTop, label);
         }
+        setProperty("xAxisTickLabels", xTickLabels);
         drawYAxis(painter, leftAxis_, AxisSide::Left);
         if (plotKind_ == PlotKind::Impedance)
             drawYAxis(painter, rightAxis_, AxisSide::Right);
@@ -539,7 +566,7 @@ private:
                 : QRectF(plotRect_.right() + 9, y - 10, width() - plotRect_.right() - 30, 20);
             painter.drawText(labelRect,
                 (side == AxisSide::Left ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignVCenter,
-                formatAxisValue(tick.value));
+                formatAxisTick(tick.value, 0.0));
         }
         painter.save();
         if (side == AxisSide::Left) {
@@ -575,9 +602,11 @@ private:
                 } else {
                     path.lineTo(screenPoint);
                 }
-                const auto radius = seriesIndex == hoveredSeries_ && pointIndex == hoveredPoint_
-                    ? 5.0 : 3.0;
-                painter.drawEllipse(screenPoint, radius, radius);
+                if (series.showMarkers) {
+                    const auto radius = seriesIndex == hoveredSeries_ && pointIndex == hoveredPoint_
+                        ? 5.0 : 3.0;
+                    painter.drawEllipse(screenPoint, radius, radius);
+                }
             }
             painter.setBrush(Qt::NoBrush);
             painter.drawPath(path);
@@ -731,26 +760,35 @@ SweepPlotsView::SweepPlotsView(QWidget* parent)
     : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(12, 12, 12, 12);
-    auto* heading = new QLabel(tr("Frequency Sweep Plots"), this);
-    auto font = heading->font();
+    layout->setContentsMargins(8, 8, 8, 8);
+    auto* headingLabel = new QLabel(tr("Frequency Sweep Plots"), this);
+    auto font = headingLabel->font();
     font.setBold(true);
     font.setPointSize(font.pointSize() + 3);
-    heading->setFont(font);
+    headingLabel->setFont(font);
+    auto* heading = new QHBoxLayout;
+    heading->addWidget(headingLabel);
+    heading->addStretch();
+    referenceControl_ = new QCheckBox(tr("Show Historical Overlay"), this);
+    referenceControl_->setObjectName(QStringLiteral("sweepShowReference"));
+    referenceControl_->setChecked(false);
+    referenceControl_->setEnabled(false);
+    heading->addWidget(referenceControl_);
     summary_ = new QLabel(tr("Run an analysis to populate sweep plots."), this);
     summary_->setWordWrap(true);
-    auto* splitter = new QSplitter(Qt::Vertical, this);
+    splitter_ = new QSplitter(Qt::Vertical, this);
 
-    impedancePlot_ = new SweepPlotWidget(splitter);
+    impedancePlot_ = new SweepPlotWidget(splitter_);
     impedancePlot_->setObjectName(QStringLiteral("impedanceSweepPlot"));
+    impedancePlot_->setMinimumHeight(110);
 
-    auto* swrPanel = new QWidget(splitter);
-    auto* swrLayout = new QVBoxLayout(swrPanel);
+    swrPanel_ = new QWidget(splitter_);
+    auto* swrLayout = new QVBoxLayout(swrPanel_);
     swrLayout->setContentsMargins(0, 0, 0, 0);
     auto* swrControls = new QHBoxLayout;
     swrControls->addStretch();
-    swrControls->addWidget(new QLabel(tr("SWR scale:"), swrPanel));
-    swrScaleControl_ = new QComboBox(swrPanel);
+    swrControls->addWidget(new QLabel(tr("SWR scale:"), swrPanel_));
+    swrScaleControl_ = new QComboBox(swrPanel_);
     swrScaleControl_->setObjectName(QStringLiteral("swrScaleControl"));
     swrScaleControl_->addItem(tr("Logarithmic"), static_cast<int>(SwrScaleMode::Logarithmic));
     swrScaleControl_->addItem(tr("Linear"), static_cast<int>(SwrScaleMode::Linear));
@@ -758,17 +796,18 @@ SweepPlotsView::SweepPlotsView(QWidget* parent)
     swrScaleControl_->addItem(tr("Limit 1–5"), static_cast<int>(SwrScaleMode::LimitFive));
     swrControls->addWidget(swrScaleControl_);
     swrLayout->addLayout(swrControls);
-    swrPlot_ = new SweepPlotWidget(swrPanel);
+    swrPlot_ = new SweepPlotWidget(swrPanel_);
     swrPlot_->setObjectName(QStringLiteral("swrSweepPlot"));
+    swrPlot_->setMinimumHeight(110);
     swrLayout->addWidget(swrPlot_, 1);
 
-    splitter->addWidget(impedancePlot_);
-    splitter->addWidget(swrPanel);
-    splitter->setStretchFactor(0, 1);
-    splitter->setStretchFactor(1, 1);
-    layout->addWidget(heading);
+    splitter_->addWidget(impedancePlot_);
+    splitter_->addWidget(swrPanel_);
+    splitter_->setStretchFactor(0, 1);
+    splitter_->setStretchFactor(1, 1);
+    layout->addLayout(heading);
     layout->addWidget(summary_);
-    layout->addWidget(splitter, 1);
+    layout->addWidget(splitter_, 1);
 
     QSettings settings;
     swrScaleControl_->setCurrentIndex(std::clamp(
@@ -779,13 +818,65 @@ SweepPlotsView::SweepPlotsView(QWidget* parent)
         QSettings{}.setValue(QStringLiteral("results/swrScaleModeV2"), index);
     };
     connect(swrScaleControl_, &QComboBox::currentIndexChanged, this, applySwrScale);
+    connect(referenceControl_, &QCheckBox::toggled, this, [this] { refreshPlots(); });
     applySwrScale(swrScaleControl_->currentIndex());
 }
 
 void SweepPlotsView::setResults(const analysis::AnalysisResult& result, const QString& runDirectory)
 {
+    result_ = result;
+    runDirectory_ = runDirectory;
+    refreshPlots();
+}
+
+void SweepPlotsView::setReferenceResults(const analysis::AnalysisResult& result, QString label)
+{
+    referenceResult_ = result;
+    referenceLabel_ = std::move(label);
+    referenceControl_->setEnabled(true);
+    refreshPlots();
+}
+
+void SweepPlotsView::clearReferenceResults()
+{
+    referenceResult_.reset();
+    referenceLabel_.clear();
+    referenceControl_->setEnabled(false);
+    refreshPlots();
+}
+
+void SweepPlotsView::setReferenceVisible(bool visible)
+{
+    referenceControl_->setChecked(visible);
+}
+
+void SweepPlotsView::setReferenceControlVisible(bool visible)
+{
+    referenceControl_->setVisible(visible);
+}
+
+void SweepPlotsView::configureForCompactReview()
+{
+    setReferenceVisible(true);
+    layout()->setContentsMargins(4, 4, 4, 4);
+    layout()->setSpacing(4);
+    impedancePlot_->setMinimumHeight(120);
+    swrPlot_->setMinimumHeight(120);
+    splitter_->insertWidget(0, swrPanel_);
+    splitter_->setSizes({140, 140});
+}
+
+void SweepPlotsView::refreshPlots()
+{
+    if (!result_) {
+        impedancePlot_->setImpedancePlot({});
+        swrPlot_->setSwrPlot(tr("SWR"), {});
+        summary_->setText(tr("No analysis results are loaded."));
+        return;
+    }
+
     std::map<std::pair<int, int>, std::vector<analysis::FeedpointResult>> feedpoints;
-    for (const auto& feedpoint : result.feedpoints)
+    for (const auto& feedpoint : result_->feedpoints)
         feedpoints[{feedpoint.wireTag, feedpoint.segment}].push_back(feedpoint);
 
     std::vector<PlotSeries> impedanceSeries;
@@ -802,24 +893,81 @@ void SweepPlotsView::setResults(const analysis::AnalysisResult& result, const QS
             reactanceBase.lighter(100 + colorOffset), AxisSide::Right, {}};
         PlotSeries swr{tr("SWR W%1:S%2").arg(source.first).arg(source.second), {},
             resistanceBase.lighter(100 + colorOffset), AxisSide::Left, {}};
+
+        if (referenceResult_ && referenceControl_->isChecked()) {
+            auto referenceResistanceColor = resistance.color;
+            auto referenceReactanceColor = reactance.color;
+            referenceResistanceColor.setAlpha(105);
+            referenceReactanceColor.setAlpha(105);
+            PlotSeries referenceResistance{
+                tr("Overlay R W%1:S%2").arg(source.first).arg(source.second), tr("Ω"), referenceResistanceColor,
+                AxisSide::Left, {}, Qt::DashLine, false, true};
+            PlotSeries referenceReactance{
+                tr("Overlay X W%1:S%2").arg(source.first).arg(source.second), tr("Ω"), referenceReactanceColor,
+                AxisSide::Right, {}, Qt::DashLine, false, true};
+            PlotSeries referenceSwr{
+                tr("Overlay SWR W%1:S%2").arg(source.first).arg(source.second), {}, referenceResistanceColor,
+                AxisSide::Left, {}, Qt::DashLine, false, true};
+            for (const auto& referencePoint : referenceResult_->feedpoints) {
+                if (referencePoint.wireTag != source.first
+                    || referencePoint.segment != source.second) continue;
+                const auto frequencyMatches = std::ranges::any_of(points,
+                    [&referencePoint](const auto& activePoint) {
+                        return nearlyEqual(activePoint.frequencyMHz,
+                            referencePoint.frequencyMHz);
+                    });
+                if (!frequencyMatches) continue;
+                referenceResistance.points.emplace_back(referencePoint.frequencyMHz,
+                    referencePoint.impedance.real());
+                referenceReactance.points.emplace_back(referencePoint.frequencyMHz,
+                    referencePoint.impedance.imag());
+                if (nearlyEqual(result_->referenceImpedanceOhms,
+                        referenceResult_->referenceImpedanceOhms)) {
+                    referenceSwr.points.emplace_back(referencePoint.frequencyMHz,
+                        analysis::standingWaveRatio(referencePoint.impedance,
+                            referenceResult_->referenceImpedanceOhms));
+                }
+            }
+            if (!referenceResistance.points.empty()) {
+                std::ranges::sort(referenceResistance.points, {}, &QPointF::x);
+                std::ranges::sort(referenceReactance.points, {}, &QPointF::x);
+                impedanceSeries.push_back(std::move(referenceResistance));
+                impedanceSeries.push_back(std::move(referenceReactance));
+            }
+            if (!referenceSwr.points.empty()) {
+                std::ranges::sort(referenceSwr.points, {}, &QPointF::x);
+                swrSeries.push_back(std::move(referenceSwr));
+            }
+        }
         for (const auto& point : points) {
             resistance.points.emplace_back(point.frequencyMHz, point.impedance.real());
             reactance.points.emplace_back(point.frequencyMHz, point.impedance.imag());
             swr.points.emplace_back(point.frequencyMHz,
-                analysis::standingWaveRatio(point.impedance, result.referenceImpedanceOhms));
+                analysis::standingWaveRatio(point.impedance, result_->referenceImpedanceOhms));
         }
         impedanceSeries.push_back(std::move(resistance));
         impedanceSeries.push_back(std::move(reactance));
         swrSeries.push_back(std::move(swr));
         ++colorIndex;
     }
+    std::ranges::stable_partition(impedanceSeries,
+        [](const auto& series) { return series.reference; });
+    std::ranges::stable_partition(swrSeries,
+        [](const auto& series) { return series.reference; });
     impedancePlot_->setImpedancePlot(std::move(impedanceSeries));
-    swrPlot_->setSwrPlot(tr("SWR (%1 Ω)").arg(formatDecimal(result.referenceImpedanceOhms)),
+    swrPlot_->setSwrPlot(tr("SWR (%1 Ω)").arg(formatDecimal(result_->referenceImpedanceOhms)),
         std::move(swrSeries));
-    summary_->setText(result.feedpoints.empty()
-            ? tr("No supported feedpoint results were found in %1.").arg(runDirectory)
+    const auto referenceNote = referenceResult_ && referenceControl_->isChecked()
+        ? nearlyEqual(result_->referenceImpedanceOhms,
+                referenceResult_->referenceImpedanceOhms)
+            ? tr(" Historical overlay %1 is shown dashed.").arg(referenceLabel_)
+            : tr(" Historical overlay %1 shows dashed R/X; its SWR is unavailable because Z0 differs.")
+                .arg(referenceLabel_)
+        : QString{};
+    summary_->setText(result_->feedpoints.empty()
+            ? tr("No supported feedpoint results were found in %1.").arg(runDirectory_)
             : tr("%1 result point(s) from %2. Hover a marker for exact engineering values.")
-                .arg(result.feedpoints.size()).arg(runDirectory));
+                .arg(result_->feedpoints.size()).arg(runDirectory_) + referenceNote);
 }
 
 void SweepPlotsView::setSelectedFrequency(double frequencyMHz)
@@ -833,7 +981,7 @@ DirectionalMetricsView::DirectionalMetricsView(QWidget* parent)
 {
     setObjectName(QStringLiteral("optimizationCandidateDirectionalPlots"));
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setContentsMargins(8, 8, 8, 8);
     summary_ = new QLabel(tr("No directional objective data are available."), this);
     summary_->setWordWrap(true);
     plot_ = new SweepPlotWidget(this);
@@ -857,34 +1005,79 @@ void DirectionalMetricsView::setResults(
     setMetrics(metrics);
 }
 
+void DirectionalMetricsView::setReferenceResults(
+    const analysis::OptimizationObjectiveResult& result, QString label)
+{
+    std::vector<DirectionalPlotPoint> metrics;
+    metrics.reserve(result.frequencyMetrics.size());
+    for (const auto& value : result.frequencyMetrics) {
+        metrics.push_back({value.frequencyMHz, value.forwardGainDb,
+            value.frontToBackDb, value.frontToRearDb});
+    }
+    setReferenceMetrics(metrics, std::move(label));
+}
+
 void DirectionalMetricsView::setMetrics(
     const std::vector<DirectionalPlotPoint>& metrics)
 {
+    metrics_ = metrics;
+    refresh();
+}
+
+void DirectionalMetricsView::setReferenceMetrics(
+    const std::vector<DirectionalPlotPoint>& metrics, QString label)
+{
+    referenceMetrics_ = metrics;
+    referenceLabel_ = std::move(label);
+    refresh();
+}
+
+void DirectionalMetricsView::clearReferenceMetrics()
+{
+    referenceMetrics_.clear();
+    referenceLabel_.clear();
+    refresh();
+}
+
+void DirectionalMetricsView::refresh()
+{
     std::vector<PlotSeries> series;
-    const auto appendSeries = [&series, &metrics](QString name, QString unit, QColor color,
-                                  Qt::PenStyle lineStyle, auto member) {
+    const auto appendSeries = [&series](const auto& metrics, QString name, QString unit,
+                                  QColor color, Qt::PenStyle lineStyle, bool reference,
+                                  auto member) {
         PlotSeries item{std::move(name), std::move(unit), std::move(color),
-            AxisSide::Left, {}, lineStyle};
+            AxisSide::Left, {}, lineStyle, !reference, reference};
         for (const auto& point : metrics) {
             const auto& value = point.*member;
             if (value) item.points.emplace_back(point.frequencyMHz, *value);
         }
         if (!item.points.empty()) series.push_back(std::move(item));
     };
-    appendSeries(tr("Forward Gain"), tr("dBi"), QColor(35, 150, 85), Qt::SolidLine,
+    if (!referenceMetrics_.empty()) {
+        appendSeries(referenceMetrics_, tr("Overlay Gain — %1").arg(referenceLabel_),
+            tr("dBi"), QColor(35, 150, 85, 110), Qt::DashLine, true,
+            &DirectionalPlotPoint::forwardGainDb);
+        appendSeries(referenceMetrics_, tr("Overlay F/B — %1").arg(referenceLabel_),
+            tr("dB"), QColor(220, 50, 45, 110), Qt::DashLine, true,
+            &DirectionalPlotPoint::frontToBackDb);
+        appendSeries(referenceMetrics_, tr("Overlay F/R — %1").arg(referenceLabel_),
+            tr("dB"), QColor(135, 75, 180, 110), Qt::DashLine, true,
+            &DirectionalPlotPoint::frontToRearDb);
+    }
+    appendSeries(metrics_, tr("Forward Gain"), tr("dBi"), QColor(35, 150, 85), Qt::SolidLine, false,
         &DirectionalPlotPoint::forwardGainDb);
-    appendSeries(tr("F/B"), tr("dB"), QColor(220, 50, 45), Qt::SolidLine,
+    appendSeries(metrics_, tr("F/B"), tr("dB"), QColor(220, 50, 45), Qt::SolidLine, false,
         &DirectionalPlotPoint::frontToBackDb);
-    appendSeries(tr("F/R"), tr("dB"), QColor(135, 75, 180), Qt::DashLine,
+    appendSeries(metrics_, tr("F/R"), tr("dB"), QColor(135, 75, 180), Qt::DashLine, false,
         &DirectionalPlotPoint::frontToRearDb);
-    plot_->setLinearPlot(tr("Directional Performance"), tr("Frequency (MHz)"),
+    plot_->setLinearPlot(tr("Directional vs Frequency"), tr("Frequency (MHz)"),
         tr("Gain / Ratio (dB)"), std::move(series));
 
     QStringList summaries;
-    const auto appendSummary = [&summaries, &metrics](const QString& name,
+    const auto appendSummary = [&summaries, this](const QString& name,
                                    const QString& unit, auto member) {
         std::vector<std::pair<double, double>> values;
-        for (const auto& point : metrics) {
+        for (const auto& point : metrics_) {
             const auto& value = point.*member;
             if (value) values.emplace_back(point.frequencyMHz, *value);
         }
@@ -908,9 +1101,12 @@ void DirectionalMetricsView::setMetrics(
         &DirectionalPlotPoint::frontToBackDb);
     appendSummary(tr("F/R"), tr("dB"),
         &DirectionalPlotPoint::frontToRearDb);
-    summary_->setText(summaries.isEmpty()
+    auto summary = summaries.isEmpty()
         ? tr("No directional objective data are available for this candidate.")
-        : summaries.join(QStringLiteral("\n")));
+        : summaries.join(QStringLiteral("\n"));
+    if (!referenceMetrics_.empty())
+        summary += tr("\nHistorical overlay %1 is shown dashed.").arg(referenceLabel_);
+    summary_->setText(summary);
 }
 
 void DirectionalMetricsView::setSelectedFrequency(double frequencyMHz)

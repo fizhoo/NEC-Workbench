@@ -47,19 +47,12 @@ auto joinLines(const std::vector<std::string>& lines) -> std::string
     return output.str();
 }
 
-auto oppositeDirection(double thetaDegrees, double phiDegrees) -> std::pair<double, double>
+// F/B's back direction: the same elevation turned 180 degrees in azimuth.
+auto frontToBackDirection(double thetaDegrees, double phiDegrees) -> std::pair<double, double>
 {
-    constexpr auto radiansPerDegree = std::numbers::pi / 180.0;
-    constexpr auto degreesPerRadian = 180.0 / std::numbers::pi;
-    const auto theta = thetaDegrees * radiansPerDegree;
-    const auto phi = phiDegrees * radiansPerDegree;
-    const auto x = -std::sin(theta) * std::cos(phi);
-    const auto y = -std::sin(theta) * std::sin(phi);
-    const auto z = -std::cos(theta);
-    const auto oppositeTheta = std::acos(std::clamp(z, -1.0, 1.0)) * degreesPerRadian;
-    auto oppositePhi = std::atan2(y, x) * degreesPerRadian;
-    if (oppositePhi < 0.0) oppositePhi += 360.0;
-    return {oppositeTheta, oppositePhi};
+    auto backPhi = std::fmod(phiDegrees + 180.0, 360.0);
+    if (backPhi < 0.0) backPhi += 360.0;
+    return {thetaDegrees, backPhi};
 }
 
 }
@@ -78,6 +71,30 @@ auto normalizeSolverDeck(std::string_view source) -> std::string
         if (card.mnemonic == "CE"
             || (card.kind != nec::NecCardKind::Blank && card.mnemonic != "CM")) {
             openingCommentBlock = false;
+        }
+        if (index + 1 < cards.size() || document.hasFinalLineEnding())
+            output << document.lineEnding();
+    }
+    return output.str();
+}
+
+auto formatSolverInputForBackend(std::string_view source,
+    std::string_view backendId) -> std::string
+{
+    if (backendId != "nec2dxs") return std::string(source);
+
+    const auto document = nec::NecParser{}.parse(source);
+    std::ostringstream output;
+    const auto cards = document.cards();
+    for (std::size_t index = 0; index < cards.size(); ++index) {
+        const auto& card = cards[index];
+        if (card.kind == nec::NecCardKind::Blank
+            || card.kind == nec::NecCardKind::Comment
+            || card.kind == nec::NecCardKind::Unknown) {
+            output << card.sourceText;
+        } else {
+            output << card.mnemonic;
+            for (const auto& field : card.fields) output << ' ' << field;
         }
         if (index + 1 < cards.size() || document.hasFinalLineEnding())
             output << document.lineEnding();
@@ -279,7 +296,7 @@ auto prepareDirectionalOptimizationInput(std::string_view source,
     front.phiCount = 1;
     front.thetaStart = thetaDegrees;
     front.phiStart = phiDegrees;
-    const auto [backTheta, backPhi] = oppositeDirection(thetaDegrees, phiDegrees);
+    const auto [backTheta, backPhi] = frontToBackDirection(thetaDegrees, phiDegrees);
     auto back = front;
     back.thetaStart = backTheta;
     back.phiStart = backPhi;
@@ -305,6 +322,152 @@ auto prepareDirectionalOptimizationInput(std::string_view source,
             requests.push_back(writer.writeRadiationPatternCard(back));
         }
     }
+
+    std::vector<std::string> lines;
+    lines.reserve(document.cards().size() + requests.size());
+    auto insertedRequests = false;
+    for (const auto& card : document.cards()) {
+        if (card.kind == nec::NecCardKind::Frequency
+            || card.kind == nec::NecCardKind::RadiationPattern
+            || card.kind == nec::NecCardKind::Execute) continue;
+        if (!insertedRequests && card.kind == nec::NecCardKind::End) {
+            lines.insert(lines.end(), requests.begin(), requests.end());
+            insertedRequests = true;
+        }
+        lines.push_back(card.sourceText);
+    }
+    if (!insertedRequests) lines.insert(lines.end(), requests.begin(), requests.end());
+    return joinLines(lines);
+}
+
+auto prepareDirectionalCutOptimizationInput(std::string_view source,
+    std::span<const double> frequenciesMHz, DirectionalEvaluationMode mode,
+    double cutAngleDegrees, bool includeOppositeDirection,
+    bool includeRearRegion) -> std::string
+{
+    (void)includeOppositeDirection;
+    (void)includeRearRegion;
+    if (mode == DirectionalEvaluationMode::SpecifiedDirection
+        || !std::isfinite(cutAngleDegrees))
+        return prepareImpedanceInput(source);
+
+    std::vector<double> frequencies;
+    frequencies.reserve(frequenciesMHz.size());
+    for (const auto frequencyMHz : frequenciesMHz) {
+        if (std::isfinite(frequencyMHz) && frequencyMHz > 0.0)
+            frequencies.push_back(frequencyMHz);
+    }
+    std::ranges::sort(frequencies);
+    const auto duplicates = std::ranges::unique(frequencies);
+    frequencies.erase(duplicates.begin(), duplicates.end());
+    if (frequencies.empty()) return prepareImpedanceInput(source);
+
+    constexpr auto cutStepDegrees = 5.0;
+    model::RadiationPatternRequest primary;
+    if (mode == DirectionalEvaluationMode::StrongestInAzimuthCut) {
+        primary.thetaCount = 1;
+        primary.phiCount = 72;
+        primary.thetaStart = cutAngleDegrees;
+        primary.phiStart = 0.0;
+        primary.thetaStep = 0.0;
+        primary.phiStep = cutStepDegrees;
+    } else {
+        primary.thetaCount = 37;
+        primary.phiCount = 1;
+        primary.thetaStart = -90.0;
+        primary.phiStart = cutAngleDegrees;
+        primary.thetaStep = cutStepDegrees;
+        primary.phiStep = 0.0;
+    }
+
+    std::vector<model::RadiationPatternRequest> patterns{primary};
+
+    const auto document = nec::NecParser{}.parse(normalizeSolverDeck(source));
+    const nec::NecWriter writer;
+    std::vector<std::string> requests;
+    requests.reserve(frequencies.size() * (2U + patterns.size()));
+    for (const auto frequencyMHz : frequencies) {
+        model::FrequencyDefinition frequency;
+        frequency.startMHz = frequencyMHz;
+        requests.push_back(writer.writeFrequencyCard(frequency));
+        requests.emplace_back("XQ 0");
+        for (const auto& pattern : patterns)
+            requests.push_back(writer.writeRadiationPatternCard(pattern));
+    }
+
+    std::vector<std::string> lines;
+    lines.reserve(document.cards().size() + requests.size());
+    auto insertedRequests = false;
+    for (const auto& card : document.cards()) {
+        if (card.kind == nec::NecCardKind::Frequency
+            || card.kind == nec::NecCardKind::RadiationPattern
+            || card.kind == nec::NecCardKind::Execute) continue;
+        if (!insertedRequests && card.kind == nec::NecCardKind::End) {
+            lines.insert(lines.end(), requests.begin(), requests.end());
+            insertedRequests = true;
+        }
+        lines.push_back(card.sourceText);
+    }
+    if (!insertedRequests) lines.insert(lines.end(), requests.begin(), requests.end());
+    return joinLines(lines);
+}
+
+auto prepareOptimizationInput(std::string_view source,
+    const FrequencyPlan& requestedFrequencyPlan,
+    const OptimizationObjectiveSpec& objective) -> std::string
+{
+    auto frequencyPlan = requestedFrequencyPlan;
+    if (objective.kind == OptimizationObjectiveKind::SwrAtFrequency) {
+        frequencyPlan = {FrequencyPlanMode::Explicit,
+            {objective.targetFrequencyMHz}, {}};
+    }
+    const auto frequenciesMHz = frequencyPlanPoints(frequencyPlan);
+    const auto directional = objective.forwardGainWeight > 0.0
+        || objective.frontToBackWeight > 0.0
+        || objective.frontToRearWeight > 0.0;
+    if (directional) {
+        if (objective.directionalEvaluationMode
+            == DirectionalEvaluationMode::SpecifiedDirection) {
+            return prepareDirectionalOptimizationInput(source, frequenciesMHz,
+                objective.forwardThetaDegrees, objective.forwardPhiDegrees,
+                objective.frontToBackWeight > 0.0,
+                objective.frontToRearWeight > 0.0);
+        }
+        return prepareDirectionalCutOptimizationInput(source, frequenciesMHz,
+            objective.directionalEvaluationMode,
+            objective.directionalEvaluationMode
+                    == DirectionalEvaluationMode::StrongestInAzimuthCut
+                ? objective.forwardThetaDegrees : objective.forwardPhiDegrees,
+            objective.frontToBackWeight > 0.0,
+            objective.frontToRearWeight > 0.0);
+    }
+    return frequencyPlan.mode == FrequencyPlanMode::Explicit
+        ? prepareExplicitFrequencyInput(source, frequenciesMHz)
+        : prepareImpedanceInput(source);
+}
+
+auto prepareMaximumGainSearchInput(std::string_view source,
+    double frequencyMHz, bool aboveGroundOnly) -> std::string
+{
+    if (!std::isfinite(frequencyMHz) || frequencyMHz <= 0.0)
+        return prepareImpedanceInput(source);
+
+    const auto document = nec::NecParser{}.parse(normalizeSolverDeck(source));
+    const nec::NecWriter writer;
+    model::FrequencyDefinition frequency;
+    frequency.startMHz = frequencyMHz;
+    model::RadiationPatternRequest pattern;
+    pattern.thetaCount = aboveGroundOnly ? 19 : 37;
+    pattern.phiCount = 72;
+    pattern.thetaStart = 0.0;
+    pattern.phiStart = 0.0;
+    pattern.thetaStep = 5.0;
+    pattern.phiStep = 5.0;
+    const std::array requests{
+        writer.writeFrequencyCard(frequency),
+        std::string{"XQ 0"},
+        writer.writeRadiationPatternCard(pattern),
+    };
 
     std::vector<std::string> lines;
     lines.reserve(document.cards().size() + requests.size());

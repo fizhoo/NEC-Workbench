@@ -3,8 +3,11 @@
 #include "ui/DisplayFormat.h"
 #include "ui/DetachablePanel.h"
 #include "ui/WorkspaceNavigator.h"
+#include "ui/WorkbenchIcon.h"
 
 #include "analysis/FrequencyComparison.h"
+#include "analysis/HistoricalOverlayCompatibility.h"
+#include "analysis/OptimizationBaseline.h"
 #include "analysis/SolverCommand.h"
 #include "analysis/NecOutputParser.h"
 #include "analysis/SolverInput.h"
@@ -19,7 +22,7 @@
 #include "nec/NecSymbolEditor.h"
 #include "nec/NecSymbolResolver.h"
 #include "nec/NecWriter.h"
-#include "ui/dashboard/DashboardPage.h"
+#include "ui/controlpanel/ControlPanel.h"
 #include "ui/cards/WireCardEditor.h"
 #include "ui/cards/StructuredCardEditor.h"
 #include "ui/analysis/AnalysisSetupEditor.h"
@@ -28,10 +31,11 @@
 #include "ui/analysis/ConvergenceWorkspace.h"
 #include "ui/analysis/ImpedanceResultsView.h"
 #include "ui/analysis/QuickSweepDialog.h"
-#include "ui/analysis/ResultsSummaryView.h"
+#include "ui/analysis/ResultWindowCoordinator.h"
 #include "ui/analysis/RunReviewWindow.h"
 #include "ui/analysis/SweepPlotsView.h"
 #include "ui/analysis/FieldResultsViews.h"
+#include "ui/analysis/HistoricalOverlayControl.h"
 #include "ui/editor/NecEditor.h"
 #include "ui/editor/NecHighlighter.h"
 #include "ui/geometry/EngineeringSpinBox.h"
@@ -63,6 +67,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDoubleSpinBox>
+#include <QEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -78,6 +83,7 @@
 #include <QLineEdit>
 #include <QStringList>
 #include <QMenuBar>
+#include <QMenu>
 #include <QMessageBox>
 #include <QMargins>
 #include <QJsonDocument>
@@ -96,6 +102,7 @@
 #include <QStyle>
 #include <QStandardPaths>
 #include <QTableWidget>
+#include <QTableView>
 #include <QTabWidget>
 #include <QTextBlock>
 #include <QTextCursor>
@@ -128,6 +135,8 @@
 namespace necwb::ui {
 namespace {
 
+constexpr QSize kResultWindowSize{520, 380};
+
 constexpr auto ItemKindRole = Qt::UserRole;
 constexpr auto WireTagRole = Qt::UserRole + 1;
 constexpr auto SourceLineRole = Qt::UserRole + 2;
@@ -139,10 +148,17 @@ auto modelSegmentCount(const model::AntennaModel& model) -> int
     return count;
 }
 
-auto workbenchIcon(const char* name) -> QIcon
+auto historicalOverlayStatusText(analysis::HistoricalOverlayStatus status) -> QString
 {
-    return QIcon(QStringLiteral(":/icons/")
-        + QString::fromLatin1(name) + QStringLiteral(".svg"));
+    switch (status) {
+    case analysis::HistoricalOverlayStatus::Compatible:
+        return QObject::tr("Compatible");
+    case analysis::HistoricalOverlayStatus::Partial:
+        return QObject::tr("Partial");
+    case analysis::HistoricalOverlayStatus::NoMatchingData:
+        return QObject::tr("No matching data");
+    }
+    return {};
 }
 
 void invokeFocusedEditCommand(const char* command)
@@ -216,6 +232,7 @@ auto workspaceDensityFontSize(MainWindow::WorkspaceDensity density) -> int
 enum RunColumn {
     RunStartedColumn,
     RunModelColumn,
+    RunNoteColumn,
     RunTypeColumn,
     RunResultsColumn,
     RunOutputSizeColumn,
@@ -263,6 +280,10 @@ void setRunResultMetadata(AnalysisRunRecord& record, const analysis::AnalysisRes
     record.hasImpedance = !result.feedpoints.empty();
     record.hasCurrents = !result.currents.empty();
     record.hasRadiation = !result.radiation.empty();
+    const auto coverage = analysis::optimizationResultCoverage(result);
+    record.referenceImpedanceOhms = coverage.referenceImpedanceOhms;
+    record.impedanceFrequenciesMHz = coverage.impedanceFrequenciesMHz;
+    record.radiationCoverage = coverage.radiation;
     std::vector<double> frequencies;
     const auto addFrequency = [&frequencies](double frequencyMHz) {
         if (std::ranges::find_if(frequencies, [frequencyMHz](double existing) {
@@ -401,43 +422,45 @@ MainWindow::MainWindow()
 {
     setWindowTitle(tr("Untitled[*] — NEC Workbench"));
     setWindowModified(false);
-    resize(1280, 820);
 
     solverRunner_ = new SolverProcessRunner(this);
     createActions();
     createWorkspace();
+    resultWindowCoordinator_ = std::make_unique<ResultWindowCoordinator>(
+        impedancePanel_, currentsPanel_, radiationPanel_);
+    impedancePanel_->setVisibilityChangedCallback([this](bool visible) {
+        controlPanel_->setResultWindowVisible(ControlPanel::Workspace::Impedance, visible);
+    });
+    currentsPanel_->setVisibilityChangedCallback([this](bool visible) {
+        controlPanel_->setResultWindowVisible(ControlPanel::Workspace::Currents, visible);
+    });
+    radiationPanel_->setVisibilityChangedCallback([this](bool visible) {
+        controlPanel_->setResultWindowVisible(ControlPanel::Workspace::Radiation, visible);
+    });
+    geometryPanel_->setVisibilityChangedCallback([this](bool visible) {
+        controlPanel_->setResultWindowVisible(ControlPanel::Workspace::GeometryEditor, visible);
+    });
     createDocks();
     createMenusAndToolbar();
+    // The main window only shows the dashboard (every module opens in its own window), and
+    // the dashboard does not stretch, so the window is fixed to its content instead of
+    // letting a short window squeeze sections over each other.
+    layout()->setSizeConstraint(QLayout::SetFixedSize);
+    statusBar()->setSizeGripEnabled(false);
+    connect(dashboardStack_, &QStackedWidget::currentChanged,
+        this, [this] { fitWindowToDashboard(); });
+    fitWindowToDashboard();
+    qApp->installEventFilter(this);
     setWorkspaceDensity(workspaceDensityFromId(QSettings{}.value(
         QStringLiteral("appearance/workspaceDensity"), QStringLiteral("compact")).toString()));
 
     modelFileStatus_ = new QLabel(this);
     modelFileStatus_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    modelFileStatus_->setMinimumWidth(0);
+    modelFileStatus_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     statusBar()->addPermanentWidget(modelFileStatus_, 1);
     checkStatus_ = new QLabel(tr("No model loaded"), this);
     statusBar()->addPermanentWidget(checkStatus_);
-    solverActivityWidget_ = new QWidget(this);
-    solverActivityWidget_->setObjectName(QStringLiteral("solverActivityWidget"));
-    auto* solverActivityLayout = new QHBoxLayout(solverActivityWidget_);
-    solverActivityLayout->setContentsMargins(6, 0, 0, 0);
-    solverActivityLayout->setSpacing(6);
-    solverActivityProgress_ = new QProgressBar(solverActivityWidget_);
-    solverActivityProgress_->setObjectName(QStringLiteral("solverActivityProgress"));
-    solverActivityProgress_->setRange(0, 0);
-    solverActivityProgress_->setTextVisible(false);
-    solverActivityProgress_->setFixedWidth(72);
-    solverActivityLabel_ = new QLabel(solverActivityWidget_);
-    solverActivityLabel_->setObjectName(QStringLiteral("solverActivityLabel"));
-    solverActivityLabel_->setMinimumWidth(230);
-    solverActivityCancelButton_ = new QPushButton(tr("Cancel"), solverActivityWidget_);
-    solverActivityCancelButton_->setObjectName(QStringLiteral("solverActivityCancelButton"));
-    solverActivityLayout->addWidget(solverActivityProgress_);
-    solverActivityLayout->addWidget(solverActivityLabel_);
-    solverActivityLayout->addWidget(solverActivityCancelButton_);
-    statusBar()->addPermanentWidget(solverActivityWidget_);
-    solverActivityWidget_->hide();
-    connect(solverActivityCancelButton_, &QPushButton::clicked,
-        this, [this] { cancelAnalysis(); });
     connect(solverRunner_, &SolverProcessRunner::started, this, [this] {
         solverActivityPhase_ = tr("Solving");
         updateSolverActivity();
@@ -457,8 +480,8 @@ MainWindow::MainWindow()
         saveAction_->setEnabled(modified);
         setWindowModified(modified);
         sourceWorkspace_->setTabText(0, modified ? tr("Raw Source *") : tr("Raw Source"));
-        if (dashboardPage_ != nullptr)
-            dashboardPage_->setDocumentState(currentFile_.isEmpty()
+        if (controlPanel_ != nullptr)
+            controlPanel_->setDocumentState(currentFile_.isEmpty()
                     ? QString{} : QFileInfo(currentFile_).fileName(), modified);
     });
     connect(editor_->document(), &QTextDocument::undoAvailable, this, [this] { updateUndoActions(); });
@@ -496,18 +519,33 @@ MainWindow::MainWindow()
         if (index == structuredSourceTabIndex_ && !modelChecked_) checkModel();
         updateUndoActions();
     });
-    connect(moduleStack_, &QStackedWidget::currentChanged, this, [this](int index) {
-        updateWorkspaceDockVisibility(index);
-        updateUndoActions();
-    });
+    connect(moduleStack_, &QStackedWidget::currentChanged, this,
+        [this] { updateUndoActions(); });
 
     restoreWorkspaceLayout();
     updateUndoActions();
 }
 
+auto MainWindow::eventFilter(QObject* watched, QEvent* event) -> bool
+{
+    // Dashboard content changes size (results, stale markers, density), so refit the
+    // window whenever the visible dashboard page asks for a new layout.
+    if (event->type() == QEvent::LayoutRequest && dashboardStack_ != nullptr
+        && watched == dashboardStack_->currentWidget())
+        QTimer::singleShot(0, this, [this] { fitWindowToDashboard(); });
+    if (event->type() == QEvent::Show) {
+        auto* dialog = qobject_cast<QDialog*>(watched);
+        if (dialog != nullptr && dialog->isWindow()
+            && dialog->property("workspaceDensityId").toString()
+                != workspaceDensityId(workspaceDensity_)) {
+            applyWorkspaceDensity(dialog);
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
 MainWindow::~MainWindow()
 {
-    delete detachedResultsWindow_;
     delete runReviewWindow_;
 }
 
@@ -584,7 +622,7 @@ void MainWindow::createActions()
     checkAction_->setIcon(workbenchIcon("check"));
     checkAction_->setShortcut(QKeySequence(Qt::Key_F7));
     checkAction_->setStatusTip(tr("Check NEC cards and model geometry"));
-    connect(checkAction_, &QAction::triggered, this, [this] { checkModel(); });
+    connect(checkAction_, &QAction::triggered, this, [this] { checkModel(true); });
 
     runAction_ = new QAction(tr("&Run Analysis"), this);
     runAction_->setIcon(workbenchIcon("run"));
@@ -621,10 +659,11 @@ void MainWindow::createActions()
     connect(averageGainAction_, &QAction::triggered, this, [this] { startAverageGainTest(); });
 
     convergenceAction_ = new QAction(tr("Segmentation &Convergence…"), this);
+    convergenceAction_->setObjectName(QStringLiteral("segmentationConvergenceAction"));
     convergenceAction_->setIcon(workbenchIcon("frequency-sweep"));
     convergenceAction_->setEnabled(false);
     convergenceAction_->setStatusTip(tr(
-        "Open the multi-run segmentation convergence study under Results Validation"));
+        "Open the multi-run segmentation convergence study window"));
     connect(convergenceAction_, &QAction::triggered, this, [this] { showConvergenceStudy(); });
 
     fitGeometryAction_ = new QAction(tr("&Fit Geometry"), this);
@@ -671,13 +710,6 @@ void MainWindow::createActions()
     redoAction_->setIcon(workbenchIcon("redo"));
     redoAction_->setShortcut(QKeySequence::Redo);
     connect(redoAction_, &QAction::triggered, this, [this] { performRedo(); });
-
-    detachResultsAction_ = new QAction(tr("Detach Results Window"), this);
-    detachResultsAction_->setIcon(workbenchIcon("detach"));
-    detachResultsAction_->setObjectName(QStringLiteral("detachResultsAction"));
-    detachResultsAction_->setStatusTip(
-        tr("Move the existing Results workspace into a separate reusable window"));
-    connect(detachResultsAction_, &QAction::triggered, this, [this] { toggleResultsDetached(); });
 
     resetLayoutAction_ = new QAction(tr("&Reset Layout"), this);
     resetLayoutAction_->setObjectName(QStringLiteral("resetLayoutAction"));
@@ -743,16 +775,20 @@ void MainWindow::createActions()
     moduleGroup->setExclusive(true);
     homeModuleAction_ = moduleGroup->addAction(tr("&Home"));
     modelModuleAction_ = moduleGroup->addAction(tr("&Model"));
-    analysisModuleAction_ = moduleGroup->addAction(tr("&Analysis"));
+    analysisModuleAction_ = moduleGroup->addAction(tr("&Setup"));
     resultsModuleAction_ = moduleGroup->addAction(tr("&Results"));
     optimizeModuleAction_ = moduleGroup->addAction(tr("&Optimize"));
+    modelModuleAction_->setObjectName(QStringLiteral("modelModuleAction"));
+    analysisModuleAction_->setObjectName(QStringLiteral("setupModuleAction"));
+    optimizeModuleAction_->setObjectName(QStringLiteral("optimizeModuleAction"));
     modelModuleAction_->setIcon(workbenchIcon("geometry"));
-    analysisModuleAction_->setIcon(workbenchIcon("analysis"));
+    analysisModuleAction_->setIcon(workbenchIcon("settings"));
     resultsModuleAction_->setIcon(workbenchIcon("results"));
     optimizeModuleAction_->setIcon(workbenchIcon("optimize"));
     for (auto* action : moduleGroup->actions()) {
         action->setCheckable(true);
     }
+    resultsModuleAction_->setCheckable(false);
     homeModuleAction_->setChecked(true);
     modelModuleAction_->setEnabled(false);
     analysisModuleAction_->setEnabled(false);
@@ -762,8 +798,7 @@ void MainWindow::createActions()
     connect(modelModuleAction_, &QAction::triggered, this, [this] { showModule(modelModuleIndex_); });
     connect(analysisModuleAction_, &QAction::triggered, this, [this] { showModule(analysisModuleIndex_); });
     connect(resultsModuleAction_, &QAction::triggered, this, [this] {
-        showModule(resultsModuleIndex_);
-        if (!resultsAvailable_) resultsWorkspace_->setCurrentIndex(analysisRunsTabIndex_);
+        showPrimaryResultsWindow();
     });
     connect(optimizeModuleAction_, &QAction::triggered,
         this, [this] { showModule(optimizeModuleIndex_); });
@@ -775,19 +810,8 @@ void MainWindow::createWorkspace()
     auto* centralLayout = new QVBoxLayout(central);
     centralLayout->setContentsMargins(0, 0, 0, 0);
     centralLayout->setSpacing(0);
-    auto* moduleNavigation = new QToolBar(tr("Workbench Modules"), central);
-    moduleNavigation->setObjectName(QStringLiteral("moduleNavigationToolbar"));
-    moduleNavigation->setIconSize({18, 18});
-    moduleNavigation->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    moduleNavigation->addAction(homeModuleAction_);
-    moduleNavigation->addSeparator();
-    moduleNavigation->addAction(modelModuleAction_);
-    moduleNavigation->addAction(analysisModuleAction_);
-    moduleNavigation->addAction(resultsModuleAction_);
-    moduleNavigation->addAction(optimizeModuleAction_);
     moduleStack_ = new QStackedWidget(central);
     moduleStack_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-    centralLayout->addWidget(moduleNavigation);
     centralLayout->addWidget(moduleStack_, 1);
     setCentralWidget(central);
 
@@ -806,18 +830,61 @@ void MainWindow::createWorkspace()
     welcomePage_ = new WelcomePage(newAction_, openAction_,
         [this](const QString& path) { openFileAtPath(path); },
         [this] { openExample(); }, [this] { clearRecentFiles(); }, dashboardStack_);
-    welcomePage_->setRecentFiles(recentFiles());
     dashboardStack_->addWidget(welcomePage_);
-    dashboardPage_ = new DashboardPage(editor_->document(), dashboardStack_);
-    dashboardPage_->setQuickActions(checkAction_, runAction_);
-    dashboardPage_->setAverageGainAction(averageGainAction_);
-    dashboardPage_->setConvergenceAction(convergenceAction_);
-    dashboardStack_->addWidget(dashboardPage_);
+    controlPanel_ = new ControlPanel(dashboardStack_);
+    controlPanel_->setFileActions(openAction_, saveAction_);
+    refreshRecentFileViews(recentFiles());
+    controlPanel_->setQuickActions(
+        checkAction_, runAction_, quickSweepAction_, stopAction_);
+    controlPanel_->setAverageGainAction(averageGainAction_);
+    controlPanel_->setConvergenceAction(convergenceAction_);
+    controlPanel_->setOpenWorkspaceCallback([this](ControlPanel::Workspace destination) {
+        switch (destination) {
+        case ControlPanel::Workspace::Setup:
+            showModule(analysisModuleIndex_);
+            break;
+        case ControlPanel::Workspace::GeometryEditor:
+            showModule(geometryModuleIndex_);
+            break;
+        case ControlPanel::Workspace::Impedance:
+            resultWindowCoordinator_->showImpedance();
+            break;
+        case ControlPanel::Workspace::Currents:
+            resultWindowCoordinator_->showCurrents();
+            break;
+        case ControlPanel::Workspace::Radiation:
+            resultWindowCoordinator_->showRadiation();
+            break;
+        case ControlPanel::Workspace::Runs:
+            showRunHistory();
+            break;
+        case ControlPanel::Workspace::Optimize:
+            showModule(optimizeModuleIndex_);
+            break;
+        }
+    });
+    controlPanel_->setOpenEditorCallback([this](ControlPanel::Editor destination) {
+        switch (destination) {
+        case ControlPanel::Editor::Frequency: showEditor(EditorDestination::Frequency); break;
+        case ControlPanel::Editor::Wires: showEditor(EditorDestination::Geometry); break;
+        case ControlPanel::Editor::Sources: showEditor(EditorDestination::Sources); break;
+        case ControlPanel::Editor::Loads:
+        case ControlPanel::Editor::TransmissionLines:
+            showEditor(EditorDestination::Loads);
+            break;
+        case ControlPanel::Editor::Ground: showEditor(EditorDestination::Environment); break;
+        case ControlPanel::Editor::Variables: showEditor(EditorDestination::Parameters); break;
+        case ControlPanel::Editor::Requests: showEditor(EditorDestination::Requests); break;
+        case ControlPanel::Editor::Deck: showEditor(EditorDestination::RawSource); break;
+        }
+    });
+    dashboardStack_->addWidget(controlPanel_);
+    QTimer::singleShot(0, this, [this] { refreshDashboardRuns(); });
     homeModuleIndex_ = moduleStack_->addWidget(dashboardStack_);
 
     auto* structuredContainer = new QWidget(sourceWorkspace_);
     auto* structuredLayout = new QVBoxLayout(structuredContainer);
-    structuredLayout->setContentsMargins(8, 8, 8, 8);
+    structuredLayout->setContentsMargins(6, 6, 6, 6);
     structuredLayout->setSpacing(6);
     auto* deckUnitBar = new QHBoxLayout;
     deckUnitBar->addWidget(new QLabel(tr("NEC deck geometry units:"), structuredContainer));
@@ -894,7 +961,7 @@ void MainWindow::createWorkspace()
             detachFieldParameter(sourceLine, fieldIndex, fieldLabel);
         });
 
-    workspace_ = new QTabWidget(modelWorkspace_);
+    workspace_ = new QTabWidget(moduleStack_);
     workspace_->setObjectName(QStringLiteral("geometryWorkspace"));
     workspace_->setDocumentMode(true);
     workspace_->setMovable(true);
@@ -1039,10 +1106,17 @@ void MainWindow::createWorkspace()
     connect(fit3DButton, &QToolButton::clicked, geometry3DView_, &Geometry3DView::fitToView);
     connect(isometricButton, &QToolButton::clicked, geometry3DView_, &Geometry3DView::setIsometricView);
     connectAttachments(geometry3DView_);
-    const auto geometry3DTabIndex = workspace_->addTab(geometry3DPage, tr("3D Geometry"));
+    geometry3DTabIndex_ = workspace_->addTab(geometry3DPage, tr("3D Geometry"));
     workspace_->setTabIcon(geometryTabIndex_, workbenchIcon("geometry"));
-    workspace_->setTabIcon(geometry3DTabIndex, workbenchIcon("3d-view"));
-    modelGeometryWorkspaceIndex_ = modelWorkspace_->addTab(workspace_, tr("Geometry"));
+    workspace_->setTabIcon(geometry3DTabIndex_, workbenchIcon("3d-view"));
+    // Geometry and the deck live in separate windows so each keeps its own size: the deck
+    // is usually small beside a run, while geometry work wants a large window.
+    geometryPanel_ = new DetachablePanel(QStringLiteral("geometry-editor"),
+        tr("Geometry Editor"), moduleStack_, {QStringLiteral("workspaceWindows"),
+            QStringLiteral("geometryEditorWindow"), QSize{1000, 760}});
+    geometryPanel_->setStatusText(tr("No model loaded"));
+    geometryPanel_->setContent(workspace_);
+    geometryModuleIndex_ = moduleStack_->addWidget(geometryPanel_);
 
     parameterEditor_ = new ParameterEditor(modelWorkspace_);
     connect(parameterEditor_, &ParameterEditor::parameterChanged, this,
@@ -1053,13 +1127,12 @@ void MainWindow::createWorkspace()
         [this](std::size_t sourceLine, QString name) { deleteParameter(sourceLine, name); });
     connect(parameterEditor_, &ParameterEditor::parameterSelected, this,
         [this](std::size_t sourceLine) { editor_->goToLine(sourceLine); });
-    modelParametersWorkspaceIndex_ = modelWorkspace_->addTab(parameterEditor_, tr("Parameters"));
 
     analysisWorkspace_ = new QTabWidget(moduleStack_);
-    analysisWorkspace_->setObjectName(QStringLiteral("analysisWorkspace"));
+    analysisWorkspace_->setObjectName(QStringLiteral("setupWorkspace"));
     analysisWorkspace_->setDocumentMode(true);
 
-    setupEditor_ = new SetupEditor(modelWorkspace_);
+    setupEditor_ = new SetupEditor(analysisWorkspace_);
     connect(setupEditor_, &SetupEditor::frequencyChanged, this,
         [this](model::FrequencyDefinition frequency) { changeFrequency(frequency); });
     connect(setupEditor_, &SetupEditor::frequencyDeleteRequested, this,
@@ -1078,10 +1151,7 @@ void MainWindow::createWorkspace()
         [this](std::size_t sourceLine) { deleteExcitation(sourceLine); });
     connect(setupEditor_, &SetupEditor::excitationSelected, this,
         [this](std::size_t sourceLine) { selectExcitation(sourceLine); });
-    modelSourcesWorkspaceIndex_ = modelWorkspace_->addTab(
-        setupEditor_->sourcesPage(), tr("Sources"));
-
-    loadNetworkEditor_ = new LoadNetworkEditor(modelWorkspace_);
+    loadNetworkEditor_ = new LoadNetworkEditor(analysisWorkspace_);
     loadNetworkEditor_->setLengthUnit(geometrySettings_.lengthUnit);
     connect(loadNetworkEditor_, &LoadNetworkEditor::loadChanged, this,
         [this](model::LoadDefinition load) {
@@ -1120,24 +1190,24 @@ void MainWindow::createWorkspace()
         [this](std::size_t sourceLine) { selectLoad(sourceLine); });
     connect(loadNetworkEditor_, &LoadNetworkEditor::transmissionLineSelected, this,
         [this](std::size_t sourceLine) { selectTransmissionLine(sourceLine); });
-    loadNetworkTabIndex_ = modelWorkspace_->addTab(
-        loadNetworkEditor_, tr("Loads && Transmission Lines"));
-    modelEnvironmentWorkspaceIndex_ = modelWorkspace_->addTab(
-        setupEditor_->environmentPage(), tr("Environment"));
     modelDeckWorkspaceIndex_ = modelWorkspace_->addTab(sourceWorkspace_, tr("NEC Deck"));
-    modelWorkspace_->setTabIcon(modelGeometryWorkspaceIndex_, workbenchIcon("geometry"));
+    modelParametersWorkspaceIndex_ = modelWorkspace_->addTab(parameterEditor_, tr("Parameters"));
     modelWorkspace_->setTabIcon(modelParametersWorkspaceIndex_, workbenchIcon("structured-cards"));
-    modelWorkspace_->setTabIcon(modelSourcesWorkspaceIndex_, workbenchIcon("sources"));
-    modelWorkspace_->setTabIcon(loadNetworkTabIndex_, workbenchIcon("loads"));
-    modelWorkspace_->setTabIcon(modelEnvironmentWorkspaceIndex_, workbenchIcon("environment"));
     modelWorkspace_->setTabIcon(modelDeckWorkspaceIndex_, workbenchIcon("nec-deck"));
     auto* modelNavigator = new WorkspaceNavigator(
         modelWorkspace_, QStringLiteral("model"), moduleStack_);
-    modelModuleIndex_ = moduleStack_->addWidget(modelNavigator);
+    // Keeps the former Model Editor's settings key so its saved size carries over.
+    modelPanel_ = new DetachablePanel(QStringLiteral("model-editor"),
+        tr("NEC Deck"), moduleStack_, {QStringLiteral("workspaceWindows"),
+            QStringLiteral("modelEditorWindow")});
+    modelPanel_->setStatusText(tr("No model loaded"));
+    modelPanel_->setContent(modelNavigator);
+    modelModuleIndex_ = moduleStack_->addWidget(modelPanel_);
 
     analysisSetupEditor_ = new AnalysisSetupEditor(analysisWorkspace_);
     connect(analysisSetupEditor_, &AnalysisSetupEditor::settingsChanged, this,
         [this](QString backendId, QString executablePath, int timeoutSeconds) {
+            const auto backendChanged = solverBackendId_ != backendId;
             solverBackendId_ = std::move(backendId);
             solverExecutablePath_ = std::move(executablePath);
             solverExecutablePaths_.insert(solverBackendId_, solverExecutablePath_);
@@ -1148,11 +1218,12 @@ void MainWindow::createWorkspace()
             convergenceWorkspace_->setContext(editor_->toPlainText(), currentFile_,
                 solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_,
                 modelChecked_ && modelErrorCount_ == 0);
-            dashboardPage_->setModel(currentModel_, currentSetup_, solverBackendId_, modelChecked_,
-                modelErrorCount_, modelWarningCount_);
+            controlPanel_->setModel(currentModel_, currentSetup_, activeSource().document(),
+                solverBackendId_, modelChecked_, modelErrorCount_, modelWarningCount_);
             runAction_->setStatusTip(solverExecutablePath_.isEmpty()
-                    ? tr("Select a NEC engine executable under Analysis → Solver")
+                    ? tr("Select a NEC engine executable under Setup → Solver")
                     : tr("Run the checked model with the selected NEC engine"));
+            if (backendChanged && modelChecked_) checkModel();
             updateAnalysisReadiness();
         });
     connect(analysisSetupEditor_, &AnalysisSetupEditor::executablePathChanged, this,
@@ -1162,10 +1233,14 @@ void MainWindow::createWorkspace()
             QSettings{}.setValue(
                 QStringLiteral("analysis/executables/%1").arg(backendId), executablePath);
         });
-    const auto analysisSolverTabIndex = analysisWorkspace_->addTab(
-        scrollableEditor(analysisSetupEditor_, analysisWorkspace_), tr("Solver"));
     analysisFrequencyTabIndex_ = analysisWorkspace_->addTab(
         setupEditor_->frequencyPage(), tr("Frequency"));
+    modelSourcesWorkspaceIndex_ = analysisWorkspace_->addTab(
+        setupEditor_->sourcesPage(), tr("Sources"));
+    loadNetworkTabIndex_ = analysisWorkspace_->addTab(
+        loadNetworkEditor_, tr("Loads && Transmission Lines"));
+    modelEnvironmentWorkspaceIndex_ = analysisWorkspace_->addTab(
+        setupEditor_->environmentPage(), tr("Environment"));
     analysisRequestEditor_ = new AnalysisRequestEditor(analysisWorkspace_);
     connect(analysisRequestEditor_, &AnalysisRequestEditor::executionChanged, this,
         [this](bool enabled, model::ExecutionRequest execution) {
@@ -1192,28 +1267,33 @@ void MainWindow::createWorkspace()
         [this](std::size_t sourceLine) {
             deleteSetupCard(tr("Delete radiation pattern"), sourceLine);
         });
-    const auto analysisRequestsTabIndex = analysisWorkspace_->addTab(
+    analysisRequestsTabIndex_ = analysisWorkspace_->addTab(
         scrollableEditor(analysisRequestEditor_, analysisWorkspace_), tr("Requests"));
-    analysisWorkspace_->setTabIcon(analysisSolverTabIndex, workbenchIcon("settings"));
+    analysisSolverTabIndex_ = analysisWorkspace_->addTab(
+        scrollableEditor(analysisSetupEditor_, analysisWorkspace_), tr("Solver"));
+    analysisWorkspace_->setTabIcon(modelSourcesWorkspaceIndex_, workbenchIcon("sources"));
+    analysisWorkspace_->setTabIcon(loadNetworkTabIndex_, workbenchIcon("loads"));
+    analysisWorkspace_->setTabIcon(modelEnvironmentWorkspaceIndex_, workbenchIcon("environment"));
+    analysisWorkspace_->setTabIcon(analysisSolverTabIndex_, workbenchIcon("settings"));
     analysisWorkspace_->setTabIcon(analysisFrequencyTabIndex_, workbenchIcon("frequency-sweep"));
-    analysisWorkspace_->setTabIcon(analysisRequestsTabIndex, workbenchIcon("radiation-pattern"));
+    analysisWorkspace_->setTabIcon(analysisRequestsTabIndex_, workbenchIcon("radiation-pattern"));
 
-    runsPage_ = new QWidget(moduleStack_);
-    auto* runsLayout = new QVBoxLayout(runsPage_);
-    runsLayout->setContentsMargins(16, 16, 16, 16);
-    auto* runsHeading = new QLabel(tr("Runs"), runsPage_);
+    auto* runsPage = new QWidget(moduleStack_);
+    auto* runsLayout = new QVBoxLayout(runsPage);
+    runsLayout->setContentsMargins(10, 10, 10, 10);
+    auto* runsHeading = new QLabel(tr("Runs"), runsPage);
     auto runsHeadingFont = runsHeading->font();
     runsHeadingFont.setBold(true);
     runsHeadingFont.setPointSize(runsHeadingFont.pointSize() + 3);
     runsHeading->setFont(runsHeadingFont);
     auto* runsDescription = new QLabel(tr(
         "Analysis runs appear individually. Optimization candidates are grouped under one session row. "
-        "Open or double-click a row to inspect it in the separate, reusable Run Review window."), runsPage_);
+        "Open or double-click a row to inspect it in the separate, reusable Run Review window."), runsPage);
     runsDescription->setWordWrap(true);
-    analysisRuns_ = new QTableWidget(0, RunColumnCount, runsPage_);
+    analysisRuns_ = new QTableWidget(0, RunColumnCount, runsPage);
     analysisRuns_->setObjectName(QStringLiteral("analysisRunsTable"));
-    analysisRuns_->setHorizontalHeaderLabels({tr("Started"), tr("Model"), tr("Type"), tr("Results"),
-        tr("Output"), tr("Backend"), tr("Status"), tr("Duration"), tr("Run Folder")});
+    analysisRuns_->setHorizontalHeaderLabels({tr("Started"), tr("Model"), tr("Note"), tr("Type"),
+        tr("Results"), tr("Output"), tr("Backend"), tr("Status"), tr("Duration"), tr("Run Folder")});
     analysisRuns_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     analysisRuns_->setSelectionBehavior(QAbstractItemView::SelectRows);
     analysisRuns_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -1221,27 +1301,35 @@ void MainWindow::createWorkspace()
     analysisRuns_->horizontalHeader()->setStretchLastSection(true);
     auto* runViewButtons = new QHBoxLayout;
     auto* runManagementButtons = new QHBoxLayout;
-    cancelRunButton_ = new QPushButton(tr("Cancel Active Run"), runsPage_);
+    cancelRunButton_ = new QPushButton(tr("Cancel Active Run"), runsPage);
     cancelRunButton_->setEnabled(false);
-    openRunResultsButton_ = new QPushButton(tr("Open Run Review"), runsPage_);
+    openRunResultsButton_ = new QPushButton(tr("Open Run Review"), runsPage);
     openRunResultsButton_->setObjectName(QStringLiteral("openRunResultsButton"));
     openRunResultsButton_->setEnabled(false);
-    inspectRunInputButton_ = new QPushButton(tr("Inspect Input Snapshot"), runsPage_);
+    inspectRunInputButton_ = new QPushButton(tr("Inspect Input Snapshot"), runsPage);
     inspectRunInputButton_->setObjectName(QStringLiteral("inspectRunInputButton"));
     inspectRunInputButton_->setEnabled(false);
-    openRunSnapshotButton_ = new QPushButton(tr("Open Snapshot as New Model"), runsPage_);
+    openRunSnapshotButton_ = new QPushButton(tr("Open Snapshot as New Model"), runsPage);
     openRunSnapshotButton_->setObjectName(QStringLiteral("openRunSnapshotButton"));
     openRunSnapshotButton_->setEnabled(false);
-    openRunFolderButton_ = new QPushButton(tr("Open Run Folder"), runsPage_);
+    openRunFolderButton_ = new QPushButton(tr("Open Run Folder"), runsPage);
     openRunFolderButton_->setEnabled(false);
-    deleteRunButton_ = new QPushButton(tr("Delete Run…"), runsPage_);
+    pinRunReferenceButton_ = new QPushButton(tr("Use as Historical Overlay"), runsPage);
+    pinRunReferenceButton_->setObjectName(QStringLiteral("pinRunReferenceButton"));
+    pinRunReferenceButton_->setEnabled(false);
+    editRunNoteButton_ = new QPushButton(tr("Edit Run Note…"), runsPage);
+    editRunNoteButton_->setObjectName(QStringLiteral("editRunNoteButton"));
+    editRunNoteButton_->setEnabled(false);
+    deleteRunButton_ = new QPushButton(tr("Delete Run…"), runsPage);
     deleteRunButton_->setObjectName(QStringLiteral("deleteRunButton"));
     deleteRunButton_->setEnabled(false);
     runViewButtons->addWidget(openRunResultsButton_);
     runViewButtons->addWidget(inspectRunInputButton_);
     runViewButtons->addWidget(openRunSnapshotButton_);
+    runViewButtons->addWidget(pinRunReferenceButton_);
     runViewButtons->addStretch();
     runManagementButtons->addWidget(cancelRunButton_);
+    runManagementButtons->addWidget(editRunNoteButton_);
     runManagementButtons->addWidget(openRunFolderButton_);
     runManagementButtons->addWidget(deleteRunButton_);
     runManagementButtons->addStretch();
@@ -1254,6 +1342,10 @@ void MainWindow::createWorkspace()
     connect(openRunResultsButton_, &QPushButton::clicked, this, [this] { loadSelectedRun(); });
     connect(inspectRunInputButton_, &QPushButton::clicked, this, [this] { inspectSelectedRunInput(); });
     connect(openRunSnapshotButton_, &QPushButton::clicked, this, [this] { openSelectedRunSnapshot(); });
+    connect(pinRunReferenceButton_, &QPushButton::clicked,
+        this, [this] { pinSelectedRunReference(); });
+    connect(editRunNoteButton_, &QPushButton::clicked,
+        this, [this] { editSelectedRunNote(); });
     connect(deleteRunButton_, &QPushButton::clicked, this, [this] { deleteSelectedRun(); });
     connect(openRunFolderButton_, &QPushButton::clicked, this, [this] {
         const auto* item = analysisRuns_->currentRow() >= 0
@@ -1267,94 +1359,89 @@ void MainWindow::createWorkspace()
     connect(analysisRuns_, &QTableWidget::itemSelectionChanged,
         this, [this] { updateRunSelectionActions(); });
     connect(analysisRuns_, &QTableWidget::cellDoubleClicked,
-        this, [this](int, int) { loadSelectedRun(); });
+        this, [this](int, int column) {
+            if (column == RunNoteColumn) editSelectedRunNote();
+            else loadSelectedRun();
+        });
+    runHistoryPanel_ = new DetachablePanel(QStringLiteral("run-history"),
+        tr("Run History"), moduleStack_, {QStringLiteral("workspaceWindows"),
+            QStringLiteral("runHistoryWindow"), kResultWindowSize});
+    runHistoryPanel_->setStatusText(tr("Saved analysis and study runs"));
+    runHistoryPanel_->setContent(runsPage);
+    moduleStack_->addWidget(runHistoryPanel_);
+    QTimer::singleShot(0, this, [this] {
+        if (runHistoryPanel_->isWindowVisible() && !runHistoryLoaded_) loadRunHistory();
+    });
 
     auto* analysisNavigator = new WorkspaceNavigator(
         analysisWorkspace_, QStringLiteral("analysis"), moduleStack_);
-    analysisModuleIndex_ = moduleStack_->addWidget(analysisNavigator);
+    setupPanel_ = new DetachablePanel(QStringLiteral("analysis-setup"),
+        tr("Analysis Setup"), moduleStack_, {QStringLiteral("workspaceWindows"),
+            QStringLiteral("analysisSetupWindow")});
+    setupPanel_->setStatusText(tr("No model loaded"));
+    setupPanel_->setContent(analysisNavigator);
+    analysisModuleIndex_ = moduleStack_->addWidget(setupPanel_);
 
-    createResultsWorkspace();
+    createResultWindows();
     createOptimizationWorkspace();
     preserveControlHeights(moduleStack_);
     showModule(homeModuleIndex_);
 }
 
-void MainWindow::createResultsWorkspace()
+void MainWindow::createResultWindows()
 {
-    resultsHost_ = new QWidget(moduleStack_);
-    resultsHostLayout_ = new QVBoxLayout(resultsHost_);
-    resultsHostLayout_->setContentsMargins(0, 0, 0, 0);
-    detachedResultsPlaceholder_ = new QWidget(resultsHost_);
-    auto* detachedPlaceholderLayout = new QVBoxLayout(detachedResultsPlaceholder_);
-    detachedPlaceholderLayout->setAlignment(Qt::AlignCenter);
-    auto* detachedPlaceholderTitle = new QLabel(
-        tr("Results are open in a separate window."), detachedResultsPlaceholder_);
-    auto detachedPlaceholderFont = detachedPlaceholderTitle->font();
-    detachedPlaceholderFont.setBold(true);
-    detachedPlaceholderTitle->setFont(detachedPlaceholderFont);
-    auto* showDetachedResultsButton = new QPushButton(
-        tr("Show Results Window"), detachedResultsPlaceholder_);
-    auto* attachDetachedResultsButton = new QPushButton(
-        tr("Attach Results to Main Window"), detachedResultsPlaceholder_);
-    detachedPlaceholderLayout->addWidget(detachedPlaceholderTitle, 0, Qt::AlignCenter);
-    detachedPlaceholderLayout->addWidget(showDetachedResultsButton, 0, Qt::AlignCenter);
-    detachedPlaceholderLayout->addWidget(attachDetachedResultsButton, 0, Qt::AlignCenter);
-    detachedResultsPlaceholder_->hide();
-    connect(showDetachedResultsButton, &QPushButton::clicked,
-        this, [this] { showDetachedResults(); });
-    connect(attachDetachedResultsButton, &QPushButton::clicked, this, [this] { attachResults(); });
-
-    resultsContent_ = new QWidget(resultsHost_);
-    resultsContent_->setObjectName(QStringLiteral("resultsWorkspaceContent"));
-    resultsContent_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-    auto* resultsLayout = new QVBoxLayout(resultsContent_);
-    resultsLayout->setContentsMargins(0, 0, 0, 0);
-    auto* resultsContextFrame = new QFrame(resultsContent_);
-    resultsContextFrame->setObjectName(QStringLiteral("resultsContextBanner"));
-    resultsContextFrame->setFrameShape(QFrame::StyledPanel);
-    auto* resultsContextLayout = new QVBoxLayout(resultsContextFrame);
-    resultsContextLayout->setContentsMargins(12, 8, 12, 8);
-    auto* resultsContextHeading = new QHBoxLayout;
-    resultsContextTitleLabel_ = new QLabel(tr("No Results Loaded"), resultsContextFrame);
-    resultsContextTitleLabel_->setObjectName(QStringLiteral("resultsContextTitleLabel"));
-    auto resultsContextFont = resultsContextTitleLabel_->font();
-    resultsContextFont.setBold(true);
-    resultsContextTitleLabel_->setFont(resultsContextFont);
-    detachResultsButton_ = new QPushButton(tr("Detach Results"), resultsContextFrame);
-    detachResultsButton_->setObjectName(QStringLiteral("detachResultsButton"));
-    resultsContextHeading->addWidget(resultsContextTitleLabel_, 1);
-    resultsContextHeading->addWidget(detachResultsButton_);
-    resultsContextDetailLabel_ = new QLabel(
-        tr("Select a run from Results → Runs, or analyze the active model."), resultsContextFrame);
-    resultsContextDetailLabel_->setObjectName(QStringLiteral("resultsContextDetailLabel"));
-    resultsContextDetailLabel_->setWordWrap(true);
-    activeModelResultsLabel_ = new QLabel(tr("Active Model: None"), resultsContextFrame);
-    activeModelResultsLabel_->setObjectName(QStringLiteral("activeModelResultsLabel"));
-    resultsContextLayout->addLayout(resultsContextHeading);
-    resultsContextLayout->addWidget(resultsContextDetailLabel_);
-    resultsContextLayout->addWidget(activeModelResultsLabel_);
-    connect(detachResultsButton_, &QPushButton::clicked, this, [this] { toggleResultsDetached(); });
-    resultsStatusLabel_ = new QLabel(tr("No analysis results are loaded."), resultsContent_);
-    resultsStatusLabel_->setContentsMargins(12, 7, 12, 7);
-    resultsStatusLabel_->setWordWrap(true);
-    auto* frequencyBar = new QHBoxLayout;
-    auto* frequencyLabel = new QLabel(tr("Result Frequency:"), resultsContent_);
-    resultsFrequencyControl_ = new QComboBox(resultsContent_);
-    resultsFrequencyControl_->setObjectName(QStringLiteral("resultsFrequencyControl"));
-    resultsFrequencyControl_->setMinimumContentsLength(24);
-    resultsFrequencyControl_->setEnabled(false);
-    resultsAvailabilityLabel_ = new QLabel(tr("No result data available."), resultsContent_);
-    resultsAvailabilityLabel_->setObjectName(QStringLiteral("resultsAvailabilityLabel"));
-    frequencyBar->addWidget(frequencyLabel);
-    frequencyBar->addWidget(resultsFrequencyControl_);
-    frequencyBar->addSpacing(12);
-    frequencyBar->addWidget(resultsAvailabilityLabel_, 1);
-    resultsWorkspace_ = new QTabWidget(resultsContent_);
-    resultsWorkspace_->setDocumentMode(true);
-    resultsSummaryView_ = new ResultsSummaryView(resultsWorkspace_);
-    resultsSummaryTabIndex_ = resultsWorkspace_->addTab(resultsSummaryView_, tr("Summary"));
-    validationWorkspace_ = new QTabWidget(resultsWorkspace_);
+    resultWindowsHost_ = new QWidget(moduleStack_);
+    resultWindowsHost_->setObjectName(QStringLiteral("resultWindowsHost"));
+    resultWindowsHost_->hide();
+    validationPanel_ = new DetachablePanel(QStringLiteral("validation"),
+        tr("Validation"), resultWindowsHost_, {QStringLiteral("resultWindows"),
+            QStringLiteral("validationWindow"), kResultWindowSize});
+    validationWorkspace_ = new QTabWidget(validationPanel_);
+    validationWorkspace_->setObjectName(QStringLiteral("validationWorkspace"));
     validationWorkspace_->setDocumentMode(true);
+    auto* validationOverview = new QWidget(validationWorkspace_);
+    validationOverview->setObjectName(QStringLiteral("validationOverview"));
+    auto* validationOverviewLayout = new QVBoxLayout(validationOverview);
+    validationOverviewLayout->setContentsMargins(8, 8, 8, 8);
+    validationOverviewLayout->setSpacing(6);
+    auto* validationOverviewHeading = new QLabel(tr("Static Model Check"), validationOverview);
+    auto validationOverviewFont = validationOverviewHeading->font();
+    validationOverviewFont.setBold(true);
+    validationOverviewHeading->setFont(validationOverviewFont);
+    validationOverviewSummary_ = new QLabel(
+        tr("Run Check Model to evaluate the current source."), validationOverview);
+    validationOverviewSummary_->setObjectName(QStringLiteral("validationOverviewSummary"));
+    validationOverviewScope_ = new QLabel(tr(
+        "Checks NEC syntax, backend compatibility, references, geometry, and model adequacy. "
+        "Average Gain Test and convergence are separate solver-backed studies."),
+        validationOverview);
+    validationOverviewScope_->setObjectName(QStringLiteral("validationOverviewScope"));
+    validationOverviewScope_->setWordWrap(true);
+    auto* validationOverviewButtons = new QHBoxLayout;
+    auto* checkFromValidationButton = new QPushButton(tr("Check Model…"), validationOverview);
+    checkFromValidationButton->setObjectName(QStringLiteral("checkModelFromValidationButton"));
+    auto* openModelCheckButton = new QPushButton(tr("Open Current Report"), validationOverview);
+    openModelCheckButton->setObjectName(QStringLiteral("openModelCheckReportButton"));
+    auto* changeValidationSolverButton = new QPushButton(tr("Change Solver…"), validationOverview);
+    changeValidationSolverButton->setObjectName(QStringLiteral("changeValidationSolverButton"));
+    validationOverviewButtons->addWidget(checkFromValidationButton);
+    validationOverviewButtons->addWidget(openModelCheckButton);
+    validationOverviewButtons->addStretch();
+    validationOverviewButtons->addWidget(changeValidationSolverButton);
+    validationOverviewLayout->addWidget(validationOverviewHeading);
+    validationOverviewLayout->addWidget(validationOverviewSummary_);
+    validationOverviewLayout->addWidget(validationOverviewScope_);
+    validationOverviewLayout->addLayout(validationOverviewButtons);
+    validationOverviewLayout->addStretch();
+    connect(checkFromValidationButton, &QPushButton::clicked,
+        this, [this] { checkModel(true); });
+    connect(openModelCheckButton, &QPushButton::clicked, modelCheckWindowAction_, &QAction::trigger);
+    connect(changeValidationSolverButton, &QPushButton::clicked, this, [this] {
+        if (!showModule(analysisModuleIndex_)) return;
+        analysisWorkspace_->setCurrentIndex(analysisSolverTabIndex_);
+    });
+    validationOverviewTabIndex_ = validationWorkspace_->addTab(
+        validationOverview, tr("Static Check"));
     averageGainResultsView_ = new AverageGainResultsView(validationWorkspace_);
     averageGainResultsView_->setRunAction(averageGainAction_);
     averageGainValidationTabIndex_ = validationWorkspace_->addTab(
@@ -1362,33 +1449,58 @@ void MainWindow::createResultsWorkspace()
     convergenceWorkspace_ = new ConvergenceWorkspace(validationWorkspace_);
     convergenceValidationTabIndex_ = validationWorkspace_->addTab(
         convergenceWorkspace_, tr("Segmentation Convergence"));
-    averageGainResultsTabIndex_ = resultsWorkspace_->addTab(validationWorkspace_, tr("Validation"));
-    convergenceWorkspace_->setRunsChangedCallback([this] { loadRunHistory(); });
+    validationPanel_->setContent(validationWorkspace_);
+    convergenceWorkspace_->setRunsChangedCallback([this] {
+        if (runHistoryLoaded_) loadRunHistory();
+        refreshDashboardRuns();
+    });
     convergenceWorkspace_->setRunningChangedCallback([this] { synchronizeRunnerState(); });
     convergenceWorkspace_->setSummaryChangedCallback([this](const QString& summary) {
-        dashboardPage_->setConvergenceState(summary);
-        resultsAvailable_ = true;
-        resultsStatusLabel_->setText(tr("Model validation — %1").arg(summary));
+        validationPanel_->setStatusText(summary);
+        controlPanel_->setStudyStatus(ControlPanel::Study::Convergence,
+            ControlPanel::StudyState::Complete, summary);
     });
 
-    auto* impedanceTabs = new QTabWidget(resultsWorkspace_);
+    auto* impedanceContent = new QWidget(resultWindowsHost_);
+    auto* impedanceLayout = new QVBoxLayout(impedanceContent);
+    impedanceLayout->setContentsMargins(0, 0, 0, 0);
+    impedanceLayout->setSpacing(2);
+    impedanceOverlayControl_ = new HistoricalOverlayControl(
+        QStringLiteral("impedance"), impedanceContent);
+    auto* impedanceTabs = new QTabWidget(impedanceContent);
     impedanceTabs->setDocumentMode(true);
     analysisResultsView_ = new ImpedanceResultsView(impedanceTabs);
     impedanceTabs->addTab(analysisResultsView_, tr("Table"));
     visualizePlotsView_ = new SweepPlotsView(impedanceTabs);
     impedanceTabs->addTab(visualizePlotsView_, tr("Plots"));
-    auto* impedancePanel = new DetachablePanel(
-        QStringLiteral("impedance"), tr("Impedance Results"), resultsWorkspace_);
-    impedancePanel->setContent(impedanceTabs);
-    const auto impedanceTabIndex = resultsWorkspace_->addTab(impedancePanel, tr("Impedance"));
+    impedanceTabs->setCurrentWidget(visualizePlotsView_);
+    visualizePlotsView_->setReferenceControlVisible(false);
+    impedanceOverlayControl_->setVisibilityChangedCallback([this](bool visible) {
+        visualizePlotsView_->setReferenceVisible(visible);
+    });
+    impedanceOverlayControl_->setChooseRequestedCallback([this](QWidget* anchor) {
+        chooseResultReference(anchor);
+    });
+    impedanceLayout->addWidget(impedanceOverlayControl_);
+    impedanceLayout->addWidget(impedanceTabs, 1);
+    impedancePanel_ = new DetachablePanel(
+        QStringLiteral("impedance"), tr("Impedance Results"), resultWindowsHost_,
+        {QStringLiteral("resultWindows"), {}, kResultWindowSize});
+    impedancePanel_->setContent(impedanceContent);
 
-    auto* currentsPanel = new DetachablePanel(
-        QStringLiteral("currents"), tr("Current Distribution"), resultsWorkspace_);
-    currentResultsView_ = new CurrentDistributionView(currentsPanel);
-    currentsPanel->setContent(currentResultsView_);
-    const auto currentsTabIndex = resultsWorkspace_->addTab(currentsPanel, tr("Currents"));
+    currentsPanel_ = new DetachablePanel(
+        QStringLiteral("currents"), tr("Current Distribution"), resultWindowsHost_,
+        {QStringLiteral("resultWindows"), {}, kResultWindowSize});
+    currentResultsView_ = new CurrentDistributionView(currentsPanel_);
+    currentsPanel_->setContent(currentResultsView_);
 
-    auto* radiationTabs = new QTabWidget(resultsWorkspace_);
+    auto* radiationContent = new QWidget(resultWindowsHost_);
+    auto* radiationLayout = new QVBoxLayout(radiationContent);
+    radiationLayout->setContentsMargins(0, 0, 0, 0);
+    radiationLayout->setSpacing(2);
+    radiationOverlayControl_ = new HistoricalOverlayControl(
+        QStringLiteral("radiation"), radiationContent);
+    auto* radiationTabs = new QTabWidget(radiationContent);
     radiationTabs->setDocumentMode(true);
     radiationPatternView_ = new RadiationPatternView(radiationTabs);
     radiationTabs->addTab(radiationPatternView_, tr("2D Pattern"));
@@ -1396,10 +1508,23 @@ void MainWindow::createResultsWorkspace()
     radiationTabs->addTab(radiation3DView_, tr("3D Pattern"));
     radiationPerformanceView_ = new RadiationPerformanceView(radiationTabs);
     radiationTabs->addTab(radiationPerformanceView_, tr("Performance vs Frequency"));
-    auto* radiationPanel = new DetachablePanel(
-        QStringLiteral("radiation"), tr("Radiation Results"), resultsWorkspace_);
-    radiationPanel->setContent(radiationTabs);
-    const auto radiationTabIndex = resultsWorkspace_->addTab(radiationPanel, tr("Radiation"));
+    radiationPatternView_->setReferenceControlVisible(false);
+    radiation3DView_->setReferenceControlVisible(false);
+    radiationPerformanceView_->setReferenceControlVisible(false);
+    radiationOverlayControl_->setVisibilityChangedCallback([this](bool visible) {
+        radiationPatternView_->setReferenceVisible(visible);
+        radiation3DView_->setReferenceVisible(visible);
+        radiationPerformanceView_->setReferenceVisible(visible);
+    });
+    radiationOverlayControl_->setChooseRequestedCallback([this](QWidget* anchor) {
+        chooseResultReference(anchor);
+    });
+    radiationLayout->addWidget(radiationOverlayControl_);
+    radiationLayout->addWidget(radiationTabs, 1);
+    radiationPanel_ = new DetachablePanel(
+        QStringLiteral("radiation"), tr("Radiation Results"), resultWindowsHost_,
+        {QStringLiteral("resultWindows"), {}, kResultWindowSize});
+    radiationPanel_->setContent(radiationContent);
     radiationPatternView_->setSettingsChangedCallback([this](const auto& settings) {
         radiation3DView_->setDisplaySettings(settings);
         radiationPerformanceView_->setComponent(settings.component);
@@ -1412,61 +1537,73 @@ void MainWindow::createResultsWorkspace()
         radiationPatternView_->setComponent(component);
         radiation3DView_->setComponent(component);
     });
-    connect(resultsFrequencyControl_, &QComboBox::currentIndexChanged, this, [this] {
-        if (resultsFrequencyControl_->currentIndex() >= 0)
-            applyResultFrequency(resultsFrequencyControl_->currentData().toDouble());
-    });
-    auto* rawOutputPage = new QWidget(resultsWorkspace_);
-    auto* rawOutputLayout = new QVBoxLayout(rawOutputPage);
-    rawOutputLayout->setContentsMargins(12, 12, 12, 12);
+
+    auto* rawOutputContent = new QWidget(resultWindowsHost_);
+    auto* rawOutputLayout = new QVBoxLayout(rawOutputContent);
+    rawOutputLayout->setContentsMargins(6, 4, 6, 6);
+    rawOutputLayout->setSpacing(4);
     auto* rawOutputDescription = new QLabel(tr(
-        "Complete, immutable model.out from the solver. The frequency selector filters parsed views; "
-        "it does not rewrite this archived file."), rawOutputPage);
+        "Complete, immutable model.out from the latest loaded analysis. Parsed result windows "
+        "do not alter this text."), rawOutputContent);
     rawOutputDescription->setWordWrap(true);
     auto* rawOutputControls = new QHBoxLayout;
-    auto* jumpFrequencyButton = new QPushButton(tr("Jump to Selected Frequency"), rawOutputPage);
-    rawOutputFindControl_ = new QLineEdit(rawOutputPage);
-    rawOutputFindControl_->setPlaceholderText(tr("Find text in complete output"));
-    auto* findOutputButton = new QPushButton(tr("Find Next"), rawOutputPage);
+    rawOutputControls->setSpacing(6);
+    rawOutputFrequencyControl_ = new QComboBox(rawOutputContent);
+    rawOutputFrequencyControl_->setObjectName(QStringLiteral("rawOutputFrequencyControl"));
+    rawOutputFrequencyControl_->setMinimumContentsLength(12);
+    rawOutputFrequencyControl_->setEnabled(false);
+    auto* jumpFrequencyButton = new QPushButton(
+        tr("Jump to Frequency"), rawOutputContent);
+    rawOutputFindControl_ = new QLineEdit(rawOutputContent);
+    rawOutputFindControl_->setObjectName(QStringLiteral("rawOutputFindControl"));
+    rawOutputFindControl_->setPlaceholderText(tr("Find text"));
+    auto* findOutputButton = new QPushButton(tr("Find Next"), rawOutputContent);
+    rawOutputControls->addWidget(new QLabel(tr("Frequency:"), rawOutputContent));
+    rawOutputControls->addWidget(rawOutputFrequencyControl_);
     rawOutputControls->addWidget(jumpFrequencyButton);
-    rawOutputControls->addSpacing(12);
+    rawOutputControls->addSpacing(8);
     rawOutputControls->addWidget(rawOutputFindControl_, 1);
     rawOutputControls->addWidget(findOutputButton);
-    analysisOutput_ = new QPlainTextEdit(rawOutputPage);
+    analysisOutput_ = new QPlainTextEdit(rawOutputContent);
+    analysisOutput_->setObjectName(QStringLiteral("analysisRawOutput"));
     analysisOutput_->setReadOnly(true);
+    analysisOutput_->setLineWrapMode(QPlainTextEdit::NoWrap);
     analysisOutput_->setPlaceholderText(tr("Complete solver output will appear here."));
     rawOutputLayout->addWidget(rawOutputDescription);
     rawOutputLayout->addLayout(rawOutputControls);
     rawOutputLayout->addWidget(analysisOutput_, 1);
     connect(jumpFrequencyButton, &QPushButton::clicked,
         this, [this] { jumpRawOutputToSelectedFrequency(); });
-    connect(findOutputButton, &QPushButton::clicked, this, [this] { findInRawOutput(); });
-    connect(rawOutputFindControl_, &QLineEdit::returnPressed, this, [this] { findInRawOutput(); });
-    analysisOutputTabIndex_ = resultsWorkspace_->addTab(rawOutputPage, tr("Raw Output"));
-    analysisRunsTabIndex_ = resultsWorkspace_->addTab(runsPage_, tr("Runs"));
-    resultsWorkspace_->setTabIcon(resultsSummaryTabIndex_, workbenchIcon("results"));
-    resultsWorkspace_->setTabIcon(averageGainResultsTabIndex_, workbenchIcon("validate"));
-    resultsWorkspace_->setTabIcon(impedanceTabIndex, workbenchIcon("frequency-sweep"));
-    resultsWorkspace_->setTabIcon(currentsTabIndex, workbenchIcon("sources"));
-    resultsWorkspace_->setTabIcon(radiationTabIndex, workbenchIcon("radiation-pattern"));
-    resultsWorkspace_->setTabIcon(analysisOutputTabIndex_, workbenchIcon("nec-deck"));
-    resultsWorkspace_->setTabIcon(analysisRunsTabIndex_, workbenchIcon("analysis"));
-    auto* resultsNavigator = new WorkspaceNavigator(
-        resultsWorkspace_, QStringLiteral("results"), resultsContent_);
-    resultsLayout->addWidget(resultsContextFrame);
-    resultsLayout->addWidget(resultsStatusLabel_);
-    resultsLayout->addLayout(frequencyBar);
-    resultsLayout->addWidget(resultsNavigator, 1);
-    resultsHostLayout_->addWidget(resultsContent_, 1);
-    resultsHostLayout_->addWidget(detachedResultsPlaceholder_, 1);
-    resultsModuleIndex_ = moduleStack_->addWidget(resultsHost_);
+    connect(findOutputButton, &QPushButton::clicked,
+        this, [this] { findInRawOutput(); });
+    connect(rawOutputFindControl_, &QLineEdit::returnPressed,
+        this, [this] { findInRawOutput(); });
+    rawOutputPanel_ = new DetachablePanel(
+        QStringLiteral("raw-output"), tr("Raw Solver Output"), resultWindowsHost_,
+        {QStringLiteral("resultWindows"), QStringLiteral("rawOutputWindow"),
+            kResultWindowSize});
+    rawOutputPanel_->setContent(rawOutputContent);
 }
 
 void MainWindow::createOptimizationWorkspace()
 {
-    optimizationWorkspace_ = new OptimizationWorkspace(moduleStack_);
-    optimizationWorkspace_->setRunsChangedCallback([this] { loadRunHistory(); });
-    optimizationWorkspace_->setRunningChangedCallback([this] { synchronizeRunnerState(); });
+    optimizationPanel_ = new DetachablePanel(QStringLiteral("optimization"),
+        tr("Optimization"), moduleStack_, {QStringLiteral("workspaceWindows"),
+            QStringLiteral("optimizationWindow")});
+    optimizationPanel_->setStatusText(tr("No model loaded"));
+    optimizationWorkspace_ = new OptimizationWorkspace(optimizationPanel_);
+    optimizationWorkspace_->setObjectName(QStringLiteral("optimizationWorkspace"));
+    optimizationWorkspace_->setRunsChangedCallback([this] {
+        if (runHistoryLoaded_) loadRunHistory();
+        refreshDashboardRuns();
+    });
+    optimizationWorkspace_->setRunningChangedCallback([this] {
+        synchronizeRunnerState();
+        const auto modelName = currentFile_.isEmpty()
+            ? tr("Untitled model.nec") : QFileInfo(currentFile_).fileName();
+        optimizationPanel_->setStatusText(tr("%1 · %2").arg(modelName,
+            optimizationWorkspace_->isRunning() ? tr("Running") : tr("Ready")));
+    });
     optimizationWorkspace_->setParameterizationHelpCallback([this] {
         if (!showModule(modelModuleIndex_)) return;
         modelWorkspace_->setCurrentIndex(modelDeckWorkspaceIndex_);
@@ -1504,7 +1641,33 @@ void MainWindow::createOptimizationWorkspace()
             startAnalysis();
             return solverRunner_->isRunning();
         });
-    optimizeModuleIndex_ = moduleStack_->addWidget(optimizationWorkspace_);
+    optimizationWorkspace_->setBaselineRunCallback(
+        [this](const analysis::FrequencyPlan& frequencyPlan,
+            const analysis::OptimizationObjectiveSpec& objective) {
+            if (solverRunner_->isRunning() || convergenceWorkspace_->isRunning()) return false;
+            checkModel();
+            const auto& cache = activeSource();
+            const auto& resolution = cache.resolution();
+            if (modelErrorCount_ != 0 || !resolution.ok()) return false;
+            const auto solverInput = analysis::prepareOptimizationInput(
+                resolution.generatedDeck, frequencyPlan, objective);
+            currentBaselineReferenceImpedanceOhms_ = objective.referenceImpedance;
+            startAnalysisRun(std::string(cache.source()), solverInput,
+                QStringLiteral("optimization-baseline"),
+                tr("Optimization baseline · %1 frequencies")
+                    .arg(analysis::frequencyPlanPoints(frequencyPlan).size()),
+                tr("Running optimization baseline"),
+                SolverRunPurpose::OptimizationBaseline);
+            return solverRunner_->isRunning();
+        });
+    optimizationWorkspace_->setCancelBaselineRunCallback(
+        [this] { cancelAnalysis(); });
+    optimizationWorkspace_->setFindMaximumGainCallback(
+        [this](double frequencyMHz) {
+            return startOptimizationPeakSearch(frequencyMHz);
+        });
+    optimizationPanel_->setContent(optimizationWorkspace_);
+    optimizeModuleIndex_ = moduleStack_->addWidget(optimizationPanel_);
 }
 
 auto MainWindow::showModule(int index) -> bool
@@ -1512,26 +1675,44 @@ auto MainWindow::showModule(int index) -> bool
     if (moduleStack_ == nullptr || index < 0 || index >= moduleStack_->count()) {
         return false;
     }
+    if (index == geometryModuleIndex_ && geometryPanel_ != nullptr) {
+        geometryPanel_->showWindow();
+        updateUndoActions();
+        return true;
+    }
+    if (index == modelModuleIndex_ && modelPanel_ != nullptr) {
+        modelPanel_->showWindow();
+        const auto current = moduleStack_->currentIndex();
+        if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
+        else if (current == analysisModuleIndex_) analysisModuleAction_->setChecked(true);
+        else if (current == optimizeModuleIndex_) optimizeModuleAction_->setChecked(true);
+        updateUndoActions();
+        return true;
+    }
+    if (index == analysisModuleIndex_ && setupPanel_ != nullptr) {
+        setupPanel_->showWindow();
+        const auto current = moduleStack_->currentIndex();
+        if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
+        else if (current == optimizeModuleIndex_) optimizeModuleAction_->setChecked(true);
+        updateUndoActions();
+        return true;
+    }
+    if (index == optimizeModuleIndex_ && optimizationPanel_ != nullptr) {
+        optimizationPanel_->showWindow();
+        const auto current = moduleStack_->currentIndex();
+        if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
+        updateUndoActions();
+        return true;
+    }
     if (index != moduleStack_->currentIndex() && !confirmCurrentEditorNavigation()) {
         const auto current = moduleStack_->currentIndex();
         if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
         else if (current == modelModuleIndex_) modelModuleAction_->setChecked(true);
         else if (current == analysisModuleIndex_) analysisModuleAction_->setChecked(true);
-        else if (current == resultsModuleIndex_) resultsModuleAction_->setChecked(true);
         else if (current == optimizeModuleIndex_) optimizeModuleAction_->setChecked(true);
         return false;
     }
-    if (index == resultsModuleIndex_ && resultsDetached_ && detachedResultsWindow_ != nullptr) {
-        showDetachedResults();
-        const auto current = moduleStack_->currentIndex();
-        if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
-        else if (current == modelModuleIndex_) modelModuleAction_->setChecked(true);
-        else if (current == analysisModuleIndex_) analysisModuleAction_->setChecked(true);
-        else if (current == optimizeModuleIndex_) optimizeModuleAction_->setChecked(true);
-        return true;
-    }
     moduleStack_->setCurrentIndex(index);
-    if (index != resultsModuleIndex_) lastNonResultsModuleIndex_ = index;
     if (index == homeModuleIndex_) {
         homeModuleAction_->setChecked(true);
         dashboardStack_->setCurrentIndex(hasNecModel_ ? 1 : 0);
@@ -1539,11 +1720,8 @@ auto MainWindow::showModule(int index) -> bool
         modelModuleAction_->setChecked(true);
     } else if (index == analysisModuleIndex_) {
         analysisModuleAction_->setChecked(true);
-    } else if (index == resultsModuleIndex_) {
-        resultsModuleAction_->setChecked(true);
     } else if (index == optimizeModuleIndex_) {
         optimizeModuleAction_->setChecked(true);
-        optimizationWorkspace_->restoreCandidateDetailsWindow();
     }
     updateUndoActions();
     return true;
@@ -1583,75 +1761,24 @@ auto MainWindow::confirmPendingEdits(QWidget* page) -> bool
     return true;
 }
 
-void MainWindow::toggleResultsDetached()
+void MainWindow::showPrimaryResultsWindow()
 {
-    if (resultsDetached_) attachResults();
-    else detachResults();
-}
-
-void MainWindow::detachResults()
-{
-    if (resultsDetached_ || resultsContent_ == nullptr || resultsHostLayout_ == nullptr) return;
-    if (detachedResultsWindow_ == nullptr) {
-        detachedResultsWindow_ = new QDialog(nullptr, Qt::Window);
-        detachedResultsWindow_->setObjectName(QStringLiteral("detachedResultsWindow"));
-        detachedResultsWindow_->setWindowTitle(tr("Results — NEC Workbench"));
-        detachedResultsWindow_->setModal(false);
-        detachedResultsWindow_->setAttribute(Qt::WA_QuitOnClose, false);
-        detachedResultsWindow_->setWindowFlag(Qt::WindowMinimizeButtonHint, true);
-        detachedResultsWindow_->setWindowFlag(Qt::WindowMaximizeButtonHint, true);
-        auto* layout = new QVBoxLayout(detachedResultsWindow_);
-        layout->setContentsMargins(0, 0, 0, 0);
-        layout->setSizeConstraint(QLayout::SetNoConstraint);
-        const auto geometry = QSettings{}.value(QStringLiteral("resultsWindow/geometry")).toByteArray();
-        if (!geometry.isEmpty()) detachedResultsWindow_->restoreGeometry(geometry);
-        else detachedResultsWindow_->resize(1000, 720);
-        connect(detachedResultsWindow_, &QDialog::finished, this, [this] { attachResults(); });
+    if (!resultsAvailable_) {
+        showRunHistory();
+        return;
     }
-
-    resultsHostLayout_->removeWidget(resultsContent_);
-    resultsContent_->setParent(detachedResultsWindow_);
-    detachedResultsWindow_->layout()->addWidget(resultsContent_);
-    detachedResultsPlaceholder_->show();
-    resultsDetached_ = true;
-    detachResultsAction_->setText(tr("Attach Results to Main Window"));
-    detachResultsButton_->setText(tr("Attach to Main Window"));
-    showDetachedResults();
-    if (moduleStack_->currentIndex() == resultsModuleIndex_)
-        showModule(lastNonResultsModuleIndex_ >= 0 ? lastNonResultsModuleIndex_ : homeModuleIndex_);
+    if (!displayedResults_.feedpoints.empty()) resultWindowCoordinator_->showImpedance();
+    else if (!displayedResults_.radiation.empty()) resultWindowCoordinator_->showRadiation();
+    else if (!displayedResults_.currents.empty()) resultWindowCoordinator_->showCurrents();
+    else showRunHistory();
 }
 
-void MainWindow::attachResults()
+void MainWindow::setLiveResultStatus(const QString& status)
 {
-    if (!resultsDetached_ || resultsContent_ == nullptr || resultsHostLayout_ == nullptr) return;
-    if (detachedResultsWindow_ != nullptr) {
-        QSettings{}.setValue(QStringLiteral("resultsWindow/geometry"),
-            detachedResultsWindow_->saveGeometry());
-        detachedResultsWindow_->layout()->removeWidget(resultsContent_);
-    }
-    resultsContent_->setParent(resultsHost_);
-    resultsHostLayout_->insertWidget(0, resultsContent_, 1);
-    detachedResultsPlaceholder_->hide();
-    resultsContent_->show();
-    resultsDetached_ = false;
-    detachResultsAction_->setText(tr("Detach Results Window"));
-    detachResultsButton_->setText(tr("Detach Results"));
-    if (detachedResultsWindow_ != nullptr) detachedResultsWindow_->hide();
-}
-
-void MainWindow::showDetachedResults()
-{
-    if (detachedResultsWindow_ == nullptr) return;
-    if (detachedResultsWindow_->isMinimized()) detachedResultsWindow_->showNormal();
-    else detachedResultsWindow_->show();
-    detachedResultsWindow_->raise();
-    detachedResultsWindow_->activateWindow();
-}
-
-void MainWindow::presentCompletedAnalysisResults()
-{
-    if (resultsDetached_) showDetachedResults();
-    else detachResults();
+    if (impedancePanel_ != nullptr) impedancePanel_->setStatusText(status);
+    if (currentsPanel_ != nullptr) currentsPanel_->setStatusText(status);
+    if (radiationPanel_ != nullptr) radiationPanel_->setStatusText(status);
+    if (rawOutputPanel_ != nullptr) rawOutputPanel_->setStatusText(status);
 }
 
 void MainWindow::showEditor(EditorDestination destination, int geometryTab)
@@ -1664,20 +1791,22 @@ void MainWindow::showEditor(EditorDestination destination, int geometryTab)
         if (!showModule(analysisModuleIndex_)) return;
         analysisWorkspace_->setCurrentIndex(analysisFrequencyTabIndex_);
     } else if (destination == EditorDestination::Sources) {
-        if (!showModule(modelModuleIndex_)) return;
-        modelWorkspace_->setCurrentIndex(modelSourcesWorkspaceIndex_);
+        if (!showModule(analysisModuleIndex_)) return;
+        analysisWorkspace_->setCurrentIndex(modelSourcesWorkspaceIndex_);
     } else if (destination == EditorDestination::Loads) {
-        if (!showModule(modelModuleIndex_)) return;
-        modelWorkspace_->setCurrentIndex(loadNetworkTabIndex_);
+        if (!showModule(analysisModuleIndex_)) return;
+        analysisWorkspace_->setCurrentIndex(loadNetworkTabIndex_);
     } else if (destination == EditorDestination::Environment) {
-        if (!showModule(modelModuleIndex_)) return;
-        modelWorkspace_->setCurrentIndex(modelEnvironmentWorkspaceIndex_);
+        if (!showModule(analysisModuleIndex_)) return;
+        analysisWorkspace_->setCurrentIndex(modelEnvironmentWorkspaceIndex_);
+    } else if (destination == EditorDestination::Requests) {
+        if (!showModule(analysisModuleIndex_)) return;
+        analysisWorkspace_->setCurrentIndex(analysisRequestsTabIndex_);
     } else if (destination == EditorDestination::Parameters) {
         if (!showModule(modelModuleIndex_)) return;
         modelWorkspace_->setCurrentIndex(modelParametersWorkspaceIndex_);
     } else {
-        if (!showModule(modelModuleIndex_)) return;
-        modelWorkspace_->setCurrentIndex(modelGeometryWorkspaceIndex_);
+        if (!showModule(geometryModuleIndex_)) return;
         workspace_->setCurrentIndex(geometryTab);
     }
 }
@@ -1995,13 +2124,15 @@ void MainWindow::showAutoSegmentation()
 
 void MainWindow::createDocks()
 {
-    projectDock_ = new QDockWidget(tr("Project"), this);
+    projectDock_ = new QDockWidget(tr("Project Tree"), this);
     projectDock_->setObjectName(QStringLiteral("projectDock"));
     projectTree_ = new QTreeWidget(projectDock_);
+    projectTree_->setObjectName(QStringLiteral("projectTree"));
     projectTree_->setHeaderHidden(true);
     projectTree_->setAlternatingRowColors(true);
     projectDock_->setWidget(projectTree_);
     addDockWidget(Qt::LeftDockWidgetArea, projectDock_);
+    projectDock_->hide();
 
     modelCheckWindow_ = new QDialog(this, Qt::Tool);
     modelCheckWindow_->setObjectName(QStringLiteral("modelCheckWindow"));
@@ -2010,7 +2141,7 @@ void MainWindow::createDocks()
     modelCheckWindow_->setAttribute(Qt::WA_DeleteOnClose, false);
     modelCheckWindow_->resize(820, 440);
     auto* validationLayout = new QVBoxLayout(modelCheckWindow_);
-    validationLayout->setContentsMargins(8, 6, 8, 6);
+    validationLayout->setContentsMargins(6, 4, 6, 4);
     validationLayout->setSpacing(4);
     validationSummary_ = new QLabel(
         tr("Run Check Model to evaluate the current source."), modelCheckWindow_);
@@ -2018,8 +2149,8 @@ void MainWindow::createDocks()
     summaryFont.setBold(true);
     validationSummary_->setFont(summaryFont);
     validationScope_ = new QLabel(tr(
-        "Static source and geometry findings. AGT and convergence results are available under "
-        "Results > Validation."), modelCheckWindow_);
+        "Static source and geometry findings. AGT and convergence results are available in "
+        "the Validation window."), modelCheckWindow_);
     validationScope_->setWordWrap(true);
     diagnostics_ = new QTreeWidget(modelCheckWindow_);
     diagnostics_->setHeaderLabels({tr("Severity"), tr("Category"), tr("Line"), tr("Message")});
@@ -2035,15 +2166,26 @@ void MainWindow::createDocks()
     auto* validationButtons = new QHBoxLayout;
     auto* recheckButton = new QPushButton(tr("Recheck"), modelCheckWindow_);
     auto* goToFindingButton = new QPushButton(tr("Go to Selected Finding"), modelCheckWindow_);
+    auto* generatedDeckButton = new QPushButton(tr("View Generated Solver Deck…"), modelCheckWindow_);
+    auto* changeSolverButton = new QPushButton(tr("Change Solver…"), modelCheckWindow_);
     auto* closeValidationButton = new QPushButton(tr("Close"), modelCheckWindow_);
     validationButtons->addWidget(recheckButton);
     validationButtons->addWidget(goToFindingButton);
+    validationButtons->addWidget(generatedDeckButton);
     validationButtons->addStretch();
+    validationButtons->addWidget(changeSolverButton);
     validationButtons->addWidget(closeValidationButton);
     validationLayout->addLayout(validationButtons);
-    connect(recheckButton, &QPushButton::clicked, this, [this] { checkModel(); });
+    connect(recheckButton, &QPushButton::clicked, this, [this] { checkModel(true); });
     connect(goToFindingButton, &QPushButton::clicked, this, [this] {
         if (auto* item = diagnostics_->currentItem()) goToDiagnostic(item);
+    });
+    connect(generatedDeckButton, &QPushButton::clicked,
+        this, [this] { showGeneratedSolverDeck(); });
+    connect(changeSolverButton, &QPushButton::clicked, this, [this] {
+        modelCheckWindow_->hide();
+        if (!showModule(analysisModuleIndex_)) return;
+        analysisWorkspace_->setCurrentIndex(analysisSolverTabIndex_);
     });
     connect(closeValidationButton, &QPushButton::clicked,
         modelCheckWindow_, &QDialog::hide);
@@ -2062,7 +2204,7 @@ void MainWindow::createDocks()
             runMonitorWindow_->hide();
     });
     auto* monitorLayout = new QVBoxLayout(runMonitorWindow_);
-    monitorLayout->setContentsMargins(8, 8, 8, 8);
+    monitorLayout->setContentsMargins(6, 6, 6, 6);
     monitorLayout->setSpacing(6);
     runMonitorContextLabel_ = new QLabel(tr("No solver run has started."), runMonitorWindow_);
     runMonitorContextLabel_->setObjectName(QStringLiteral("runMonitorContext"));
@@ -2130,6 +2272,9 @@ void MainWindow::createMenusAndToolbar()
     fileMenu->setObjectName(QStringLiteral("fileMenu"));
     fileMenu->addAction(newAction_);
     fileMenu->addAction(openAction_);
+    recentModelsMenu_ = fileMenu->addMenu(tr("Open &Recent"));
+    recentModelsMenu_->setObjectName(QStringLiteral("recentModelsMenu"));
+    refreshRecentFileViews(recentFiles());
     fileMenu->addSeparator();
     fileMenu->addAction(saveAction_);
     fileMenu->addAction(saveAsAction_);
@@ -2152,32 +2297,116 @@ void MainWindow::createMenusAndToolbar()
     densityMenu->addAction(compactDensityAction_);
     densityMenu->addAction(standardDensityAction_);
     densityMenu->addAction(spaciousDensityAction_);
+    auto* resultWindowsMenu = viewMenu->addMenu(tr("&Result Windows"));
+    resultWindowsMenu->setObjectName(QStringLiteral("resultWindowsMenu"));
+    auto* showImpedanceWindowAction = resultWindowsMenu->addAction(
+        workbenchIcon("frequency-sweep"), tr("Impedance && SWR"));
+    showImpedanceWindowAction->setObjectName(QStringLiteral("showImpedanceWindowAction"));
+    showImpedanceWindowAction->setStatusTip(
+        tr("Open or raise the live impedance and SWR result window"));
+    connect(showImpedanceWindowAction, &QAction::triggered, this,
+        [this] { resultWindowCoordinator_->showImpedance(); });
+    auto* showCurrentsWindowAction = resultWindowsMenu->addAction(
+        workbenchIcon("sources"), tr("Currents"));
+    showCurrentsWindowAction->setObjectName(QStringLiteral("showCurrentsWindowAction"));
+    showCurrentsWindowAction->setStatusTip(
+        tr("Open or raise the live current-distribution window"));
+    connect(showCurrentsWindowAction, &QAction::triggered, this,
+        [this] { resultWindowCoordinator_->showCurrents(); });
+    auto* showRadiationWindowAction = resultWindowsMenu->addAction(
+        workbenchIcon("radiation-pattern"), tr("Radiation"));
+    showRadiationWindowAction->setObjectName(QStringLiteral("showRadiationWindowAction"));
+    showRadiationWindowAction->setStatusTip(
+        tr("Open or raise the live radiation-result window"));
+    connect(showRadiationWindowAction, &QAction::triggered, this,
+        [this] { resultWindowCoordinator_->showRadiation(); });
+    auto* showRawOutputWindowAction = resultWindowsMenu->addAction(
+        workbenchIcon("nec-deck"), tr("Raw Solver Output"));
+    showRawOutputWindowAction->setObjectName(QStringLiteral("showRawOutputWindowAction"));
+    showRawOutputWindowAction->setStatusTip(
+        tr("Open or raise the complete output from the latest loaded analysis"));
+    connect(showRawOutputWindowAction, &QAction::triggered, this,
+        [this] { rawOutputPanel_->showWindow(); });
+    resultWindowsMenu->addSeparator();
+    auto* showRunHistoryAction = resultWindowsMenu->addAction(
+        workbenchIcon("analysis"), tr("Run History"));
+    showRunHistoryAction->setObjectName(QStringLiteral("showRunHistoryAction"));
+    showRunHistoryAction->setStatusTip(tr("Open the saved analysis-run history"));
+    connect(showRunHistoryAction, &QAction::triggered, this, [this] {
+        showRunHistory();
+    });
     viewMenu->addSeparator();
-    viewMenu->addAction(projectDock_->toggleViewAction());
+    auto* projectTreeAction = projectDock_->toggleViewAction();
+    projectTreeAction->setText(tr("Project Tree"));
+    viewMenu->addAction(projectTreeAction);
     viewMenu->addAction(modelCheckWindowAction_);
     viewMenu->addAction(runMonitorWindowAction_);
     viewMenu->addSeparator();
     viewMenu->addAction(resetLayoutAction_);
     viewMenu->addSeparator();
-    viewMenu->addAction(detachResultsAction_);
-    viewMenu->addSeparator();
     viewMenu->addAction(fitGeometryAction_);
 
     auto* modelMenu = menuBar()->addMenu(tr("&Model"));
     modelMenu->setObjectName(QStringLiteral("modelMenu"));
-    modelMenu->addAction(checkAction_);
+    auto* geometryEditorAction = modelMenu->addAction(
+        workbenchIcon("geometry"), tr("&Geometry Editor"));
+    geometryEditorAction->setObjectName(QStringLiteral("geometryEditorAction"));
+    connect(geometryEditorAction, &QAction::triggered,
+        this, [this] { showModule(geometryModuleIndex_); });
+    auto* necDeckAction = modelMenu->addAction(workbenchIcon("nec-deck"), tr("NEC &Deck"));
+    necDeckAction->setObjectName(QStringLiteral("necDeckAction"));
+    connect(necDeckAction, &QAction::triggered,
+        this, [this] { showEditor(EditorDestination::RawSource); });
+    for (auto* action : {geometryEditorAction, necDeckAction}) {
+        action->setEnabled(modelModuleAction_->isEnabled());
+        connect(modelModuleAction_, &QAction::enabledChanged, action, &QAction::setEnabled);
+    }
+    modelMenu->addSeparator();
     modelMenu->addAction(autoSegmentationAction_);
     modelMenu->addSeparator();
-    modelMenu->addAction(averageGainAction_);
-    modelMenu->addAction(convergenceAction_);
-    modelMenu->addSeparator();
     modelMenu->addAction(geometrySettingsAction_);
+
+    auto* validateMenu = menuBar()->addMenu(tr("&Validate"));
+    validateMenu->setObjectName(QStringLiteral("validateMenu"));
+    validateMenu->addAction(checkAction_);
+    validateMenu->addSeparator();
+    validateMenu->addAction(averageGainAction_);
+    validateMenu->addAction(convergenceAction_);
+    validateMenu->addSeparator();
+    auto* openValidationAction = validateMenu->addAction(tr("Open Validation Results"));
+    openValidationAction->setObjectName(QStringLiteral("openValidationResultsAction"));
+    connect(openValidationAction, &QAction::triggered, this, [this] {
+        validationWorkspace_->setCurrentIndex(validationOverviewTabIndex_);
+        validationPanel_->showWindow();
+    });
 
     auto* runMenu = menuBar()->addMenu(tr("&Run"));
     runMenu->setObjectName(QStringLiteral("runMenu"));
     runMenu->addAction(runAction_);
     runMenu->addAction(quickSweepAction_);
     runMenu->addAction(stopAction_);
+    runMenu->addSeparator();
+    auto* reviewRunsAction = runMenu->addAction(tr("Review Run History"));
+    reviewRunsAction->setObjectName(QStringLiteral("reviewRunHistoryAction"));
+    connect(reviewRunsAction, &QAction::triggered, this, [this] {
+        showRunHistory();
+    });
+    runMenu->addAction(runMonitorWindowAction_);
+    auto* openRunFolderAction = runMenu->addAction(tr("Open Run Folder"));
+    openRunFolderAction->setObjectName(QStringLiteral("openRunFolderAction"));
+    // The run started in this session, otherwise the newest run in the history.
+    const auto runFolder = [this] {
+        return currentRunDirectory_.isEmpty() ? latestStoredRunDirectory_ : currentRunDirectory_;
+    };
+    connect(runMenu, &QMenu::aboutToShow, this, [openRunFolderAction, runFolder] {
+        const auto directory = runFolder();
+        openRunFolderAction->setEnabled(!directory.isEmpty() && QDir(directory).exists());
+        openRunFolderAction->setStatusTip(directory);
+    });
+    connect(openRunFolderAction, &QAction::triggered, this, [runFolder] {
+        const auto directory = runFolder();
+        if (!directory.isEmpty()) QDesktopServices::openUrl(QUrl::fromLocalFile(directory));
+    });
 
     auto* helpMenu = menuBar()->addMenu(tr("&Help"));
     helpMenu->setObjectName(QStringLiteral("helpMenu"));
@@ -2186,51 +2415,14 @@ void MainWindow::createMenusAndToolbar()
     helpMenu->addSeparator();
     helpMenu->addAction(aboutAction_);
 
-    auto* toolbar = addToolBar(tr("Main"));
-    toolbar->setObjectName(QStringLiteral("mainToolbar"));
-    toolbar->setIconSize({24, 24});
-    toolbar->addAction(newAction_);
-    toolbar->addAction(openAction_);
-    toolbar->addAction(saveAction_);
-    toolbar->addSeparator();
-    toolbar->addAction(undoAction_);
-    toolbar->addAction(redoAction_);
-    toolbar->addSeparator();
-    toolbar->addAction(checkAction_);
-    toolbar->addAction(runAction_);
-    toolbar->addAction(quickSweepAction_);
-    toolbar->addAction(stopAction_);
 }
 
 void MainWindow::resetWorkspaceLayout()
 {
-    if (resultsDetached_) attachResults();
-    removeDockWidget(projectDock_);
-    projectDock_->show();
-    addDockWidget(Qt::LeftDockWidgetArea, projectDock_);
-    const auto projectWidth = workspaceDensity_ == WorkspaceDensity::Compact ? 220
-        : workspaceDensity_ == WorkspaceDensity::Standard ? 260 : 300;
-    resizeDocks({projectDock_}, {projectWidth}, Qt::Horizontal);
+    projectDock_->hide();
     modelCheckWindow_->hide();
     runMonitorWindow_->hide();
-    focusedWorkspaceDockStateActive_ = false;
-    updateWorkspaceDockVisibility(moduleStack_ == nullptr ? -1 : moduleStack_->currentIndex());
     statusBar()->showMessage(tr("Workspace layout reset."), 4000);
-}
-
-void MainWindow::updateWorkspaceDockVisibility(int moduleIndex)
-{
-    if (projectDock_ == nullptr) return;
-    const auto focusedWorkspace = moduleIndex == resultsModuleIndex_
-        || moduleIndex == optimizeModuleIndex_;
-    if (focusedWorkspace && !focusedWorkspaceDockStateActive_) {
-        projectDockVisibleBeforeFocusedWorkspace_ = projectDock_->isVisible();
-        if (!projectDock_->isFloating()) projectDock_->hide();
-        focusedWorkspaceDockStateActive_ = true;
-    } else if (!focusedWorkspace && focusedWorkspaceDockStateActive_) {
-        if (projectDockVisibleBeforeFocusedWorkspace_) projectDock_->show();
-        focusedWorkspaceDockStateActive_ = false;
-    }
 }
 
 void MainWindow::setWorkspaceDensity(WorkspaceDensity density)
@@ -2248,63 +2440,16 @@ void MainWindow::setWorkspaceDensity(WorkspaceDensity density)
 
 void MainWindow::applyWorkspaceDensity()
 {
-    const auto baseFontSize = workspaceDensityFontSize(workspaceDensity_);
-    const auto initialBaseFontSize = QApplication::font().pointSize();
-    const auto updateFont = [baseFontSize, initialBaseFontSize](QWidget* widget) {
-        if (!widget->property("workspaceDensityFontDelta").isValid()) {
-            const auto pointSize = widget->font().pointSize();
-            if (pointSize > 0)
-                widget->setProperty("workspaceDensityFontDelta", pointSize - initialBaseFontSize);
-        }
-        const auto delta = widget->property("workspaceDensityFontDelta").toInt();
-        auto font = widget->font();
-        font.setPointSize(std::max(6, baseFontSize + delta));
-        widget->setFont(font);
-    };
-    updateFont(this);
-    for (auto* widget : findChildren<QWidget*>()) updateFont(widget);
+    auto roots = QList<QWidget*>{this};
+    for (auto* widget : QApplication::topLevelWidgets()) {
+        if (widget != this && qobject_cast<QDialog*>(widget) != nullptr)
+            roots.push_back(widget);
+    }
+    for (auto* root : roots) applyWorkspaceDensity(root);
 
     auto applicationFont = QApplication::font();
-    applicationFont.setPointSize(baseFontSize);
+    applicationFont.setPointSize(workspaceDensityFontSize(workspaceDensity_));
     QApplication::setFont(applicationFont);
-
-    const auto scale = workspaceDensityScale(workspaceDensity_);
-    for (auto* layout : findChildren<QLayout*>()) {
-        if (!layout->property("workspaceDensityMargins").isValid()) {
-            const auto margins = layout->contentsMargins();
-            layout->setProperty("workspaceDensityMargins", QVariantList{
-                margins.left(), margins.top(), margins.right(), margins.bottom()});
-            layout->setProperty("workspaceDensitySpacing", layout->spacing());
-        }
-        const auto margins = layout->property("workspaceDensityMargins").toList();
-        if (margins.size() == 4) {
-            layout->setContentsMargins(qRound(margins[0].toInt() * scale),
-                qRound(margins[1].toInt() * scale), qRound(margins[2].toInt() * scale),
-                qRound(margins[3].toInt() * scale));
-        }
-        const auto spacing = layout->property("workspaceDensitySpacing").toInt();
-        if (spacing >= 0) layout->setSpacing(qRound(spacing * scale));
-    }
-
-    const auto minimumScale = workspaceDensity_ == WorkspaceDensity::Compact ? 0.75
-        : workspaceDensity_ == WorkspaceDensity::Standard ? 0.9 : 1.0;
-    const auto updateMinimumSize = [minimumScale](QWidget* widget) {
-        if (!widget->property("workspaceDensityMinimumSize").isValid()) {
-            const auto minimumSize = widget->minimumSize();
-            widget->setProperty("workspaceDensityMinimumSize", QVariantList{
-                minimumSize.width(), minimumSize.height()});
-        }
-        const auto minimumSize = widget->property("workspaceDensityMinimumSize").toList();
-        if (minimumSize.size() != 2) return;
-        widget->setMinimumSize(qRound(minimumSize[0].toInt() * minimumScale),
-            qRound(minimumSize[1].toInt() * minimumScale));
-    };
-    for (auto* button : findChildren<QCommandLinkButton*>()) updateMinimumSize(button);
-    for (auto* view : findChildren<GeometryView*>()) updateMinimumSize(view);
-    for (auto* view : findChildren<Geometry3DView*>()) updateMinimumSize(view);
-    for (auto* widget : findChildren<QWidget*>()) {
-        if (dynamic_cast<Radiation3DView*>(widget) != nullptr) updateMinimumSize(widget);
-    }
 
     const auto controlHeight = workspaceDensity_ == WorkspaceDensity::Compact ? 20
         : workspaceDensity_ == WorkspaceDensity::Standard ? 24 : 28;
@@ -2327,13 +2472,82 @@ void MainWindow::applyWorkspaceDensity()
     ).arg(toolbarHeight).arg(horizontalPadding).arg(controlHeight).arg(tabPadding).arg(tabPadding + 4));
 }
 
+void MainWindow::applyWorkspaceDensity(QWidget* root)
+{
+    if (root == nullptr) return;
+
+    const auto baseFontSize = workspaceDensityFontSize(workspaceDensity_);
+    const auto initialBaseFontSize = QApplication::font().pointSize();
+    const auto updateFont = [baseFontSize, initialBaseFontSize](QWidget* widget) {
+        if (!widget->property("workspaceDensityFontDelta").isValid()) {
+            const auto pointSize = widget->font().pointSize();
+            if (pointSize > 0)
+                widget->setProperty("workspaceDensityFontDelta", pointSize - initialBaseFontSize);
+        }
+        const auto delta = widget->property("workspaceDensityFontDelta").toInt();
+        auto font = widget->font();
+        font.setPointSize(std::max(6, baseFontSize + delta));
+        widget->setFont(font);
+    };
+    updateFont(root);
+    for (auto* widget : root->findChildren<QWidget*>()) updateFont(widget);
+
+    const auto scale = workspaceDensityScale(workspaceDensity_);
+    for (auto* layout : root->findChildren<QLayout*>()) {
+        if (!layout->property("workspaceDensityMargins").isValid()) {
+            const auto margins = layout->contentsMargins();
+            layout->setProperty("workspaceDensityMargins", QVariantList{
+                margins.left(), margins.top(), margins.right(), margins.bottom()});
+            layout->setProperty("workspaceDensitySpacing", layout->spacing());
+        }
+        const auto margins = layout->property("workspaceDensityMargins").toList();
+        if (margins.size() == 4) {
+            layout->setContentsMargins(qRound(margins[0].toInt() * scale),
+                qRound(margins[1].toInt() * scale),
+                qRound(margins[2].toInt() * scale),
+                qRound(margins[3].toInt() * scale));
+        }
+        const auto spacing = layout->property("workspaceDensitySpacing").toInt();
+        if (spacing >= 0) layout->setSpacing(qRound(spacing * scale));
+    }
+
+    const auto minimumScale = workspaceDensity_ == WorkspaceDensity::Compact ? 0.75
+        : workspaceDensity_ == WorkspaceDensity::Standard ? 0.9 : 1.0;
+    const auto updateMinimumSize = [minimumScale](QWidget* widget) {
+        if (!widget->property("workspaceDensityMinimumSize").isValid()) {
+            const auto minimumSize = widget->minimumSize();
+            widget->setProperty("workspaceDensityMinimumSize", QVariantList{
+                minimumSize.width(), minimumSize.height()});
+        }
+        const auto minimumSize = widget->property("workspaceDensityMinimumSize").toList();
+        if (minimumSize.size() != 2) return;
+        widget->setMinimumSize(qRound(minimumSize[0].toInt() * minimumScale),
+            qRound(minimumSize[1].toInt() * minimumScale));
+    };
+    for (auto* button : root->findChildren<QCommandLinkButton*>())
+        updateMinimumSize(button);
+    for (auto* view : root->findChildren<GeometryView*>()) updateMinimumSize(view);
+    for (auto* view : root->findChildren<Geometry3DView*>()) updateMinimumSize(view);
+    for (auto* widget : root->findChildren<QWidget*>()) {
+        if (dynamic_cast<Radiation3DView*>(widget) != nullptr)
+            updateMinimumSize(widget);
+    }
+
+    const auto tableRowHeight = workspaceDensity_ == WorkspaceDensity::Compact ? 21
+        : workspaceDensity_ == WorkspaceDensity::Standard ? 24 : 28;
+    for (auto* table : root->findChildren<QTableView*>())
+        table->verticalHeader()->setDefaultSectionSize(tableRowHeight);
+
+    root->setProperty("workspaceDensityId", workspaceDensityId(workspaceDensity_));
+}
+
 void MainWindow::showGettingStarted()
 {
     QMessageBox::information(this, tr("Getting Started"),
         tr("1. Create or open a NEC model.\n"
            "2. Edit geometry and electrical model data under Model.\n"
            "3. Run Check Model and resolve blocking errors.\n"
-           "4. Configure the solver and requested outputs under Analysis.\n"
+           "4. Configure frequency, sources, environment, requests, and the solver under Setup.\n"
            "5. Run Analysis, then inspect Results."));
 }
 
@@ -2359,10 +2573,11 @@ void MainWindow::openUserGuide()
 void MainWindow::showAboutDialog()
 {
     QMessageBox::about(this, tr("About NEC Workbench"),
-        tr("NEC Workbench\n\n"
+        tr("NEC Workbench %1\n\n"
            "A cross-platform desktop workbench for creating, checking, analyzing, "
            "visualizing, and optimizing NEC antenna models.\n\n"
-           "Licensed under the GNU General Public License version 3 or later."));
+           "Licensed under the GNU General Public License version 3 or later.")
+            .arg(QStringLiteral(NECWB_DISPLAY_VERSION)));
 }
 
 void MainWindow::newModel()
@@ -2380,6 +2595,7 @@ void MainWindow::newModel()
     analysisModuleAction_->setEnabled(true);
     resultsModuleAction_->setEnabled(true);
     dashboardStack_->setCurrentIndex(1);
+    analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile({});
     editor_->document()->setModified(false);
     showEditor(EditorDestination::RawSource);
@@ -2415,10 +2631,21 @@ void MainWindow::openFileAtPath(const QString& path)
     analysisModuleAction_->setEnabled(true);
     resultsModuleAction_->setEnabled(true);
     dashboardStack_->setCurrentIndex(1);
+    analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile(path);
     editor_->document()->setModified(false);
     showEditor(EditorDestination::RawSource);
     checkModel();
+}
+
+void MainWindow::fitWindowToDashboard()
+{
+    auto* page = dashboardStack_ == nullptr ? nullptr : dashboardStack_->currentWidget();
+    if (page == nullptr) return;
+    if (isMaximized() || isFullScreen()) showNormal();
+    // The window is fixed to its layout (see the constructor), so sizing the central
+    // widget to the dashboard sizes the whole window, including any visible dock.
+    centralWidget()->setFixedSize(page->sizeHint().expandedTo(page->minimumSizeHint()));
 }
 
 void MainWindow::openExample()
@@ -2449,6 +2676,34 @@ auto MainWindow::recentFiles() const -> QStringList
     return result;
 }
 
+void MainWindow::refreshRecentFileViews(const QStringList& files)
+{
+    if (welcomePage_ != nullptr) welcomePage_->setRecentFiles(files);
+    if (controlPanel_ != nullptr) controlPanel_->setRecentModels(files,
+        [this](const QString& path) { openFileAtPath(path); },
+        [this] { clearRecentFiles(); });
+    if (recentModelsMenu_ == nullptr) return;
+    recentModelsMenu_->clear();
+    if (files.isEmpty()) {
+        auto* empty = recentModelsMenu_->addAction(tr("No Recent Models"));
+        empty->setEnabled(false);
+    } else {
+        for (const auto& path : files) {
+            const QFileInfo file(path);
+            auto* action = recentModelsMenu_->addAction(
+                tr("%1 — %2").arg(file.fileName(), file.dir().dirName()));
+            action->setData(path);
+            action->setToolTip(path);
+            connect(action, &QAction::triggered, this,
+                [this, path] { openFileAtPath(path); });
+        }
+    }
+    recentModelsMenu_->addSeparator();
+    auto* clear = recentModelsMenu_->addAction(tr("Clear Recent Models"));
+    clear->setEnabled(!files.isEmpty());
+    connect(clear, &QAction::triggered, this, [this] { clearRecentFiles(); });
+}
+
 void MainWindow::rememberRecentFile(const QString& path)
 {
     if (path.isEmpty()) return;
@@ -2458,13 +2713,13 @@ void MainWindow::rememberRecentFile(const QString& path)
     files.prepend(absolutePath);
     while (files.size() > 8) files.removeLast();
     QSettings{}.setValue(QStringLiteral("files/recentModels"), files);
-    if (welcomePage_ != nullptr) welcomePage_->setRecentFiles(files);
+    refreshRecentFileViews(files);
 }
 
 void MainWindow::clearRecentFiles()
 {
     QSettings{}.remove(QStringLiteral("files/recentModels"));
-    if (welcomePage_ != nullptr) welcomePage_->setRecentFiles({});
+    refreshRecentFileViews({});
 }
 
 auto MainWindow::saveFile() -> bool
@@ -2509,7 +2764,7 @@ auto MainWindow::maybeSaveChanges() -> bool
     return answer == QMessageBox::Discard || saveFile();
 }
 
-void MainWindow::checkModel()
+void MainWindow::checkModel(bool presentReport)
 {
     const auto& cache = activeSource();
     const auto& document = cache.document();
@@ -2519,7 +2774,9 @@ void MainWindow::checkModel()
     if (resolution.ok()) {
         const auto& resolvedDocument = *cache.resolvedDocument();
         deckUnitInfo = nec::inspectDeckGeometryUnits(resolvedDocument);
-        result = nec::NecModelChecker{}.check(resolvedDocument);
+        result = nec::NecModelChecker{}.check(resolvedDocument,
+            {nec::compatibilityProfileForBackend(solverBackendId_.toStdString()),
+                resolution.definitions.size()});
         currentSetup_ = nec::NecSetupConverter{}.convert(resolvedDocument);
     } else {
         for (const auto& diagnostic : resolution.diagnostics) {
@@ -2541,13 +2798,15 @@ void MainWindow::checkModel()
     diagnostics_->clear();
     for (const auto& diagnostic : result.diagnostics) {
         const bool isError = diagnostic.severity == nec::DiagnosticSeverity::Error;
+        const bool isWarning = diagnostic.severity == nec::DiagnosticSeverity::Warning;
         auto* item = new QTreeWidgetItem(diagnostics_, {
-            isError ? tr("Error") : tr("Warning"),
+            isError ? tr("Error") : isWarning ? tr("Warning") : tr("Converted"),
             QString::fromStdString(diagnostic.category),
             QString::number(diagnostic.lineNumber),
             QString::fromStdString(diagnostic.message)});
         item->setData(0, SourceLineRole, static_cast<qulonglong>(diagnostic.lineNumber));
-        item->setIcon(0, style()->standardIcon(isError ? QStyle::SP_MessageBoxCritical : QStyle::SP_MessageBoxWarning));
+        item->setIcon(0, style()->standardIcon(isError ? QStyle::SP_MessageBoxCritical
+            : isWarning ? QStyle::SP_MessageBoxWarning : QStyle::SP_MessageBoxInformation));
     }
     if (result.diagnostics.empty()) {
         auto* item = new QTreeWidgetItem(diagnostics_,
@@ -2561,8 +2820,16 @@ void MainWindow::checkModel()
         });
     const auto incomplete = currentModel_.empty() || !currentSetup_.frequency
         || currentSetup_.excitations.empty();
+    const auto profileName = nec::compatibilityProfileName(
+        nec::compatibilityProfileForBackend(solverBackendId_.toStdString()));
+    const auto compatibilityName = QString::fromUtf8(
+        profileName.data(), static_cast<qsizetype>(profileName.size()));
+    validationScope_->setText(tr(
+        "Validation target: %1. Static source and geometry findings are shown below; AGT and "
+        "convergence results are available in the Validation window.").arg(compatibilityName));
     if (result.errorCount() != 0) {
-        validationSummary_->setText(tr("Invalid model · %1 blocking error(s)")
+        validationSummary_->setText(tr("Not ready for %1 · %2 blocking error(s)")
+            .arg(compatibilityName)
             .arg(static_cast<qulonglong>(result.errorCount())));
     } else if (incomplete) {
         validationSummary_->setText(tr("Incomplete model · finish geometry and analysis setup"));
@@ -2570,8 +2837,16 @@ void MainWindow::checkModel()
         validationSummary_->setText(tr("Static adequacy: Caution · %1 finding(s) to review")
             .arg(static_cast<qulonglong>(adequacyWarnings)));
     } else {
-        validationSummary_->setText(tr("Static adequacy checks passed"));
+        validationSummary_->setText(result.informationCount() == 0
+                ? tr("Compatible with %1 · static adequacy checks passed").arg(compatibilityName)
+                : tr("Compatible with %1 · %2 automatic conversion(s)")
+                    .arg(compatibilityName)
+                    .arg(static_cast<qulonglong>(result.informationCount())));
     }
+    validationOverviewSummary_->setText(validationSummary_->text());
+    validationOverviewScope_->setText(tr(
+        "Validation target: %1. Open the report for individual findings; use the other tabs "
+        "for solver-backed Average Gain Test and convergence studies.").arg(compatibilityName));
 
     editor_->setDiagnostics(result.diagnostics);
     updateDeckUnitControls(deckUnitInfo);
@@ -2601,7 +2876,7 @@ void MainWindow::checkModel()
     analysisRequestEditor_->setData(currentSetup_);
     structuredCardEditor_->setParameterControlledFields(parameterFields);
     structuredCardEditor_->setDocument(document);
-    dashboardPage_->setModel(currentModel_, currentSetup_, solverBackendId_, true,
+    controlPanel_->setModel(currentModel_, currentSetup_, document, solverBackendId_, true,
         modelErrorCount_, modelWarningCount_);
     updateProjectTree(currentModel_, document);
     optimizationWorkspace_->setContext(editor_->toPlainText(), currentFile_,
@@ -2610,17 +2885,52 @@ void MainWindow::checkModel()
     convergenceWorkspace_->setContext(editor_->toPlainText(), currentFile_,
         solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_,
         modelErrorCount_ == 0);
-    checkStatus_->setText(tr("Checked: %1 errors, %2 warnings, %3 wires, %4 patches, %5 cards")
+    const auto checkDetail = tr("Checked: %1 errors, %2 warnings, %3 wires, %4 patches, %5 cards")
         .arg(static_cast<qulonglong>(result.errorCount()))
         .arg(static_cast<qulonglong>(result.warningCount()))
         .arg(static_cast<qulonglong>(currentModel_.wireCount()))
         .arg(static_cast<qulonglong>(currentModel_.surfacePatchCount()))
-        .arg(static_cast<qulonglong>(document.cards().size())));
-    if (!result.diagnostics.empty()) {
+        .arg(static_cast<qulonglong>(document.cards().size()));
+    checkStatus_->setText(tr("Check: %1E · %2W")
+        .arg(result.errorCount()).arg(result.warningCount()));
+    checkStatus_->setToolTip(checkDetail);
+    if (presentReport || result.errorCount() != 0 || result.warningCount() != 0) {
         modelCheckWindow_->show();
         modelCheckWindow_->raise();
+        if (presentReport) modelCheckWindow_->activateWindow();
     }
     updateAnalysisReadiness();
+}
+
+void MainWindow::showGeneratedSolverDeck()
+{
+    const auto& resolution = activeSource().resolution();
+    if (!resolution.ok()) {
+        QMessageBox::warning(this, tr("Generated Solver Deck"),
+            tr("The parameterized source cannot be expanded until its formula errors are fixed."));
+        return;
+    }
+
+    QDialog dialog(modelCheckWindow_);
+    dialog.setWindowTitle(tr("Generated Solver Deck — NEC Workbench"));
+    dialog.resize(820, 560);
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* explanation = new QLabel(tr(
+        "This numeric base deck is generated from the authored source. NEC Workbench may apply "
+        "additional request-specific changes when a run starts; the authored model is unchanged."),
+        &dialog);
+    explanation->setWordWrap(true);
+    auto* source = new QPlainTextEdit(&dialog);
+    source->setReadOnly(true);
+    source->setLineWrapMode(QPlainTextEdit::NoWrap);
+    source->setPlainText(QString::fromStdString(
+        analysis::normalizeSolverDeck(resolution.generatedDeck)));
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(explanation);
+    layout->addWidget(source, 1);
+    layout->addWidget(buttons);
+    dialog.exec();
 }
 
 void MainWindow::clearCheckResults()
@@ -2633,15 +2943,26 @@ void MainWindow::clearCheckResults()
     optimizationWorkspace_->setModelValid(false);
     convergenceWorkspace_->setContext(editor_->toPlainText(), currentFile_,
         solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_, false);
-    dashboardPage_->setModel(currentModel_, currentSetup_, solverBackendId_, false,
-        modelErrorCount_, modelWarningCount_);
-    dashboardPage_->markAverageGainStale();
+    const auto& cache = activeSource();
+    auto dashboardModel = currentModel_;
+    auto dashboardSetup = currentSetup_;
+    if (const auto* resolved = cache.resolvedDocument(); resolved != nullptr) {
+        dashboardModel = nec::NecModelConverter{}.convert(*resolved).model;
+        dashboardSetup = nec::NecSetupConverter{}.convert(*resolved);
+    }
+    controlPanel_->setModel(dashboardModel, dashboardSetup, cache.document(),
+        solverBackendId_, false, modelErrorCount_, modelWarningCount_);
     averageGainResultsView_->markStale();
-    dashboardPage_->markConvergenceStale();
     convergenceWorkspace_->markStale();
-    if (resultsAvailable_) dashboardPage_->markResultsStale();
-    if (resultsAvailable_)
-        resultsStatusLabel_->setText(tr("STALE — the NEC model changed after these results were calculated."));
+    controlPanel_->setStudyStatus(ControlPanel::Study::AverageGain,
+        ControlPanel::StudyState::Stale);
+    controlPanel_->setStudyStatus(ControlPanel::Study::Convergence,
+        ControlPanel::StudyState::Stale);
+    if (resultsAvailable_) controlPanel_->markResultsStale();
+    if (resultsAvailable_) {
+        liveResultsStale_ = true;
+        setLiveResultStatus(tr("Stale — model changed; run again"));
+    }
     updateAnalysisReadiness();
 }
 
@@ -2724,7 +3045,7 @@ void MainWindow::activateProjectItem(QTreeWidgetItem* item)
     }
     if (mnemonic == QStringLiteral("RP") || mnemonic == QStringLiteral("XQ")) {
         showModule(analysisModuleIndex_);
-        analysisWorkspace_->setCurrentWidget(analysisRequestEditor_);
+        analysisWorkspace_->setCurrentIndex(analysisRequestsTabIndex_);
         return;
     }
     if (mnemonic == QStringLiteral("GW")) {
@@ -3495,9 +3816,8 @@ void MainWindow::synchronizeRunnerState()
 
 void MainWindow::showConvergenceStudy()
 {
-    showModule(resultsModuleIndex_);
-    resultsWorkspace_->setCurrentIndex(averageGainResultsTabIndex_);
     validationWorkspace_->setCurrentIndex(convergenceValidationTabIndex_);
+    validationPanel_->showWindow();
 }
 
 void MainWindow::startAnalysis()
@@ -3562,14 +3882,53 @@ void MainWindow::startQuickFrequencySweep()
         tr("Quick frequency sweep"));
 }
 
+auto MainWindow::startOptimizationPeakSearch(double frequencyMHz) -> bool
+{
+    if (solverRunner_->isRunning() || optimizationWorkspace_->isRunning()
+        || convergenceWorkspace_->isRunning()
+        || !std::isfinite(frequencyMHz) || frequencyMHz <= 0.0) return false;
+    checkModel();
+    const QFileInfo executable(solverExecutablePath_);
+    if (modelErrorCount_ != 0 || currentModel_.empty()
+        || currentSetup_.excitations.empty()
+        || !analysis::isBackendRunnable(solverBackendId_.toStdString())
+        || !executable.exists() || !executable.isFile() || !executable.isExecutable()) {
+        statusBar()->showMessage(tr(
+            "Maximum-gain search canceled: check the model and selected solver."), 5000);
+        return false;
+    }
+
+    const auto& cache = activeSource();
+    const auto& resolution = cache.resolution();
+    if (!resolution.ok()) {
+        statusBar()->showMessage(tr(
+            "Maximum-gain search canceled: model expressions could not be resolved."), 5000);
+        return false;
+    }
+    const auto aboveGroundOnly = currentSetup_.ground
+        && currentSetup_.ground->type != model::GroundType::FreeSpace;
+    const auto solverInput = analysis::prepareMaximumGainSearchInput(
+        resolution.generatedDeck, frequencyMHz, aboveGroundOnly);
+    currentPeakSearchFrequencyMHz_ = frequencyMHz;
+    const auto summary = tr("Maximum gain at %1 MHz").arg(formatDecimal(frequencyMHz));
+    startAnalysisRun(std::string(cache.source()), solverInput,
+        QStringLiteral("optimization-peak-search"), summary,
+        tr("Finding maximum gain"), SolverRunPurpose::OptimizationPeakSearch);
+    return solverRunner_->isRunning();
+}
+
 void MainWindow::startAnalysisRun(const std::string& authoredSource,
     const std::string& solverInput, const QString& runType, const QString& summary,
-    const QString& activity)
+    const QString& activity, SolverRunPurpose purpose)
 {
-    currentRunPurpose_ = SolverRunPurpose::Analysis;
+    const auto backendSolverInput = analysis::formatSolverInputForBackend(
+        solverInput, solverBackendId_.toStdString());
+    currentRunPurpose_ = purpose;
     currentRunRecord_ = runStore_.create(solverBackendId_, currentFile_.isEmpty()
         ? QStringLiteral("Untitled model.nec") : currentFile_, runType);
     currentRunRecord_->summary = summary;
+    currentRunRecord_->modelFingerprint = QString::fromStdString(
+        analysis::optimizationModelFingerprint(solverInput));
     runStore_.save(*currentRunRecord_);
     currentRunDirectory_ = currentRunRecord_->directory;
     if (!QFileInfo::exists(currentRunDirectory_)) {
@@ -3596,7 +3955,7 @@ void MainWindow::startAnalysisRun(const std::string& authoredSource,
         currentRunRecord_.reset();
         return;
     }
-    inputFile.write(QByteArray::fromStdString(solverInput));
+    inputFile.write(QByteArray::fromStdString(backendSolverInput));
     inputFile.close();
 
     analysis::SolverCommand command;
@@ -3696,8 +4055,10 @@ void MainWindow::startAverageGainTest()
         currentRunRecord_.reset();
         return;
     }
-    inputFile.write(QByteArray::fromStdString(analysis::prepareAverageGainTestInput(
-        resolution.generatedDeck, currentAverageGainFrequencyMHz_, currentAverageGainEnvironment_)));
+    const auto averageGainInput = analysis::prepareAverageGainTestInput(
+        resolution.generatedDeck, currentAverageGainFrequencyMHz_, currentAverageGainEnvironment_);
+    inputFile.write(QByteArray::fromStdString(analysis::formatSolverInputForBackend(
+        averageGainInput, solverBackendId_.toStdString())));
     inputFile.close();
     writeAverageGainMetadata(currentRunDirectory_, currentAverageGainFrequencyMHz_,
         currentAverageGainEnvironment_);
@@ -3718,11 +4079,14 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
 {
     if (!currentRunRecord_) return;
     addRunRecord(*currentRunRecord_, true);
+    refreshDashboardRuns();
     currentRunRow_ = 0;
     analysisRuns_->selectRow(0);
 
     solverOutput_->clear();
     analysisOutput_->clear();
+    rawOutputFrequencyControl_->clear();
+    rawOutputFrequencyControl_->setEnabled(false);
     const auto program = QString::fromStdString(command.executable);
     QStringList arguments;
     for (const auto& argument : command.arguments) {
@@ -3750,9 +4114,6 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
     solverActivityName_ = activity;
     solverActivityPhase_ = tr("Starting solver");
     solverElapsed_.start();
-    solverActivityProgress_->setRange(0, 0);
-    solverActivityCancelButton_->setEnabled(true);
-    solverActivityWidget_->show();
     updateSolverActivity();
     if (solverActivityTimer_ == nullptr) {
         solverActivityTimer_ = new QTimer(this);
@@ -3764,13 +4125,16 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
     cancelRunButton_->setEnabled(true);
     openRunFolderButton_->setEnabled(true);
     runAction_->setEnabled(false);
-    showModule(resultsModuleIndex_);
+    if (currentRunPurpose_ == SolverRunPurpose::Analysis)
+        setLiveResultStatus(tr("Running…"));
     if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
         averageGainResultsView_->setRunning(currentAverageGainFrequencyMHz_,
             currentAverageGainEnvironment_, runContext(*currentRunRecord_));
-        dashboardPage_->setAverageGainRunning(currentAverageGainFrequencyMHz_);
-        resultsWorkspace_->setCurrentIndex(averageGainResultsTabIndex_);
+        controlPanel_->setStudyStatus(ControlPanel::Study::AverageGain,
+            ControlPanel::StudyState::Running,
+            tr("running @ %1 MHz").arg(formatDecimal(currentAverageGainFrequencyMHz_)));
         validationWorkspace_->setCurrentIndex(averageGainValidationTabIndex_);
+        validationPanel_->showWindow();
     }
     updateRunSelectionActions();
     statusBar()->showMessage(tr("Running %1…").arg(activity));
@@ -3783,7 +4147,6 @@ void MainWindow::cancelAnalysis()
     if (!solverRunner_->isRunning()) return;
     stopAction_->setEnabled(false);
     solverActivityPhase_ = tr("Canceling");
-    solverActivityCancelButton_->setEnabled(false);
     runMonitorStopButton_->setEnabled(false);
     updateSolverActivity();
     appendSolverOutput(tr("\nCancellation requested; stopping solver.\n"));
@@ -3822,32 +4185,24 @@ void MainWindow::showRunMonitor(bool manuallyRequested)
 
 void MainWindow::updateSolverActivity()
 {
-    if (solverActivityWidget_ == nullptr || !solverActivityWidget_->isVisible()) return;
+    if (runMonitorStatusLabel_ == nullptr) return;
     auto detail = tr("%1 · %2 · %3 s")
         .arg(solverActivityName_, solverActivityPhase_)
         .arg(formatDecimal(solverElapsed_.isValid() ? solverElapsed_.elapsed() / 1000.0 : 0.0));
     const QFileInfo output(currentRunOutputPath_);
     if (output.exists() && output.size() > 0)
         detail += tr(" · output %1").arg(formatByteSize(output.size()));
-    solverActivityLabel_->setText(detail);
-    if (runMonitorStatusLabel_ != nullptr) runMonitorStatusLabel_->setText(detail);
+    runMonitorStatusLabel_->setText(detail);
 }
 
 void MainWindow::completeSolverActivity(const QString& status)
 {
     if (solverActivityTimer_ != nullptr) solverActivityTimer_->stop();
     solverActivityPhase_ = status;
-    solverActivityProgress_->setRange(0, 1);
-    solverActivityProgress_->setValue(status == tr("Completed") ? 1 : 0);
-    solverActivityCancelButton_->setEnabled(false);
     runMonitorProgress_->setRange(0, 1);
     runMonitorProgress_->setValue(status == tr("Completed") ? 1 : 0);
     runMonitorStopButton_->setEnabled(false);
     updateSolverActivity();
-    QTimer::singleShot(5000, this, [this] {
-        if (!solverRunner_->isRunning() && solverActivityWidget_ != nullptr)
-            solverActivityWidget_->hide();
-    });
     if (status == tr("Completed") && !runMonitorPinnedOpen_
         && runMonitorAutoHideTimer_ != nullptr) {
         runMonitorAutoHideTimer_->start();
@@ -3866,6 +4221,8 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     updateSolverActivity();
 
     auto averageGainParsed = false;
+    auto peakGainParsed = false;
+    auto optimizationBaselineParsed = false;
     auto analysisResultsAvailable = false;
     QFile outputFile(currentRunOutputPath_);
     if (processSucceeded && outputFile.open(QIODevice::ReadOnly)) {
@@ -3873,7 +4230,10 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
         analysisOutput_->setPlainText(QString::fromLocal8Bit(outputBytes));
         auto result = analysis::NecOutputParser{}.parse(std::string_view(
             outputBytes.constData(), static_cast<std::size_t>(outputBytes.size())));
-        result.referenceImpedanceOhms = model::referenceImpedanceOhms(currentSetup_);
+        // A baseline is judged against the study's reference, which may differ from the model's.
+        result.referenceImpedanceOhms = currentRunPurpose_ == SolverRunPurpose::OptimizationBaseline
+            ? currentBaselineReferenceImpedanceOhms_
+            : model::referenceImpedanceOhms(currentSetup_);
         if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
             if (!result.averagePowerGain) {
                 if (const auto integrated = analysis::integrateAverageGain(
@@ -3899,16 +4259,16 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
                     .arg(averageGainClassificationName(assessment.classification));
                 averageGainResultsView_->setResult(assessment, currentAverageGainFrequencyMHz_,
                     currentAverageGainEnvironment_, result.averagingSolidAnglePi, context);
-                dashboardPage_->setAverageGainResult(assessment, currentAverageGainFrequencyMHz_);
+                controlPanel_->setStudyStatus(ControlPanel::Study::AverageGain,
+                    ControlPanel::StudyState::Complete,
+                    tr("%1 @ %2 MHz").arg(formatDecimal(assessment.normalizedGain),
+                        formatDecimal(currentAverageGainFrequencyMHz_)));
                 writeAverageGainMetadata(currentRunDirectory_, currentAverageGainFrequencyMHz_,
                     currentAverageGainEnvironment_, assessment, result.averagingSolidAnglePi);
-                resultsAvailable_ = true;
                 displayedRunDirectory_ = currentRunDirectory_;
-                resultsStatusLabel_->setText(tr("Average Gain Test — %1").arg(context));
-                showActiveResultsContext(context);
-                showModule(resultsModuleIndex_);
-                resultsWorkspace_->setCurrentIndex(averageGainResultsTabIndex_);
+                validationPanel_->setStatusText(tr("Average Gain Test — %1").arg(context));
                 validationWorkspace_->setCurrentIndex(averageGainValidationTabIndex_);
+                validationPanel_->showWindow();
                 const auto expectedSolidAngle = currentAverageGainEnvironment_
                         == analysis::AverageGainEnvironment::PerfectGround
                     ? 2.0 : 4.0;
@@ -3921,7 +4281,9 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             } else {
                 averageGainResultsView_->setFailure(
                     tr("The solver output contains no AVERAGE POWER GAIN value."), context);
-                dashboardPage_->setAverageGainFailure(tr("average power gain was not reported"));
+                controlPanel_->setStudyStatus(ControlPanel::Study::AverageGain,
+                    ControlPanel::StudyState::Failed, {},
+                    tr("No average power gain was reported."));
             }
             analysisRuns_->setItem(currentRunRow_, RunResultsColumn,
                 new QTableWidgetItem(runResultsText(*currentRunRecord_)));
@@ -3938,8 +4300,6 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
         }
         if (currentRunPurpose_ == SolverRunPurpose::Analysis) {
             const auto context = runContext(*currentRunRecord_);
-            resultsSummaryView_->setResults(result, context);
-            resultsSummaryView_->clearInputSnapshot();
             analysisResultsView_->setResults(result, context);
             visualizePlotsView_->setResults(result, context);
             currentResultsView_->setModel(currentModel_);
@@ -3949,29 +4309,58 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             radiation3DView_->setResults(result, context);
             radiationPerformanceView_->setResults(result, context);
             setDisplayedResults(result);
+            optimizationWorkspace_->setLatestAnalysisResult(result);
             displayedRunDirectory_ = currentRunDirectory_;
             activeModelResultsDirectory_ = currentRunDirectory_;
             activeModelResultsContext_ = context;
-            dashboardPage_->setResults(result, context, false);
-            dashboardPage_->setModel(currentModel_, currentSetup_, solverBackendId_, true,
-                modelErrorCount_, modelWarningCount_);
+            controlPanel_->setResults(result, context, false);
+            controlPanel_->setModel(currentModel_, currentSetup_, activeSource().document(),
+                solverBackendId_, true, modelErrorCount_, modelWarningCount_);
             resultsAvailable_ = true;
-            resultsStatusLabel_->setText(tr("Current results — %1").arg(context));
-            showActiveResultsContext(context);
+            liveResultsStale_ = false;
+            setLiveResultStatus(tr("Current"));
             analysisResultsAvailable = !result.feedpoints.empty() || !result.currents.empty()
                 || !result.radiation.empty();
+            if (analysisResultsAvailable)
+                resultWindowCoordinator_->presentCompletedAnalysis(result);
+            if (analysisResultsAvailable && currentRunRecord_)
+                optimizationWorkspace_->setOptimizationBaseline(*currentRunRecord_, result);
+        } else if (currentRunPurpose_ == SolverRunPurpose::OptimizationBaseline) {
+            optimizationBaselineParsed = !result.feedpoints.empty() || !result.radiation.empty();
+            if (optimizationBaselineParsed && currentRunRecord_)
+                optimizationWorkspace_->setOptimizationBaseline(*currentRunRecord_, result);
+        } else if (currentRunPurpose_ == SolverRunPurpose::OptimizationPeakSearch) {
+            const auto peak = analysis::radiationPeakAtNearestFrequency(
+                result.radiation, analysis::RadiationComponent::Total,
+                currentPeakSearchFrequencyMHz_);
+            if (peak && peak->sampleCount > 1) {
+                peakGainParsed = true;
+                optimizationWorkspace_->setLatestAnalysisResult(result);
+                currentRunRecord_->summary = tr(
+                    "Maximum %1 dBi at elevation %2°, azimuth %3° · %4 MHz")
+                    .arg(formatDecimal(peak->metrics.peakGainDb))
+                    .arg(formatDecimal(90.0 - peak->metrics.peakThetaDegrees))
+                    .arg(formatDecimal(peak->metrics.peakPhiDegrees))
+                    .arg(formatDecimal(peak->frequencyMHz));
+                runStore_.save(*currentRunRecord_);
+            } else {
+                appendSolverOutput(tr(
+                    "\nThe maximum-gain search produced no usable multi-angle radiation pattern.\n"));
+            }
         }
     } else if (processSucceeded && currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
         const auto message = tr("The solver did not produce a readable model.out file.");
         averageGainResultsView_->setFailure(message, runContext(*currentRunRecord_));
-        dashboardPage_->setAverageGainFailure(message);
+        controlPanel_->setStudyStatus(ControlPanel::Study::AverageGain,
+            ControlPanel::StudyState::Failed, {}, message);
     } else if (currentRunRecord_) {
         if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
             const auto message = processResult.detail.isEmpty()
                 ? tr("The solver did not complete the Average Gain Test.")
                 : processResult.detail;
             averageGainResultsView_->setFailure(message, runContext(*currentRunRecord_));
-            dashboardPage_->setAverageGainFailure(message);
+            controlPanel_->setStudyStatus(ControlPanel::Study::AverageGain,
+                ControlPanel::StudyState::Failed, {}, message);
         }
         currentRunRecord_->outputBytes = QFileInfo(currentRunOutputPath_).size();
         if (currentRunRow_ >= 0) {
@@ -3985,7 +4374,10 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     }
 
     const auto runCompleted = processSucceeded
-        && (currentRunPurpose_ != SolverRunPurpose::AverageGainTest || averageGainParsed);
+        && (currentRunPurpose_ != SolverRunPurpose::AverageGainTest || averageGainParsed)
+        && (currentRunPurpose_ != SolverRunPurpose::OptimizationPeakSearch || peakGainParsed)
+        && (currentRunPurpose_ != SolverRunPurpose::OptimizationBaseline
+            || optimizationBaselineParsed);
     QString status;
     if (processResult.status == SolverProcessStatus::TimedOut) {
         status = tr("Timed out");
@@ -3996,13 +4388,22 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     } else if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest
         && processSucceeded) {
         status = tr("Failed (AGT result missing)");
+    } else if (currentRunPurpose_ == SolverRunPurpose::OptimizationPeakSearch
+        && processSucceeded) {
+        status = tr("Failed (maximum gain missing)");
+    } else if (currentRunPurpose_ == SolverRunPurpose::OptimizationBaseline
+        && processSucceeded) {
+        status = tr("Failed (baseline results missing)");
     } else if (processResult.status == SolverProcessStatus::FailedToStart) {
         status = tr("Failed to start");
     } else {
         status = tr("Failed (exit %1)").arg(processResult.exitCode);
     }
-    if (currentRunPurpose_ == SolverRunPurpose::Analysis) {
-        if (runCompleted && analysisResultsAvailable) presentCompletedAnalysisResults();
+    if (currentRunPurpose_ == SolverRunPurpose::Analysis
+        && (!runCompleted || !analysisResultsAvailable)) {
+        setLiveResultStatus(!resultsAvailable_ ? tr("No results")
+            : liveResultsStale_ ? tr("Stale — previous results retained")
+                                : tr("Previous results retained"));
     }
     setCurrentRunStatus(status);
     if (currentRunRow_ >= 0) {
@@ -4014,10 +4415,23 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             runStore_.save(*currentRunRecord_);
         }
     }
+    if (currentRunPurpose_ == SolverRunPurpose::Analysis && runCompleted
+        && currentRunRecord_) {
+        resultReferenceController_.selectAutomatic(*currentRunRecord_);
+        updateResultReference();
+    }
+    if (currentRunPurpose_ == SolverRunPurpose::OptimizationBaseline) {
+        optimizationWorkspace_->finishOptimizationBaseline(runCompleted,
+            runCompleted ? QString{} : status);
+    }
     appendSolverOutput(tr("\n\nRun status: %1\nElapsed: %2 seconds\n")
         .arg(status).arg(formatDecimal(processResult.durationSeconds)));
     const auto activity = currentRunPurpose_ == SolverRunPurpose::AverageGainTest
         ? tr("Average Gain Test")
+        : currentRunPurpose_ == SolverRunPurpose::OptimizationPeakSearch
+            ? tr("Maximum-gain search")
+        : currentRunPurpose_ == SolverRunPurpose::OptimizationBaseline
+            ? tr("Optimization baseline")
         : currentRunRecord_ && currentRunRecord_->runType == QStringLiteral("quick-sweep")
             ? tr("Quick sweep") : tr("Analysis");
     statusBar()->showMessage(tr("%1 %2. Artifacts: %3")
@@ -4030,6 +4444,7 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     synchronizeRunnerState();
     updateRunSelectionActions();
     updateAnalysisReadiness();
+    refreshDashboardRuns();
 }
 
 void MainWindow::setCurrentRunStatus(const QString& status)
@@ -4054,8 +4469,24 @@ void MainWindow::loadRunHistory()
     }
     analysisRuns_->setUpdatesEnabled(true);
     analysisRuns_->resizeColumnsToContents();
+    analysisRuns_->setColumnWidth(RunNoteColumn,
+        std::clamp(analysisRuns_->columnWidth(RunNoteColumn), 120, 240));
     analysisRuns_->clearSelection();
+    runHistoryLoaded_ = true;
     updateRunSelectionActions();
+}
+
+void MainWindow::showRunHistory()
+{
+    if (!runHistoryLoaded_) loadRunHistory();
+    runHistoryPanel_->showWindow();
+}
+
+void MainWindow::refreshDashboardRuns()
+{
+    const auto recentRuns = runStore_.loadRecent(100);
+    latestStoredRunDirectory_ = recentRuns.empty() ? QString{} : recentRuns.front().directory;
+    if (controlPanel_ != nullptr) controlPanel_->setRecentRuns(recentRuns);
 }
 
 void MainWindow::addRunRecord(const AnalysisRunRecord& record, bool prepend)
@@ -4074,6 +4505,7 @@ void MainWindow::addRunRecord(const AnalysisRunRecord& record, bool prepend)
     const QStringList values{
         record.started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")),
         record.sourceFile.isEmpty() ? tr("Archived model.nec") : QFileInfo(record.sourceFile).fileName(),
+        record.userNote.trimmed().isEmpty() ? tr("—") : record.userNote.simplified(),
         type,
         runResultsText(displayRecord),
         formatByteSize(outputBytes),
@@ -4089,9 +4521,15 @@ void MainWindow::addRunRecord(const AnalysisRunRecord& record, bool prepend)
         item->setData(RunContextRole, runContext(record));
         item->setData(RunTypeRole, record.runType);
         item->setData(RunIdRole, record.id);
+        if (column == RunNoteColumn && !record.userNote.trimmed().isEmpty())
+            item->setToolTip(record.userNote);
         analysisRuns_->setItem(row, column, item);
     }
-    if (prepend) analysisRuns_->resizeColumnsToContents();
+    if (prepend) {
+        analysisRuns_->resizeColumnsToContents();
+        analysisRuns_->setColumnWidth(RunNoteColumn,
+            std::clamp(analysisRuns_->columnWidth(RunNoteColumn), 120, 240));
+    }
 }
 
 void MainWindow::loadSelectedRun()
@@ -4200,6 +4638,7 @@ auto MainWindow::loadRunModel(const QString& directory, const QString& modelName
     analysisModuleAction_->setEnabled(true);
     resultsModuleAction_->setEnabled(true);
     dashboardStack_->setCurrentIndex(1);
+    analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile({});
     const auto displayName = modelName.isEmpty() ? tr("Archived model.nec") : modelName;
     setWindowTitle(tr("%1 (snapshot)[*] — NEC Workbench").arg(displayName));
@@ -4208,8 +4647,7 @@ auto MainWindow::loadRunModel(const QString& directory, const QString& modelName
         .arg(runContext, inputFile.fileName()));
     editor_->document()->setModified(false);
     checkModel();
-    dashboardPage_->setDocumentState(displayName, false);
-    updateActiveModelResultsLabel();
+    controlPanel_->setDocumentState(displayName, false);
     return true;
 }
 
@@ -4238,8 +4676,177 @@ void MainWindow::updateRunSelectionActions()
         || selectedType == QStringLiteral("convergence-session");
     inspectRunInputButton_->setEnabled(hasInputSnapshot && !isSession);
     openRunSnapshotButton_->setEnabled(hasInputSnapshot && !isSession && !activeSelection && !solverBusy);
+    const auto canPinReference = hasSelection && !activeSelection && !solverBusy
+        && (selectedType == QStringLiteral("analysis")
+            || selectedType == QStringLiteral("quick-sweep"))
+        && analysisRuns_->item(row, RunStatusColumn)->text() == tr("Completed")
+        && QFileInfo::exists(QDir(analysisRuns_->item(row, RunStartedColumn)
+            ->data(RunDirectoryRole).toString()).filePath(QStringLiteral("model.out")));
+    pinRunReferenceButton_->setEnabled(canPinReference);
+    editRunNoteButton_->setEnabled(hasSelection && !solverBusy);
     openRunFolderButton_->setEnabled(hasSelection);
     deleteRunButton_->setEnabled(hasSelection && !activeSelection && !solverBusy);
+}
+
+auto MainWindow::selectedRunRecord() const -> std::optional<AnalysisRunRecord>
+{
+    const auto row = analysisRuns_->currentRow();
+    if (row < 0) return std::nullopt;
+    const auto* item = analysisRuns_->item(row, RunStartedColumn);
+    if (item == nullptr) return std::nullopt;
+    const auto id = item->data(RunIdRole).toString();
+    const auto records = runStore_.load();
+    const auto found = std::ranges::find(records, id, &AnalysisRunRecord::id);
+    return found == records.end() ? std::nullopt : std::optional<AnalysisRunRecord>{*found};
+}
+
+void MainWindow::pinSelectedRunReference()
+{
+    const auto record = selectedRunRecord();
+    if (!record) return;
+    resultReferenceController_.pin(*record);
+    updateResultReference();
+    statusBar()->showMessage(tr(
+        "Historical overlay selected: %1. Turn it on in an Impedance or Radiation window.")
+        .arg(resultReferenceController_.label()), 7000);
+}
+
+void MainWindow::chooseResultReference(QWidget* anchor)
+{
+    QMenu menu(this);
+    auto eligibleCount = 0;
+    const auto* selectedReference = resultReferenceController_.record();
+    if (selectedReference != nullptr) {
+        auto* clearAction = menu.addAction(tr("Clear Historical Overlay"));
+        connect(clearAction, &QAction::triggered, this, [this] { clearResultReference(); });
+        menu.addSeparator();
+    }
+    for (const auto& record : runStore_.load()) {
+        if (record.directory == displayedRunDirectory_
+            || record.status != QStringLiteral("Completed")
+            || (record.runType != QStringLiteral("analysis")
+                && record.runType != QStringLiteral("quick-sweep"))
+            || !QFileInfo::exists(QDir(record.directory).filePath(
+                QStringLiteral("model.out")))) continue;
+        const auto modelName = record.sourceFile.isEmpty()
+            ? tr("Archived model.nec") : QFileInfo(record.sourceFile).fileName();
+        const auto detail = record.userNote.trimmed().isEmpty()
+            ? record.started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
+            : record.userNote.simplified();
+        auto* action = menu.addAction(tr("%1 — %2").arg(modelName, detail));
+        action->setCheckable(true);
+        action->setChecked(selectedReference != nullptr
+            && selectedReference->id == record.id);
+        connect(action, &QAction::triggered, this, [this, record] {
+            resultReferenceController_.pin(record);
+            updateResultReference();
+            statusBar()->showMessage(tr(
+                "Historical overlay selected. Use Show Historical Overlay in either result window."),
+                6000);
+        });
+        ++eligibleCount;
+    }
+    if (eligibleCount == 0) {
+        auto* empty = menu.addAction(tr("No completed runs available"));
+        empty->setEnabled(false);
+    }
+    menu.addSeparator();
+    auto* historyAction = menu.addAction(tr("Open Run History…"));
+    connect(historyAction, &QAction::triggered, this, [this] { showRunHistory(); });
+    auto* menuAnchor = anchor != nullptr ? anchor : this;
+    menu.exec(menuAnchor->mapToGlobal(QPoint(0, menuAnchor->height())));
+}
+
+void MainWindow::editSelectedRunNote()
+{
+    auto record = selectedRunRecord();
+    if (!record) return;
+    auto accepted = false;
+    const auto note = QInputDialog::getMultiLineText(this, tr("Edit Run Note"),
+        tr("Describe what changed or why this run matters:"), record->userNote, &accepted);
+    if (!accepted) return;
+    record->userNote = note.trimmed();
+    if (!runStore_.save(*record)) {
+        QMessageBox::critical(this, tr("Run Note Not Saved"),
+            tr("Could not update run metadata in:\n%1").arg(record->directory));
+        return;
+    }
+    if (currentRunRecord_ && currentRunRecord_->id == record->id)
+        currentRunRecord_->userNote = record->userNote;
+    const auto row = analysisRuns_->currentRow();
+    if (row >= 0) {
+        auto* noteItem = analysisRuns_->item(row, RunNoteColumn);
+        if (noteItem == nullptr) {
+            noteItem = new QTableWidgetItem;
+            analysisRuns_->setItem(row, RunNoteColumn, noteItem);
+        }
+        noteItem->setText(record->userNote.isEmpty() ? tr("—") : record->userNote.simplified());
+        noteItem->setToolTip(record->userNote);
+    }
+    resultReferenceController_.refreshMetadata(*record);
+    updateResultReference();
+    refreshDashboardRuns();
+}
+
+void MainWindow::clearResultReference()
+{
+    resultReferenceController_.clear();
+    setResultReferenceVisible(false);
+    updateResultReference();
+}
+
+void MainWindow::setResultReferenceVisible(bool visible)
+{
+    if (impedanceOverlayControl_ != nullptr) impedanceOverlayControl_->setChecked(visible);
+    else if (visualizePlotsView_ != nullptr) visualizePlotsView_->setReferenceVisible(visible);
+    if (radiationOverlayControl_ != nullptr) radiationOverlayControl_->setChecked(visible);
+    else {
+        radiationPatternView_->setReferenceVisible(visible);
+        radiation3DView_->setReferenceVisible(visible);
+        radiationPerformanceView_->setReferenceVisible(visible);
+    }
+}
+
+void MainWindow::updateResultReference()
+{
+    if (visualizePlotsView_ == nullptr || impedanceOverlayControl_ == nullptr
+        || radiationOverlayControl_ == nullptr) return;
+    const auto* reference = resultReferenceController_.result();
+    const auto hasReference = reference != nullptr;
+    if (hasReference) {
+        const auto* record = resultReferenceController_.record();
+        const auto modelName = record->sourceFile.isEmpty()
+            ? tr("Archived model.nec") : QFileInfo(record->sourceFile).fileName();
+        const auto note = record->userNote.simplified();
+        const auto plotLabel = note.isEmpty()
+            ? tr("%1 — %2").arg(modelName,
+                record->started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")))
+            : tr("%1 — “%2”").arg(modelName, note);
+        visualizePlotsView_->setReferenceResults(
+            *reference, plotLabel);
+        radiationPatternView_->setReferenceResults(*reference, plotLabel);
+        radiation3DView_->setReferenceResults(*reference, plotLabel);
+        radiationPerformanceView_->setReferenceResults(*reference, plotLabel);
+        const auto compatibility = analysis::evaluateHistoricalOverlayCompatibility(
+            displayedResults_, *reference);
+        impedanceOverlayControl_->setSelection(
+            plotLabel, historicalOverlayStatusText(compatibility.impedance));
+        radiationOverlayControl_->setSelection(
+            plotLabel, historicalOverlayStatusText(compatibility.radiation));
+        visualizePlotsView_->setReferenceVisible(impedanceOverlayControl_->isChecked());
+        const auto radiationVisible = radiationOverlayControl_->isChecked();
+        radiationPatternView_->setReferenceVisible(radiationVisible);
+        radiation3DView_->setReferenceVisible(radiationVisible);
+        radiationPerformanceView_->setReferenceVisible(radiationVisible);
+    } else {
+        visualizePlotsView_->clearReferenceResults();
+        radiationPatternView_->clearReferenceResults();
+        radiation3DView_->clearReferenceResults();
+        radiationPerformanceView_->clearReferenceResults();
+        impedanceOverlayControl_->clearSelection();
+        radiationOverlayControl_->clearSelection();
+    }
+    updateRunSelectionActions();
 }
 
 void MainWindow::deleteSelectedRun()
@@ -4271,6 +4878,10 @@ void MainWindow::deleteSelectedRun()
             tr("Could not delete the run folder:\n%1").arg(directory));
         return;
     }
+    if (const auto* reference = resultReferenceController_.record();
+        reference != nullptr && reference->directory == directory) {
+        clearResultReference();
+    }
     analysisRuns_->removeRow(row);
     if (activeModelResultsDirectory_ == directory) {
         activeModelResultsDirectory_.clear();
@@ -4278,6 +4889,7 @@ void MainWindow::deleteSelectedRun()
     }
     if (displayedRunDirectory_ == directory) clearDisplayedResults();
     updateRunSelectionActions();
+    refreshDashboardRuns();
 }
 
 void MainWindow::displayRunArtifacts(const QString& directory, const QString& context)
@@ -4292,10 +4904,9 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
         clearDisplayedResults();
         const auto message = tr("Historical run is incomplete — model.out is missing or unreadable. %1")
             .arg(context);
-        resultsStatusLabel_->setText(message);
         analysisOutput_->setPlainText(tr("Solver output unavailable: %1").arg(outputFile.fileName()));
-        showModule(resultsModuleIndex_);
-        resultsWorkspace_->setCurrentIndex(analysisRunsTabIndex_);
+        rawOutputPanel_->setStatusText(message);
+        showRunHistory();
         statusBar()->showMessage(message, 7000);
         return;
     }
@@ -4327,20 +4938,17 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
     if (!hasParsedResults) {
         clearDisplayedResults();
         const auto message = tr("Historical run contains no supported result data. %1").arg(context);
-        resultsStatusLabel_->setText(message);
-        showModule(resultsModuleIndex_);
-        resultsWorkspace_->setCurrentIndex(analysisOutputTabIndex_);
+        rawOutputPanel_->setStatusText(message);
+        rawOutputPanel_->showWindow();
         statusBar()->showMessage(message, 7000);
         return;
     }
-    resultsSummaryView_->setResults(result, context);
     analysisResultsView_->setResults(result, context);
     visualizePlotsView_->setResults(result, context);
     currentResultsView_->setModel({});
     currentResultsView_->setResults(result, context);
     radiationPatternView_->setResults(result, context);
     radiation3DView_->setModel({});
-    auto archivedModelAvailable = false;
     QFile inputFile(QDir(directory).filePath(QStringLiteral("model.nec")));
     if (inputFile.open(QIODevice::ReadOnly)) {
         const auto runDocument = nec::NecParser{}.parse(
@@ -4349,130 +4957,49 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
         if (!conversion.model.empty()) {
             currentResultsView_->setModel(conversion.model);
             radiation3DView_->setModel(conversion.model);
-            archivedModelAvailable = true;
         }
     }
-    resultsSummaryView_->clearInputSnapshot();
     radiation3DView_->setResults(result, context);
     radiationPerformanceView_->setResults(result, context);
     setDisplayedResults(result);
     displayedRunDirectory_ = directory;
     resultsAvailable_ = true;
-    resultsStatusLabel_->setText(archivedModelAvailable
-        ? tr("Active model results — %1").arg(context)
-        : tr("Results loaded — archived model.nec is missing or invalid · %1").arg(context));
-    showActiveResultsContext(context);
-    showModule(resultsModuleIndex_);
-    resultsWorkspace_->setCurrentIndex(resultsSummaryTabIndex_);
+    liveResultsStale_ = false;
+    setLiveResultStatus(tr("Current"));
+    if (!result.feedpoints.empty()) resultWindowCoordinator_->showImpedance();
+    else if (!result.radiation.empty()) resultWindowCoordinator_->showRadiation();
+    else if (!result.currents.empty()) resultWindowCoordinator_->showCurrents();
     statusBar()->showMessage(tr("Displaying active model results: %1").arg(directory), 5000);
-}
-
-void MainWindow::showActiveResultsContext(const QString& context)
-{
-    resultsContextTitleLabel_->setText(tr("Active Model Results"));
-    resultsContextDetailLabel_->setText(tr("Latest solver output for the active editor — %1").arg(context));
-    updateActiveModelResultsLabel();
-}
-
-void MainWindow::updateActiveModelResultsLabel()
-{
-    if (!hasNecModel_) {
-        activeModelResultsLabel_->setText(tr("Active Model: None"));
-        return;
-    }
-    const auto name = currentFile_.isEmpty() ? tr("Untitled model.nec") : QFileInfo(currentFile_).fileName();
-    activeModelResultsLabel_->setText(tr("Active Model: %1").arg(name));
 }
 
 void MainWindow::setDisplayedResults(const analysis::AnalysisResult& result)
 {
-    const auto previousFrequency = resultsFrequencyControl_->currentIndex() >= 0
-        ? std::optional{resultsFrequencyControl_->currentData().toDouble()} : std::nullopt;
     displayedResults_ = result;
     std::vector<double> frequencies;
     const auto addFrequency = [&frequencies](double frequencyMHz) {
-        if (std::ranges::find_if(frequencies, [frequencyMHz](double value) {
-                return nearlyEqual(value, frequencyMHz);
-            }) == frequencies.end()) frequencies.push_back(frequencyMHz);
+        if (std::ranges::none_of(frequencies, [frequencyMHz](double existing) {
+                return nearlyEqual(existing, frequencyMHz);
+            })) frequencies.push_back(frequencyMHz);
     };
     for (const auto& value : result.feedpoints) addFrequency(value.frequencyMHz);
     for (const auto& value : result.currents) addFrequency(value.frequencyMHz);
     for (const auto& value : result.radiation) addFrequency(value.frequencyMHz);
     std::ranges::sort(frequencies);
-
-    const QSignalBlocker blocker(resultsFrequencyControl_);
-    resultsFrequencyControl_->clear();
+    const QSignalBlocker blocker(rawOutputFrequencyControl_);
+    rawOutputFrequencyControl_->clear();
     for (const auto frequencyMHz : frequencies) {
-        const auto hasImpedance = std::ranges::any_of(result.feedpoints, [frequencyMHz](const auto& value) {
-            return nearlyEqual(value.frequencyMHz, frequencyMHz);
-        });
-        const auto hasCurrents = std::ranges::any_of(result.currents, [frequencyMHz](const auto& value) {
-            return nearlyEqual(value.frequencyMHz, frequencyMHz);
-        });
-        const auto hasRadiation = std::ranges::any_of(result.radiation, [frequencyMHz](const auto& value) {
-            return nearlyEqual(value.frequencyMHz, frequencyMHz);
-        });
-        QStringList available;
-        if (hasImpedance) available.append(tr("Z"));
-        if (hasCurrents) available.append(tr("I"));
-        if (hasRadiation) available.append(tr("RP"));
-        resultsFrequencyControl_->addItem(tr("%1 MHz — %2")
-            .arg(formatDecimal(frequencyMHz), available.join(QStringLiteral(" · "))), frequencyMHz);
+        rawOutputFrequencyControl_->addItem(
+            tr("%1 MHz").arg(formatDecimal(frequencyMHz)), frequencyMHz);
     }
-    resultsFrequencyControl_->setEnabled(!frequencies.empty());
-    auto selectedIndex = 0;
-    if (previousFrequency) {
-        for (auto index = 0; index < resultsFrequencyControl_->count(); ++index) {
-            if (nearlyEqual(resultsFrequencyControl_->itemData(index).toDouble(), *previousFrequency)) {
-                selectedIndex = index;
-                break;
-            }
-        }
-    }
-    if (!frequencies.empty()) {
-        resultsFrequencyControl_->setCurrentIndex(selectedIndex);
-        applyResultFrequency(resultsFrequencyControl_->currentData().toDouble());
-    } else {
-        resultsAvailabilityLabel_->setText(tr("No parsed frequency results are available."));
-    }
-}
-
-void MainWindow::applyResultFrequency(double frequencyMHz)
-{
-    const auto hasImpedance = std::ranges::any_of(displayedResults_.feedpoints, [frequencyMHz](const auto& value) {
-        return nearlyEqual(value.frequencyMHz, frequencyMHz);
-    });
-    const auto hasCurrents = std::ranges::any_of(displayedResults_.currents, [frequencyMHz](const auto& value) {
-        return nearlyEqual(value.frequencyMHz, frequencyMHz);
-    });
-    const auto hasRadiation = std::ranges::any_of(displayedResults_.radiation, [frequencyMHz](const auto& value) {
-        return nearlyEqual(value.frequencyMHz, frequencyMHz);
-    });
-    QStringList available;
-    QStringList missing;
-    const auto addStatus = [&available, &missing](bool present, const QString& name) {
-        (present ? available : missing).append(name);
-    };
-    addStatus(hasImpedance, tr("impedance"));
-    addStatus(hasCurrents, tr("currents"));
-    addStatus(hasRadiation, tr("radiation"));
-    auto text = tr("Available: %1").arg(available.empty() ? tr("none") : available.join(QStringLiteral(" · ")));
-    if (!missing.empty()) text += tr("  |  Missing: %1").arg(missing.join(QStringLiteral(" · ")));
-    resultsAvailabilityLabel_->setText(text);
-
-    resultsSummaryView_->setSelectedFrequency(frequencyMHz);
-    analysisResultsView_->setSelectedFrequency(frequencyMHz);
-    visualizePlotsView_->setSelectedFrequency(frequencyMHz);
-    currentResultsView_->setSelectedFrequency(frequencyMHz);
-    radiationPatternView_->setSelectedFrequency(frequencyMHz);
-    radiation3DView_->setSelectedFrequency(frequencyMHz);
-    radiationPerformanceView_->setSelectedFrequency(frequencyMHz);
+    rawOutputFrequencyControl_->setEnabled(!frequencies.empty());
+    updateResultReference();
 }
 
 void MainWindow::jumpRawOutputToSelectedFrequency()
 {
-    if (resultsFrequencyControl_->currentIndex() < 0 || analysisOutput_->document()->isEmpty()) return;
-    const auto target = resultsFrequencyControl_->currentData().toDouble();
+    if (rawOutputFrequencyControl_->currentIndex() < 0
+        || analysisOutput_->document()->isEmpty()) return;
+    const auto target = rawOutputFrequencyControl_->currentData().toDouble();
     static const QRegularExpression frequencyExpression(
         QStringLiteral("FREQUENCY\\s*:\\s*([+\\-0-9.EeDd]+)"),
         QRegularExpression::CaseInsensitiveOption);
@@ -4487,7 +5014,6 @@ void MainWindow::jumpRawOutputToSelectedFrequency()
         QTextCursor cursor(block);
         analysisOutput_->setTextCursor(cursor);
         analysisOutput_->centerCursor();
-        resultsWorkspace_->setCurrentIndex(analysisOutputTabIndex_);
         statusBar()->showMessage(
             tr("Raw output positioned at %1 MHz.").arg(formatDecimal(target)), 3000);
         return;
@@ -4510,13 +5036,13 @@ void MainWindow::findInRawOutput()
 
 void MainWindow::clearDisplayedResults()
 {
+    updateResultReference();
     const analysis::AnalysisResult empty;
     const auto context = tr("No analysis run");
-    resultsSummaryView_->clear();
     averageGainResultsView_->clear();
-    dashboardPage_->clearAverageGain();
     convergenceWorkspace_->clearResults();
-    dashboardPage_->clearConvergence();
+    controlPanel_->clearStudy(ControlPanel::Study::AverageGain);
+    controlPanel_->clearStudy(ControlPanel::Study::Convergence);
     analysisResultsView_->setResults(empty, context);
     visualizePlotsView_->setResults(empty, context);
     currentResultsView_->setModel({});
@@ -4526,13 +5052,11 @@ void MainWindow::clearDisplayedResults()
     radiation3DView_->setModel({});
     radiationPerformanceView_->setResults(empty, context);
     setDisplayedResults(empty);
+    controlPanel_->setResults(empty, context, false);
     displayedRunDirectory_.clear();
     resultsAvailable_ = false;
-    resultsContextTitleLabel_->setText(tr("No Results Loaded"));
-    resultsContextDetailLabel_->setText(
-        tr("Select a run from Results → Runs, or analyze the active model."));
-    updateActiveModelResultsLabel();
-    resultsStatusLabel_->setText(tr("No analysis results are loaded."));
+    liveResultsStale_ = false;
+    setLiveResultStatus(tr("No results"));
 }
 
 void MainWindow::editWire(const model::Wire& original, const model::Wire& updated)
@@ -4872,17 +5396,20 @@ void MainWindow::pushGeometrySourceEdit(const QString& description, QString upda
     }
     auto destination = EditorDestination::Geometry;
     const auto geometryTab = workspace_->currentIndex();
-    if (moduleStack_->currentIndex() == analysisModuleIndex_) {
-        destination = EditorDestination::Frequency;
-    } else if (moduleStack_->currentIndex() == modelModuleIndex_) {
+    if (moduleStack_->currentIndex() == analysisModuleIndex_
+        || (setupPanel_ != nullptr && setupPanel_->isWindowActive())) {
+        if (analysisWorkspace_->currentIndex() == modelSourcesWorkspaceIndex_)
+            destination = EditorDestination::Sources;
+        else if (analysisWorkspace_->currentIndex() == loadNetworkTabIndex_)
+            destination = EditorDestination::Loads;
+        else if (analysisWorkspace_->currentIndex() == modelEnvironmentWorkspaceIndex_)
+            destination = EditorDestination::Environment;
+        else
+            destination = EditorDestination::Frequency;
+    } else if (moduleStack_->currentIndex() == modelModuleIndex_
+        || (modelPanel_ != nullptr && modelPanel_->isWindowActive())) {
         if (modelWorkspace_->currentIndex() == modelDeckWorkspaceIndex_)
             destination = EditorDestination::RawSource;
-        else if (modelWorkspace_->currentIndex() == modelSourcesWorkspaceIndex_)
-            destination = EditorDestination::Sources;
-        else if (modelWorkspace_->currentIndex() == loadNetworkTabIndex_)
-            destination = EditorDestination::Loads;
-        else if (modelWorkspace_->currentIndex() == modelEnvironmentWorkspaceIndex_)
-            destination = EditorDestination::Environment;
         else if (modelWorkspace_->currentIndex() == modelParametersWorkspaceIndex_)
             destination = EditorDestination::Parameters;
     }
@@ -5058,9 +5585,9 @@ void MainWindow::updateProjectTree(const model::AntennaModel& antennaModel, cons
     auto* parameters = new QTreeWidgetItem(root, {tr("Parameters")});
     parameters->setData(0, ItemKindRole, QStringLiteral("parameters"));
     auto* environment = new QTreeWidgetItem(root, {tr("Environment")});
-    auto* frequencySources = new QTreeWidgetItem(root, {tr("Frequency && Sources")});
-    auto* attachments = new QTreeWidgetItem(root, {tr("Loads && Networks")});
-    auto* requests = new QTreeWidgetItem(root, {tr("Requests && Execution")});
+    auto* frequencySources = new QTreeWidgetItem(root, {tr("Frequency & Sources")});
+    auto* attachments = new QTreeWidgetItem(root, {tr("Loads & Networks")});
+    auto* requests = new QTreeWidgetItem(root, {tr("Requests & Execution")});
     auto* comments = new QTreeWidgetItem(root, {tr("Comments")});
     auto* other = new QTreeWidgetItem(root, {tr("Other Cards")});
     auto* allCards = new QTreeWidgetItem(root, {tr("All Cards")});
@@ -5147,9 +5674,9 @@ void MainWindow::updateProjectTree(const model::AntennaModel& antennaModel, cons
     labelCategory(geometry, tr("Geometry"));
     labelCategory(parameters, tr("Parameters"));
     labelCategory(environment, tr("Environment"));
-    labelCategory(frequencySources, tr("Frequency && Sources"));
-    labelCategory(attachments, tr("Loads && Networks"));
-    labelCategory(requests, tr("Requests && Execution"));
+    labelCategory(frequencySources, tr("Frequency & Sources"));
+    labelCategory(attachments, tr("Loads & Networks"));
+    labelCategory(requests, tr("Requests & Execution"));
     labelCategory(comments, tr("Comments"));
     labelCategory(other, tr("Other Cards"));
     allCards->setText(0, tr("All Cards (%1)").arg(cardCount));
@@ -5205,17 +5732,25 @@ void MainWindow::synchronizeProjectItemSelection(QTreeWidgetItem* item)
 
 void MainWindow::setCurrentFile(QString path)
 {
+    const auto modelChanged = currentFile_ != path;
     currentFile_ = std::move(path);
+    if (modelChanged && resultReferenceController_.hasReference()) clearResultReference();
     if (!currentFile_.isEmpty()) rememberRecentFile(currentFile_);
     const auto name = currentFile_.isEmpty() ? tr("Untitled") : QFileInfo(currentFile_).fileName();
     setWindowTitle(tr("%1[*] — NEC Workbench").arg(name));
     const auto modelName = currentFile_.isEmpty() ? tr("Untitled model.nec") : name;
-    modelFileStatus_->setText(tr("Open model: %1").arg(modelName));
+    modelFileStatus_->setText(tr("Model: %1").arg(modelName));
     modelFileStatus_->setToolTip(currentFile_.isEmpty() ? tr("This model has not been saved yet.") : currentFile_);
-    if (dashboardPage_ != nullptr)
-        dashboardPage_->setDocumentState(currentFile_.isEmpty() ? QString{} : name,
+    if (controlPanel_ != nullptr)
+        controlPanel_->setDocumentState(currentFile_.isEmpty() ? QString{} : name,
             editor_->document()->isModified());
-    if (activeModelResultsLabel_ != nullptr) updateActiveModelResultsLabel();
+    if (modelPanel_ != nullptr) modelPanel_->setStatusText(modelName);
+    if (geometryPanel_ != nullptr) geometryPanel_->setStatusText(modelName);
+    if (setupPanel_ != nullptr) setupPanel_->setStatusText(modelName);
+    if (optimizationPanel_ != nullptr) optimizationPanel_->setStatusText(
+        tr("%1 · %2").arg(modelName,
+            optimizationWorkspace_->isRunning() ? tr("Running") : tr("Ready")));
+    if (hasNecModel_) QTimer::singleShot(0, this, [this] { fitWindowToDashboard(); });
 }
 
 void MainWindow::restoreWorkspaceLayout()
@@ -5227,8 +5762,6 @@ void MainWindow::restoreWorkspaceLayout()
     } else {
         const auto normalGeometry = settings.value(QStringLiteral("mainWindow/normalGeometry")).toRect();
         if (normalGeometry.isValid()) setGeometry(normalGeometry);
-        else if (workspaceDensity_ == WorkspaceDensity::Compact) resize(1120, 720);
-        else if (workspaceDensity_ == WorkspaceDensity::Spacious) resize(1440, 900);
     }
     const auto savedState = settings.value(QStringLiteral("mainWindow/state")).toByteArray();
     restoreState(savedState);
@@ -5239,7 +5772,6 @@ void MainWindow::restoreWorkspaceLayout()
     const auto runMonitorGeometry = settings.value(
         QStringLiteral("runMonitorWindow/geometry")).toByteArray();
     if (!runMonitorGeometry.isEmpty()) runMonitorWindow_->restoreGeometry(runMonitorGeometry);
-    updateWorkspaceDockVisibility(moduleStack_ == nullptr ? -1 : moduleStack_->currentIndex());
     auto geometrySettings = geometrySettings_;
     geometrySettings.lengthUnit = static_cast<model::LengthUnit>(settings.value(
         QStringLiteral("model/displayLengthUnit"), static_cast<int>(model::LengthUnit::Meter)).toInt());
@@ -5293,7 +5825,6 @@ void MainWindow::restoreWorkspaceLayout()
     solverExecutablePath_ = solverExecutablePaths_.value(solverBackendId_);
     analysisSetupEditor_->setSettings(
         solverBackendId_, solverExecutablePaths_, solverTimeoutSeconds_);
-    loadRunHistory();
     updateAnalysisReadiness();
 }
 
@@ -5327,9 +5858,6 @@ void MainWindow::saveWorkspaceLayout()
     }
     settings.remove(QStringLiteral("analysis/executablePath"));
     settings.setValue(QStringLiteral("analysis/timeoutSeconds"), solverTimeoutSeconds_);
-    if (detachedResultsWindow_ != nullptr)
-        settings.setValue(QStringLiteral("resultsWindow/geometry"),
-            detachedResultsWindow_->saveGeometry());
 }
 
 }

@@ -19,7 +19,7 @@ ImpedanceResultsView::ImpedanceResultsView(QWidget* parent)
     : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(16, 16, 16, 16);
+    layout->setContentsMargins(8, 8, 8, 8);
     auto* heading = new QLabel(tr("Feedpoint Impedance"), this);
     auto font = heading->font();
     font.setBold(true);

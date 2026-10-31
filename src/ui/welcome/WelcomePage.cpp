@@ -41,8 +41,8 @@ WelcomePage::WelcomePage(QAction* newModelAction, QAction* openAction, PathCallb
     , openRecent_(std::move(openRecent))
 {
     auto* pageLayout = new QVBoxLayout(this);
-    pageLayout->setContentsMargins(48, 38, 48, 38);
-    pageLayout->setSpacing(20);
+    pageLayout->setContentsMargins(24, 18, 24, 18);
+    pageLayout->setSpacing(12);
 
     auto* title = new QLabel(tr("NEC Workbench"), this);
     auto titleFont = title->font();
@@ -57,7 +57,7 @@ WelcomePage::WelcomePage(QAction* newModelAction, QAction* openAction, PathCallb
     subtitle->setFont(subtitleFont);
 
     auto* primaryActions = new QHBoxLayout;
-    primaryActions->setSpacing(14);
+    primaryActions->setSpacing(8);
     primaryActions->addWidget(createActionButton(newModelAction,
         tr("Start with a blank, editable NEC source deck."), this));
     primaryActions->addWidget(createActionButton(openAction,

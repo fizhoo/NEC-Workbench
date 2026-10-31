@@ -39,7 +39,7 @@ ParameterEditor::ParameterEditor(QWidget* parent)
     : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setContentsMargins(8, 8, 8, 8);
     auto* group = new QGroupBox(tr("Model Parameters (SY)"), this);
     auto* groupLayout = new QVBoxLayout(group);
 
@@ -87,6 +87,10 @@ ParameterEditor::ParameterEditor(QWidget* parent)
     layout->addWidget(group, 1);
 
     connect(table_, &QTableWidget::itemSelectionChanged, this, [this] {
+        if (!updating_ && pendingRow_ >= 0 && table_->currentRow() != pendingRow_) {
+            const QSignalBlocker blocker(table_);
+            table_->selectRow(pendingRow_);
+        }
         updateActions();
         if (!updating_ && table_->currentRow() >= 0)
             emit parameterSelected(table_->item(table_->currentRow(), NameColumn)
@@ -300,9 +304,8 @@ void ParameterEditor::updateRowEditability()
 void ParameterEditor::updateActions()
 {
     const auto selectedRow = table_->currentRow();
-    const auto selectedPending = pendingRow_ >= 0 && selectedRow == pendingRow_;
     addButton_->setEnabled(pendingRow_ < 0);
-    applyButton_->setEnabled(selectedPending && pendingInputIsValid());
+    applyButton_->setEnabled(pendingRow_ >= 0 && pendingInputIsValid());
     revertButton_->setEnabled(pendingRow_ >= 0);
     deleteButton_->setEnabled(selectedRow >= 0 && pendingRow_ < 0);
     setPendingEditIndicator(applyButton_, pendingRow_ >= 0);

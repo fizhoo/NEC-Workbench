@@ -1,0 +1,31 @@
+CM Palomar Engineers 80-6 OCF Dipole
+CM Standard dimensions: 95 ft long side, 40 ft short side
+CM SY variables permit independent optimization of each leg
+CM
+CM Coordinate system:
+CM   Feedpoint at X=0
+CM   Short leg extends toward -X
+CM   Long leg extends toward +X
+CM   Height = 35 ft
+CM
+CE
+
+SY LONG_FT=97.5
+SY SHORT_FT=39
+SY FT=0.3048
+SY HGT_FT=35
+SY RAD=0.001
+
+GW 1 81 0 0 HGT_FT*FT LONG_FT*FT 0 HGT_FT*FT RAD
+GW 2 35 0 0 HGT_FT*FT -SHORT_FT*FT 0 HGT_FT*FT RAD
+
+GE 0
+
+GN 2 0 0 0 13 0.005
+
+EX 0 1 1 0 1 0
+
+FR 0 189 0 0 3 0.25
+
+XQ 0
+EN

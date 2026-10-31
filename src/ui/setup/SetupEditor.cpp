@@ -48,7 +48,7 @@ SetupEditor::SetupEditor(QWidget* parent)
     frequencyPage_ = new QWidget(this);
     frequencyPage_->setObjectName(QStringLiteral("frequencyEditorPage"));
     auto* frequencyPageLayout = new QVBoxLayout(frequencyPage_);
-    frequencyPageLayout->setContentsMargins(12, 12, 12, 12);
+    frequencyPageLayout->setContentsMargins(8, 8, 8, 8);
     auto* frequencyGroup = new QGroupBox(tr("Frequency (FR)"), frequencyPage_);
     auto* frequencyLayout = new QFormLayout(frequencyGroup);
     frequencySweepControl_ = new QCheckBox(tr("Enable frequency sweep"), frequencyGroup);
@@ -95,7 +95,7 @@ SetupEditor::SetupEditor(QWidget* parent)
     environmentPage_ = new QWidget(this);
     environmentPage_->setObjectName(QStringLiteral("environmentEditorPage"));
     auto* environmentPageLayout = new QVBoxLayout(environmentPage_);
-    environmentPageLayout->setContentsMargins(12, 12, 12, 12);
+    environmentPageLayout->setContentsMargins(8, 8, 8, 8);
     auto* groundGroup = new QGroupBox(tr("Ground Environment (GN / GE)"), environmentPage_);
     auto* groundLayout = new QFormLayout(groundGroup);
     groundTypeControl_ = new QComboBox(groundGroup);
@@ -155,7 +155,7 @@ SetupEditor::SetupEditor(QWidget* parent)
     sourcesPage_ = new QWidget(this);
     sourcesPage_->setObjectName(QStringLiteral("sourcesEditorPage"));
     auto* sourcesPageLayout = new QVBoxLayout(sourcesPage_);
-    sourcesPageLayout->setContentsMargins(12, 12, 12, 12);
+    sourcesPageLayout->setContentsMargins(8, 8, 8, 8);
     auto* feedGroup = new QGroupBox(tr("Feed System"), sourcesPage_);
     auto* feedLayout = new QFormLayout(feedGroup);
     referenceImpedanceControl_ = createDecimalControl(feedGroup);

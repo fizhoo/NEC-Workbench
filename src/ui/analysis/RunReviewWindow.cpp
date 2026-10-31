@@ -14,6 +14,7 @@
 #include "ui/optimization/OptimizationWorkspace.h"
 
 #include <QCloseEvent>
+#include <QApplication>
 #include <QComboBox>
 #include <QDesktopServices>
 #include <QDir>
@@ -73,6 +74,8 @@ RunReviewWindow::RunReviewWindow(QWidget* parent)
     setWindowFlag(Qt::WindowMinimizeButtonHint, true);
     setWindowFlag(Qt::WindowMaximizeButtonHint, true);
     auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(6, 6, 6, 6);
+    layout->setSpacing(4);
     auto* headingRow = new QHBoxLayout;
     identityLabel_ = new QLabel(this);
     identityLabel_->setObjectName(QStringLiteral("runReviewIdentity"));
@@ -208,11 +211,27 @@ auto RunReviewWindow::showRun(const AnalysisRunRecord& record,
         .arg(activeModelName.isEmpty() ? tr("None") : activeModelName));
     openSnapshotButton_->setEnabled(QFileInfo::exists(
         QDir(record.directory).filePath(QStringLiteral("model.nec"))));
+    for (auto* page : {static_cast<QWidget*>(summaryView_),
+             static_cast<QWidget*>(impedancePage_), static_cast<QWidget*>(currentsView_),
+             static_cast<QWidget*>(radiationPage_), static_cast<QWidget*>(rawOutput_),
+             static_cast<QWidget*>(inputPage_), static_cast<QWidget*>(averageGainView_),
+             static_cast<QWidget*>(optimizationView_),
+             static_cast<QWidget*>(convergenceView_)}) {
+        if (page != nullptr) page->hide();
+    }
     tabs_->clear();
     frequencyBar_->hide();
 
+    const auto optimizationSession = record.runType
+        == QStringLiteral("optimization-session");
+    if (optimizationSession) {
+        statusLabel_->setText(tr("Loading archived optimization candidates…"));
+        present();
+        QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+    }
+
     bool loaded = false;
-    if (record.runType == QStringLiteral("optimization-session"))
+    if (optimizationSession)
         loaded = showOptimizationSession(record);
     else if (record.runType == QStringLiteral("convergence-session"))
         loaded = showConvergenceSession(record);

@@ -23,6 +23,7 @@ class AnalysisRequestEditor final : public QWidget {
 public:
     explicit AnalysisRequestEditor(QWidget* parent = nullptr);
 
+    void resetFrequencySelectionForModel();
     void setData(const model::ModelSetup& setup);
     void selectPattern(std::size_t sourceLine);
     void setReadiness(const QStringList& blockingReasons);
@@ -55,7 +56,7 @@ private:
     void addSelectedFrequency(double frequencyMHz);
     void removeSelectedFrequencies();
     void chooseAmateurBandCenters();
-    void persistFrequencySelection() const;
+    void initializeFrequencySelectionFromModel();
     struct FrequencySelectionState {
         int mode{};
         double singleMHz{};
@@ -101,9 +102,7 @@ private:
     bool patternPending_{};
     bool frequencyPending_{};
     bool loadingFrequency_{};
-    bool frequencySelectionInitialized_{};
-    bool singleFrequencyInitialized_{};
-    bool selectedFrequenciesInitialized_{};
+    bool resetFrequencySelectionOnNextData_{true};
     FrequencySelectionState appliedFrequencySelection_;
 };
 

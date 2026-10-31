@@ -4,7 +4,9 @@
 #include "analysis/AdaptiveSearch.h"
 #include "analysis/DifferentialEvolutionSearch.h"
 #include "analysis/NelderMeadSearch.h"
+#include "analysis/OptimizationBaseline.h"
 #include "analysis/OptimizationObjective.h"
+#include "analysis/OptimizationPreset.h"
 #include "model/ModelSetup.h"
 #include "nec/NecSymbolResolver.h"
 #include "ui/analysis/AnalysisRunStore.h"
@@ -16,26 +18,29 @@
 #include <array>
 #include <functional>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
 class QComboBox;
 class QDialog;
 class QDoubleSpinBox;
+class QGroupBox;
+class QHBoxLayout;
 class QLabel;
 class QListWidget;
+class QPoint;
 class QProgressBar;
 class QPushButton;
 class QSplitter;
 class QSpinBox;
 class QTableWidget;
-class QTabBar;
 class QTabWidget;
 
 namespace necwb::ui {
 
 class CandidatePlotsView;
-class DirectionalMetricsView;
+class OptimizationComparePanel;
 class SweepPlotsView;
 
 class OptimizationWorkspace final : public QWidget {
@@ -55,6 +60,14 @@ public:
         std::function<bool(std::vector<std::pair<QString, double>>)> callback);
     void setApplyAndRunCallback(
         std::function<bool(std::vector<std::pair<QString, double>>)> callback);
+    void setBaselineRunCallback(std::function<bool(
+        const analysis::FrequencyPlan&, const analysis::OptimizationObjectiveSpec&)> callback);
+    void setCancelBaselineRunCallback(std::function<void()> callback);
+    void setFindMaximumGainCallback(std::function<bool(double)> callback);
+    void setLatestAnalysisResult(const analysis::AnalysisResult& result);
+    void setOptimizationBaseline(const AnalysisRunRecord& record,
+        const analysis::AnalysisResult& result);
+    void finishOptimizationBaseline(bool succeeded, QString detail = {});
     auto loadSession(const QString& sessionId) -> bool;
     void leaveHistoricalSession();
     [[nodiscard]] auto isRunning() const noexcept -> bool;
@@ -98,7 +111,6 @@ private:
         double minimum{};
         double maximum{};
         int candidateLimit{};
-        double parameterTolerance{};
         double scoreTolerance{};
         int populationSize{};
         int maximumGenerations{};
@@ -119,16 +131,48 @@ private:
         std::vector<analysis::FeedpointResult> feedpoints;
         std::vector<analysis::RadiationSample> radiation;
         std::optional<analysis::OptimizationObjectiveResult> evaluation;
+        std::optional<analysis::OptimizationObjectiveResult> availableMeasurements;
+        bool analysisLoaded{};
         int refinementRound{};
         QString trialRole;
+        QString failureDetail;
     };
 
+    void buildHistoricalBanner();
+    void buildConfigurationPanel();
+    [[nodiscard]] auto buildSearchSection(QWidget* parent) -> QGroupBox*;
+    [[nodiscard]] auto buildFrequencySection(QWidget* parent) -> QGroupBox*;
+    [[nodiscard]] auto buildObjectiveSection(QWidget* parent) -> QGroupBox*;
+    [[nodiscard]] auto buildStudyHeader() -> QHBoxLayout*;
+    [[nodiscard]] auto buildResultsPanel() -> QWidget*;
+    void buildCandidateDetailsWindow();
+    void connectObjectiveSignals();
+    void connectSearchSignals();
+    void connectFrequencySignals();
+    void connectResultSignals();
     void populateVariables(const nec::SymbolResolution& resolution);
-    [[nodiscard]] auto selectedAdaptiveVariables() const
+    void fitVariablesTableHeight();
+    [[nodiscard]] auto selectedVariables() const
         -> std::vector<StudySetup::VariableRange>;
     [[nodiscard]] auto candidateDescription(const Candidate& candidate) const -> QString;
-    void updateBounds();
     void updateObjectiveControls();
+    void applySelectedObjectivePreset();
+    void updateObjectivePresetControls();
+    void markObjectiveCustom();
+    void updateLatestPatternPeakControls();
+    void updateDirectionalSeedState();
+    void setDirection(analysis::DirectionalEvaluationMode mode, double thetaDegrees,
+        double phiDegrees);
+    [[nodiscard]] auto seedDirectionFromLatestPattern() -> bool;
+    void setLatestRadiation(std::vector<analysis::RadiationSample> radiation);
+    [[nodiscard]] auto latestPatternPeak(analysis::RadiationComponent component,
+        double frequencyMHz) -> const std::optional<analysis::RadiationPeak>&;
+    [[nodiscard]] auto latestTrackedCutMetrics(analysis::RadiationComponent component,
+        analysis::DirectionalEvaluationMode mode, double cutAngleDegrees)
+        -> const std::vector<analysis::RadiationFrequencyMetric>&;
+    [[nodiscard]] auto directionalPresetRequiresSetup() const -> bool;
+    void chooseDirectionStrategy();
+    void useLatestPatternPeak();
     void updateFrequencyControls();
     void updateSearchMethodControls();
     void updateSetupSummaries();
@@ -137,12 +181,24 @@ private:
     void updateCandidateDetails(int row);
     void resetCandidateDetails();
     void updateCandidateActionState();
+    void showCandidateContextMenu(const QPoint& position);
+    void sortCandidateTable(int column);
+    void applyCandidateSort();
+    [[nodiscard]] auto candidateIndexAtTableRow(int row) const -> int;
+    [[nodiscard]] auto tableRowForCandidateIndex(int candidateIndex) const -> int;
     [[nodiscard]] auto candidateParameterValues(int row) const
         -> std::vector<std::pair<QString, double>>;
     void applyCandidate(int row, bool runAfterApply);
     void updateCandidateRowToolTip(int row);
+    auto ensureCandidateAnalysisLoaded(Candidate& candidate) -> bool;
     void updateCandidatePlots();
+    void updateComparisonCandidate();
+    void updateBaselineState();
+    void requestOptimizationStart();
+    [[nodiscard]] auto baselineRequirements(const StudySetup& setup) const
+        -> analysis::OptimizationBaselineRequirements;
     void updateReadiness();
+    [[nodiscard]] auto readinessBlocker(const StudySetup& setup) const -> QString;
     void populateModelFrequencies(const model::FrequencyDefinition& frequency);
     void setExplicitFrequencies(const std::vector<double>& frequenciesMHz);
     void addExplicitFrequency(double frequencyMHz);
@@ -167,6 +223,7 @@ private:
     auto writeCandidateMetadata(const Candidate& candidate) -> bool;
     void setCandidateStatus(int row, const QString& status);
     [[nodiscard]] auto selectedObjective() const -> analysis::OptimizationObjectiveSpec;
+    [[nodiscard]] auto selectedObjectivePreset() const -> analysis::OptimizationPresetId;
     [[nodiscard]] auto selectedFrequencyMode() const -> FrequencyMode;
     [[nodiscard]] auto selectedSearchMethod() const -> SearchMethod;
     [[nodiscard]] auto selectedFrequencyPlan() const -> analysis::FrequencyPlan;
@@ -174,7 +231,6 @@ private:
     [[nodiscard]] auto currentStudySetup() const -> StudySetup;
     [[nodiscard]] auto captureFrequencySelection() const -> FrequencySelectionState;
     void restoreFrequencySelection(const FrequencySelectionState& state);
-    [[nodiscard]] auto objectiveName(analysis::OptimizationObjectiveKind kind) const -> QString;
     [[nodiscard]] static auto isMultivariable(SearchMethod method) noexcept -> bool;
     [[nodiscard]] auto searchMethodName(SearchMethod method) const -> QString;
     [[nodiscard]] static auto searchMethodId(SearchMethod method) -> QString;
@@ -184,12 +240,9 @@ private:
 
     QTableWidget* variablesTable_{};
     QWidget* parameterSettings_{};
-    QLabel* variableLabel_{};
-    QLabel* minimumLabel_{};
-    QLabel* maximumLabel_{};
-    QComboBox* variableControl_{};
-    QComboBox* objectiveControl_{};
-    QDoubleSpinBox* targetFrequencyControl_{};
+    QComboBox* objectivePresetControl_{};
+    QDoubleSpinBox* presetSwrLimitControl_{};
+    QLabel* presetSwrLimitLabel_{};
     QTableWidget* objectiveCriteriaTable_{};
     QDoubleSpinBox* swrWeightControl_{};
     QDoubleSpinBox* resistanceWeightControl_{};
@@ -203,9 +256,17 @@ private:
     std::array<QDoubleSpinBox*, 6> objectiveValueControls_{};
     std::array<QComboBox*, 6> objectiveAggregationControls_{};
     QPushButton* resetObjectiveDefaultsButton_{};
-    QDoubleSpinBox* forwardThetaControl_{};
-    QDoubleSpinBox* forwardPhiControl_{};
+    QLabel* directionSetupSummaryLabel_{};
+    QWidget* directionSetupPanel_{};
+    QLabel* directionSetupLabel_{};
+    QPushButton* directionSetupButton_{};
+    QPushButton* findMaximumGainButton_{};
     QComboBox* radiationComponentControl_{};
+    QPushButton* useLatestPatternPeakButton_{};
+    QLabel* latestPatternPeakLabel_{};
+    QWidget* latestPatternPeakPanel_{};
+    QLabel* latestPatternPeakFieldLabel_{};
+    QLabel* radiationComponentLabel_{};
     QComboBox* frequencyModeControl_{};
     QWidget* explicitFrequencyPanel_{};
     QWidget* continuousFrequencyPanel_{};
@@ -223,15 +284,11 @@ private:
     QLabel* frequencySummaryLabel_{};
     QPushButton* editFrequencyButton_{};
     QDialog* frequencyDialog_{};
-    QDoubleSpinBox* minimumControl_{};
-    QDoubleSpinBox* maximumControl_{};
     QSpinBox* pointsControl_{};
-    QTabBar* searchMethodTabs_{};
+    QComboBox* searchMethodControl_{};
     QLabel* searchBudgetLabel_{};
-    QLabel* adaptiveParameterToleranceLabel_{};
     QLabel* adaptiveScoreToleranceLabel_{};
     QSpinBox* adaptiveMaximumEvaluationsControl_{};
-    QDoubleSpinBox* adaptiveParameterToleranceControl_{};
     QDoubleSpinBox* adaptiveScoreToleranceControl_{};
     QWidget* differentialEvolutionSettings_{};
     QSpinBox* differentialEvolutionPopulationControl_{};
@@ -243,8 +300,8 @@ private:
     QDoubleSpinBox* referenceImpedanceControl_{};
     QLabel* studySummaryLabel_{};
     QLabel* objectiveSummaryLabel_{};
+    QLabel* objectiveWarningLabel_{};
     QLabel* objectiveExplanationLabel_{};
-    QLabel* targetFrequencyLabel_{};
     QLabel* directionalFrequencyNote_{};
     QPushButton* editObjectiveButton_{};
     QDialog* objectiveDialog_{};
@@ -254,14 +311,14 @@ private:
     QProgressBar* progress_{};
     QLabel* statusLabel_{};
     QLabel* bestLabel_{};
+    QWidget* configurationPanel_{};
     QTableWidget* resultsTable_{};
     CandidatePlotsView* candidatePlots_{};
+    OptimizationComparePanel* comparePanel_{};
     QDialog* candidateDetailsWindow_{};
     QLabel* candidateDetailLabel_{};
     QTableWidget* candidateDetailsTable_{};
     QTabWidget* candidateDetailViews_{};
-    SweepPlotsView* candidateDetailPlots_{};
-    DirectionalMetricsView* candidateDirectionalPlots_{};
     QPushButton* applyCandidateButton_{};
     QPushButton* applyCandidateAndRunButton_{};
     QWidget* historicalBanner_{};
@@ -275,13 +332,51 @@ private:
     std::function<void()> parameterizationHelpCallback_;
     std::function<bool(std::vector<std::pair<QString, double>>)> applyParameterCallback_;
     std::function<bool(std::vector<std::pair<QString, double>>)> applyAndRunCallback_;
+    std::function<bool(const analysis::FrequencyPlan&,
+        const analysis::OptimizationObjectiveSpec&)> baselineRunCallback_;
+    std::function<void()> cancelBaselineRunCallback_;
+    std::function<bool(double)> findMaximumGainCallback_;
     std::vector<nec::SymbolDefinition> definitions_;
     std::vector<Candidate> candidates_;
     std::vector<double> modelFrequenciesMHz_;
+    std::vector<analysis::RadiationSample> latestRadiation_;
+    // Scanning a full radiation pattern is expensive and the objective controls refresh
+    // many times per edit, so the last pattern-peak and tracked-cut results are kept
+    // until the pattern or the query changes.
+    struct LatestPatternPeak {
+        analysis::RadiationComponent component{};
+        double frequencyMHz{};
+        std::optional<analysis::RadiationPeak> peak;
+    };
+    struct LatestTrackedCut {
+        analysis::RadiationComponent component{};
+        analysis::DirectionalEvaluationMode mode{};
+        double cutAngleDegrees{};
+        std::vector<analysis::RadiationFrequencyMetric> metrics;
+    };
+    std::optional<LatestPatternPeak> latestPatternPeakCache_;
+    std::optional<LatestTrackedCut> latestTrackedCutCache_;
+    analysis::DirectionalEvaluationMode directionalEvaluationMode_{
+        analysis::DirectionalEvaluationMode::StrongestInAzimuthCut};
+    double forwardThetaDegrees_{90.0};
+    double forwardPhiDegrees_{};
+    bool directionalObjectiveWasEnabled_{};
+    bool directionSetupConfigured_{};
+    bool directionSetupReady_{};
+    bool maximumGainSearchRequested_{};
+    bool maximumGainDirectionStale_{};
+    bool applyingObjectivePreset_{};
     std::vector<double> activeFrequenciesMHz_;
     std::optional<AnalysisRunRecord> sessionRecord_;
+    std::optional<AnalysisRunRecord> baselineRecord_;
+    std::optional<analysis::AnalysisResult> baselineResult_;
+    analysis::OptimizationBaselineCompatibility baselineCompatibility_;
     std::optional<FrequencySelectionState> activeFrequencySelection_;
     QString source_;
+    // The resolved deck and its fingerprint, computed once per source change in setContext;
+    // readiness checks compare them with the baseline many times per edit.
+    std::optional<std::string> resolvedDeck_;
+    std::string modelFingerprint_;
     QString sourceFile_;
     QString backend_;
     QString executable_;
@@ -294,17 +389,23 @@ private:
     std::size_t candidateIndex_{};
     double bestScore_{};
     QString searchStopReason_;
+    QString readinessMessage_;
     std::optional<analysis::AdaptiveVectorSearch> adaptiveVectorSearch_;
     std::optional<analysis::NelderMeadSearch> nelderMeadSearch_;
     std::optional<analysis::DifferentialEvolutionSearch> differentialEvolutionSearch_;
     int bestRow_{-1};
     int detailCandidateRow_{-1};
+    int candidateSortColumn_{-1};
+    Qt::SortOrder candidateSortOrder_{Qt::AscendingOrder};
     bool modelValid_{};
     bool externalRunActive_{};
     bool cancelRequested_{};
     bool historicalSession_{};
+    bool symbolsResolved_{};
     bool contextInitialized_{};
     bool preserveStudyOnNextContextUpdate_{};
+    bool baselineRunInProgress_{};
+    bool startAfterBaseline_{};
 };
 
 }

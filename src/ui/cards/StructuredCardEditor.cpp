@@ -3,6 +3,7 @@
 #include "nec/NecCardCatalog.h"
 #include "nec/NecCardFieldEditor.h"
 #include "ui/ParameterFieldStyle.h"
+#include "ui/cards/CompactNumberDelegate.h"
 
 #include <QAbstractItemView>
 #include <QApplication>
@@ -248,7 +249,9 @@ auto requiredFieldCount(const QString& mnemonic, const QStringList& fields) -> i
     if (mnemonic == QStringLiteral("SP") || mnemonic == QStringLiteral("SM")) return 8;
     if (mnemonic == QStringLiteral("SC"))
         return fields.size() > 1 && fields[1].toInt() == 3 ? 8 : 5;
-    if (mnemonic == QStringLiteral("EX") || mnemonic == QStringLiteral("FR")) return 6;
+    if (mnemonic == QStringLiteral("EX")) return 6;
+    if (mnemonic == QStringLiteral("FR"))
+        return fields.size() > 1 && fields[1].toInt() == 1 ? 5 : 6;
     if (mnemonic == QStringLiteral("GS")) return 3;
     if (mnemonic == QStringLiteral("GE") || mnemonic == QStringLiteral("XQ")) return 1;
     if (mnemonic == QStringLiteral("Z0") || mnemonic == QStringLiteral("ZO")) return 1;
@@ -347,9 +350,9 @@ auto semanticFieldError(const QString& mnemonic, const QStringList& fields, int 
     return {};
 }
 
-class CardFieldDelegate final : public QStyledItemDelegate {
+class CardFieldDelegate final : public CompactNumberDelegate {
 public:
-    using QStyledItemDelegate::QStyledItemDelegate;
+    using CompactNumberDelegate::CompactNumberDelegate;
 
     auto createEditor(QWidget* parent, const QStyleOptionViewItem& option,
         const QModelIndex& index) const -> QWidget* override
@@ -436,7 +439,7 @@ public:
 StructuredCardEditor::StructuredCardEditor(QWidget* parent) : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setContentsMargins(6, 6, 6, 6);
     description_ = new QLabel(this);
     description_->setWordWrap(true);
     auto* actions = new QHBoxLayout;

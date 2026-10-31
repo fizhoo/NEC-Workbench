@@ -53,22 +53,30 @@ same definitions.
 
 ## Workspaces
 
-The top-level workspaces are Home, Model, Analysis, Results, and Optimize.
+Home is the main window: a compact control panel (`ui/controlpanel`) whose layout is
+fixed to its content. It summarizes the active model, selected-frequency quick results,
+model quality, and the latest run, and launches the focused windows without
+duplicating their content. Every other workspace is a separate top-level window:
 
-- **Home** summarizes the active model, recent results, and model quality.
-- **Model** owns geometry, parameters, sources, loads/networks, environment, and NEC source.
-- **Analysis** owns frequency, solver configuration, and output requests.
-- **Results** owns current or historical parsed output.
+- **Geometry Editor** owns the 2D and 3D geometry views.
+- **NEC Deck** owns Raw Source, Structured Cards, and Parameters.
+- **Setup** owns frequency, sources, loads/networks, environment, output requests,
+  and solver configuration.
+- **Impedance / SWR**, **Currents**, **Radiation**, **Raw Solver Output**, and
+  **Run History** present current or historical parsed output.
 - **Optimize** owns parameter studies and candidate review.
 
-The compact workspace navigator handles destinations; menus expose the complete
-command set; the toolbar contains frequent global actions. Project visibility is
-reduced automatically in space-intensive workspaces.
+Work windows are `DetachablePanel`s, and result windows are coordinated by
+`ResultWindowCoordinator`. Each window persists its own geometry, so resizing one
+never resizes another, and opening a window again raises the existing instance.
+Menus expose the complete command set; a compact navigator selects pages inside
+Setup and the NEC Deck window.
 
-Results and candidate details use reusable detachable windows. A detached view
-is the same live content, not a copied result model. Historical Run Review is
-separate and read-only so opening archived output cannot silently replace the
-active editor.
+A detached view is the same live content, not a copied result model. Historical Run
+Review is separate and read-only so opening archived output cannot silently replace
+the active editor. The historical-overlay controller selects at most one archived run
+and never changes the active result; each result window independently decides whether
+to display it.
 
 ## Validation
 
@@ -76,6 +84,12 @@ Model checking runs after source changes and immediately before a solve. Blockin
 syntax, field, ordering, expression, or reference errors prevent analysis and
 optimization. Adequacy findings are warnings because their importance depends on
 the model and engineering purpose.
+
+Validation commands are grouped in the **Validate** menu. Static findings remain
+in a reusable non-modal report, while the focused **Validation** window owns the
+compact overview, Average Gain Test result, and segmentation-convergence workspace.
+The Run Monitor remains execution UI rather than a validation result; durable runs
+are reviewed through Run History and the read-only Run Review window.
 
 The static checker covers geometry/control-card ordering, segment length,
 thin-wire ratios, source placement, adjoining segmentation, and large junctions.
@@ -108,7 +122,9 @@ The selected backend identifies a process protocol, not merely an executable nam
 
 - `nec2c` uses attached input/output arguments.
 - OpenNEC uses positional input with original-format output options.
-- 4nec2 NEC2dXS receives filenames through standard input.
+- 4nec2 NEC2dXS receives filenames through standard input. Its generated numeric deck
+  uses canonical space-delimited fields so direct execution never depends on the full
+  4nec2 application's input preprocessing or on unsupported tab separators.
 
 Each backend has an independently persisted executable path. All adapters feed
 the same run store and backend-neutral result model. No solver is bundled.
@@ -117,6 +133,15 @@ Solver execution is asynchronous and supports live output, cancellation, and a
 timeout. Every run receives a unique durable directory containing source,
 generated input, output, logs, and versioned metadata. Startup discovery rebuilds
 Run History from those directories and marks interrupted records appropriately.
+
+Completed runs also index the metadata needed for optimization baselines: a
+normalized solver-model fingerprint, backend, reference impedance, impedance
+frequencies, and exact radiation sample-grid fingerprints. The model fingerprint
+ignores comments, formatting, and temporary `FR`/`RP`/`XQ` requests while retaining
+solver-effective model values. Core compatibility logic distinguishes model,
+backend, impedance, frequency, and radiation-coverage mismatches; the optimization
+workflow can therefore reject stale or incomplete baselines without relying on a
+filename or whichever historical result happens to be displayed.
 
 ## Requests and Frequency Plans
 
@@ -128,6 +153,11 @@ This permits impedance across a broad sweep while calculating expensive radiatio
 patterns only where requested. Generated request policy is recorded with the run;
 it does not rewrite the authored cards.
 
+Request-frequency state belongs to the active model session. A newly opened model
+starts in native `FR` mode and seeds its optional single, selected, and continuous
+controls from that deck. Routine rechecks preserve user changes; opening another
+model establishes a new request-frequency state.
+
 ## Result Model
 
 The output parser produces backend-neutral frequency, feedpoint, current, and
@@ -135,13 +165,21 @@ radiation records. Views consume these records rather than reparsing output.
 
 - Impedance and SWR share the model reference impedance (`Z0`/`ZO`, default 50 Ω).
 - Current results retain wire, segment, complex current, magnitude, and phase.
+  `analysis/SegmentCurrentDisplay` prepares them for drawing: it orients straight
+  wires toward +X, +Y, or +Z (adding 180° where NEC's end-1-to-end-2 direction runs
+  the other way), references phase to the first feed current, and computes the
+  instantaneous current over the RF cycle. The Currents window's Antenna tab and the
+  table's relative-phase column both consume this core result.
 - Radiation datasets retain their frequency and request identity.
 - Historical views use the archived generated deck for the matching antenna overlay.
 
 Directional metrics share one non-widget implementation. Forward gain uses an
-explicit spherical direction. F/B requires the physical antipodal direction;
-missing coverage produces an unavailable value. F/R compares the forward sample
-with the strongest sampled response in the documented rear azimuth cut.
+explicit spherical direction. Every F/B uses one back direction, the same elevation
+at the opposite azimuth, which specified-direction requests sample explicitly and
+tracked cuts contain; missing coverage produces an unavailable value rather than a
+substitute. F/R compares the forward sample with the strongest sampled response in the
+rear half of the requested cut. [Directional Metrics](optimization-math.md#directional-metrics)
+defines each case.
 
 ## Optimization
 
@@ -167,6 +205,34 @@ Broad model radiation requests are omitted from ordinary impedance-only candidat
 Directional objectives generate focused samples at each study frequency, reducing
 solver work while preserving the stated metric definition.
 
+An optimization baseline is a durable analysis of the actual current model, not an
+optimizer candidate. Baseline identity and coverage are modeled independently from
+the live result windows' optional historical overlay so those two comparisons cannot
+silently replace one another. When the current study lacks a compatible baseline,
+the optimization workspace requests one through the ordinary MainWindow analysis
+pipeline with an optimization-specific generated deck containing only the study
+frequencies and objective-required outputs. It then begins candidate evaluation only
+after the run is parsed and indexed. This internal run is archived but does not
+replace the active live-result state.
+Directional baseline compatibility compares the exact generated theta/phi request
+grid, not only the presence of radiation data at a frequency. This keeps candidate
+overlays and directional objective reductions on the same sampled cut.
+The optimization session stores the baseline run ID; historical session review loads
+that archived result without replacing the active model's live-result state.
+
+Candidate comparison is owned by a focused panel inside the reusable detached
+candidate-preview window, leaving the main evaluation table and search-progress plot
+uncompressed. It reuses the normal SWR/impedance and 2D-pattern views, placing the
+compatible baseline behind the selected candidate as a labeled dashed series. The
+core fingerprint and coverage evaluator is Qt-free; widgets only present its status
+and data. Optimization candidates are not injected into the live result windows;
+their historical-overlay controller remains exclusively run-to-run comparison.
+
+The optimization workspace resolves and fingerprints the active deck once per model
+change, and keeps the latest pattern's peak and tracked-cut metrics until a new
+pattern arrives, so frequent readiness refreshes and objective-preset changes do not
+re-parse source or rescan large patterns.
+
 Applying a candidate is an explicit source edit to active `SY` definitions. It is
 undoable and does not mutate archived candidate artifacts. Applying and running
 then uses the normal analysis pipeline to create an ordinary result.
@@ -177,9 +243,10 @@ then uses the normal analysis pipeline to create an ordinary result.
 paths using the platform's normal user settings location. Run artifacts remain in
 the application's local data directory.
 
-Common numeric presentation is centralized in `ui/DisplayFormat.h`. Display
-rounding never changes source text, archived solver output, exports, or internal
-calculation precision.
+Common numeric presentation is centralized in `ui/DisplayFormat.h`. Structured Cards
+and Wires use `CompactNumberDelegate` to show long numbers at 6 significant figures
+while editing starts from the exact source text. Display rounding never changes
+source text, archived solver output, exports, or internal calculation precision.
 
 See the [Roadmap](roadmap.md) for planned work and the
 [NEC Card Support](nec-card-support.md) matrix for card-level behavior.

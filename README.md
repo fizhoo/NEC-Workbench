@@ -8,10 +8,15 @@ process protocols.
 ## Highlights
 
 - Raw and structured NEC editing over one authoritative source document
-- Synchronized 2D/3D geometry with wire editing, selection, units, and snapping
+- Separate Geometry Editor (synchronized 2D/3D wire editing, selection, units, and
+  snapping) and NEC Deck (raw source, structured cards, and parameters) windows
 - Structured sources, grounds, loads, transmission lines, frequencies, and requests
-- External-solver execution with live status, durable run artifacts, and history
-- SWR, impedance, currents, and interactive 2D/3D radiation results
+- External-solver execution with live status, durable run artifacts, run notes, and history
+- SWR, impedance, and interactive 2D/3D radiation results
+- Currents drawn on the antenna as magnitude, phase relative to the feed, or an
+  animated RF cycle, plus along-wire plots and a segment table
+- Compact Home control panel with quick results and reusable setup, result, and run windows
+- Optional labeled historical overlays for impedance, SWR, and radiation results
 - Static model checks, Average Gain Test, and segmentation convergence studies
 - `SY` parameterization plus sweep, adaptive, Nelder–Mead, and Differential
   Evolution optimization with impedance and directional objectives
@@ -27,9 +32,24 @@ cards.
 - [User Guide](docs/user-guide.md) — normal modeling, analysis, results, and optimization workflows
 - [Architecture](docs/architecture.md) — source, model, solver, result, and UI boundaries
 - [NEC Card Support](docs/nec-card-support.md) — support level by NEC mnemonic
+- [NEC Validation Reference](docs/nec-validation-reference.md) — backend profiles, checks, and audit boundaries
 - [Roadmap](docs/roadmap.md) — current priorities and longer-term direction
 
 Most individual controls also provide tooltips in the application.
+
+## Examples
+
+The [examples](examples) folder contains ready-to-run decks, including:
+
+- `2m-3-element-yagi.nec` — free-space Yagi with a direct 50 Ω feed; directional
+  results, F/B optimization, and element current phase
+- `40m-vertical-elevated-radials.nec` — quarter-wave vertical over average real ground
+  with drooping radials; takeoff angle and currents at a multi-wire junction
+- `40m-phased-vertical-array.nec` — two verticals fed in quadrature over perfect
+  ground; multiple sources, a cardioid pattern, and the animated currents view
+- `40m-symbolic-dipole.nec` — `SY` variables and expressions
+- `80-6 ocfd.nec`, the folded dipoles, and the `geometry-*` decks — off-center feeds,
+  transmission lines, and generated `GM`/`GR`/`GX` geometry
 
 ## Build
 
@@ -45,6 +65,10 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+Without `-DCMAKE_BUILD_TYPE`, single-configuration builds default to `RelWithDebInfo`
+(optimized, with debug symbols). Pass `-DCMAKE_BUILD_TYPE=Debug` for an unoptimized
+build.
+
 Core-only builds do not require Qt:
 
 ```sh
@@ -53,16 +77,22 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+## Releases
+
+Packaged alpha releases are published on the repository's **Releases** page. The
+current release is `0.1.0-alpha.2`.
+
 ## Build Artifacts
 
-Every push to `main` runs Linux AppImage and Windows ZIP workflows. Download the
-artifacts from a successful run on the repository's **Actions** page:
+Packaging workflows run for `main`, selected integration branches, pull requests,
+and manual dispatch. Download artifacts from a successful run on the repository's
+**Actions** page:
 
 - `NEC-Workbench-Linux-x86_64`
 - `NEC-Workbench-Windows-x64`
 
 Artifacts include the required Qt runtime files but not an NEC solver. Configure
-a separately installed solver under **Analysis → Solver**.
+a separately installed solver under **Setup → Solver**.
 
 ## Design Boundary
 

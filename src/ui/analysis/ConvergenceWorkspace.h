@@ -59,7 +59,8 @@ private:
     void finishStudy();
     auto writeStepFiles(Step& step, const std::string& deck) -> bool;
     void populateStepResult(Step& step, const QByteArray& output);
-    void setStepStatus(int row, const QString& status);
+    void setStepStatus(int row, const QString& status, const QString& detail = {},
+        bool warning = false);
     void resetTable(int rows);
 
     QDoubleSpinBox* frequencyControl_{};
@@ -72,6 +73,7 @@ private:
     QProgressBar* progress_{};
     QLabel* statusLabel_{};
     QLabel* conclusionLabel_{};
+    QLabel* assessmentDetailLabel_{};
     QTableWidget* resultsTable_{};
     QWidget* historicalBanner_{};
     QLabel* historicalBannerTitle_{};

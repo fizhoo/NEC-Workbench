@@ -22,6 +22,11 @@ auto collapsedSettingsKey(const QString& id) -> QString
     return QStringLiteral("workspaceNavigation/%1/collapsed").arg(id);
 }
 
+auto navigationText(QString tabText) -> QString
+{
+    return tabText.replace(QStringLiteral("&&"), QStringLiteral("&"));
+}
+
 }
 
 WorkspaceNavigator::WorkspaceNavigator(
@@ -93,10 +98,11 @@ void WorkspaceNavigator::populate()
 {
     navigation_->clear();
     for (auto index = 0; index < pages_->count(); ++index) {
-        auto* item = new QListWidgetItem(pages_->tabIcon(index), pages_->tabText(index));
-        item->setData(Qt::UserRole, pages_->tabText(index));
+        const auto text = navigationText(pages_->tabText(index));
+        auto* item = new QListWidgetItem(pages_->tabIcon(index), text);
+        item->setData(Qt::UserRole, text);
         item->setToolTip(pages_->tabToolTip(index).isEmpty()
-                ? pages_->tabText(index) : pages_->tabToolTip(index));
+                ? text : pages_->tabToolTip(index));
         navigation_->addItem(item);
     }
     navigation_->setCurrentRow(pages_->currentIndex());
