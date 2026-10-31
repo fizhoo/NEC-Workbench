@@ -141,6 +141,13 @@ limits. The buried-wire and parallel-alignment checks reflect NEC-2 kernel limit
 every current backend uses that kernel, and both checks are gated on it so NEC-4 class
 backends can skip them later.
 
+Connections follow NEC-2's `CONECT` tolerance: two segment ends are joined when
+|dx| + |dy| + |dz| is within 0.001 of the segment length, and an end that close to
+z = 0 is on the ground. NEC applies each segment's own length, so a long segment can
+reach a short one that does not reach back; Workbench counts ends as joined only when
+both segments agree, and the contact check reports ends in that gap. The junction,
+contact, ground, and insertion checks all use this rule.
+
 Ground handling follows NEC-2's `CONECT`: `GN` alone defines the ground (`GN -1` or no
 `GN` means free space), and only `GE 1` ties wire ends at z = 0 to the ground image.
 With `GE 0` or `GE -1`, such an end stays open and NEC forces its current to zero.

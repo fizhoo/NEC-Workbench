@@ -55,14 +55,30 @@ void addAdequacyWarning(ModelCheckResult& result, std::size_t lineNumber, std::s
     addAdequacyDiagnostic(result, DiagnosticSeverity::Warning, lineNumber, std::move(message));
 }
 
-auto nearby(const model::Point3D& first, const model::Point3D& second) -> bool
+// NEC-2 CONECT treats a segment end as touching another end, or the ground at z = 0, within
+// this fraction of the segment's own length (SMIN), measured as |dx| + |dy| + |dz|.
+constexpr auto kNecContactFraction = 1.0e-3;
+
+// NEC applies each segment's own tolerance, so a long segment can reach a short one that does
+// not reach back. Ends count as joined only when both segments agree; ends in the gap between
+// the two tolerances are left to the contact check.
+auto necTouching(const model::Point3D& first, double firstSegmentLength,
+    const model::Point3D& second, double secondSegmentLength) -> bool
 {
-    const auto scale = std::max({1.0, std::abs(first.x), std::abs(first.y), std::abs(first.z),
-        std::abs(second.x), std::abs(second.y), std::abs(second.z)});
-    const auto tolerance = scale * 1.0e-9;
-    return std::abs(first.x - second.x) <= tolerance
-        && std::abs(first.y - second.y) <= tolerance
-        && std::abs(first.z - second.z) <= tolerance;
+    const auto separation = std::abs(first.x - second.x) + std::abs(first.y - second.y)
+        + std::abs(first.z - second.z);
+    return separation <= kNecContactFraction * std::min(firstSegmentLength, secondSegmentLength);
+}
+
+// Where CONECT places a segment end relative to the ground plane under GE 1.
+auto necOnGround(double z, double segmentLength) -> bool
+{
+    return std::abs(z) <= kNecContactFraction * segmentLength;
+}
+
+auto necBelowGround(double z, double segmentLength) -> bool
+{
+    return z < -kNecContactFraction * segmentLength;
 }
 
 auto concise(double value) -> std::string
@@ -208,6 +224,7 @@ struct GraphNode {
     int segmentCount{};
     double minimumRadius{std::numeric_limits<double>::infinity()};
     double maximumRadius{};
+    double minimumSegmentLength{std::numeric_limits<double>::infinity()};
 };
 
 struct SegmentGraph {
@@ -217,7 +234,8 @@ struct SegmentGraph {
     std::vector<std::size_t> firstSegment;
     // Node pairs joined by a single segment.
     std::unordered_set<std::uint64_t> links;
-    // nearby() tolerance at the largest coordinate in the model.
+    // Rounding allowance at the largest coordinate in the model, for purely geometric tests.
+    // Connections use NEC's own tolerance instead.
     double tolerance{};
 
     static constexpr auto npos = std::numeric_limits<std::size_t>::max();
@@ -251,7 +269,7 @@ struct SegmentGraph {
 
     [[nodiscard]] auto grounded(const GraphNode& node, bool groundsEnds) const noexcept -> bool
     {
-        return groundsEnds && std::abs(node.point.z) <= tolerance;
+        return groundsEnds && necOnGround(node.point.z, node.minimumSegmentLength);
     }
 };
 
@@ -263,9 +281,11 @@ auto buildSegmentGraph(const model::AntennaModel& model) -> SegmentGraph
     struct End {
         model::Point3D point;
         double radius{};
+        double segmentLength{};
     };
     std::vector<End> ends;
     auto scale = 1.0;
+    auto longestSegment = 0.0;
     for (std::size_t wireIndex = 0; wireIndex < wires.size(); ++wireIndex) {
         const auto& wire = wires[wireIndex];
         if (wire.segments <= 0 || wire.radius <= 0.0) continue;
@@ -274,17 +294,20 @@ auto buildSegmentGraph(const model::AntennaModel& model) -> SegmentGraph
             const auto [start, end] = model::wireSegmentEndpoints(wire, segment).value();
             const auto startRadius = radiusAt(wire, double(segment - 1) / wire.segments);
             const auto endRadius = radiusAt(wire, double(segment) / wire.segments);
+            const auto length = norm(difference(end, start));
             graph.segments.push_back({&wire, wireIndex, segment, start, end,
                 std::max(startRadius, endRadius)});
-            ends.push_back({start, startRadius});
-            ends.push_back({end, endRadius});
+            ends.push_back({start, startRadius, length});
+            ends.push_back({end, endRadius, length});
             scale = std::max({scale, std::abs(start.x), std::abs(start.y), std::abs(start.z),
                 std::abs(end.x), std::abs(end.y), std::abs(end.z)});
+            longestSegment = std::max(longestSegment, length);
         }
     }
     graph.tolerance = scale * 1.0e-9;
+    const auto sweepWindow = kNecContactFraction * longestSegment;
 
-    // Group coincident ends with a sweep along x; nearby() decides each match.
+    // Group touching ends with a sweep along x; necTouching() decides each match.
     std::vector<std::size_t> order(ends.size());
     for (std::size_t index = 0; index < order.size(); ++index) order[index] = index;
     std::ranges::sort(order, {}, [&ends](std::size_t index) { return ends[index].point.x; });
@@ -297,13 +320,16 @@ auto buildSegmentGraph(const model::AntennaModel& model) -> SegmentGraph
         auto& node = graph.nodes.back();
         for (auto next = position; next < order.size(); ++next) {
             const auto& candidate = ends[order[next]];
-            if (candidate.point.x - first.point.x > graph.tolerance) break;
-            if (nodeOf[order[next]] != SegmentGraph::npos || !nearby(first.point, candidate.point))
+            if (candidate.point.x - first.point.x > sweepWindow) break;
+            if (nodeOf[order[next]] != SegmentGraph::npos
+                || !necTouching(first.point, first.segmentLength, candidate.point,
+                    candidate.segmentLength))
                 continue;
             nodeOf[order[next]] = nodeIndex;
             ++node.segmentCount;
             node.minimumRadius = std::min(node.minimumRadius, candidate.radius);
             node.maximumRadius = std::max(node.maximumRadius, candidate.radius);
+            node.minimumSegmentLength = std::min(node.minimumSegmentLength, candidate.segmentLength);
         }
     }
     for (std::size_t index = 0; index < graph.segments.size(); ++index) {
@@ -482,27 +508,35 @@ void checkGroundFit(const model::ModelSetup& setup, const SegmentGraph& graph,
         }
         const auto tag = std::to_string(wire.tag);
         const auto first = graph.firstSegment[wireIndex];
+        if (first == SegmentGraph::npos) continue;
+        // Classify segment ends the way CONECT does, each against its own segment length.
+        auto below = false;
+        auto above = false;
+        auto inGroundPlane = false;
+        for (auto index = first; index < first + static_cast<std::size_t>(wire.segments); ++index) {
+            const auto& segment = graph.segments[index];
+            const auto length = norm(difference(segment.end, segment.start));
+            below = below || necBelowGround(segment.start.z, length)
+                || necBelowGround(segment.end.z, length);
+            above = above || (segment.start.z > 0.0 && !necOnGround(segment.start.z, length))
+                || (segment.end.z > 0.0 && !necOnGround(segment.end.z, length));
+            inGroundPlane = inGroundPlane
+                || (necOnGround(segment.start.z, length) && necOnGround(segment.end.z, length));
+        }
         // GE 1 also makes NEC-2 stop on these, even without GN.
         if ((groundPresent || groundsEnds) && usesNec2Kernel(profile)) {
-            const auto inGroundPlane = groundsEnds && first != SegmentGraph::npos
-                && std::any_of(graph.segments.begin() + static_cast<std::ptrdiff_t>(first),
-                    graph.segments.begin() + static_cast<std::ptrdiff_t>(first + static_cast<std::size_t>(wire.segments)),
-                    [tolerance](const GraphSegment& segment) {
-                        return std::abs(segment.start.z) <= tolerance
-                            && std::abs(segment.end.z) <= tolerance;
-                    });
-            if (inGroundPlane) {
+            if (groundsEnds && inGroundPlane) {
                 addAdequacyDiagnostic(result, DiagnosticSeverity::Error, wire.sourceLine,
                     "Wire tag " + tag + " has segments lying in the ground plane at z = 0; "
                         "with GE 1, NEC-2 stops on this. Raise the wire above ground.");
             }
-            if (lowest < -tolerance && highest > tolerance) {
+            if (below && above) {
                 addAdequacyDiagnostic(result, DiagnosticSeverity::Error, wire.sourceLine,
                     "Wire tag " + tag + " runs from z = " + concise(lowest) + " m to z = "
                         + concise(highest) + " m through the ground at z = 0; NEC-2 cannot "
                         "model a wire that passes into the ground. End it at z = 0 or keep it "
                         "above ground.");
-            } else if (lowest < -tolerance) {
+            } else if (below) {
                 addAdequacyDiagnostic(result, DiagnosticSeverity::Error, wire.sourceLine,
                     "Wire tag " + tag + " is below ground (lowest point z = " + concise(lowest)
                         + " m); NEC-2 cannot model buried wires. Raise it to z = 0 or above, "
@@ -510,11 +544,11 @@ void checkGroundFit(const model::ModelSetup& setup, const SegmentGraph& graph,
             }
         }
         // Wires rising from z = 0 with an unconnected end there; wires lying flat are skipped.
-        if ((lowest < -tolerance || highest > tolerance) && first != SegmentGraph::npos) {
+        if (below || above) {
             const auto& lastSegment = graph.segments[first + static_cast<std::size_t>(wire.segments - 1)];
-            const auto freeAtGround = [&graph, tolerance](std::size_t nodeIndex) {
+            const auto freeAtGround = [&graph](std::size_t nodeIndex) {
                 const auto& node = graph.nodes[nodeIndex];
-                return node.segmentCount == 1 && std::abs(node.point.z) <= tolerance;
+                return node.segmentCount == 1 && necOnGround(node.point.z, node.minimumSegmentLength);
             };
             if (freeAtGround(graph.segments[first].startNode) || freeAtGround(lastSegment.endNode))
                 openAtGround.push_back(&wire);
@@ -787,7 +821,8 @@ void checkStaticAdequacy(const model::ModelSetup& setup, CompatibilityProfile pr
         if (grouped[index]) continue;
         std::vector<const Endpoint*> junction;
         for (std::size_t candidate = index; candidate < endpoints.size(); ++candidate) {
-            if (nearby(endpoints[index].point, endpoints[candidate].point)) {
+            if (necTouching(endpoints[index].point, endpoints[index].segmentLength,
+                    endpoints[candidate].point, endpoints[candidate].segmentLength)) {
                 grouped[candidate] = true;
                 junction.push_back(&endpoints[candidate]);
             }

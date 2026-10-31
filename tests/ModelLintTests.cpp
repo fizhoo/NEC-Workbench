@@ -92,6 +92,42 @@ void testUnconnectedContacts()
         "wires meeting at a shared endpoint, even at a sharp angle, are not reported");
 }
 
+// NEC-2 CONECT joins ends within 0.001 of the segment length (|dx| + |dy| + |dz|) and puts
+// ends within that distance of z = 0 on the ground.
+void testNecConnectionTolerance()
+{
+    // 1 m segments: NEC joins ends up to 1 mm apart.
+    const auto joined = check(deck(
+        "GW 1 10 -10 0 10 0 0 10 .001\n"
+        "GW 2 10 0.0004 0 10 10 0 10 .001\n", "EX 0 1 5 0 1 0\n"));
+    expect(count(joined, "not connected") == 0,
+        "ends within NEC's 0.001-segment tolerance are joined");
+    expect(count(check(deck(
+                   "GW 1 10 -10 0 10 0 0 10 .003\n"
+                   "GW 2 10 0.003 0 10 10 0 10 .003\n", "EX 0 1 5 0 1 0\n")),
+               "touch at about") == 1,
+        "ends just beyond NEC's tolerance but within the wire radii touch without joining");
+    // A 10 m segment reaches 10 mm, a 0.1 m segment only 0.1 mm; NEC joins them one way only.
+    expect(count(check(deck(
+                   "GW 1 1 -10 0 10 0 0 10 .001\n"
+                   "GW 2 1 0.001 0 10 0.101 0 10 .001\n", "EX 0 1 1 0 1 0\n")),
+               "touch at about") == 1,
+        "ends joined only from the longer segment's side are reported");
+
+    // 0.5 m segments: NEC puts ends within 0.5 mm of z = 0 on the ground.
+    const auto snapped = check(deck("GW 1 10 0 0 -0.0002 0 0 5 .001\n", "EX 0 1 1 0 1 0\n",
+        "GE 1\nGN 1\n"));
+    expect(snapped.errorCount() == 0 && count(snapped, "end at z = 0") == 0
+            && count(snapped, "ends at z = 0") == 0,
+        "an end within NEC's tolerance of z = 0 is on the ground, not buried");
+    expect(count(check(deck("GW 1 10 0 0 -0.01 0 0 5 .001\n", "EX 0 1 1 0 1 0\n",
+                   "GE 1\nGN 1\n")), "through the ground", DiagnosticSeverity::Error) == 1,
+        "an end beyond NEC's tolerance below z = 0 passes into the ground");
+    expect(count(check(deck("GW 1 10 0 0 0.0003 0 0 5 .001\n", "EX 0 1 1 0 1 0\n",
+                   "GE 0\nGN 1\n")), "does not connect wire ends to ground") == 1,
+        "an end within NEC's tolerance above z = 0 counts as at z = 0");
+}
+
 void testLargeRadialFieldIsFast()
 {
     // A vertical over 120 elevated radials of 10 segments each.
@@ -273,6 +309,7 @@ void testTransmissionLineLength()
 auto main() -> int
 {
     testUnconnectedContacts();
+    testNecConnectionTolerance();
     testLargeRadialFieldIsFast();
     testGroundFit();
     testParallelAlignment();
