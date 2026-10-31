@@ -7,10 +7,18 @@
 #include "model/WireGeometry.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <iomanip>
+#include <limits>
+#include <numbers>
+#include <optional>
+#include <set>
 #include <sstream>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace necwb::nec {
@@ -36,10 +44,15 @@ void addSequenceDiagnostic(ModelCheckResult& result, DiagnosticSeverity severity
         {severity, card.lineNumber, std::move(message), "Control sequence"});
 }
 
+void addAdequacyDiagnostic(ModelCheckResult& result, DiagnosticSeverity severity,
+    std::size_t lineNumber, std::string message)
+{
+    result.diagnostics.push_back({severity, lineNumber, std::move(message), "Model adequacy"});
+}
+
 void addAdequacyWarning(ModelCheckResult& result, std::size_t lineNumber, std::string message)
 {
-    result.diagnostics.push_back(
-        {DiagnosticSeverity::Warning, lineNumber, std::move(message), "Model adequacy"});
+    addAdequacyDiagnostic(result, DiagnosticSeverity::Warning, lineNumber, std::move(message));
 }
 
 auto nearby(const model::Point3D& first, const model::Point3D& second) -> bool
@@ -59,13 +72,650 @@ auto concise(double value) -> std::string
     return stream.str();
 }
 
-void checkStaticAdequacy(const model::ModelSetup& setup, ModelCheckResult& result)
+auto location(const model::Point3D& point) -> std::string
+{
+    // Rounding to centimeters; avoid printing -0.00.
+    const auto rounded = [](double value) { return std::abs(value) < 0.005 ? 0.0 : value; };
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(2) << '(' << rounded(point.x) << ", "
+           << rounded(point.y) << ", " << rounded(point.z) << ") m";
+    return stream.str();
+}
+
+// Static-check thresholds. These are NEC-2 modeling guidance, not hard solver limits.
+
+// GN 0 approximates the ground with reflection coefficients, which loses accuracy for wires
+// near the ground, especially horizontal ones. Below this height GN 2 (Sommerfeld-Norton) is
+// the safer choice.
+constexpr auto kReflectionGroundMinimumHeightWavelengths = 0.1;
+// Segments within this elevation angle of the ground plane count as near-horizontal.
+constexpr auto kNearHorizontalDegrees = 30.0;
+// Wires within this angle of each other count as parallel.
+constexpr auto kParallelAngleDegrees = 5.0;
+// Parallel wires count as closely spaced below the larger of these two separations.
+constexpr auto kCloseSpacingRadii = 10.0;
+constexpr auto kCloseSpacingWavelengths = 0.01;
+// Closely spaced parallel segment junctions may be offset by this fraction of a segment.
+constexpr auto kSegmentAlignmentFraction = 0.1;
+// Radius ratio at a junction above which a source, load, or TL end counts as beside a step.
+constexpr auto kRadiusStepRatio = 1.1;
+// A TL length may fall this fraction short of the straight-line gap before it is flagged.
+constexpr auto kTransmissionLineLengthTolerance = 0.01;
+
+// Buried wires and offset parallel segments are NEC-2 limitations that NEC-4 and later
+// handle. Every backend Workbench drives today uses a NEC-2 kernel.
+auto usesNec2Kernel(CompatibilityProfile profile) noexcept -> bool
+{
+    switch (profile) {
+    case CompatibilityProfile::OriginalNec2:
+    case CompatibilityProfile::FourNec2:
+    case CompatibilityProfile::OpenNec:
+        return true;
+    }
+    return true;
+}
+
+auto difference(const model::Point3D& first, const model::Point3D& second) noexcept
+    -> model::Point3D
+{
+    return {first.x - second.x, first.y - second.y, first.z - second.z};
+}
+
+auto dot(const model::Point3D& first, const model::Point3D& second) noexcept -> double
+{
+    return first.x * second.x + first.y * second.y + first.z * second.z;
+}
+
+auto norm(const model::Point3D& vector) noexcept -> double
+{
+    return std::hypot(vector.x, vector.y, vector.z);
+}
+
+auto along(const model::Point3D& origin, const model::Point3D& direction, double amount) noexcept
+    -> model::Point3D
+{
+    return {origin.x + direction.x * amount, origin.y + direction.y * amount,
+        origin.z + direction.z * amount};
+}
+
+struct ClosestApproach {
+    double distance{};
+    // Position along each segment, 0 at its start and 1 at its end.
+    double first{};
+    double second{};
+    model::Point3D midpoint;
+};
+
+// Closest points between two line segments (Ericson, Real-Time Collision Detection, 5.1.9).
+auto closestApproach(const model::Point3D& firstStart, const model::Point3D& firstEnd,
+    const model::Point3D& secondStart, const model::Point3D& secondEnd) noexcept
+    -> ClosestApproach
+{
+    const auto firstDirection = difference(firstEnd, firstStart);
+    const auto secondDirection = difference(secondEnd, secondStart);
+    const auto offset = difference(firstStart, secondStart);
+    const auto a = dot(firstDirection, firstDirection);
+    const auto e = dot(secondDirection, secondDirection);
+    const auto f = dot(secondDirection, offset);
+    auto s = 0.0;
+    auto t = 0.0;
+    if (a > 0.0 && e > 0.0) {
+        const auto b = dot(firstDirection, secondDirection);
+        const auto c = dot(firstDirection, offset);
+        const auto denominator = a * e - b * b;
+        s = denominator > 0.0 ? std::clamp((b * f - c * e) / denominator, 0.0, 1.0) : 0.0;
+        t = (b * s + f) / e;
+        if (t < 0.0) {
+            t = 0.0;
+            s = std::clamp(-c / a, 0.0, 1.0);
+        } else if (t > 1.0) {
+            t = 1.0;
+            s = std::clamp((b - c) / a, 0.0, 1.0);
+        }
+    } else if (a > 0.0) {
+        s = std::clamp(-dot(firstDirection, offset) / a, 0.0, 1.0);
+    } else if (e > 0.0) {
+        t = std::clamp(f / e, 0.0, 1.0);
+    }
+    const auto firstPoint = along(firstStart, firstDirection, s);
+    const auto secondPoint = along(secondStart, secondDirection, t);
+    return {norm(difference(firstPoint, secondPoint)), s, t,
+        along(firstPoint, difference(secondPoint, firstPoint), 0.5)};
+}
+
+auto radiusAt(const model::Wire& wire, double fraction) noexcept -> double
+{
+    if (wire.endRadius <= 0.0) return wire.radius;
+    return wire.radius + (wire.endRadius - wire.radius) * fraction;
+}
+
+// Segment-level view of the drawn wires. NEC connects segments wherever their ends coincide,
+// including at interior segment boundaries of another wire, so connection checks work on
+// segments rather than wire ends.
+struct GraphSegment {
+    const model::Wire* wire{};
+    std::size_t wireIndex{};
+    int segment{};
+    model::Point3D start;
+    model::Point3D end;
+    double radius{};
+    std::size_t startNode{};
+    std::size_t endNode{};
+};
+
+struct GraphNode {
+    model::Point3D point;
+    int segmentCount{};
+    double minimumRadius{std::numeric_limits<double>::infinity()};
+    double maximumRadius{};
+};
+
+struct SegmentGraph {
+    std::vector<GraphSegment> segments;
+    std::vector<GraphNode> nodes;
+    // Index of each wire's first segment, or npos for wires without segments or radius.
+    std::vector<std::size_t> firstSegment;
+    // Node pairs joined by a single segment.
+    std::unordered_set<std::uint64_t> links;
+    // nearby() tolerance at the largest coordinate in the model.
+    double tolerance{};
+
+    static constexpr auto npos = std::numeric_limits<std::size_t>::max();
+
+    static auto linkKey(std::size_t first, std::size_t second) noexcept -> std::uint64_t
+    {
+        return (static_cast<std::uint64_t>(std::min(first, second)) << 32)
+            | static_cast<std::uint64_t>(std::max(first, second));
+    }
+
+    [[nodiscard]] auto find(const model::AntennaModel& model, const model::Wire& wire,
+        int segment) const -> const GraphSegment*
+    {
+        const auto wireIndex = static_cast<std::size_t>(&wire - model.wires().data());
+        if (wireIndex >= firstSegment.size() || firstSegment[wireIndex] == npos
+            || segment < 1 || segment > wire.segments) return nullptr;
+        return &segments[firstSegment[wireIndex] + static_cast<std::size_t>(segment - 1)];
+    }
+
+    // True when the segments share an end or are one segment apart, so closeness is expected.
+    [[nodiscard]] auto adjacent(const GraphSegment& first, const GraphSegment& second) const
+        -> bool
+    {
+        for (const auto a : {first.startNode, first.endNode}) {
+            for (const auto b : {second.startNode, second.endNode}) {
+                if (a == b || links.contains(linkKey(a, b))) return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto grounded(const GraphNode& node, bool groundPresent) const noexcept -> bool
+    {
+        return groundPresent && std::abs(node.point.z) <= tolerance;
+    }
+};
+
+auto buildSegmentGraph(const model::AntennaModel& model) -> SegmentGraph
+{
+    SegmentGraph graph;
+    const auto wires = model.wires();
+    graph.firstSegment.assign(wires.size(), SegmentGraph::npos);
+    struct End {
+        model::Point3D point;
+        double radius{};
+    };
+    std::vector<End> ends;
+    auto scale = 1.0;
+    for (std::size_t wireIndex = 0; wireIndex < wires.size(); ++wireIndex) {
+        const auto& wire = wires[wireIndex];
+        if (wire.segments <= 0 || wire.radius <= 0.0) continue;
+        graph.firstSegment[wireIndex] = graph.segments.size();
+        for (auto segment = 1; segment <= wire.segments; ++segment) {
+            const auto [start, end] = model::wireSegmentEndpoints(wire, segment).value();
+            const auto startRadius = radiusAt(wire, double(segment - 1) / wire.segments);
+            const auto endRadius = radiusAt(wire, double(segment) / wire.segments);
+            graph.segments.push_back({&wire, wireIndex, segment, start, end,
+                std::max(startRadius, endRadius)});
+            ends.push_back({start, startRadius});
+            ends.push_back({end, endRadius});
+            scale = std::max({scale, std::abs(start.x), std::abs(start.y), std::abs(start.z),
+                std::abs(end.x), std::abs(end.y), std::abs(end.z)});
+        }
+    }
+    graph.tolerance = scale * 1.0e-9;
+
+    // Group coincident ends with a sweep along x; nearby() decides each match.
+    std::vector<std::size_t> order(ends.size());
+    for (std::size_t index = 0; index < order.size(); ++index) order[index] = index;
+    std::ranges::sort(order, {}, [&ends](std::size_t index) { return ends[index].point.x; });
+    std::vector<std::size_t> nodeOf(ends.size(), SegmentGraph::npos);
+    for (std::size_t position = 0; position < order.size(); ++position) {
+        const auto& first = ends[order[position]];
+        if (nodeOf[order[position]] != SegmentGraph::npos) continue;
+        const auto nodeIndex = graph.nodes.size();
+        graph.nodes.push_back({first.point});
+        auto& node = graph.nodes.back();
+        for (auto next = position; next < order.size(); ++next) {
+            const auto& candidate = ends[order[next]];
+            if (candidate.point.x - first.point.x > graph.tolerance) break;
+            if (nodeOf[order[next]] != SegmentGraph::npos || !nearby(first.point, candidate.point))
+                continue;
+            nodeOf[order[next]] = nodeIndex;
+            ++node.segmentCount;
+            node.minimumRadius = std::min(node.minimumRadius, candidate.radius);
+            node.maximumRadius = std::max(node.maximumRadius, candidate.radius);
+        }
+    }
+    for (std::size_t index = 0; index < graph.segments.size(); ++index) {
+        auto& segment = graph.segments[index];
+        segment.startNode = nodeOf[2 * index];
+        segment.endNode = nodeOf[2 * index + 1];
+        graph.links.insert(SegmentGraph::linkKey(segment.startNode, segment.endNode));
+    }
+    return graph;
+}
+
+// Segments that come within their combined radii without sharing an end. A uniform grid keeps
+// large radial fields fast: each padded segment box goes into the cells it covers, and a pair
+// is tested only in the cell that holds the low corner of their box overlap.
+void checkUnconnectedContacts(const SegmentGraph& graph, ModelCheckResult& result)
+{
+    const auto& segments = graph.segments;
+    if (segments.size() < 2) return;
+
+    struct Box {
+        std::array<double, 3> low;
+        std::array<double, 3> high;
+    };
+    std::vector<Box> boxes;
+    boxes.reserve(segments.size());
+    auto averageExtent = 0.0;
+    for (const auto& segment : segments) {
+        const auto pad = segment.radius + graph.tolerance;
+        Box box{{std::min(segment.start.x, segment.end.x) - pad,
+                    std::min(segment.start.y, segment.end.y) - pad,
+                    std::min(segment.start.z, segment.end.z) - pad},
+            {std::max(segment.start.x, segment.end.x) + pad,
+                std::max(segment.start.y, segment.end.y) + pad,
+                std::max(segment.start.z, segment.end.z) + pad}};
+        averageExtent += std::max({box.high[0] - box.low[0], box.high[1] - box.low[1],
+            box.high[2] - box.low[2]});
+        boxes.push_back(box);
+    }
+    const auto cellSize = averageExtent / static_cast<double>(segments.size());
+
+    struct Cell {
+        std::int64_t x{};
+        std::int64_t y{};
+        std::int64_t z{};
+        auto operator==(const Cell&) const -> bool = default;
+    };
+    struct CellHash {
+        auto operator()(const Cell& cell) const noexcept -> std::size_t
+        {
+            auto hash = static_cast<std::size_t>(cell.x) * 73856093u;
+            hash ^= static_cast<std::size_t>(cell.y) * 19349663u;
+            hash ^= static_cast<std::size_t>(cell.z) * 83492791u;
+            return hash;
+        }
+    };
+    const auto cellIndex = [cellSize](double value) {
+        return static_cast<std::int64_t>(std::floor(value / cellSize));
+    };
+    const auto cellOf = [&cellIndex](const std::array<double, 3>& point) {
+        return Cell{cellIndex(point[0]), cellIndex(point[1]), cellIndex(point[2])};
+    };
+
+    // A segment far longer than the cell size would fill too many cells; test it directly.
+    constexpr auto kMaximumCellsPerSegment = std::int64_t{512};
+    std::unordered_map<Cell, std::vector<std::size_t>, CellHash> grid;
+    std::vector<std::size_t> oversized;
+    for (std::size_t index = 0; index < segments.size(); ++index) {
+        const auto low = cellOf(boxes[index].low);
+        const auto high = cellOf(boxes[index].high);
+        const auto cellCount = (high.x - low.x + 1) * (high.y - low.y + 1) * (high.z - low.z + 1);
+        if (!(cellSize > 0.0) || cellCount > kMaximumCellsPerSegment) {
+            oversized.push_back(index);
+            continue;
+        }
+        for (auto x = low.x; x <= high.x; ++x)
+            for (auto y = low.y; y <= high.y; ++y)
+                for (auto z = low.z; z <= high.z; ++z) grid[{x, y, z}].push_back(index);
+    }
+
+    std::set<std::pair<std::size_t, std::size_t>> reportedWires;
+    const auto test = [&](std::size_t firstIndex, std::size_t secondIndex) {
+        const auto& firstBox = boxes[firstIndex];
+        const auto& secondBox = boxes[secondIndex];
+        for (auto axis = 0; axis < 3; ++axis) {
+            if (firstBox.high[axis] < secondBox.low[axis]
+                || secondBox.high[axis] < firstBox.low[axis]) return;
+        }
+        const auto& first = segments[firstIndex];
+        const auto& second = segments[secondIndex];
+        const auto wires = std::minmax(first.wireIndex, second.wireIndex);
+        if (reportedWires.contains(wires) || graph.adjacent(first, second)) return;
+        const auto approach = closestApproach(first.start, first.end, second.start, second.end);
+        if (approach.distance > first.radius + second.radius + graph.tolerance) return;
+        reportedWires.insert(wires);
+
+        const auto lineNumber = std::max(first.wire->sourceLine, second.wire->sourceLine);
+        // A free wire end resting on the other segment's interior is a T that NEC leaves open.
+        const auto freeEndOn = [&graph](const GraphSegment& segment, double position) {
+            const auto node = position <= 0.0 ? segment.startNode
+                : position >= 1.0               ? segment.endNode
+                                                : SegmentGraph::npos;
+            return node != SegmentGraph::npos && graph.nodes[node].segmentCount == 1;
+        };
+        const auto interior = [](double position) { return position > 0.0 && position < 1.0; };
+        const auto* ending = freeEndOn(first, approach.first) && interior(approach.second) ? &first
+            : freeEndOn(second, approach.second) && interior(approach.first)             ? &second
+                                                                                         : nullptr;
+        if (ending != nullptr && first.wireIndex != second.wireIndex) {
+            const auto& other = ending == &first ? second : first;
+            addAdequacyWarning(result, lineNumber,
+                "Wire tag " + std::to_string(ending->wire->tag) + " ends on wire tag "
+                    + std::to_string(other.wire->tag) + " at about "
+                    + location(approach.midpoint) + ", but not at one of its segment ends, so "
+                    "NEC does not connect them. Move the end to a segment junction on wire tag "
+                    + std::to_string(other.wire->tag) + " or split that wire there.");
+        } else if (first.wireIndex == second.wireIndex) {
+            addAdequacyWarning(result, lineNumber,
+                "Wire tag " + std::to_string(first.wire->tag) + " crosses itself at about "
+                    + location(approach.midpoint)
+                    + "; NEC joins segments only at shared segment endpoints. Reshape the wire "
+                      "so its segments stay apart.");
+        } else {
+            const auto verb = approach.distance <= graph.tolerance ? " cross" : " touch";
+            addAdequacyWarning(result, lineNumber,
+                "Wire tags " + std::to_string(first.wire->tag) + " and "
+                    + std::to_string(second.wire->tag) + verb + " at about "
+                    + location(approach.midpoint)
+                    + " but are not connected; NEC joins wires only at shared segment "
+                      "endpoints. Split one wire at the crossing or move it.");
+        }
+    };
+
+    for (const auto& [cell, members] : grid) {
+        for (std::size_t i = 0; i < members.size(); ++i) {
+            for (std::size_t j = i + 1; j < members.size(); ++j) {
+                const auto& firstBox = boxes[members[i]];
+                const auto& secondBox = boxes[members[j]];
+                const auto owner = cellOf({std::max(firstBox.low[0], secondBox.low[0]),
+                    std::max(firstBox.low[1], secondBox.low[1]),
+                    std::max(firstBox.low[2], secondBox.low[2])});
+                if (owner == cell) test(members[i], members[j]);
+            }
+        }
+    }
+    for (std::size_t i = 0; i < oversized.size(); ++i) {
+        for (std::size_t other = 0; other < segments.size(); ++other) {
+            const auto alsoOversized = std::ranges::find(oversized, other) != oversized.end();
+            if (other == oversized[i] || (alsoOversized && other < oversized[i])) continue;
+            test(oversized[i], other);
+        }
+    }
+}
+
+void checkGroundFit(const model::ModelSetup& setup, const SegmentGraph& graph,
+    double wavelengthMeters, CompatibilityProfile profile, ModelCheckResult& result)
+{
+    const auto groundType = setup.ground ? setup.ground->type : model::GroundType::FreeSpace;
+    const auto groundPresent = groundType != model::GroundType::FreeSpace;
+    const auto tolerance = graph.tolerance;
+    const auto wires = result.model.wires();
+    std::vector<const model::Wire*> groundedLooking;
+
+    for (std::size_t wireIndex = 0; wireIndex < wires.size(); ++wireIndex) {
+        const auto& wire = wires[wireIndex];
+        if (wire.segments <= 0) continue;
+        auto lowest = std::numeric_limits<double>::infinity();
+        auto highest = -lowest;
+        for (std::size_t point = 0; point < model::wirePathPointCount(wire); ++point) {
+            lowest = std::min(lowest, model::wirePathPoint(wire, point).z);
+            highest = std::max(highest, model::wirePathPoint(wire, point).z);
+        }
+        const auto tag = std::to_string(wire.tag);
+        if (groundPresent && usesNec2Kernel(profile)) {
+            if (lowest < -tolerance && highest > tolerance) {
+                addAdequacyDiagnostic(result, DiagnosticSeverity::Error, wire.sourceLine,
+                    "Wire tag " + tag + " runs from z = " + concise(lowest) + " m to z = "
+                        + concise(highest) + " m through the ground at z = 0; NEC-2 cannot "
+                        "model a wire that passes into the ground. End it at z = 0 or keep it "
+                        "above ground.");
+            } else if (lowest < -tolerance) {
+                addAdequacyDiagnostic(result, DiagnosticSeverity::Error, wire.sourceLine,
+                    "Wire tag " + tag + " is below ground (lowest point z = " + concise(lowest)
+                        + " m); NEC-2 cannot model buried wires. Raise it to z = 0 or above, "
+                          "or use a NEC-4 class solver.");
+            }
+        }
+        if (!groundPresent && (lowest < -tolerance || highest > tolerance)
+            && graph.firstSegment[wireIndex] != SegmentGraph::npos) {
+            const auto& firstSegment = graph.segments[graph.firstSegment[wireIndex]];
+            const auto& lastSegment = graph.segments[graph.firstSegment[wireIndex]
+                + static_cast<std::size_t>(wire.segments - 1)];
+            const auto freeAtGround = [&graph, tolerance](std::size_t nodeIndex) {
+                const auto& node = graph.nodes[nodeIndex];
+                return node.segmentCount == 1 && std::abs(node.point.z) <= tolerance;
+            };
+            if (freeAtGround(firstSegment.startNode) || freeAtGround(lastSegment.endNode))
+                groundedLooking.push_back(&wire);
+        }
+    }
+    if (!groundedLooking.empty()) {
+        // One finding on GE, where the fix goes, rather than one per wire of an array.
+        const auto geometryEnd = setup.ground ? setup.ground->geometryEndSourceLine : 0;
+        auto tags = std::string(groundedLooking.size() == 1 ? "Wire tag " : "Wire tags ");
+        for (std::size_t index = 0; index < groundedLooking.size() && index < 5; ++index)
+            tags += (index == 0 ? "" : ", ") + std::to_string(groundedLooking[index]->tag);
+        if (groundedLooking.size() > 5)
+            tags += " and " + std::to_string(groundedLooking.size() - 5) + " more";
+        addAdequacyWarning(result, geometryEnd != 0 ? geometryEnd : groundedLooking.front()->sourceLine,
+            tags + (groundedLooking.size() == 1
+                    ? " ends at z = 0, but the model has no ground, so that end is open in free "
+                      "space. If it should connect to ground, add a GN card and use GE 1."
+                    : " end at z = 0, but the model has no ground, so those ends are open in "
+                      "free space. If they should connect to ground, add a GN card and use GE 1."));
+    }
+
+    if (groundType != model::GroundType::ReflectionApproximation) return;
+    const auto heightLimit = kReflectionGroundMinimumHeightWavelengths * wavelengthMeters;
+    const auto horizontalLimit = std::sin(kNearHorizontalDegrees * std::numbers::pi / 180.0);
+    std::set<std::size_t> lowWires;
+    const GraphSegment* lowestSegment{};
+    auto lowestHeight = std::numeric_limits<double>::infinity();
+    for (const auto& segment : graph.segments) {
+        const auto direction = difference(segment.end, segment.start);
+        const auto height = (segment.start.z + segment.end.z) / 2.0;
+        if (height < -tolerance || height >= heightLimit
+            || std::abs(direction.z) > horizontalLimit * norm(direction)) continue;
+        lowWires.insert(segment.wireIndex);
+        if (height < lowestHeight) {
+            lowestHeight = height;
+            lowestSegment = &segment;
+        }
+    }
+    if (lowestSegment == nullptr) return;
+    addAdequacyWarning(result, setup.ground->sourceLine,
+        "GN 0 uses the reflection-coefficient ground approximation, but "
+            + std::to_string(lowWires.size())
+            + (lowWires.size() == 1 ? " wire has" : " wires have")
+            + " near-horizontal segments below " + concise(kReflectionGroundMinimumHeightWavelengths)
+            + " wavelength (lowest: wire tag " + std::to_string(lowestSegment->wire->tag) + " at "
+            + concise(lowestHeight) + " m, " + concise(lowestHeight / wavelengthMeters)
+            + " wavelength). Use GN 2 (Sommerfeld-Norton) for wires this close to ground.");
+}
+
+// Closely spaced parallel wires whose segment junctions do not line up.
+void checkParallelAlignment(const SegmentGraph& graph, double wavelengthMeters,
+    ModelCheckResult& result)
+{
+    struct Line {
+        const model::Wire* wire{};
+        model::Point3D direction;
+        double radius{};
+        double minimumSegment{};
+        std::vector<model::Point3D> junctions;
+    };
+    std::vector<Line> lines;
+    const auto wires = result.model.wires();
+    for (std::size_t wireIndex = 0; wireIndex < wires.size(); ++wireIndex) {
+        const auto& wire = wires[wireIndex];
+        const auto first = graph.firstSegment[wireIndex];
+        if (first == SegmentGraph::npos || wire.geometryKind != model::WireGeometryKind::Straight)
+            continue;
+        const auto direction = difference(wire.end, wire.start);
+        const auto length = norm(direction);
+        if (length <= 0.0) continue;
+        Line line{&wire, along({}, direction, 1.0 / length), model::wireMaximumRadius(wire),
+            model::wireMinimumSegmentLength(wire), {wire.start}};
+        for (auto segment = 0; segment < wire.segments; ++segment)
+            line.junctions.push_back(graph.segments[first + static_cast<std::size_t>(segment)].end);
+        lines.push_back(std::move(line));
+    }
+
+    const auto parallelCosine = std::cos(kParallelAngleDegrees * std::numbers::pi / 180.0);
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        for (std::size_t j = i + 1; j < lines.size(); ++j) {
+            const auto& first = lines[i];
+            const auto& second = lines[j];
+            const auto cosine = dot(first.direction, second.direction);
+            if (std::abs(cosine) < parallelCosine) continue;
+            // Measure both wires along their mean direction so neither is foreshortened.
+            const auto mean = along(first.direction, second.direction, cosine < 0.0 ? -1.0 : 1.0);
+            const auto axis = along({}, mean, 1.0 / norm(mean));
+            const auto origin = first.junctions.front();
+            const auto project = [&axis, &origin](const std::vector<model::Point3D>& points) {
+                std::vector<double> positions;
+                positions.reserve(points.size());
+                for (const auto& point : points) positions.push_back(dot(difference(point, origin), axis));
+                std::ranges::sort(positions);
+                return positions;
+            };
+            const auto firstPositions = project(first.junctions);
+            const auto secondPositions = project(second.junctions);
+            const auto low = std::max(firstPositions.front(), secondPositions.front());
+            const auto high = std::min(firstPositions.back(), secondPositions.back());
+            const auto segmentLength = std::min(first.minimumSegment, second.minimumSegment);
+            // Require at least one segment side by side; this also skips end-to-end wires.
+            if (high - low < segmentLength) continue;
+
+            const auto middle = along(origin, axis, (low + high) / 2.0);
+            const auto fromSecond = difference(middle, second.junctions.front());
+            const auto separation = norm(difference(fromSecond,
+                along({}, axis, dot(fromSecond, axis))));
+            const auto closeLimit = std::max(kCloseSpacingRadii * std::max(first.radius, second.radius),
+                kCloseSpacingWavelengths * wavelengthMeters);
+            // Contact is reported by the crossing check.
+            if (separation <= first.radius + second.radius || separation >= closeLimit) continue;
+
+            const auto slack = segmentLength * 1.0e-6;
+            const auto largestOffset = [low, high, slack](const std::vector<double>& positions,
+                                           const std::vector<double>& reference) {
+                auto largest = 0.0;
+                for (const auto position : positions) {
+                    if (position < low - slack || position > high + slack) continue;
+                    const auto next = std::ranges::lower_bound(reference, position);
+                    auto nearest = std::numeric_limits<double>::infinity();
+                    if (next != reference.end()) nearest = *next - position;
+                    if (next != reference.begin()) nearest = std::min(nearest, position - *(next - 1));
+                    largest = std::max(largest, nearest);
+                }
+                return largest;
+            };
+            const auto offset = std::max(largestOffset(firstPositions, secondPositions),
+                largestOffset(secondPositions, firstPositions));
+            if (offset <= kSegmentAlignmentFraction * segmentLength) continue;
+            addAdequacyWarning(result, std::max(first.wire->sourceLine, second.wire->sourceLine),
+                "Wire tags " + std::to_string(first.wire->tag) + " and "
+                    + std::to_string(second.wire->tag) + " run parallel " + concise(separation)
+                    + " m apart, but their segment junctions are offset by up to "
+                    + concise(offset) + " m (" + concise(100.0 * offset / segmentLength)
+                    + "% of a segment); NEC-2 is most accurate when closely spaced parallel "
+                      "segments line up. Segment the overlapping lengths to match.");
+        }
+    }
+}
+
+enum class InsertionRisk {
+    None,
+    Junction,
+    RadiusStep,
+    FreeEnd
+};
+
+struct InsertionFinding {
+    InsertionRisk risk{InsertionRisk::None};
+    const GraphNode* node{};
+};
+
+// Why a segment is a poor place for a source, load, or transmission-line end, if it is.
+auto insertionRisk(const SegmentGraph& graph, const model::AntennaModel& model,
+    const model::SegmentReference& reference, bool groundPresent) -> InsertionFinding
+{
+    if (reference.wire == nullptr) return {};
+    const auto* segment = graph.find(model, *reference.wire, reference.segment);
+    if (segment == nullptr) return {};
+    InsertionFinding freeEnd;
+    for (const auto nodeIndex : {segment->startNode, segment->endNode}) {
+        const auto& node = graph.nodes[nodeIndex];
+        if (node.segmentCount > 2) return {InsertionRisk::Junction, &node};
+        if (node.maximumRadius > node.minimumRadius * kRadiusStepRatio)
+            return {InsertionRisk::RadiusStep, &node};
+        // A one-segment wire is the usual stub for a TL or NT terminal; its ends are expected.
+        if (node.segmentCount == 1 && reference.wire->segments > 1
+            && !graph.grounded(node, groundPresent))
+            freeEnd = {InsertionRisk::FreeEnd, &node};
+    }
+    return freeEnd;
+}
+
+void reportInsertionRisk(ModelCheckResult& result, const SegmentGraph& graph,
+    bool groundPresent, std::string_view card, int wireTag, int segment, std::size_t lineNumber)
+{
+    const auto reference = model::referencedSegment(result.model, wireTag, segment);
+    if (!reference) return;
+    const auto finding = insertionRisk(graph, result.model, *reference, groundPresent);
+    const auto isLine = card == "TL";
+    const auto subject = std::string(isLine ? "TL end" : card) + " on wire tag "
+        + std::to_string(wireTag) + " segment " + std::to_string(segment);
+    const auto objects = card == "EX" ? "sources" : card == "LD" ? "loads" : "line connections";
+    switch (finding.risk) {
+    case InsertionRisk::Junction:
+        addAdequacyWarning(result, lineNumber,
+            subject + " touches a junction of " + std::to_string(finding.node->segmentCount)
+                + " segments; NEC-2 is less accurate for " + objects
+                + " there. Move it at least one segment from the junction if the design allows.");
+        break;
+    case InsertionRisk::RadiusStep:
+        addAdequacyWarning(result, lineNumber,
+            subject + " adjoins a radius step from " + concise(finding.node->minimumRadius)
+                + " m to " + concise(finding.node->maximumRadius) + " m; NEC-2 is less accurate "
+                + "for " + objects + " there. Move it at least one segment from the step.");
+        break;
+    case InsertionRisk::FreeEnd:
+        if (isLine) break;
+        addAdequacyDiagnostic(result, DiagnosticSeverity::Information, lineNumber,
+            subject + " is on the end segment of a free wire end, where NEC forces the current "
+                      "toward zero; move it inward unless that is intended.");
+        break;
+    case InsertionRisk::None:
+        break;
+    }
+}
+
+void checkStaticAdequacy(const model::ModelSetup& setup, CompatibilityProfile profile,
+    ModelCheckResult& result)
 {
     if (!setup.frequency || result.model.empty()) return;
     const auto highestFrequencyMHz = std::max(setup.frequency->startMHz,
         model::frequencyEndMHz(*setup.frequency));
     if (!std::isfinite(highestFrequencyMHz) || highestFrequencyMHz <= 0.0) return;
     const auto wavelengthMeters = 299.792458 / highestFrequencyMHz;
+    const auto graph = buildSegmentGraph(result.model);
+    const auto groundPresent = setup.ground
+        && setup.ground->type != model::GroundType::FreeSpace;
 
     struct Endpoint {
         model::Point3D point;
@@ -134,6 +784,8 @@ void checkStaticAdequacy(const model::ModelSetup& setup, ModelCheckResult& resul
         const auto reference = model::referencedSegment(result.model, excitation.wireTag,
             excitation.segment);
         if (!reference || reference->wire == nullptr) continue;
+        reportInsertionRisk(result, graph, groundPresent, "EX", excitation.wireTag,
+            excitation.segment, excitation.sourceLine);
         const auto* wire = reference->wire;
         if (wire->segments % 2 != 0) continue;
         if (reference->segment == wire->segments / 2
@@ -143,6 +795,39 @@ void checkStaticAdequacy(const model::ModelSetup& setup, ModelCheckResult& resul
                     + " has an even segment count; no segment lies exactly at its center");
         }
     }
+    for (const auto& load : setup.loads) {
+        // Only single-segment lumped loads sit at one place; LD 5 and ranges are distributed.
+        if (load.type == 5 || load.firstSegment < 1 || load.lastSegment != load.firstSegment)
+            continue;
+        reportInsertionRisk(result, graph, groundPresent, "LD", load.wireTag, load.firstSegment,
+            load.sourceLine);
+    }
+    for (const auto& line : setup.transmissionLines) {
+        reportInsertionRisk(result, graph, groundPresent, "TL", line.wireTag1, line.segment1,
+            line.sourceLine);
+        reportInsertionRisk(result, graph, groundPresent, "TL", line.wireTag2, line.segment2,
+            line.sourceLine);
+        // A zero length tells NEC to use the straight-line distance.
+        if (line.lengthMeters <= 0.0) continue;
+        const auto firstCenter = model::wireSegmentPosition(result.model, line.wireTag1,
+            line.segment1);
+        const auto secondCenter = model::wireSegmentPosition(result.model, line.wireTag2,
+            line.segment2);
+        if (!firstCenter || !secondCenter) continue;
+        const auto gap = norm(difference(*firstCenter, *secondCenter));
+        if (line.lengthMeters >= gap * (1.0 - kTransmissionLineLengthTolerance)) continue;
+        addAdequacyWarning(result, line.sourceLine,
+            "TL from wire tag " + std::to_string(line.wireTag1) + " segment "
+                + std::to_string(line.segment1) + " to wire tag " + std::to_string(line.wireTag2)
+                + " segment " + std::to_string(line.segment2) + " is " + concise(line.lengthMeters)
+                + " m long, but those segments are " + concise(gap)
+                + " m apart; a real line cannot be shorter than the gap it spans. Check the "
+                  "length, which NEC reads in meters even when GS scales the geometry.");
+    }
+
+    checkUnconnectedContacts(graph, result);
+    checkGroundFit(setup, graph, wavelengthMeters, profile, result);
+    if (usesNec2Kernel(profile)) checkParallelAlignment(graph, wavelengthMeters, result);
 }
 
 void checkExcitation(const NecCard& card, ModelCheckResult& result)
@@ -709,7 +1394,7 @@ auto NecModelChecker::check(const NecDocument& document, ModelCheckOptions optio
                         : " SY symbols were resolved and expanded in the generated solver deck"),
             "Compatibility"});
     }
-    checkStaticAdequacy(setup, result);
+    checkStaticAdequacy(setup, options.compatibility, result);
     std::ranges::sort(result.diagnostics, {}, &ModelDiagnostic::lineNumber);
     return result;
 }
