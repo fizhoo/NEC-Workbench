@@ -60,8 +60,8 @@ void addAdequacyWarning(ModelCheckResult& result, std::size_t lineNumber, std::s
 constexpr auto kNecContactFraction = 1.0e-3;
 
 // NEC applies each segment's own tolerance, so a long segment can reach a short one that does
-// not reach back. Ends count as joined only when both segments agree; ends in the gap between
-// the two tolerances are left to the contact check.
+// not reach back. Ends count as joined only when both segments agree; a one-way reach stops
+// NEC-2 and is reported by checkNecJunctions().
 auto necTouching(const model::Point3D& first, double firstSegmentLength,
     const model::Point3D& second, double secondSegmentLength) -> bool
 {
@@ -341,10 +341,139 @@ auto buildSegmentGraph(const model::AntennaModel& model) -> SegmentGraph
     return graph;
 }
 
+using WirePairs = std::set<std::pair<std::size_t, std::size_t>>;
+
+// Replays NEC-2's CONECT and TRIO. CONECT gives each segment end one pointer: the first other
+// segment end, searching onward from the next segment number, within that end's own tolerance
+// (negative when it is the other segment's first end). TRIO follows those pointers around each
+// junction and stops NEC-2 if it meets a zero or does not come back within 30 steps. With
+// mixed segment lengths, a long segment can reach a short one that does not reach back.
+// Returns the wire pairs reported, so the contact check does not report them again.
+auto checkNecJunctions(const SegmentGraph& graph, bool groundsEnds, ModelCheckResult& result)
+    -> WirePairs
+{
+    WirePairs reported;
+    const auto& segments = graph.segments;
+    const auto count = static_cast<std::int64_t>(segments.size());
+    if (count < 2) return reported;
+
+    // End 2 * i is the start of segment i, 2 * i + 1 its end.
+    const auto endPoint = [&segments](std::size_t end) -> const model::Point3D& {
+        return end % 2 == 0 ? segments[end / 2].start : segments[end / 2].end;
+    };
+    std::vector<double> lengths(segments.size());
+    for (std::size_t index = 0; index < segments.size(); ++index)
+        lengths[index] = norm(difference(segments[index].end, segments[index].start));
+    std::vector<std::size_t> order(2 * segments.size());
+    for (std::size_t index = 0; index < order.size(); ++index) order[index] = index;
+    std::ranges::sort(order, {}, [&endPoint](std::size_t end) { return endPoint(end).x; });
+
+    // Pointers use NEC's 1-based segment numbers; 0 means a free end.
+    std::vector<std::int64_t> pointer(order.size());
+    for (std::size_t end = 0; end < order.size(); ++end) {
+        const auto self = static_cast<std::int64_t>(end / 2);
+        const auto& point = endPoint(end);
+        const auto tolerance = kNecContactFraction * lengths[end / 2];
+        if (groundsEnds && necOnGround(point.z, lengths[end / 2])) {
+            pointer[end] = self + 1;
+            continue;
+        }
+        auto best = std::numeric_limits<std::int64_t>::max();
+        auto bestEnd = std::size_t{};
+        auto position = std::ranges::lower_bound(order, point.x - tolerance, {},
+            [&endPoint](std::size_t other) { return endPoint(other).x; });
+        for (; position != order.end() && endPoint(*position).x <= point.x + tolerance; ++position) {
+            const auto other = static_cast<std::int64_t>(*position / 2);
+            if (other == self) continue;
+            const auto& candidate = endPoint(*position);
+            const auto separation = std::abs(point.x - candidate.x) + std::abs(point.y - candidate.y)
+                + std::abs(point.z - candidate.z);
+            if (separation > tolerance) continue;
+            // Search order: next segment number first, and a segment's first end before its last.
+            const auto rank = 2 * ((other - self + count) % count) + static_cast<std::int64_t>(*position % 2);
+            if (rank < best) {
+                best = rank;
+                bestEnd = *position;
+            }
+        }
+        if (best == std::numeric_limits<std::int64_t>::max()) continue;
+        // Ends of the same kind (first to first, last to last) give a negative pointer.
+        const auto next = static_cast<std::int64_t>(bestEnd / 2) + 1;
+        pointer[end] = (end % 2) == (bestEnd % 2) ? -next : next;
+    }
+
+    constexpr auto kTrioLimit = 30;
+    const auto report = [&](std::size_t fromEnd, std::size_t toEnd, std::string message) {
+        const auto& from = segments[fromEnd / 2];
+        const auto& to = segments[toEnd / 2];
+        const auto wires = std::minmax(from.wireIndex, to.wireIndex);
+        if (!reported.insert(wires).second) return;
+        addAdequacyDiagnostic(result, DiagnosticSeverity::Error,
+            std::max(from.wire->sourceLine, to.wire->sourceLine), std::move(message));
+    };
+    const auto name = [&segments](std::size_t end) {
+        const auto& segment = segments[end / 2];
+        return "wire tag " + std::to_string(segment.wire->tag) + " segment "
+            + std::to_string(segment.segment);
+    };
+    for (std::size_t start = 0; start < pointer.size(); ++start) {
+        // TRIO's 30-step limit covers both ends of a segment together; per end is enough to
+        // tell a broken ring from a closed one.
+        if (pointer[start] == 0) continue;
+        const auto self = start / 2;
+        auto steps = 0;
+        auto current = start;
+        std::vector<std::size_t> visited;
+        while (true) {
+            const auto link = pointer[current];
+            const auto next = static_cast<std::size_t>(std::abs(link) - 1);
+            if (next == self) break;
+            if (++steps >= kTrioLimit) {
+                // A walk that repeats segments without coming back is a ring broken by a
+                // one-sided link; a plain overflow is left to the junction-size warning.
+                if (std::ranges::find(visited, next) != visited.end()) {
+                    report(start, 2 * next, "Segment ends at about " + location(endPoint(start))
+                            + " are joined from some sides only, so NEC-2's junction walk from "
+                            + name(start) + " never returns to it. NEC-2 stops with \"TRIO - "
+                              "SEGMENT CONNECTION ERROR\" (nec2c runs out of memory instead). "
+                              "Make the ends meet exactly, or separate them beyond 0.1% of the "
+                              "longest segment length.");
+                    for (const auto segment : visited) {
+                        reported.insert(std::minmax(segments[self].wireIndex,
+                            segments[segment].wireIndex));
+                    }
+                }
+                break;
+            }
+            visited.push_back(next);
+            // A negative pointer joins ends of the same kind (first to first, last to last).
+            const auto arrival = 2 * next + (link < 0 ? current % 2 : 1 - current % 2);
+            if (pointer[arrival] == 0) {
+                const auto& from = endPoint(current);
+                const auto& to = endPoint(arrival);
+                const auto separation = std::abs(from.x - to.x) + std::abs(from.y - to.y)
+                    + std::abs(from.z - to.z);
+                report(current, arrival, "The end of " + name(current) + " reaches " + name(arrival)
+                        + " at about " + location(to) + ", but not the other way: the ends are "
+                        + concise(separation * 1000.0) + " mm apart (|dx| + |dy| + |dz|), within "
+                          "NEC's 0.1% of the first segment's length but not the second's. NEC-2 "
+                          "stops with \"TRIO - SEGMENT CONNECTION ERROR\". Make the ends meet "
+                          "exactly, or move them more than "
+                        + concise(kNecContactFraction * lengths[current / 2] * 1000.0)
+                        + " mm apart.");
+                break;
+            }
+            current = arrival;
+        }
+    }
+    return reported;
+}
+
 // Segments that come within their combined radii without sharing an end. A uniform grid keeps
 // large radial fields fast: each padded segment box goes into the cells it covers, and a pair
 // is tested only in the cell that holds the low corner of their box overlap.
-void checkUnconnectedContacts(const SegmentGraph& graph, ModelCheckResult& result)
+void checkUnconnectedContacts(const SegmentGraph& graph, WirePairs reportedWires,
+    ModelCheckResult& result)
 {
     const auto& segments = graph.segments;
     if (segments.size() < 2) return;
@@ -409,7 +538,6 @@ void checkUnconnectedContacts(const SegmentGraph& graph, ModelCheckResult& resul
                 for (auto z = low.z; z <= high.z; ++z) grid[{x, y, z}].push_back(index);
     }
 
-    std::set<std::pair<std::size_t, std::size_t>> reportedWires;
     const auto test = [&](std::size_t firstIndex, std::size_t secondIndex) {
         const auto& firstBox = boxes[firstIndex];
         const auto& secondBox = boxes[secondIndex];
@@ -668,8 +796,11 @@ void checkParallelAlignment(const SegmentGraph& graph, double wavelengthMeters,
             const auto fromSecond = difference(middle, second.junctions.front());
             const auto separation = norm(difference(fromSecond,
                 along({}, axis, dot(fromSecond, axis))));
-            const auto closeLimit = std::max(kCloseSpacingRadii * std::max(first.radius, second.radius),
-                kCloseSpacingWavelengths * wavelengthMeters);
+            // The NEC-2 guide asks for aligned segments only when wires are "very close"; an
+            // offset of at most half a segment matters only within about a segment length.
+            const auto closeLimit = std::min(segmentLength,
+                std::max(kCloseSpacingRadii * std::max(first.radius, second.radius),
+                    kCloseSpacingWavelengths * wavelengthMeters));
             // Contact is reported by the crossing check.
             if (separation <= first.radius + second.radius || separation >= closeLimit) continue;
 
@@ -746,10 +877,11 @@ void reportInsertionRisk(ModelCheckResult& result, const SegmentGraph& graph,
     const auto objects = card == "EX" ? "sources" : card == "LD" ? "loads" : "line connections";
     switch (finding.risk) {
     case InsertionRisk::Junction:
-        addAdequacyWarning(result, lineNumber,
+        // NEC-2 allows this (only EX 5 needs a two-segment junction), so it is a note.
+        addAdequacyDiagnostic(result, DiagnosticSeverity::Information, lineNumber,
             subject + " touches a junction of " + std::to_string(finding.node->segmentCount)
-                + " segments; NEC-2 is less accurate for " + objects
-                + " there. Move it at least one segment from the junction if the design allows.");
+                + " segments, so the result includes the junction; move it one segment away if "
+                  "you want the wire on its own.");
         break;
     case InsertionRisk::RadiusStep:
         addAdequacyWarning(result, lineNumber,
@@ -890,7 +1022,9 @@ void checkStaticAdequacy(const model::ModelSetup& setup, CompatibilityProfile pr
                   "length, which NEC reads in meters even when GS scales the geometry.");
     }
 
-    checkUnconnectedContacts(graph, result);
+    auto reportedWires = WirePairs{};
+    if (usesNec2Kernel(profile)) reportedWires = checkNecJunctions(graph, groundsEnds, result);
+    checkUnconnectedContacts(graph, std::move(reportedWires), result);
     checkGroundFit(setup, graph, wavelengthMeters, profile, result);
     if (usesNec2Kernel(profile)) checkParallelAlignment(graph, wavelengthMeters, result);
 }
