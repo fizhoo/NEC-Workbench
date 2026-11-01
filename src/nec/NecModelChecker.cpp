@@ -205,6 +205,62 @@ auto radiusAt(const model::Wire& wire, double fraction) noexcept -> double
     return wire.radius + (wire.endRadius - wire.radius) * fraction;
 }
 
+struct Cell {
+    std::int64_t x{};
+    std::int64_t y{};
+    std::int64_t z{};
+    auto operator==(const Cell&) const -> bool = default;
+};
+
+struct CellHash {
+    auto operator()(const Cell& cell) const noexcept -> std::size_t
+    {
+        auto hash = static_cast<std::size_t>(cell.x) * 73856093u;
+        hash ^= static_cast<std::size_t>(cell.y) * 19349663u;
+        hash ^= static_cast<std::size_t>(cell.z) * 83492791u;
+        return hash;
+    }
+};
+
+// Points hashed into cubes of a fixed size, for finding points within that distance of each
+// other without scanning a whole row of wires that share one coordinate.
+class PointGrid {
+public:
+    PointGrid(const std::vector<model::Point3D>& points, double cellSize)
+        : cellSize_(cellSize > 0.0 ? cellSize : 1.0)
+    {
+        for (std::size_t index = 0; index < points.size(); ++index)
+            cells_[cellOf(points[index])].push_back(index);
+    }
+
+    // Calls visit(index) for every point in the cubes around point, a superset of the points
+    // within one cell size of it.
+    template <typename Visit>
+    void forEachNear(const model::Point3D& point, Visit visit) const
+    {
+        const auto center = cellOf(point);
+        for (auto x = center.x - 1; x <= center.x + 1; ++x)
+            for (auto y = center.y - 1; y <= center.y + 1; ++y)
+                for (auto z = center.z - 1; z <= center.z + 1; ++z) {
+                    const auto found = cells_.find({x, y, z});
+                    if (found == cells_.end()) continue;
+                    for (const auto index : found->second) visit(index);
+                }
+    }
+
+private:
+    [[nodiscard]] auto cellOf(const model::Point3D& point) const -> Cell
+    {
+        const auto index = [this](double value) {
+            return static_cast<std::int64_t>(std::floor(value / cellSize_));
+        };
+        return {index(point.x), index(point.y), index(point.z)};
+    }
+
+    double cellSize_;
+    std::unordered_map<Cell, std::vector<std::size_t>, CellHash> cells_;
+};
+
 // Segment-level view of the drawn wires. NEC connects segments wherever their ends coincide,
 // including at interior segment boundaries of another wire, so connection checks work on
 // segments rather than wire ends.
@@ -305,32 +361,32 @@ auto buildSegmentGraph(const model::AntennaModel& model) -> SegmentGraph
         }
     }
     graph.tolerance = scale * 1.0e-9;
-    const auto sweepWindow = kNecContactFraction * longestSegment;
 
-    // Group touching ends with a sweep along x; necTouching() decides each match.
-    std::vector<std::size_t> order(ends.size());
-    for (std::size_t index = 0; index < order.size(); ++index) order[index] = index;
-    std::ranges::sort(order, {}, [&ends](std::size_t index) { return ends[index].point.x; });
+    // Group touching ends; necTouching() decides each match. No end reaches farther than NEC's
+    // tolerance for the longest segment, so that is the grid's cell size.
+    std::vector<model::Point3D> points;
+    points.reserve(ends.size());
+    for (const auto& end : ends) points.push_back(end.point);
+    const PointGrid grid(points, kNecContactFraction * longestSegment);
     std::vector<std::size_t> nodeOf(ends.size(), SegmentGraph::npos);
-    for (std::size_t position = 0; position < order.size(); ++position) {
-        const auto& first = ends[order[position]];
-        if (nodeOf[order[position]] != SegmentGraph::npos) continue;
+    for (std::size_t index = 0; index < ends.size(); ++index) {
+        const auto& first = ends[index];
+        if (nodeOf[index] != SegmentGraph::npos) continue;
         const auto nodeIndex = graph.nodes.size();
         graph.nodes.push_back({first.point});
         auto& node = graph.nodes.back();
-        for (auto next = position; next < order.size(); ++next) {
-            const auto& candidate = ends[order[next]];
-            if (candidate.point.x - first.point.x > sweepWindow) break;
-            if (nodeOf[order[next]] != SegmentGraph::npos
+        grid.forEachNear(first.point, [&](std::size_t next) {
+            const auto& candidate = ends[next];
+            if (nodeOf[next] != SegmentGraph::npos
                 || !necTouching(first.point, first.segmentLength, candidate.point,
                     candidate.segmentLength))
-                continue;
-            nodeOf[order[next]] = nodeIndex;
+                return;
+            nodeOf[next] = nodeIndex;
             ++node.segmentCount;
             node.minimumRadius = std::min(node.minimumRadius, candidate.radius);
             node.maximumRadius = std::max(node.maximumRadius, candidate.radius);
             node.minimumSegmentLength = std::min(node.minimumSegmentLength, candidate.segmentLength);
-        }
+        });
     }
     for (std::size_t index = 0; index < graph.segments.size(); ++index) {
         auto& segment = graph.segments[index];
@@ -362,15 +418,19 @@ auto checkNecJunctions(const SegmentGraph& graph, bool groundsEnds, ModelCheckRe
         return end % 2 == 0 ? segments[end / 2].start : segments[end / 2].end;
     };
     std::vector<double> lengths(segments.size());
-    for (std::size_t index = 0; index < segments.size(); ++index)
+    auto longestSegment = 0.0;
+    for (std::size_t index = 0; index < segments.size(); ++index) {
         lengths[index] = norm(difference(segments[index].end, segments[index].start));
-    std::vector<std::size_t> order(2 * segments.size());
-    for (std::size_t index = 0; index < order.size(); ++index) order[index] = index;
-    std::ranges::sort(order, {}, [&endPoint](std::size_t end) { return endPoint(end).x; });
+        longestSegment = std::max(longestSegment, lengths[index]);
+    }
+    std::vector<model::Point3D> points;
+    points.reserve(2 * segments.size());
+    for (std::size_t end = 0; end < 2 * segments.size(); ++end) points.push_back(endPoint(end));
+    const PointGrid grid(points, kNecContactFraction * longestSegment);
 
     // Pointers use NEC's 1-based segment numbers; 0 means a free end.
-    std::vector<std::int64_t> pointer(order.size());
-    for (std::size_t end = 0; end < order.size(); ++end) {
+    std::vector<std::int64_t> pointer(points.size());
+    for (std::size_t end = 0; end < points.size(); ++end) {
         const auto self = static_cast<std::int64_t>(end / 2);
         const auto& point = endPoint(end);
         const auto tolerance = kNecContactFraction * lengths[end / 2];
@@ -380,22 +440,21 @@ auto checkNecJunctions(const SegmentGraph& graph, bool groundsEnds, ModelCheckRe
         }
         auto best = std::numeric_limits<std::int64_t>::max();
         auto bestEnd = std::size_t{};
-        auto position = std::ranges::lower_bound(order, point.x - tolerance, {},
-            [&endPoint](std::size_t other) { return endPoint(other).x; });
-        for (; position != order.end() && endPoint(*position).x <= point.x + tolerance; ++position) {
-            const auto other = static_cast<std::int64_t>(*position / 2);
-            if (other == self) continue;
-            const auto& candidate = endPoint(*position);
+        grid.forEachNear(point, [&](std::size_t candidateEnd) {
+            const auto other = static_cast<std::int64_t>(candidateEnd / 2);
+            if (other == self) return;
+            const auto& candidate = points[candidateEnd];
             const auto separation = std::abs(point.x - candidate.x) + std::abs(point.y - candidate.y)
                 + std::abs(point.z - candidate.z);
-            if (separation > tolerance) continue;
+            if (separation > tolerance) return;
             // Search order: next segment number first, and a segment's first end before its last.
-            const auto rank = 2 * ((other - self + count) % count) + static_cast<std::int64_t>(*position % 2);
+            const auto rank = 2 * ((other - self + count) % count)
+                + static_cast<std::int64_t>(candidateEnd % 2);
             if (rank < best) {
                 best = rank;
-                bestEnd = *position;
+                bestEnd = candidateEnd;
             }
-        }
+        });
         if (best == std::numeric_limits<std::int64_t>::max()) continue;
         // Ends of the same kind (first to first, last to last) give a negative pointer.
         const auto next = static_cast<std::int64_t>(bestEnd / 2) + 1;
@@ -499,21 +558,6 @@ void checkUnconnectedContacts(const SegmentGraph& graph, WirePairs reportedWires
     }
     const auto cellSize = averageExtent / static_cast<double>(segments.size());
 
-    struct Cell {
-        std::int64_t x{};
-        std::int64_t y{};
-        std::int64_t z{};
-        auto operator==(const Cell&) const -> bool = default;
-    };
-    struct CellHash {
-        auto operator()(const Cell& cell) const noexcept -> std::size_t
-        {
-            auto hash = static_cast<std::size_t>(cell.x) * 73856093u;
-            hash ^= static_cast<std::size_t>(cell.y) * 19349663u;
-            hash ^= static_cast<std::size_t>(cell.z) * 83492791u;
-            return hash;
-        }
-    };
     const auto cellIndex = [cellSize](double value) {
         return static_cast<std::int64_t>(std::floor(value / cellSize));
     };
@@ -611,14 +655,44 @@ void checkUnconnectedContacts(const SegmentGraph& graph, WirePairs reportedWires
     }
 }
 
-void checkGroundFit(const model::ModelSetup& setup, const SegmentGraph& graph,
-    double wavelengthMeters, CompatibilityProfile profile, ModelCheckResult& result)
+struct GroundState {
+    model::GroundType type{model::GroundType::FreeSpace};
+    std::size_t sourceLine{};
+};
+
+// The grounds NEC-2 solves with: the GN in effect at each XQ, RP, NE, or NH request, or the
+// last GN when there is none. A later GN replaces an earlier one.
+auto executedGrounds(const NecDocument& document) -> std::vector<GroundState>
+{
+    std::vector<GroundState> executed;
+    GroundState current;
+    for (const auto& card : document.cards()) {
+        if (card.kind == NecCardKind::Ground) {
+            int type{};
+            if (!card.fields.empty() && parseNumber(card.fields[0], type)
+                && type >= static_cast<int>(model::GroundType::FreeSpace)
+                && type <= static_cast<int>(model::GroundType::SommerfeldNorton))
+                current = {static_cast<model::GroundType>(type), card.lineNumber};
+        } else if (card.mnemonic == "XQ" || card.mnemonic == "RP" || card.mnemonic == "NE"
+            || card.mnemonic == "NH") {
+            if (executed.empty() || executed.back().sourceLine != current.sourceLine)
+                executed.push_back(current);
+        }
+    }
+    if (executed.empty()) executed.push_back(current);
+    return executed;
+}
+
+void checkGroundFit(const model::ModelSetup& setup, const std::vector<GroundState>& grounds,
+    const SegmentGraph& graph, double wavelengthMeters, CompatibilityProfile profile,
+    ModelCheckResult& result)
 {
     // In NEC-2, GN alone defines the ground, and GE alone decides whether wire ends at z = 0
     // attach to it: CONECT ties them to the ground image only for GE 1. With GE 0 or -1 such
-    // an end stays open and its current is forced to zero.
-    const auto groundType = setup.ground ? setup.ground->type : model::GroundType::FreeSpace;
-    const auto groundPresent = groundType != model::GroundType::FreeSpace;
+    // an end stays open and its current is forced to zero. A deck that solves over ground in
+    // any execution request is checked against that ground.
+    const auto groundPresent = std::ranges::any_of(grounds,
+        [](const GroundState& ground) { return ground.type != model::GroundType::FreeSpace; });
     const auto groundFlag = setup.ground ? setup.ground->geometryGroundFlag : 0;
     const auto groundsEnds = groundFlag > 0;
     const auto tolerance = graph.tolerance;
@@ -710,7 +784,9 @@ void checkGroundFit(const model::ModelSetup& setup, const SegmentGraph& graph,
         }
     }
 
-    if (groundType != model::GroundType::ReflectionApproximation) return;
+    const auto reflection = std::ranges::find(grounds,
+        model::GroundType::ReflectionApproximation, &GroundState::type);
+    if (reflection == grounds.end()) return;
     const auto heightLimit = kReflectionGroundMinimumHeightWavelengths * wavelengthMeters;
     const auto horizontalLimit = std::sin(kNearHorizontalDegrees * std::numbers::pi / 180.0);
     std::set<std::size_t> lowWires;
@@ -728,7 +804,7 @@ void checkGroundFit(const model::ModelSetup& setup, const SegmentGraph& graph,
         }
     }
     if (lowestSegment == nullptr) return;
-    addAdequacyWarning(result, setup.ground->sourceLine,
+    addAdequacyWarning(result, reflection->sourceLine,
         "GN 0 uses the reflection-coefficient ground approximation, but "
             + std::to_string(lowWires.size())
             + (lowWires.size() == 1 ? " wire has" : " wires have")
@@ -900,14 +976,19 @@ void reportInsertionRisk(ModelCheckResult& result, const SegmentGraph& graph,
     }
 }
 
-void checkStaticAdequacy(const model::ModelSetup& setup, CompatibilityProfile profile,
-    ModelCheckResult& result)
+void checkStaticAdequacy(const NecDocument& document, const model::ModelSetup& setup,
+    CompatibilityProfile profile, ModelCheckResult& result)
 {
     if (!setup.frequency || result.model.empty()) return;
     const auto highestFrequencyMHz = std::max(setup.frequency->startMHz,
         model::frequencyEndMHz(*setup.frequency));
     if (!std::isfinite(highestFrequencyMHz) || highestFrequencyMHz <= 0.0) return;
     const auto wavelengthMeters = 299.792458 / highestFrequencyMHz;
+    // Ground height is most demanding at the lowest frequency of a sweep.
+    const auto lowestFrequencyMHz = std::min(setup.frequency->startMHz,
+        model::frequencyEndMHz(*setup.frequency));
+    const auto longestWavelengthMeters = lowestFrequencyMHz > 0.0
+        ? 299.792458 / lowestFrequencyMHz : wavelengthMeters;
     const auto graph = buildSegmentGraph(result.model);
     // Only GE 1 ties wire ends at z = 0 to ground; otherwise they are free ends.
     const auto groundsEnds = setup.ground
@@ -1025,7 +1106,8 @@ void checkStaticAdequacy(const model::ModelSetup& setup, CompatibilityProfile pr
     auto reportedWires = WirePairs{};
     if (usesNec2Kernel(profile)) reportedWires = checkNecJunctions(graph, groundsEnds, result);
     checkUnconnectedContacts(graph, std::move(reportedWires), result);
-    checkGroundFit(setup, graph, wavelengthMeters, profile, result);
+    checkGroundFit(setup, executedGrounds(document), graph, longestWavelengthMeters, profile,
+        result);
     if (usesNec2Kernel(profile)) checkParallelAlignment(graph, wavelengthMeters, result);
 }
 
@@ -1593,7 +1675,7 @@ auto NecModelChecker::check(const NecDocument& document, ModelCheckOptions optio
                         : " SY symbols were resolved and expanded in the generated solver deck"),
             "Compatibility"});
     }
-    checkStaticAdequacy(setup, options.compatibility, result);
+    checkStaticAdequacy(document, setup, options.compatibility, result);
     std::ranges::sort(result.diagnostics, {}, &ModelDiagnostic::lineNumber);
     return result;
 }

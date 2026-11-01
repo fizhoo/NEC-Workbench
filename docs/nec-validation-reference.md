@@ -129,7 +129,7 @@ and Segmentation Convergence for numerical validation.
 | Wire passing through ground | Error | One end above z = 0 and another point below it, under the same conditions |
 | Segment lying in the ground plane | Error | Both segment ends at z = 0 with `GE 1`; NEC-2 stops on this |
 | Wire end at z = 0 that is not tied to ground | Warning | A free wire end at z = 0 on a wire that does not lie in the z = 0 plane, unless the deck has both `GN` and `GE 1`. The message covers the three cases: no ground, `GN` with `GE 0`/`-1`, and `GE 1` without `GN`. Reported once on `GE` |
-| `GN 0` with low horizontal wires | Warning | Segment centers below 0.1 λ and within 30° of horizontal; suggests `GN 2` |
+| `GN 0` with low horizontal wires | Warning | Segment centers below 0.1 λ at the lowest swept frequency and within 30° of horizontal; suggests `GN 2` |
 | Unaligned closely spaced parallel wires | Warning | Straight wires within 5° of parallel, overlapping by at least a segment, closer than both max(10 × the larger radius, 0.01 λ) and the shorter segment length, but not touching, with segment junctions offset by more than 10% of the shorter segment. Applies to NEC-2 family backends only |
 | `EX`, `LD`, or `TL` end beside a radius step | Warning | The segment touches a junction where radii differ by more than 10% |
 | `EX`, `LD`, or `TL` end at a multiwire junction | Information | The segment touches a junction of more than two segments. NEC-2 allows this (only `EX 5` needs a simple two-segment junction), so it is a note |
@@ -158,8 +158,9 @@ above. The junction, contact, ground, and insertion checks all use this rule.
 Ground handling follows NEC-2's `CONECT`: `GN` alone defines the ground (`GN -1` or no
 `GN` means free space), and only `GE 1` ties wire ends at z = 0 to the ground image.
 With `GE 0` or `GE -1`, such an end stays open and NEC forces its current to zero.
-Workbench reads the first `GN` card; a later `GN` changes the ground for later
-execution requests in NEC but is not yet checked separately.
+A later `GN` replaces an earlier one, so the ground checks use the `GN` in effect at
+each execution request (`XQ`, `RP`, `NE`, or `NH`), or the last `GN` when there is none.
+A deck that solves over ground in any request is checked against that ground.
 
 `TL` lengths are compared in meters, as NEC reads them; a `GS` card scales the geometry
 but not the `TL` length.

@@ -163,6 +163,13 @@ void testLargeRadialFieldIsFast()
     expect(elapsed < std::chrono::seconds(1),
         "contact check stays fast on a 120-radial field");
 
+    // A long vertical wire puts every end at one x; the end matching must not scan them all.
+    const auto tallStarted = std::chrono::steady_clock::now();
+    const auto tall = check(deck("GW 1 10000 0 0 1 0 0 2001 .001\n", "EX 0 1 5000 0 1 0\n"));
+    expect(tall.errorCount() == 0
+            && std::chrono::steady_clock::now() - tallStarted < std::chrono::seconds(1),
+        "a 10,000-segment vertical wire checks quickly");
+
     // A short wire across the field cuts the seven radials within about 9.5 degrees of +x.
     geometry << "GW 200 1 3 -0.5 5 3 0.5 5 .001\n";
     const auto crossed = check(deck(geometry.str(), "EX 0 1 2 0 1 0\n"));
@@ -222,6 +229,15 @@ void testGroundFit()
                    "GE 0\nGN 1\n")), "lying in the ground plane", DiagnosticSeverity::Error) == 0,
         "without GE 1, NEC-2 does not stop on a wire lying on z = 0");
 
+    // NEC-2 solves with the GN in effect at each execution request, not the first GN.
+    expect(count(check(deck("GW 1 11 -5 0 -1 5 0 -1 .001\n", "EX 0 1 6 0 1 0\n",
+                   "GE 0\nGN 1\nGN -1\n")), "below ground", DiagnosticSeverity::Error) == 0,
+        "a later GN -1 puts the solution back in free space");
+    expect(count(check(deck("GW 1 11 -5 0 -1 5 0 -1 .001\n",
+                   "EX 0 1 6 0 1 0\nFR 0 1 0 0 14 0\nXQ\nGN -1\nXQ\n", "GE 0\nGN 1\n")),
+               "is below ground", DiagnosticSeverity::Error) == 1,
+        "a buried wire is an error if any execution request solves over ground");
+
     const auto lowReflection = check(deck("GW 1 11 -5 0 1 5 0 1 .001\n", "EX 0 1 6 0 1 0\n",
         "GE 0\nGN 0 0 0 0 13 0.005\n"));
     expect(count(lowReflection, "Use GN 2") == 1,
@@ -232,6 +248,11 @@ void testGroundFit()
     expect(count(check(deck("GW 1 11 -5 0 10 5 0 10 .001\n", "EX 0 1 6 0 1 0\n",
                    "GE 0\nGN 0 0 0 0 13 0.005\n")), "Use GN 2") == 0,
         "GN 0 is acceptable for wires well above ground");
+    // 14 and 144 MHz: 1 m is 0.0047 wavelength at 14 MHz, though 0.48 at 144 MHz.
+    expect(count(check("GW 1 11 -5 0 1 5 0 1 .001\nGE 0\nGN 0 0 0 0 13 0.005\n"
+                       "EX 0 1 6 0 1 0\nFR 0 2 0 0 14 130\nEN\n"),
+               "Use GN 2") == 1,
+        "the ground-height check uses the lowest frequency of a sweep");
 }
 
 void testParallelAlignment()
