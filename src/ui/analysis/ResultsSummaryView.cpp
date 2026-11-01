@@ -204,14 +204,23 @@ void ResultsSummaryView::refresh()
     }
     const auto metrics = analysis::radiationMetrics(selectedRadiation, analysis::RadiationComponent::Total);
     if (metrics.valid) {
-        auto text = tr("Peak %1 dBi at θ %2°, φ %3°")
-            .arg(formatDecimal(metrics.peakGainDb))
-            .arg(formatDecimal(metrics.peakThetaDegrees))
-            .arg(formatDecimal(metrics.peakPhiDegrees));
+        const auto peak = std::ranges::find_if(selectedRadiation, [&metrics](const auto& sample) {
+            return sample.totalGainDb == metrics.peakGainDb
+                && sample.thetaDegrees == metrics.peakThetaDegrees
+                && sample.phiDegrees == metrics.peakPhiDegrees;
+        });
+        const auto gain = analysis::formatGain({.gainDb = metrics.peakGainDb,
+            .thetaDegrees = metrics.peakThetaDegrees, .phiDegrees = metrics.peakPhiDegrees,
+            .frequencyMHz = selectedFrequency_,
+            .sampleStepDegrees = peak != selectedRadiation.end()
+                ? analysis::patternStepAround(selectedRadiation, *peak) : std::nullopt});
+        auto text = tr("Peak %1").arg(fromCore(gain.text));
         if (metrics.tiedPeaks.size() > 1)
             text += tr(" · %1 tied peak directions").arg(metrics.tiedPeaks.size());
         radiationLabel_->setText(text);
+        radiationLabel_->setToolTip(fromCore(gain.toolTip));
     } else {
+        radiationLabel_->setToolTip({});
         radiationLabel_->setText(tr("No radiation pattern at %1 MHz")
             .arg(formatDecimal(selectedFrequency_)));
     }

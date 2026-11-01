@@ -129,10 +129,20 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
             optionalNumericItem(metrics.frontToBackDb));
         candidateDetailsTable_->setItem(detailRow, 6,
             optionalNumericItem(metrics.frontToRearDb));
-        candidateDetailsTable_->setItem(detailRow, 7,
-            optionalNumericItem(metrics.forwardThetaDegrees));
-        candidateDetailsTable_->setItem(detailRow, 8,
-            optionalNumericItem(metrics.forwardPhiDegrees));
+        const auto direction = metrics.forwardThetaDegrees && metrics.forwardPhiDegrees
+            ? std::optional{analysis::patternDirection(
+                  *metrics.forwardThetaDegrees, *metrics.forwardPhiDegrees)}
+            : std::nullopt;
+        candidateDetailsTable_->setItem(detailRow, 7, optionalNumericItem(direction
+            ? std::optional{direction->elevationDegrees} : std::nullopt));
+        candidateDetailsTable_->setItem(detailRow, 8, optionalNumericItem(direction
+            ? std::optional{direction->azimuthDegrees} : std::nullopt));
+        if (direction) {
+            const auto necDirection = tr("NEC %1").arg(fromCore(analysis::formatNecDirection(
+                *metrics.forwardThetaDegrees, *metrics.forwardPhiDegrees)));
+            candidateDetailsTable_->item(detailRow, 7)->setToolTip(necDirection);
+            candidateDetailsTable_->item(detailRow, 8)->setToolTip(necDirection);
+        }
         if (candidate.evaluation && evaluation->evaluatedFrequencyCount == 1
             && std::abs(evaluation->evaluationFrequencyMHz - metrics.frequencyMHz) < 1.0e-9) {
             for (auto column = 0; column < candidateDetailsTable_->columnCount(); ++column) {
@@ -245,10 +255,14 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
                                     - *firstDirection->forwardPhiDegrees) > 1.0e-6);
                     });
                 breakdown.append(directionVaries
-                    ? tr("Tracked lobe direction varies by frequency; see Theta/Phi columns")
-                    : tr("Tracked lobe direction θ %1°, φ %2°")
-                          .arg(formatDecimal(*firstDirection->forwardThetaDegrees))
-                          .arg(formatDecimal(*firstDirection->forwardPhiDegrees)));
+                    ? tr("Tracked lobe direction varies by frequency; see El/Az columns")
+                    : tr("Tracked lobe direction %1 (NEC %2)")
+                          .arg(fromCore(analysis::formatDirection(
+                                   *firstDirection->forwardThetaDegrees,
+                                   *firstDirection->forwardPhiDegrees)),
+                              fromCore(analysis::formatNecDirection(
+                                  *firstDirection->forwardThetaDegrees,
+                                  *firstDirection->forwardPhiDegrees))));
             }
         }
     }
@@ -270,8 +284,13 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
             header.append(tr("F/B %1 dB")
                 .arg(formatDecimal(*candidate.evaluation->frontToBackDb)));
         else if (candidate.evaluation->forwardGainDb)
-            header.append(tr("gain %1 dBi")
-                .arg(formatDecimal(*candidate.evaluation->forwardGainDb)));
+            header.append(tr("gain %1").arg(fromCore(analysis::formatGain({
+                .gainDb = *candidate.evaluation->forwardGainDb,
+                .thetaDegrees = candidate.evaluation->forwardThetaDegrees,
+                .phiDegrees = candidate.evaluation->forwardPhiDegrees,
+                .component = activeObjective_.radiationComponent,
+                .frequencyMHz = candidate.evaluation->forwardGainFrequencyMHz,
+                .sampleStepDegrees = std::nullopt}).text)));
         else if (candidate.evaluation->frontToRearDb)
             header.append(tr("F/R %1 dB")
                 .arg(formatDecimal(*candidate.evaluation->frontToRearDb)));

@@ -1536,6 +1536,12 @@ void MainWindow::createResultWindows()
         radiationPatternView_->setComponent(component);
         radiation3DView_->setComponent(component);
     });
+    const auto useAsForwardDirection = [this, radiationTabs](double theta, double phi) {
+        radiationPerformanceView_->setForwardDirection(theta, phi);
+        radiationTabs->setCurrentWidget(radiationPerformanceView_);
+    };
+    radiationPatternView_->setForwardDirectionCallback(useAsForwardDirection);
+    radiation3DView_->setForwardDirectionCallback(useAsForwardDirection);
 
     auto* rawOutputContent = new QWidget(resultWindowsHost_);
     auto* rawOutputLayout = new QVBoxLayout(rawOutputContent);
@@ -4342,11 +4348,13 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             if (peak && peak->sampleCount > 1) {
                 peakGainParsed = true;
                 optimizationWorkspace_->setLatestAnalysisResult(result);
-                currentRunRecord_->summary = tr(
-                    "Maximum %1 dBi at elevation %2°, azimuth %3° · %4 MHz")
-                    .arg(formatDecimal(peak->metrics.peakGainDb))
-                    .arg(formatDecimal(90.0 - peak->metrics.peakThetaDegrees))
-                    .arg(formatDecimal(peak->metrics.peakPhiDegrees))
+                currentRunRecord_->summary = tr("Maximum %1 · %2 MHz")
+                    .arg(fromCore(analysis::formatGain({.gainDb = peak->metrics.peakGainDb,
+                        .thetaDegrees = peak->metrics.peakThetaDegrees,
+                        .phiDegrees = peak->metrics.peakPhiDegrees,
+                        .component = analysis::RadiationComponent::Total,
+                        .frequencyMHz = peak->frequencyMHz,
+                        .sampleStepDegrees = std::nullopt}).text))
                     .arg(formatDecimal(peak->frequencyMHz));
                 runStore_.save(*currentRunRecord_);
             } else {

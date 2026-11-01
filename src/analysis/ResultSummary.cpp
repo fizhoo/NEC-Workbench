@@ -1,6 +1,7 @@
 #include "analysis/ResultSummary.h"
 
 #include "analysis/FrequencyComparison.h"
+#include "analysis/GainDirection.h"
 
 #include <algorithm>
 #include <cmath>
@@ -56,7 +57,8 @@ auto datasetKindFor(const AnalysisResult& result, const RadiationSample& peak)
 auto makeGainSummary(const AnalysisResult& result, const RadiationSample& sample) -> PeakGainSummary
 {
     return {sample.frequencyMHz, sample.totalGainDb, sample.thetaDegrees, sample.phiDegrees,
-        sample.patternIndex, datasetKindFor(result, sample)};
+        sample.patternIndex, datasetKindFor(result, sample),
+        patternStepAround(result.radiation, sample)};
 }
 
 }

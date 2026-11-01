@@ -127,8 +127,9 @@ protected:
         painter.drawEllipse(markerPoint, 4.0, 4.0);
         painter.setPen(foreground);
         painter.drawText(QRectF(8, 4, width() - 16, 20), Qt::AlignLeft,
-            tr("%1 dBi at %2°")
-                .arg(formatDecimal(nearest->gainDb), formatDecimal(nearest->angleDegrees)));
+            tr("%1 dBi at %2 %3")
+                .arg(formatDecimal(nearest->gainDb), elevation_ ? tr("El") : tr("Az"),
+                    fromCore(analysis::formatAngle(nearest->angleDegrees))));
     }
 
 private:
@@ -344,8 +345,10 @@ void DirectionStrategyDialog::updatePreview()
         latestResult_->setText(tr("Latest result: selected slice contains no usable gain samples."));
     } else {
         const auto peak = std::ranges::max_element(points, {}, &PreviewPoint::gainDb);
-        latestResult_->setText(tr("Latest result: maximum %1 dBi at %2° · %3 MHz")
-            .arg(formatDecimal(peak->gainDb), formatDecimal(peak->angleDegrees),
+        latestResult_->setText(tr("Latest result: maximum in this slice %1 dBi at %2 %3 · %4 MHz")
+            .arg(formatDecimal(peak->gainDb),
+                patternSlice() == PatternSlice::Azimuth ? tr("Az") : tr("El"),
+                fromCore(analysis::formatAngle(peak->angleDegrees)),
                 formatDecimal(nearestFrequency)));
     }
     preview_->setData(std::move(points),

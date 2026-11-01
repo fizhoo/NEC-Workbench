@@ -196,12 +196,17 @@ void OptimizationWorkspace::updateObjectiveControls()
         ? tr("Peak Gain in Cut (dBi)") : tr("Gain at Direction (dBi)"));
     gainCriterion->setToolTip(trackedCut
         ? tr("Highest gain found in the selected azimuth or elevation cut.")
-        : tr("Gain at the specified physical theta and phi direction."));
+        : tr("Gain at the specified physical elevation and azimuth."));
     resultsTable_->horizontalHeaderItem(GainColumn)->setText(trackedCut
         ? tr("Peak Gain (dBi)") : tr("Gain (dBi)"));
     resultsTable_->horizontalHeaderItem(GainColumn)->setToolTip(trackedCut
         ? tr("Highest gain found in the selected cut for this candidate.")
-        : tr("Gain at the specified theta, phi, frequency, and radiation component."));
+        : tr("Gain at the specified elevation, azimuth, frequency, and radiation component."));
+    // F/R depends on the evaluation mode; say which rule is active.
+    const auto frontToRear = fromCore(analysis::frontToRearDefinition(
+        objective.directionalEvaluationMode));
+    objectiveCriteriaTable_->item(5, 0)->setToolTip(frontToRear);
+    resultsTable_->horizontalHeaderItem(FrontToRearColumn)->setToolTip(frontToRear);
     updateObjectivePresetControls();
     updateLatestPatternPeakControls();
     updateFrequencyControls();
@@ -230,11 +235,11 @@ void OptimizationWorkspace::updateLatestPatternPeakControls()
             == analysis::DirectionalEvaluationMode::SpecifiedDirection
         ? tr("Use Latest Pattern Peak") : tr("Use Latest Peak to Set Cut"));
     if (usable) {
-        auto status = tr(
-            "%1 dBi at elevation %2°, azimuth %3° · %4 MHz")
-            .arg(formatDecimal(peak->metrics.peakGainDb))
-            .arg(formatDecimal(90.0 - peak->metrics.peakThetaDegrees))
-            .arg(formatDecimal(peak->metrics.peakPhiDegrees))
+        auto status = tr("%1 · %2 MHz")
+            .arg(fromCore(analysis::formatGain({.gainDb = peak->metrics.peakGainDb,
+                .thetaDegrees = peak->metrics.peakThetaDegrees,
+                .phiDegrees = peak->metrics.peakPhiDegrees, .component = component,
+                .frequencyMHz = peak->frequencyMHz, .sampleStepDegrees = std::nullopt}).text))
             .arg(formatDecimal(peak->frequencyMHz));
         if (mode != analysis::DirectionalEvaluationMode::SpecifiedDirection) {
             const auto cutAngle = mode
@@ -250,12 +255,14 @@ void OptimizationWorkspace::updateLatestPatternPeakControls()
                     == analysis::RadiationMetricAvailability::PatternNull) {
                 status += mode
                         == analysis::DirectionalEvaluationMode::StrongestInAzimuthCut
-                    ? tr(" · Warning: θ %1° cut contains only pattern nulls; latest peak suggests θ %2°")
-                          .arg(formatDecimal(cutAngle))
-                          .arg(formatDecimal(peak->metrics.peakThetaDegrees))
-                    : tr(" · Warning: φ %1° cut contains only pattern nulls; latest peak suggests φ %2°")
-                          .arg(formatDecimal(cutAngle))
-                          .arg(formatDecimal(peak->metrics.peakPhiDegrees));
+                    ? tr(" · Warning: %1 contains only pattern nulls; latest peak suggests El %2")
+                          .arg(fromCore(analysis::azimuthCutName(cutAngle)),
+                              fromCore(analysis::formatAngle(analysis::patternDirection(
+                                  peak->metrics.peakThetaDegrees, 0.0).elevationDegrees)))
+                    : tr(" · Warning: %1 contains only pattern nulls; latest peak suggests Az %2")
+                          .arg(fromCore(analysis::elevationCutName(cutAngle)),
+                              fromCore(analysis::formatAngle(analysis::patternDirection(
+                                  90.0, peak->metrics.peakPhiDegrees).azimuthDegrees)));
             }
         }
         latestPatternPeakLabel_->setText(status);

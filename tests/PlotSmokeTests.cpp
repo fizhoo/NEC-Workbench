@@ -1628,10 +1628,10 @@ auto main(int argc, char* argv[]) -> int
     const auto latestPatternPeakApplied = optimizationUseLatestPatternPeak != nullptr
         && optimizationUseLatestPatternPeak->isEnabled()
         && optimizationLatestPatternPeakStatus != nullptr
-        && optimizationLatestPatternPeakStatus->text().contains(QStringLiteral("35.000"))
+        && optimizationLatestPatternPeakStatus->text().contains(QStringLiteral("@ El 35°"))
         && optimizationObjectiveSummary != nullptr
         && optimizationObjectiveSummary->text().contains(
-            QStringLiteral("Track peak in azimuth cut at θ 55.000°"))
+            QStringLiteral("Track peak · Azimuth cut at El 35° (NEC θ 55°)"))
         && optimizationDirectionSetupSummary != nullptr
         && optimizationDirectionSetupSummary->text().contains(
             QStringLiteral("elevation 35.000°"));
@@ -1642,7 +1642,7 @@ auto main(int argc, char* argv[]) -> int
     application.processEvents();
     const auto replacedPatternPeakShown = optimizationLatestPatternPeakStatus != nullptr
         && optimizationLatestPatternPeakStatus->text().contains(
-            QStringLiteral("elevation 50.000°"));
+            QStringLiteral("@ El 50°"));
     const auto perCriterionDirectionalObjectiveValid = optimizationDirectionalFrequencyNote != nullptr
         && optimizationDirectionalFrequencyNote->text().contains(
             QStringLiteral("Each criterion independently"))
@@ -2625,13 +2625,50 @@ auto main(int argc, char* argv[]) -> int
     auto* signedThetaSummary = signedThetaView.findChild<QLabel*>(
         QStringLiteral("radiation2DSummary"));
     const auto signedThetaTiesNormalized = signedThetaSummary != nullptr
-        && signedThetaSummary->text().contains(QStringLiteral("at -70.000°"))
-        && signedThetaSummary->text().contains(QStringLiteral("tied at 70.000°"))
+        && signedThetaSummary->text().contains(QStringLiteral("Elevation cut at Az 0°"))
+        && signedThetaSummary->text().contains(QStringLiteral("Max in this cut 8.200 dBi @ El 20°, Az 180°"))
+        && signedThetaSummary->text().contains(QStringLiteral("tied at El 20°, Az 0°"))
         && !signedThetaSummary->text().contains(QStringLiteral("430"));
     auto* signedThetaPlot = signedThetaView.findChild<QWidget*>(
         QStringLiteral("radiationPolarPlot"));
     const auto signedThetaCutStaysOpen = signedThetaPlot != nullptr
         && !signedThetaPlot->property("closedPattern").toBool();
+    // A cut that misses the main lobe names its own maximum and points at the pattern peak.
+    necwb::analysis::AnalysisResult offCutPeakResult;
+    for (auto theta = -90; theta <= 90; theta += 10) {
+        const auto gain = theta == 80 ? 5.0 : -10.0;
+        offCutPeakResult.radiation.push_back({146.0, static_cast<double>(theta), 0.0,
+            gain, -999.99, gain});
+    }
+    for (auto phi = 0; phi < 360; phi += 30) {
+        const auto gain = phi == 90 ? 8.0 : 0.0;
+        offCutPeakResult.radiation.push_back({146.0, 80.0, static_cast<double>(phi),
+            gain, -999.99, gain, {}, {}, {}, 1});
+    }
+    necwb::ui::RadiationPatternView offCutPeakView;
+    offCutPeakView.setResults(offCutPeakResult, QStringLiteral("off-cut-test"));
+    auto* offCutSummary = offCutPeakView.findChild<QLabel*>(QStringLiteral("radiation2DSummary"));
+    auto* offCutPlot = offCutPeakView.findChild<QWidget*>(QStringLiteral("radiationPolarPlot"));
+    const auto offCutPeakNamed = offCutSummary != nullptr && offCutPlot != nullptr
+        && offCutSummary->text().contains(QStringLiteral("Elevation cut at Az 0°"))
+        && offCutSummary->text().contains(QStringLiteral(
+            "Max in this cut 5.000 dBi @ El 10°, Az 0° (sampled, RP step 10°)"))
+        && offCutSummary->text().contains(QStringLiteral(
+            "Pattern peak 8.000 dBi @ El 10°, Az 90° (sampled, RP step 30°), outside this cut"))
+        && offCutSummary->toolTip().contains(QStringLiteral("F/B:"))
+        && offCutPlot->property("cutName").toString() == QStringLiteral("Elevation cut at Az 0°");
+    necwb::ui::RadiationPerformanceView offCutPerformance;
+    offCutPerformance.setResults(offCutPeakResult, QStringLiteral("off-cut-test"));
+    offCutPerformance.setSelectedFrequency(146.0);
+    offCutPerformance.setForwardDirection(80.0, 90.0);
+    auto* offCutReadout = offCutPerformance.findChild<QLabel*>(
+        QStringLiteral("radiationPerformanceReadout"));
+    auto* offCutElevation = offCutPerformance.findChild<QDoubleSpinBox*>(
+        QStringLiteral("radiationPerformanceElevation"));
+    const auto forwardDirectionReadout = offCutReadout != nullptr && offCutElevation != nullptr
+        && offCutElevation->value() == 10.0
+        && offCutReadout->text().contains(QStringLiteral("Gain toward El 10°, Az 90°: 8.000 dBi"))
+        && offCutReadout->toolTip().contains(QStringLiteral("F/R:"));
     necwb::ui::RadiationPatternView emptyRadiation2D;
     emptyRadiation2D.setResults({}, QStringLiteral("empty-radiation-test"));
     auto* emptyRadiationFrequency = emptyRadiation2D.findChild<QComboBox*>(
@@ -2797,6 +2834,7 @@ auto main(int argc, char* argv[]) -> int
         && controlPanelExtrema != nullptr
         && controlPanelExtrema->text().contains(QStringLiteral("Min SWR"))
         && controlPanelExtrema->text().contains(QStringLiteral("Peak gain"))
+        && controlPanelExtrema->text().contains(QStringLiteral("dBi @ El"))
         && controlPanelFooter != nullptr
         && controlPanelFooter->text().contains(QStringLiteral("Last run"))
         && studiesCleared
@@ -3939,7 +3977,7 @@ auto main(int argc, char* argv[]) -> int
         && separateDatasetsSwitchCuts
         && horizontalMaxGainCutStaysCompatible && radiationMetricsVisible
         && radiationExportReady && maxGainCutSelected && signedThetaTiesNormalized
-        && signedThetaCutStaysOpen
+        && signedThetaCutStaysOpen && offCutPeakNamed && forwardDirectionReadout
         && missingRadiationReported
         && missingRadiationDisablesDataExport
         && resultOriginPreserved && semanticResultExtent

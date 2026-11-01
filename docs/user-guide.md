@@ -352,7 +352,12 @@ The radiation frequency selector includes only frequencies with pattern data.
 
 - **2D Pattern** selects vertical or horizontal cuts, cycles available angles,
   reports peak and interpolated 3 dB beamwidth when computable, and probes nearby
-  samples under the pointer. A compatible historical overlay is drawn as a muted dashed
+  samples under the pointer. Every cut says which cut it is ("Elevation cut at Az 0°",
+  "Azimuth cut at El 10°") and labels its strongest sample "Max in this cut". When other
+  RP data at the same frequency has a stronger sample, the summary adds "Pattern peak …,
+  outside this cut". In Normalized mode the plot and the hover readout state the
+  reference level, for example "0 dB = 7.410 dBi". Vertical cuts are labelled in
+  elevation, with the horizon level and the cut's two azimuths marked at each side. A compatible historical overlay is drawn as a muted dashed
   trace. Workbench requires the same frequency, cut orientation/plane, and angular
   sample grid; it reports the historical overlay as unavailable rather than interpolating.
   Normalized mode normalizes each trace to its own peak for shape comparison;
@@ -361,7 +366,16 @@ The radiation frequency selector includes only frequencies with pattern data.
   overlays. A compatible historical grid appears as a muted dashed wireframe. It
   does not invent missing angular coverage.
 - **Performance vs Frequency** shows available forward gain, F/B, and F/R metrics,
-  with compatible historical curves shown dashed.
+  with compatible historical curves shown dashed. The line above the plot reads
+  "Gain toward El 15°, Az 45°: 5.900 dBi" for the selected frequency. Right-click a
+  sample on the 2D or 3D pattern and choose **Use This Sample as Forward Direction** to
+  set the forward elevation and azimuth from it.
+
+Gains are shown as "6.670 dBi @ El 0°, Az 0°": elevation is measured above the horizon
+(NEC θ = 90° − El) and azimuth is NEC φ. Tooltips give the NEC θ/φ, frequency, and
+component, and a component other than Total is named ("dBi vertical"). A peak whose RP
+step is wider than 5° is marked "(sampled, RP step 10°)": the true peak may sit between
+samples, so request a finer RP to locate it.
 
 F/B compares the peak with the same elevation angle turned 180° in azimuth, as other
 amateur modeling programs do, so an elevated beam over ground still has an F/B. If the
@@ -494,7 +508,8 @@ available, Workbench initially fills the slice from its maximum-gain direction.
 
 Tracked cuts use 5-degree samples. They can follow a lobe as geometry changes, but
 are more expensive than a specified direction and may switch between competing
-lobes. Candidate frequency details show the theta and phi actually selected. F/B
+lobes. Candidate frequency details show the elevation and azimuth actually selected
+(NEC θ/φ in the cell tooltip). F/B
 compares the front with the same elevation turned 180° in azimuth; F/R uses the
 strongest sample in the rear half of the requested cut. See
 [Directional Metrics](optimization-math.md#directional-metrics) for the exact definitions.

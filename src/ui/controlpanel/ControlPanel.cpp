@@ -515,6 +515,24 @@ void ControlPanel::refreshQuickResults()
     set(gainResult_, summary.selectedGain
         ? std::optional<double>{summary.selectedGain->gainDb} : std::nullopt, tr(" dBi"));
     set(frontToBackResult_, summary.selectedFrontToBackDb, tr(" dB"));
+    const auto gainText = [](const analysis::PeakGainSummary& gain) {
+        return analysis::formatGain({.gainDb = gain.gainDb,
+            .thetaDegrees = gain.thetaDegrees, .phiDegrees = gain.phiDegrees,
+            .frequencyMHz = gain.frequencyMHz,
+            .sampleStepDegrees = gain.sampleStepDegrees});
+    };
+    const auto selectedGainText = summary.selectedGain
+        ? std::optional{gainText(*summary.selectedGain)} : std::nullopt;
+    gainResult_->setToolTip(selectedGainText
+        ? tr("Pattern peak at the selected frequency: %1\n%2")
+              .arg(fromCore(selectedGainText->text), fromCore(selectedGainText->toolTip))
+        : QString{});
+    frontToBackResult_->setToolTip(summary.selectedGain
+        ? tr("%1\nForward direction: the pattern peak, %2.")
+              .arg(fromCore(analysis::frontToBackDefinition()),
+                  fromCore(analysis::formatDirection(summary.selectedGain->thetaDegrees,
+                      summary.selectedGain->phiDegrees)))
+        : QString{});
     const std::array radiationRows{
         std::tuple{gainResultLabel_, gainResult_, summary.selectedGain.has_value()},
         std::tuple{frontToBackResultLabel_, frontToBackResult_,
@@ -523,12 +541,25 @@ void ControlPanel::refreshQuickResults()
         label->setVisible(visible);
         value->setVisible(visible);
     }
+    // The compact grid has no room for directions, so they go on the wrapping line below.
     QStringList extrema;
+    QStringList extremaToolTips;
+    if (selectedGainText) {
+        extrema.append(tr("Gain %1").arg(fromCore(selectedGainText->text)));
+        extremaToolTips.append(tr("Gain: pattern peak at the selected frequency · %1")
+            .arg(fromCore(selectedGainText->toolTip)));
+    }
     if (summary.minimumSwr) extrema.append(tr("Min SWR %1 @ %2 MHz")
         .arg(formatDecimal(summary.minimumSwr->swr), formatDecimal(summary.minimumSwr->frequencyMHz)));
-    if (summary.peakGain) extrema.append(tr("Peak gain %1 dBi @ %2 MHz")
-        .arg(formatDecimal(summary.peakGain->gainDb), formatDecimal(summary.peakGain->frequencyMHz)));
+    if (summary.peakGain) {
+        const auto peak = gainText(*summary.peakGain);
+        extrema.append(tr("Peak gain %1, %2 MHz")
+            .arg(fromCore(peak.text), formatDecimal(summary.peakGain->frequencyMHz)));
+        extremaToolTips.append(tr("Peak gain: strongest Total sample at any frequency · %1")
+            .arg(fromCore(peak.toolTip)));
+    }
     resultExtrema_->setText(extrema.join(QStringLiteral(" · ")));
+    resultExtrema_->setToolTip(extremaToolTips.join(QStringLiteral("\n")));
     quickResults_->setEnabled(!resultsStale_);
     resultStale_->setVisible(resultsStale_);
 }

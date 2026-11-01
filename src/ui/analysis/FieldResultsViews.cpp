@@ -18,6 +18,8 @@
 #include <QLabel>
 #include <QLinearGradient>
 #include <QLineF>
+#include <QContextMenuEvent>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -338,6 +340,18 @@ auto radiationCutSamples(const analysis::AnalysisResult& result, double frequenc
     return unique;
 }
 
+auto findRadiationSample(const analysis::AnalysisResult& result, double frequencyMHz,
+    int patternIndex, double thetaDegrees, double phiDegrees) -> const analysis::RadiationSample*
+{
+    const auto match = std::ranges::find_if(result.radiation, [&](const auto& sample) {
+        return nearlyEqual(sample.frequencyMHz, frequencyMHz)
+            && sample.patternIndex == patternIndex
+            && nearlyEqual(sample.thetaDegrees, thetaDegrees)
+            && nearlyEqual(sample.phiDegrees, phiDegrees);
+    });
+    return match == result.radiation.end() ? nullptr : &*match;
+}
+
 auto plotPoints(const std::vector<analysis::RadiationCutPoint>& samples) -> std::vector<QPointF>
 {
     std::vector<QPointF> values;
@@ -511,6 +525,7 @@ private:
 class RadiationPolarWidget final : public QWidget {
 public:
     using HoverTextCallback = std::function<void(const QString&)>;
+    using ForwardDirectionCallback = std::function<void(double, double)>;
 
     explicit RadiationPolarWidget(QWidget* parent = nullptr) : QWidget(parent)
     {
@@ -521,9 +536,11 @@ public:
         setProperty("ringLabelBackground", true);
         setProperty("hoverSampleMode", QStringLiteral("nearest-nec-sample"));
     }
-    void setSamples(std::vector<QPointF> samples)
+    void setSamples(std::vector<analysis::RadiationCutPoint> cut)
     {
-        samples_ = std::move(samples);
+        std::ranges::sort(cut, {}, &analysis::RadiationCutPoint::angleDegrees);
+        samples_ = plotPoints(cut);
+        cut_ = std::move(cut);
         setProperty("closedPattern", radiationAnglesCoverCircle(samples_));
         tracking_ = false;
         setProperty("hoverReadout", QString{});
@@ -547,7 +564,41 @@ public:
     {
         hoverTextCallback_ = std::move(callback);
     }
+    void setForwardDirectionCallback(ForwardDirectionCallback callback)
+    {
+        forwardDirectionCallback_ = std::move(callback);
+    }
+    // A vertical cut plots NEC theta around the circle through the plane at `plane` phi;
+    // a horizontal cut plots phi at `plane` theta.
+    void setCut(bool vertical, double plane)
+    {
+        vertical_ = vertical;
+        plane_ = plane;
+        setProperty("cutName", cutName());
+        update();
+    }
+    [[nodiscard]] auto cutName() const -> QString
+    {
+        return fromCore(vertical_ ? analysis::elevationCutName(plane_)
+                                  : analysis::azimuthCutName(plane_));
+    }
 protected:
+    void contextMenuEvent(QContextMenuEvent* event) override
+    {
+        if (cut_.empty() || !forwardDirectionCallback_) return;
+        const auto* nearest = nearestCutPoint(event->pos());
+        const auto peak = std::ranges::max_element(cut_, {}, &analysis::RadiationCutPoint::gainDb);
+        QMenu menu(this);
+        const auto* useNearest = menu.addAction(tr("Use This Sample as Forward Direction (%1)")
+            .arg(fromCore(analysis::formatDirection(nearest->thetaDegrees, nearest->phiDegrees))));
+        const auto* usePeak = menu.addAction(tr("Use Cut Maximum as Forward Direction (%1)")
+            .arg(fromCore(analysis::formatDirection(peak->thetaDegrees, peak->phiDegrees))));
+        const auto* chosen = menu.exec(event->globalPos());
+        if (chosen == useNearest)
+            forwardDirectionCallback_(nearest->thetaDegrees, nearest->phiDegrees);
+        else if (chosen == usePeak)
+            forwardDirectionCallback_(peak->thetaDegrees, peak->phiDegrees);
+    }
     void mouseMoveEvent(QMouseEvent* event) override
     {
         cursor_ = event->position();
@@ -602,7 +653,9 @@ protected:
             painter.drawEllipse(center, ringRadius, ringRadius);
             const auto ringDb = innerDb + (outerDb - innerDb) * ring / 4.0;
             drawRingLabel(QPointF(center.x() + 5, center.y() - ringRadius - 2),
-                tr("%1 dB").arg(formatDecimal(ringDb)));
+                settings_.scale == analysis::RadiationScale::Normalized
+                    ? tr("%1 dB").arg(formatDecimal(ringDb))
+                    : tr("%1 dBi").arg(formatDecimal(ringDb)));
         }
         for (auto angle = 0; angle < 360; angle += 30) {
             const auto radians = angle * std::numbers::pi / 180.0;
@@ -611,8 +664,23 @@ protected:
             const auto labelPoint = center
                 + QPointF(std::sin(radians), -std::cos(radians)) * (radius + 18.0);
             painter.setPen(labelColor);
+            // Vertical cuts are labelled in elevation: the horizon is level and the zenith is up.
+            const auto label = vertical_
+                ? fromCore(analysis::formatAngle(angle <= 180 ? 90.0 - angle : angle - 270.0))
+                : angle == 0 ? tr("0°/360°") : tr("%1°").arg(angle);
             painter.drawText(QRectF(labelPoint.x() - 22, labelPoint.y() - 9, 44, 18),
-                Qt::AlignCenter, angle == 0 ? tr("0°/360°") : tr("%1°").arg(angle));
+                Qt::AlignCenter, label);
+        }
+        if (vertical_) {
+            painter.setPen(labelColor);
+            const auto forwardSide = tr("Az %1 →").arg(
+                fromCore(analysis::formatAngle(analysis::patternDirection(90.0, plane_).azimuthDegrees)));
+            const auto backSide = tr("← Az %1").arg(fromCore(analysis::formatAngle(
+                analysis::patternDirection(90.0, plane_ + 180.0).azimuthDegrees)));
+            painter.drawText(QRectF(center.x() + radius - 90, center.y() + 4, 90, 18),
+                Qt::AlignRight | Qt::AlignVCenter, forwardSide);
+            painter.drawText(QRectF(center.x() - radius, center.y() + 4, 90, 18),
+                Qt::AlignLeft | Qt::AlignVCenter, backSide);
         }
         painter.setPen(QPen(palette().color(QPalette::Text), 1.5));
         painter.drawLine(center - QPointF(radius, 0), center + QPointF(radius, 0));
@@ -645,19 +713,24 @@ protected:
             QPen(QColor(65, 105, 165, 145), 2, Qt::DashLine));
         drawPattern(samples_, maxGain, QPen(QColor(215, 70, 65), 2));
         painter.setPen(palette().color(QPalette::Text));
-        painter.drawText(8, 20, tr("Angle: degrees · Radial scale: %1 · Absolute peak: %2 dBi")
-            .arg(settings_.scale == analysis::RadiationScale::Normalized
-                    ? tr("relative gain (dB)") : tr("absolute gain (dBi)"))
-            .arg(formatDecimal(maxGain)));
+        const auto reference = referenceText(maxGain);
+        setProperty("referenceLevel", reference);
+        painter.drawText(8, 20, painter.fontMetrics().elidedText(
+            tr("%1 · Max in this cut %2 dBi · %3")
+                .arg(cutName(), formatDecimal(maxGain), reference),
+            Qt::ElideRight, width() - 16));
         if (!referenceSamples_.empty()) {
+            // Each pattern is normalized to its own peak.
+            const auto overlayText = settings_.scale == analysis::RadiationScale::Normalized
+                ? tr("Overlay — %1 · %2").arg(referenceLabel_, referenceText(referenceMaxGain))
+                : tr("Overlay — %1").arg(referenceLabel_);
             const auto label = painter.fontMetrics().elidedText(
-                tr("Overlay — %1").arg(referenceLabel_), Qt::ElideRight,
-                std::max(80, width() / 2));
+                overlayText, Qt::ElideRight, std::max(80, width() / 2));
             const auto left = width() - painter.fontMetrics().horizontalAdvance(label) - 34;
             painter.setPen(QPen(QColor(65, 105, 165, 175), 2, Qt::DashLine));
-            painter.drawLine(QPointF(left, 18), QPointF(left + 20, 18));
+            painter.drawLine(QPointF(left, 36), QPointF(left + 20, 36));
             painter.setPen(palette().color(QPalette::Text));
-            painter.drawText(left + 25, 22, label);
+            painter.drawText(left + 25, 40, label);
         }
         if (tracking_) {
             auto cursorAngle = std::atan2(cursor_.x() - center.x(), center.y() - cursor_.y())
@@ -695,23 +768,54 @@ private:
             });
         const auto maxGain = std::ranges::max(samples_, {},
             [](const QPointF& point) { return point.y(); }).y();
-        return tr("Nearest NEC sample · Angle %1° · Gain %2 dBi · Relative %3 dB")
-            .arg(formatDecimal(nearest->x()), formatDecimal(nearest->y()),
-                formatDecimal(nearest->y() - maxGain));
+        const auto& direction = cut_[static_cast<std::size_t>(
+            std::distance(samples_.begin(), nearest))];
+        auto text = tr("Nearest NEC sample · %1 (NEC %2) · Gain %3 dBi · Relative %4 dB")
+            .arg(fromCore(analysis::formatDirection(direction.thetaDegrees, direction.phiDegrees)),
+                fromCore(analysis::formatNecDirection(direction.thetaDegrees, direction.phiDegrees)),
+                formatDecimal(nearest->y()), formatDecimal(nearest->y() - maxGain));
+        if (settings_.scale == analysis::RadiationScale::Normalized)
+            text += tr(" · %1").arg(referenceText(maxGain));
+        if (forwardDirectionCallback_) text += tr(" · Right-click to use as forward direction");
+        return text;
+    }
+    [[nodiscard]] auto referenceText(double maxGain) const -> QString
+    {
+        return settings_.scale == analysis::RadiationScale::Normalized
+            ? fromCore(analysis::referenceLevelText(maxGain))
+            : tr("Radial scale dBi");
+    }
+    [[nodiscard]] auto nearestCutPoint(const QPointF& position) const
+        -> const analysis::RadiationCutPoint*
+    {
+        const QPointF center(width() / 2.0, height() / 2.0 + 8.0);
+        auto cursorAngle = std::atan2(position.x() - center.x(), center.y() - position.y())
+            * 180.0 / std::numbers::pi;
+        if (cursorAngle < 0.0) cursorAngle += 360.0;
+        return &*std::ranges::min_element(cut_, {}, [cursorAngle](const auto& point) {
+            const auto difference = std::abs(std::fmod(point.angleDegrees + 360.0, 360.0)
+                - cursorAngle);
+            return std::min(difference, 360.0 - difference);
+        });
     }
 
     std::vector<QPointF> samples_;
+    std::vector<analysis::RadiationCutPoint> cut_;
     std::vector<QPointF> referenceSamples_;
     QString referenceLabel_;
     analysis::RadiationDisplaySettings settings_;
     QPointF cursor_;
     HoverTextCallback hoverTextCallback_;
+    ForwardDirectionCallback forwardDirectionCallback_;
+    double plane_{};
+    bool vertical_{true};
     bool tracking_{};
 };
 
 class RadiationSurfaceWidget final : public QWidget {
 public:
     using HoverTextCallback = std::function<void(const QString&)>;
+    using ForwardDirectionCallback = std::function<void(double, double)>;
 
     explicit RadiationSurfaceWidget(QWidget* parent = nullptr) : QWidget(parent)
     {
@@ -747,6 +851,8 @@ public:
     void setOverlayVisible(bool visible) { showOverlay_ = visible; update(); }
     void setHoverTextCallback(HoverTextCallback callback)
     { hoverTextCallback_ = std::move(callback); }
+    void setForwardDirectionCallback(ForwardDirectionCallback callback)
+    { forwardDirectionCallback_ = std::move(callback); }
     void resetView()
     {
         yaw_ = -0.7;
@@ -757,8 +863,30 @@ public:
         update();
     }
 protected:
+    void contextMenuEvent(QContextMenuEvent* event) override
+    {
+        const auto maxGain = showRadiation_ ? maximumGain(samples_) : std::nullopt;
+        if (!maxGain || !forwardDirectionCallback_) return;
+        const auto scale = std::min(width(), height()) * 0.38 * zoom_;
+        const auto nearest = nearestProjectedSample(event->pos(), scale, gainReference(*maxGain));
+        const auto metrics = analysis::radiationMetrics(samples_, settings_.component);
+        if (!nearest || !metrics.valid) return;
+        QMenu menu(this);
+        const auto* useNearest = menu.addAction(tr("Use This Sample as Forward Direction (%1)")
+            .arg(fromCore(analysis::formatDirection(
+                nearest->sample->thetaDegrees, nearest->sample->phiDegrees))));
+        const auto* usePeak = menu.addAction(tr("Use Pattern Peak as Forward Direction (%1)")
+            .arg(fromCore(analysis::formatDirection(
+                metrics.peakThetaDegrees, metrics.peakPhiDegrees))));
+        const auto* chosen = menu.exec(event->globalPos());
+        if (chosen == useNearest)
+            forwardDirectionCallback_(nearest->sample->thetaDegrees, nearest->sample->phiDegrees);
+        else if (chosen == usePeak)
+            forwardDirectionCallback_(metrics.peakThetaDegrees, metrics.peakPhiDegrees);
+    }
     void mousePressEvent(QMouseEvent* event) override
     {
+        if (event->button() == Qt::RightButton) return;
         last_ = event->position();
         dragging_ = true;
         panning_ = event->button() == Qt::MiddleButton
@@ -828,8 +956,14 @@ protected:
         painter.setPen(palette().color(QPalette::Text));
         if (showOverlay_) {
             auto status = tr("Drag to orbit · wheel to zoom · zoom %1×").arg(formatDecimal(zoom_));
-            if (hasRadiation) status += tr(" · %1 peak %2 dBi")
-                .arg(componentName(settings_.component), formatDecimal(maxGain));
+            if (hasRadiation) {
+                const auto metrics = analysis::radiationMetrics(samples_, settings_.component);
+                status += tr(" · Pattern peak %1").arg(fromCore(analysis::formatGain(
+                    {.gainDb = maxGain, .thetaDegrees = metrics.peakThetaDegrees,
+                        .phiDegrees = metrics.peakPhiDegrees,
+                        .component = settings_.component, .frequencyMHz = settings_.frequencyMHz,
+                        .sampleStepDegrees = std::nullopt}).text));
+            }
             if (referenceMaximum)
                 status += tr(" · Historical overlay %1 shown dashed").arg(referenceLabel_);
             painter.drawText(10, 22, status + tr(" · Shift/middle-drag to pan"));
@@ -841,7 +975,9 @@ protected:
             setProperty("colorScaleMaximum", reference);
             drawColorLegend(painter, 42.0,
                 settings_.scale == analysis::RadiationScale::Normalized
-                    ? tr("Radiation: relative gain") : tr("Radiation: absolute gain"),
+                    ? tr("Radiation: relative gain · %1")
+                          .arg(fromCore(analysis::referenceLevelText(reference)))
+                    : tr("Radiation: absolute gain"),
                 settings_.scale == analysis::RadiationScale::Normalized
                     ? settings_.floorDb : minimum,
                 settings_.scale == analysis::RadiationScale::Normalized ? 0.0 : reference,
@@ -944,10 +1080,16 @@ private:
         const auto scale = std::min(width(), height()) * 0.38 * zoom_;
         const auto nearest = nearestProjectedSample(position, scale, reference);
         if (!nearest) return {};
-        return tr("Nearest NEC sample · θ %1° · φ %2° · Gain %3 dBi · Relative %4 dB")
-            .arg(formatDecimal(nearest->sample->thetaDegrees),
-                formatDecimal(nearest->sample->phiDegrees), formatDecimal(nearest->gain),
-                formatDecimal(nearest->gain - *maxGain));
+        auto text = tr("Nearest NEC sample · %1 (NEC %2) · Gain %3 dBi · Relative %4 dB")
+            .arg(fromCore(analysis::formatDirection(
+                     nearest->sample->thetaDegrees, nearest->sample->phiDegrees)),
+                fromCore(analysis::formatNecDirection(
+                    nearest->sample->thetaDegrees, nearest->sample->phiDegrees)),
+                formatDecimal(nearest->gain), formatDecimal(nearest->gain - *maxGain));
+        if (settings_.scale == analysis::RadiationScale::Normalized)
+            text += tr(" · %1").arg(fromCore(analysis::referenceLevelText(*maxGain)));
+        if (forwardDirectionCallback_) text += tr(" · Right-click to use as forward direction");
+        return text;
     }
     [[nodiscard]] auto nearestProjectedSample(const QPointF& position, double scale,
         double reference) const -> std::optional<ProjectedRadiationSample>
@@ -1106,6 +1248,7 @@ private:
     QPointF cursor_;
     QPointF pan_;
     HoverTextCallback hoverTextCallback_;
+    ForwardDirectionCallback forwardDirectionCallback_;
     double yaw_{-0.7};
     double pitch_{0.45};
     double zoom_{1.0};
@@ -1197,7 +1340,7 @@ RadiationPatternView::RadiationPatternView(QWidget* parent) : QWidget(parent)
     frequency_->setMinimumContentsLength(20);
     dataset_ = new QComboBox(this); dataset_->setObjectName(QStringLiteral("radiation2DDataset"));
     phi_ = new QComboBox(this); phi_->setObjectName(QStringLiteral("radiation2DCutPlane"));
-    cutLabel_ = new QLabel(tr("Phi plane"), this);
+    cutLabel_ = new QLabel(tr("Elevation cut at Az"), this);
     component_ = new QComboBox(this); component_->setObjectName(QStringLiteral("radiation2DComponent"));
     scale_ = new QComboBox(this); scale_->setObjectName(QStringLiteral("radiation2DScale"));
     floor_ = new QComboBox(this); floor_->setObjectName(QStringLiteral("radiation2DFloor"));
@@ -1334,6 +1477,8 @@ void RadiationPatternView::setComponent(analysis::RadiationComponent component)
 }
 void RadiationPatternView::setSettingsChangedCallback(SettingsChangedCallback callback)
 { settingsChangedCallback_ = std::move(callback); }
+void RadiationPatternView::setForwardDirectionCallback(ForwardDirectionCallback callback)
+{ plot_->setForwardDirectionCallback(std::move(callback)); }
 auto RadiationPatternView::availableCutPlanes(CutOrientation orientation) const -> std::vector<double>
 {
     return availableCutPlanes(orientation, selectedPatternIndex(dataset_));
@@ -1402,7 +1547,7 @@ void RadiationPatternView::refreshCutControls()
     orientationButton_->setText(orientation_ == CutOrientation::Vertical
         ? tr("Vertical") : tr("Horizontal"));
     cutLabel_->setText(orientation_ == CutOrientation::Vertical
-        ? tr("Phi plane") : tr("Theta angle"));
+        ? tr("Elevation cut at Az") : tr("Azimuth cut at El"));
     const auto oppositeOrientation = orientation_ == CutOrientation::Vertical
         ? CutOrientation::Horizontal : CutOrientation::Vertical;
     const auto oppositeAvailable = !availableCutPlanes(oppositeOrientation).empty()
@@ -1422,8 +1567,15 @@ void RadiationPatternView::refreshSelectors()
 {
     const auto previousValue = phi_->currentData().toDouble();
     phi_->clear();
-    for (const auto plane : availableCutPlanes(orientation_))
-        phi_->addItem(QStringLiteral("%1°").arg(formatDecimal(plane)), plane);
+    for (const auto plane : availableCutPlanes(orientation_)) {
+        phi_->addItem(orientation_ == CutOrientation::Vertical
+                ? fromCore(analysis::formatAngle(plane))
+                : tr("%1 (NEC θ %2)").arg(
+                      fromCore(analysis::formatAngle(analysis::patternDirection(plane, 0.0)
+                          .elevationDegrees)),
+                      fromCore(analysis::formatAngle(plane))),
+            plane);
+    }
     const auto previousIndex = phi_->findData(previousValue); if (previousIndex >= 0) phi_->setCurrentIndex(previousIndex); refresh();
 }
 void RadiationPatternView::refreshDatasets()
@@ -1456,18 +1608,33 @@ void RadiationPatternView::refresh()
             ? tr(" · Historical overlay %1 shown dashed").arg(referenceLabel_)
             : tr(" · Historical overlay %1 unavailable: exact frequency/cut grid differs")
                 .arg(referenceLabel_);
+    plot_->setCut(vertical, angle);
+    const auto cutName = plot_->cutName();
     const auto metrics = analysis::radiationCutMetrics(cutSamples, radiationAnglesCoverCircle(values));
     if (metrics.valid) {
-        auto peakText = tr("%1 peak %2 dBi at %3°")
-            .arg(componentName(settings.component), formatDecimal(metrics.peakGainDb),
-                formatDecimal(metrics.peakAngleDegrees));
+        const auto cutPointAt = [&cutSamples](double plotAngle) {
+            return std::ranges::find_if(cutSamples, [plotAngle](const auto& point) {
+                return nearlyEqual(point.angleDegrees, plotAngle);
+            });
+        };
+        const auto peakPoint = cutPointAt(metrics.peakAngleDegrees);
+        const auto* peakSample = findRadiationSample(result_, settings.frequencyMHz,
+            selectedPatternIndex(dataset_), peakPoint->thetaDegrees, peakPoint->phiDegrees);
+        const auto peakGain = analysis::formatGain({.gainDb = metrics.peakGainDb,
+            .thetaDegrees = peakPoint->thetaDegrees, .phiDegrees = peakPoint->phiDegrees,
+            .component = settings.component, .frequencyMHz = settings.frequencyMHz,
+            .sampleStepDegrees = peakSample != nullptr
+                ? analysis::patternStepAround(result_.radiation, *peakSample) : std::nullopt});
+        auto peakText = tr("Max in this cut %1").arg(fromCore(peakGain.text));
         if (metrics.tiedPeakAnglesDegrees.size() > 1) {
             QStringList tiedAngles;
             for (const auto tiedAngle : metrics.tiedPeakAnglesDegrees) {
-                if (!nearlyEqual(tiedAngle, metrics.peakAngleDegrees))
-                    tiedAngles.append(QStringLiteral("%1°").arg(formatDecimal(tiedAngle)));
+                if (nearlyEqual(tiedAngle, metrics.peakAngleDegrees)) continue;
+                const auto tied = cutPointAt(tiedAngle);
+                tiedAngles.append(fromCore(analysis::formatDirection(
+                    tied->thetaDegrees, tied->phiDegrees)));
             }
-            if (!tiedAngles.empty()) peakText += tr("; tied at %1").arg(tiedAngles.join(QStringLiteral(", ")));
+            if (!tiedAngles.empty()) peakText += tr("; tied at %1").arg(tiedAngles.join(tr("; ")));
         }
         const auto beamwidthText = metrics.interpolatedBeamwidthDegrees
             ? tr("3 dB HPBW %1° interpolated (%2° sampled)")
@@ -1477,13 +1644,40 @@ void RadiationPatternView::refresh()
         const auto frontToBackText = metrics.frontToBackDb
             ? tr("F/B %1 dB").arg(formatDecimal(*metrics.frontToBackDb))
             : tr("F/B unavailable");
-        summary_->setText(tr("%1 MHz · %2 · %3 · %4 · %5 · Left/Right changes angle · Space changes cut")
-            .arg(formatDecimal(settings.frequencyMHz), runContext_, peakText,
-                beamwidthText, frontToBackText) + referenceText);
+        // A cut can miss the main lobe; point at the strongest sample in all RP data.
+        std::vector<analysis::RadiationSample> atFrequency;
+        for (const auto& sample : result_.radiation)
+            if (nearlyEqual(sample.frequencyMHz, settings.frequencyMHz)) atFrequency.push_back(sample);
+        const auto pattern = analysis::radiationMetrics(atFrequency, settings.component);
+        QString patternPeakText;
+        QString patternPeakToolTip;
+        if (pattern.valid && pattern.peakGainDb > metrics.peakGainDb + 1.0e-6) {
+            const auto* sample = &*std::ranges::find_if(atFrequency, [&pattern](const auto& value) {
+                return value.thetaDegrees == pattern.peakThetaDegrees
+                    && value.phiDegrees == pattern.peakPhiDegrees;
+            });
+            const auto patternGain = analysis::formatGain({.gainDb = pattern.peakGainDb,
+                .thetaDegrees = pattern.peakThetaDegrees, .phiDegrees = pattern.peakPhiDegrees,
+                .component = settings.component, .frequencyMHz = settings.frequencyMHz,
+                .sampleStepDegrees = analysis::patternStepAround(atFrequency, *sample)});
+            patternPeakText = tr(" · Pattern peak %1, outside this cut")
+                .arg(fromCore(patternGain.text));
+            patternPeakToolTip = tr("\nPattern peak: strongest sample in all RP data at this "
+                "frequency, not in this cut · %1").arg(fromCore(patternGain.toolTip));
+        }
+        summary_->setText(tr("%1 MHz · %2 · %3 · %4 · %5 · %6%7 · Left/Right changes angle · Space changes cut")
+            .arg(formatDecimal(settings.frequencyMHz), runContext_, cutName, peakText,
+                beamwidthText, frontToBackText, patternPeakText) + referenceText);
+        summary_->setToolTip(tr("Max in this cut: strongest sample in this cut (%1) · %2\n"
+            "HPBW: 3 dB beamwidth within this cut.\n%3 Forward is the cut maximum.%4")
+            .arg(cutName, fromCore(peakGain.toolTip),
+                fromCore(analysis::frontToBackDefinition()), patternPeakToolTip));
     } else {
-        summary_->setText(tr("%1 MHz · No %2 samples for this cut · %3")
-            .arg(formatDecimal(settings.frequencyMHz), componentName(settings.component), runContext_)
+        summary_->setText(tr("%1 MHz · %2 · No %3 samples for this cut · %4")
+            .arg(formatDecimal(settings.frequencyMHz), cutName,
+                componentName(settings.component), runContext_)
             + referenceText);
+        summary_->setToolTip({});
     }
     exportImageButton_->setEnabled(metrics.valid);
     exportDataButton_->setEnabled(metrics.valid);
@@ -1496,7 +1690,7 @@ void RadiationPatternView::refresh()
     }));
     plot_->setDisplaySettings(settings);
     plot_->setReferenceSamples(std::move(referenceValues), referenceLabel_);
-    plot_->setSamples(values);
+    plot_->setSamples(cutSamples);
 }
 void RadiationPatternView::toggleOrientation()
 {
@@ -1789,11 +1983,21 @@ void Radiation3DView::refresh()
         const auto frontToBackText = metrics.frontToBackDb
             ? tr("F/B %1 dB").arg(formatDecimal(*metrics.frontToBackDb))
             : tr("F/B unavailable");
-        auto text = tr("%1 MHz · %2 · %3 peak %4 dBi at θ %5°, φ %6° · %7 · %8 phi plane(s)")
-            .arg(formatDecimal(settings.frequencyMHz), runContext_, componentName(settings.component))
-            .arg(formatDecimal(metrics.peakGainDb), formatDecimal(metrics.peakThetaDegrees),
-                formatDecimal(metrics.peakPhiDegrees), frontToBackText)
+        const auto peak = std::ranges::find_if(radiation, [&metrics](const auto& sample) {
+            return sample.thetaDegrees == metrics.peakThetaDegrees
+                && sample.phiDegrees == metrics.peakPhiDegrees;
+        });
+        const auto peakGain = analysis::formatGain({.gainDb = metrics.peakGainDb,
+            .thetaDegrees = metrics.peakThetaDegrees, .phiDegrees = metrics.peakPhiDegrees,
+            .component = settings.component, .frequencyMHz = settings.frequencyMHz,
+            .sampleStepDegrees = analysis::patternStepAround(radiation, *peak)});
+        auto text = tr("%1 MHz · %2 · Pattern peak %3 · %4 · %5 phi plane(s)")
+            .arg(formatDecimal(settings.frequencyMHz), runContext_, fromCore(peakGain.text),
+                frontToBackText)
             .arg(planes.size());
+        summary_->setToolTip(tr("Pattern peak: strongest sample in this RP dataset · %1\n"
+            "%2 Forward is the pattern peak.")
+            .arg(fromCore(peakGain.toolTip), fromCore(analysis::frontToBackDefinition())));
         if (metrics.tiedPeaks.size() > 1)
             text += tr(" · %1 tied peak directions").arg(metrics.tiedPeaks.size());
         if (planes.size() < 3)
@@ -1805,6 +2009,7 @@ void Radiation3DView::refresh()
                 : tr(" · Historical overlay %1 shown dashed").arg(referenceLabel_);
         summary_->setText(text);
     } else {
+        summary_->setToolTip({});
         summary_->setText(tr("%1 MHz · %2 · No %3 radiation samples · %4 current segment(s)")
             .arg(formatDecimal(settings.frequencyMHz), runContext_, componentName(settings.component))
             .arg(currents.size()));
@@ -1814,6 +2019,10 @@ void Radiation3DView::refresh()
     surface_->setDisplaySettings(settings);
     surface_->setReferenceSamples(std::move(referenceRadiation), referenceLabel_);
     surface_->setSamples(std::move(radiation)); surface_->setCurrents(std::move(currents));
+}
+void Radiation3DView::setForwardDirectionCallback(ForwardDirectionCallback callback)
+{
+    surface_->setForwardDirectionCallback(std::move(callback));
 }
 void Radiation3DView::refreshDatasets()
 {
@@ -1898,13 +2107,25 @@ RadiationPerformanceView::RadiationPerformanceView(QWidget* parent)
     referenceControl_->setChecked(false);
     referenceControl_->setEnabled(false);
     controls->addWidget(referenceControl_);
+    readout_ = new QLabel(this);
+    readout_->setObjectName(QStringLiteral("radiationPerformanceReadout"));
+    readout_->setWordWrap(true);
+    auto readoutFont = readout_->font();
+    readoutFont.setBold(true);
+    readoutFont.setPointSizeF(readoutFont.pointSizeF() * 1.15);
+    readout_->setFont(readoutFont);
     summary_ = new QLabel(tr(
         "Load radiation results to inspect directional performance across frequency."), this);
     summary_->setObjectName(QStringLiteral("radiationPerformanceSummary"));
     summary_->setWordWrap(true);
     plot_ = new DirectionalMetricsView(this);
     plot_->setObjectName(QStringLiteral("radiationPerformancePlot"));
+    plot_->setToolTip(tr("Gain is toward the forward direction above.\n%1\n%2")
+        .arg(fromCore(analysis::frontToBackDefinition()),
+            fromCore(analysis::frontToRearDefinition(
+                analysis::DirectionalEvaluationMode::SpecifiedDirection))));
     layout->addLayout(controls);
+    layout->addWidget(readout_);
     layout->addWidget(summary_);
     layout->addWidget(plot_, 1);
     connect(component_, &QComboBox::currentIndexChanged, this, [this] {
@@ -1986,6 +2207,17 @@ void RadiationPerformanceView::setComponentChangedCallback(
     componentChangedCallback_ = std::move(callback);
 }
 
+void RadiationPerformanceView::setForwardDirection(double thetaDegrees, double phiDegrees)
+{
+    const auto direction = analysis::patternDirection(thetaDegrees, phiDegrees);
+    updatingDirection_ = true;
+    forwardElevation_->setValue(direction.elevationDegrees);
+    forwardAzimuth_->setValue(direction.azimuthDegrees);
+    updatingDirection_ = false;
+    directionCustomized_ = true;
+    refresh();
+}
+
 void RadiationPerformanceView::seedDirectionFromPatternPeak()
 {
     const auto component = static_cast<analysis::RadiationComponent>(
@@ -2044,6 +2276,8 @@ void RadiationPerformanceView::refresh()
     }
     if (selectedFrequencyMHz_) plot_->setSelectedFrequency(*selectedFrequencyMHz_);
     if (metrics.empty()) {
+        readout_->clear();
+        readout_->setToolTip({});
         summary_->setText(tr("No radiation samples are available · %1").arg(runContext_));
         return;
     }
@@ -2053,10 +2287,29 @@ void RadiationPerformanceView::refresh()
             return std::abs(left.frequencyMHz - targetFrequency)
                 < std::abs(right.frequencyMHz - targetFrequency);
         });
-    const auto direction = tr(
-        "Elevation %1°, azimuth %2° (NEC θ %3°)")
-        .arg(formatDecimal(forwardElevation_->value()),
-            formatDecimal(forwardAzimuth_->value()), formatDecimal(thetaDegrees));
+    const auto direction = tr("%1 (NEC %2)")
+        .arg(fromCore(analysis::formatDirection(thetaDegrees, phiDegrees)),
+            fromCore(analysis::formatNecDirection(thetaDegrees, phiDegrees)));
+    const auto toward = fromCore(analysis::formatDirection(thetaDegrees, phiDegrees));
+    const auto componentText = component == analysis::RadiationComponent::Total
+        ? QString{} : tr(" (%1)").arg(componentName(component).toLower());
+    QStringList readout;
+    readout.append(selectedMetric->forwardGainDb
+        ? tr("Gain toward %1%2: %3 dBi").arg(toward, componentText,
+              formatDecimal(*selectedMetric->forwardGainDb))
+        : tr("Gain toward %1%2: unavailable").arg(toward, componentText));
+    if (selectedMetric->frontToBackDb)
+        readout.append(tr("F/B %1 dB").arg(formatDecimal(*selectedMetric->frontToBackDb)));
+    if (selectedMetric->frontToRearDb)
+        readout.append(tr("F/R %1 dB").arg(formatDecimal(*selectedMetric->frontToRearDb)));
+    readout_->setText(tr("%1 · %2 MHz").arg(readout.join(QStringLiteral(" · ")),
+        formatDecimal(selectedMetric->frequencyMHz)));
+    readout_->setToolTip(tr("Forward direction %1 · %2 gain\n%3\n%4\n"
+        "Set the direction above, use Pattern Peak, or right-click a 2D or 3D pattern.")
+        .arg(direction, componentName(component),
+            fromCore(analysis::frontToBackDefinition()),
+            fromCore(analysis::frontToRearDefinition(
+                analysis::DirectionalEvaluationMode::SpecifiedDirection))));
     if (selectedMetric->forwardAvailability == analysis::RadiationMetricAvailability::PatternNull) {
         summary_->setText(tr(
             "%1 is a pattern null at %2 MHz. Choose another sampled direction or use "

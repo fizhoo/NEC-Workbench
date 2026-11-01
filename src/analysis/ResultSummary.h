@@ -41,6 +41,8 @@ struct PeakGainSummary {
     double phiDegrees{};
     int patternIndex{};
     RadiationDatasetKind datasetKind{RadiationDatasetKind::Point};
+    // Widest RP step next to the peak sample; see patternStepAround.
+    std::optional<double> sampleStepDegrees;
 };
 
 struct ResultSummary {

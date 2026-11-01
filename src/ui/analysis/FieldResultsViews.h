@@ -51,6 +51,9 @@ private:
     QString runContext_;
 };
 
+// Receives an NEC theta and phi chosen on a pattern to use as the forward direction.
+using ForwardDirectionCallback = std::function<void(double, double)>;
+
 class RadiationPatternView final : public QWidget {
 public:
     using SettingsChangedCallback = std::function<void(const analysis::RadiationDisplaySettings&)>;
@@ -64,6 +67,7 @@ public:
     void setDisplaySettings(const analysis::RadiationDisplaySettings& settings);
     void setComponent(analysis::RadiationComponent component);
     void setSettingsChangedCallback(SettingsChangedCallback callback);
+    void setForwardDirectionCallback(ForwardDirectionCallback callback);
 
 private:
     enum class CutOrientation { Vertical, Horizontal };
@@ -119,6 +123,7 @@ public:
     void setDisplaySettings(const analysis::RadiationDisplaySettings& settings);
     void setComponent(analysis::RadiationComponent component);
     void setSettingsChangedCallback(SettingsChangedCallback callback);
+    void setForwardDirectionCallback(ForwardDirectionCallback callback);
     void setOverviewMode(bool enabled);
 
 private:
@@ -163,6 +168,8 @@ public:
     void setSelectedFrequency(double frequencyMHz);
     void setComponent(analysis::RadiationComponent component);
     void setComponentChangedCallback(ComponentChangedCallback callback);
+    // Uses an NEC direction picked on another radiation view as the forward direction.
+    void setForwardDirection(double thetaDegrees, double phiDegrees);
 
 private:
     void seedDirectionFromPatternPeak();
@@ -174,6 +181,7 @@ private:
     QDoubleSpinBox* forwardElevation_{};
     QDoubleSpinBox* forwardAzimuth_{};
     QPushButton* usePatternPeak_{};
+    QLabel* readout_{};
     QLabel* summary_{};
     QCheckBox* referenceControl_{};
     DirectionalMetricsView* plot_{};

@@ -496,6 +496,17 @@ void ConvergenceWorkspace::populateStepResult(Step& step, const QByteArray& outp
     resultsTable_->setItem(step.row, ResistanceColumn, numericItem(step.impedance->real()));
     resultsTable_->setItem(step.row, ReactanceColumn, numericItem(step.impedance->imag()));
     resultsTable_->setItem(step.row, GainColumn, optionalItem(step.peakGainDb));
+    if (const auto peak = analysis::radiationPeakAtNearestFrequency(result.radiation,
+            analysis::RadiationComponent::Total, frequencyControl_->value());
+        step.peakGainDb && peak && nearlyEqual(peak->frequencyMHz, frequencyControl_->value())) {
+        const auto gain = analysis::formatGain({.gainDb = peak->metrics.peakGainDb,
+            .thetaDegrees = peak->metrics.peakThetaDegrees,
+            .phiDegrees = peak->metrics.peakPhiDegrees,
+            .component = analysis::RadiationComponent::Total,
+            .frequencyMHz = peak->frequencyMHz, .sampleStepDegrees = std::nullopt});
+        resultsTable_->item(step.row, GainColumn)->setToolTip(tr("Sampled peak %1\n%2")
+            .arg(fromCore(gain.text), fromCore(gain.toolTip)));
+    }
 
     std::optional<double> impedanceChange;
     std::optional<double> gainChange;

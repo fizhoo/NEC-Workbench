@@ -1,13 +1,16 @@
 #pragma once
 
+#include "analysis/GainDirection.h"
+
 #include <QString>
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 
 namespace necwb::ui {
 
-inline constexpr auto DisplayDecimalPlaces = 3;
+inline constexpr auto DisplayDecimalPlaces = analysis::DisplayDecimalPlaces;
 
 inline auto formatDecimal(double value) -> QString
 {
@@ -15,6 +18,11 @@ inline auto formatDecimal(double value) -> QString
         return QString::number(value, 'e', DisplayDecimalPlaces);
     }
     return QString::number(value, 'f', DisplayDecimalPlaces);
+}
+
+inline auto fromCore(const std::string& text) -> QString
+{
+    return QString::fromStdString(text);
 }
 
 inline auto formatAxisTick(double value, double step) -> QString

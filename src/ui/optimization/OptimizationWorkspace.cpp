@@ -478,16 +478,19 @@ void OptimizationWorkspace::updateSetupSummaries()
     QString directionSummary;
     if (setup.objective.directionalEvaluationMode
         == analysis::DirectionalEvaluationMode::StrongestInAzimuthCut) {
-        directionSummary = tr("\nTrack peak in azimuth cut at θ %1°")
-            .arg(formatDecimal(setup.objective.forwardThetaDegrees));
+        directionSummary = tr("\nTrack peak · %1 (NEC θ %2)")
+            .arg(fromCore(analysis::azimuthCutName(setup.objective.forwardThetaDegrees)),
+                fromCore(analysis::formatAngle(setup.objective.forwardThetaDegrees)));
     } else if (setup.objective.directionalEvaluationMode
         == analysis::DirectionalEvaluationMode::StrongestInElevationCut) {
-        directionSummary = tr("\nTrack peak in elevation cut at φ %1°")
-            .arg(formatDecimal(setup.objective.forwardPhiDegrees));
+        directionSummary = tr("\nTrack peak · %1")
+            .arg(fromCore(analysis::elevationCutName(setup.objective.forwardPhiDegrees)));
     } else {
-        directionSummary = tr("\nEvaluate fixed direction θ %1°, φ %2°")
-            .arg(formatDecimal(setup.objective.forwardThetaDegrees))
-            .arg(formatDecimal(setup.objective.forwardPhiDegrees));
+        directionSummary = tr("\nEvaluate fixed direction %1 (NEC %2)")
+            .arg(fromCore(analysis::formatDirection(setup.objective.forwardThetaDegrees,
+                     setup.objective.forwardPhiDegrees)),
+                fromCore(analysis::formatNecDirection(setup.objective.forwardThetaDegrees,
+                    setup.objective.forwardPhiDegrees)));
     }
     const auto preset = selectedObjectivePreset();
     const auto directional = setup.objective.forwardGainWeight > 0.0

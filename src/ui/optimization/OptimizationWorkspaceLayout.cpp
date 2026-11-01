@@ -632,10 +632,9 @@ auto OptimizationWorkspace::buildObjectiveSection(QWidget* parent) -> QGroupBox*
     criterionItem(2, tr("Reactance (Ω)"), tr("Feedpoint reactance."));
     criterionItem(3, tr("Peak Gain in Cut (dBi)"),
         tr("Highest gain found in the selected azimuth or elevation cut."));
-    criterionItem(4, tr("F/B (dB)"),
-        tr("Forward gain minus gain exactly 180 degrees opposite."));
-    criterionItem(5, tr("F/R (dB)"),
-        tr("Forward gain minus the strongest response in the rear azimuth half."));
+    criterionItem(4, tr("F/B (dB)"), fromCore(analysis::frontToBackDefinition()));
+    criterionItem(5, tr("F/R (dB)"), fromCore(analysis::frontToRearDefinition(
+        analysis::DirectionalEvaluationMode::StrongestInAzimuthCut)));
     const auto weightControl = [this](const QString& name, double value) {
         auto* control = new FocusWheelDoubleSpinBox(objectiveCriteriaTable_);
         control->setObjectName(name);
@@ -886,10 +885,11 @@ auto OptimizationWorkspace::buildResultsPanel() -> QWidget*
         tr("R (Ω)"), tr("X (Ω)"), tr("Gain (dBi)"), tr("F/B (dB)"), tr("F/R (dB)"), tr("Status"), tr("Run")});
     resultsTable_->horizontalHeaderItem(GainColumn)->setToolTip(tr(
         "Forward gain at the configured theta, phi, frequency, and radiation component."));
-    resultsTable_->horizontalHeaderItem(FrontToBackColumn)->setToolTip(tr(
-        "Gain in the configured forward direction minus gain at the physical opposite direction."));
-    resultsTable_->horizontalHeaderItem(FrontToRearColumn)->setToolTip(tr(
-        "Gain in the configured forward direction minus the strongest response in the rear 180° half of the configured azimuth cut."));
+    resultsTable_->horizontalHeaderItem(FrontToBackColumn)->setToolTip(
+        fromCore(analysis::frontToBackDefinition()));
+    resultsTable_->horizontalHeaderItem(FrontToRearColumn)->setToolTip(
+        fromCore(analysis::frontToRearDefinition(
+            analysis::DirectionalEvaluationMode::StrongestInAzimuthCut)));
     resultsTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     resultsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     resultsTable_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -979,7 +979,11 @@ void OptimizationWorkspace::buildCandidateDetailsWindow()
     candidateDetailsTable_->setHorizontalHeaderLabels(
         {tr("Frequency (MHz)"), tr("SWR"), tr("R (Ω)"), tr("X (Ω)"),
             tr("Gain (dBi)"), tr("F/B (dB)"), tr("F/R (dB)"),
-            tr("Theta (°)"), tr("Phi (°)")});
+            tr("El (°)"), tr("Az (°)")});
+    candidateDetailsTable_->horizontalHeaderItem(7)->setToolTip(tr(
+        "Elevation of the forward direction above the horizon (NEC θ = 90° − El)."));
+    candidateDetailsTable_->horizontalHeaderItem(8)->setToolTip(tr(
+        "Azimuth of the forward direction (NEC φ)."));
     candidateDetailsTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     candidateDetailsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     candidateDetailsTable_->setSelectionMode(QAbstractItemView::SingleSelection);

@@ -1,11 +1,13 @@
 #include "ui/optimization/CandidateEvaluator.h"
 
+#include "analysis/GainDirection.h"
 #include "analysis/NecOutputParser.h"
 #include "analysis/SolverCommand.h"
 #include "analysis/SolverInput.h"
 #include "nec/NecModelChecker.h"
 #include "nec/NecParser.h"
 #include "nec/NecSymbolResolver.h"
+#include "ui/DisplayFormat.h"
 #include "ui/FileIo.h"
 
 #include <QDir>
@@ -40,15 +42,17 @@ auto objectiveFailureDetail(const analysis::OptimizationObjectiveFailure& failur
         ? QObject::tr(" at %1 MHz").arg(*failure.frequencyMHz, 0, 'f', 3) : QString{};
     const auto direction = objective.directionalEvaluationMode
             == analysis::DirectionalEvaluationMode::SpecifiedDirection
-        ? QObject::tr(" (theta %1 deg, phi %2 deg)")
-              .arg(objective.forwardThetaDegrees, 0, 'f', 3)
-              .arg(objective.forwardPhiDegrees, 0, 'f', 3)
+        ? QObject::tr(" (%1, NEC %2)")
+              .arg(fromCore(analysis::formatDirection(
+                       objective.forwardThetaDegrees, objective.forwardPhiDegrees)),
+                  fromCore(analysis::formatNecDirection(
+                      objective.forwardThetaDegrees, objective.forwardPhiDegrees)))
         : objective.directionalEvaluationMode
                 == analysis::DirectionalEvaluationMode::StrongestInAzimuthCut
-            ? QObject::tr(" (strongest lobe in theta %1 deg azimuth cut)")
-                  .arg(objective.forwardThetaDegrees, 0, 'f', 3)
-            : QObject::tr(" (strongest lobe in phi %1 deg elevation cut)")
-                  .arg(objective.forwardPhiDegrees, 0, 'f', 3);
+            ? QObject::tr(" (strongest lobe · %1)")
+                  .arg(fromCore(analysis::azimuthCutName(objective.forwardThetaDegrees)))
+            : QObject::tr(" (strongest lobe · %1)")
+                  .arg(fromCore(analysis::elevationCutName(objective.forwardPhiDegrees)));
     using Kind = analysis::OptimizationObjectiveFailureKind;
     switch (failure.kind) {
     case Kind::InvalidConfiguration:
