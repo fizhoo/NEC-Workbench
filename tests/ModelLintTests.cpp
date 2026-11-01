@@ -107,12 +107,27 @@ void testNecConnectionTolerance()
                    "GW 2 10 0.003 0 10 10 0 10 .003\n", "EX 0 1 5 0 1 0\n")),
                "touch at about") == 1,
         "ends just beyond NEC's tolerance but within the wire radii touch without joining");
-    // A 10 m segment reaches 10 mm, a 0.1 m segment only 0.1 mm; NEC joins them one way only.
+    // A 10 m segment reaches 10 mm, a 0.1 m segment only 0.1 mm; NEC-2's TRIO then stops.
+    const auto oneSided = check(deck(
+        "GW 1 1 -10 0 10 0 0 10 .001\n"
+        "GW 2 1 0.001 0 10 0.101 0 10 .001\n", "EX 0 1 1 0 1 0\n"));
+    expect(count(oneSided, "The end of wire tag 1 segment 1 reaches wire tag 2 segment 1",
+               DiagnosticSeverity::Error) == 1
+            && count(oneSided, "touch at about") == 0,
+        "ends joined only from the longer segment's side are a NEC-2 error, reported once");
+    // Two short segments meet exactly and a long one reaches them from 1 mm away: the short
+    // ones point at each other, so the walk from the long segment never returns.
     expect(count(check(deck(
-                   "GW 1 1 -10 0 10 0 0 10 .001\n"
-                   "GW 2 1 0.001 0 10 0.101 0 10 .001\n", "EX 0 1 1 0 1 0\n")),
-               "touch at about") == 1,
-        "ends joined only from the longer segment's side are reported");
+                   "GW 1 1 -10 0 10 -0.001 0 10 .001\n"
+                   "GW 2 1 0 0 10 0 0.1 10 .001\n"
+                   "GW 3 1 0 0 10 0 -0.1 10 .001\n", "EX 0 1 1 0 1 0\n")),
+               "never returns", DiagnosticSeverity::Error) == 1,
+        "a junction ring broken by a one-way reach is a NEC-2 error");
+    const auto mixedLengths = check(deck(
+        "GW 1 1 -10 0 10 0 0 10 .001\n"
+        "GW 2 1 0 0 10 0.1 0 10 .001\n", "EX 0 1 1 0 1 0\n"));
+    expect(mixedLengths.errorCount() == 0 && count(mixedLengths, "touch at about") == 0,
+        "long and short segments meeting exactly are joined");
 
     // 0.5 m segments: NEC puts ends within 0.5 mm of z = 0 on the ground.
     const auto snapped = check(deck("GW 1 10 0 0 -0.0002 0 0 5 .001\n", "EX 0 1 1 0 1 0\n",
@@ -235,6 +250,12 @@ void testParallelAlignment()
                    "GW 1 11 -5 0 10 5 0 10 .001\n"
                    "GW 2 10 -5 2 10 5 2 10 .001\n")), "run parallel") == 0,
         "widely spaced parallel wires are not reported");
+    // 0.4 m apart is within 10 radii of a 5 cm wire (0.5 m) but two 0.2 m segments away, so
+    // the offset junctions do not matter.
+    expect(count(check(deck(
+                   "GW 1 50 -5 0 10 5 0 10 .05\n"
+                   "GW 2 49 -5 0.4 10 5 0.4 10 .05\n")), "run parallel") == 0,
+        "thick parallel wires more than a segment apart are not reported");
     expect(count(check(deck(
                    "GW 1 11 -5 0 10 0 0 10 .001\n"
                    "GW 2 7 0 0 10 5 0 10 .001\n")), "run parallel") == 0,
@@ -249,13 +270,16 @@ void testInsertionSegments()
         "GW 3 10 0 0 5 -2.5 4.33 3 .001\n"
         "GW 4 10 0 0 5 -2.5 -4.33 3 .001\n";
     const auto junctionFeed = check(deck(groundPlane, "EX 0 1 1 0 1 0\n"));
-    expect(count(junctionFeed, "EX on wire tag 1 segment 1 touches a junction of 4 segments") == 1,
-        "a source at a multi-wire junction is reported");
-    expect(count(check(deck(groundPlane, "EX 0 1 2 0 1 0\n")), "touches a junction") == 0,
+    expect(count(junctionFeed, "EX on wire tag 1 segment 1 touches a junction of 4 segments",
+               DiagnosticSeverity::Information) == 1,
+        "a source at a multi-wire junction is a note");
+    expect(count(check(deck(groundPlane, "EX 0 1 2 0 1 0\n")), "touches a junction",
+               DiagnosticSeverity::Information) == 0,
         "a source one segment from the junction is not reported");
     expect(count(check(deck(groundPlane, "EX 0 1 2 0 1 0\nTL 2 1 1 5 50 0\n")),
-               "TL end on wire tag 2 segment 1 touches a junction") == 1,
-        "a transmission-line end at a multi-wire junction is reported");
+               "TL end on wire tag 2 segment 1 touches a junction",
+               DiagnosticSeverity::Information) == 1,
+        "a transmission-line end at a multi-wire junction is a note");
 
     const std::string stepped =
         "GW 1 5 -5 0 10 0 0 10 .001\n"
