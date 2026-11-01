@@ -268,6 +268,10 @@ if(NECWB_BUILD_TESTS)
     target_link_libraries(necwb_core_tests PRIVATE necwb_core)
     add_test(NAME necwb_core_tests COMMAND necwb_core_tests)
 
+    add_executable(necwb_model_lint_tests tests/ModelLintTests.cpp)
+    target_link_libraries(necwb_model_lint_tests PRIVATE necwb_core)
+    add_test(NAME necwb_model_lint_tests COMMAND necwb_model_lint_tests)
+
     if(NECWB_BUILD_GUI)
         add_executable(necwb_plot_tests tests/PlotSmokeTests.cpp)
         target_link_libraries(necwb_plot_tests PRIVATE necwb_ui)
