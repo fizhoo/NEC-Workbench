@@ -2625,11 +2625,22 @@ auto main(int argc, char* argv[]) -> int
     const auto radiationExportReady = radiation2DExportImage->isEnabled()
         && radiation2DExportData->isEnabled() && radiation3DExportImage->isEnabled()
         && radiation3DExportData->isEnabled();
+    // Max-Gain Cut keeps the kind of cut: elevation at the peak's azimuth (phi 60),
+    // azimuth at the peak's elevation (theta 75).
     radiation2DOrientation->click();
     radiation2DMaxGainCut->click();
     application.processEvents();
-    const auto maxGainCutSelected = radiation2DOrientation->text() == QStringLiteral("Show Azimuth Cut")
+    const auto elevationMaxGainCutSelected = radiation2DOrientation->text()
+            == QStringLiteral("Show Azimuth Cut")
         && radiation2DCutPlane->currentData().toDouble() == 60.0
+        && radiation2DSummary->text().contains(QStringLiteral("20.000 dBi"));
+    radiation2DOrientation->click();
+    radiation2DMaxGainCut->click();
+    application.processEvents();
+    const auto maxGainCutSelected = elevationMaxGainCutSelected
+        && radiation2DOrientation->text() == QStringLiteral("Show Elevation Cut")
+        && radiation2DCutPlane->currentData().toDouble() == 75.0
+        && radiation2DSummary->text().contains(QStringLiteral("Azimuth cut at El 15°"))
         && radiation2DSummary->text().contains(QStringLiteral("20.000 dBi"));
     necwb::analysis::AnalysisResult signedThetaResult;
     for (auto theta = -90; theta <= 90; theta += 10) {

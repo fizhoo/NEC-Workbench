@@ -1403,7 +1403,8 @@ RadiationPatternView::RadiationPatternView(QWidget* parent) : QWidget(parent)
     auto* next = new QPushButton(tr("Angle ▶"), this);
     next->setToolTip(tr("Select the next calculated angle"));
     maxGainCutButton_ = new QPushButton(tr("Max-Gain Cut"), this);
-    maxGainCutButton_->setToolTip(tr("Show the cut containing maximum gain"));
+    maxGainCutButton_->setToolTip(tr("Move to the cut through the strongest sample: an azimuth "
+        "cut at the peak's elevation, or an elevation cut at the peak's azimuth."));
     maxGainCutButton_->setObjectName(QStringLiteral("radiation2DMaxGainCut"));
     exportImageButton_ = new QPushButton(tr("Image…"), this);
     exportImageButton_->setToolTip(tr("Export pattern image"));
@@ -1762,12 +1763,14 @@ void RadiationPatternView::showMaxGainCut()
     if (peak == result_.radiation.end()
         || !nearlyEqual(peak->frequencyMHz, settings.frequencyMHz)) return;
 
-    if (!availableCutPlanes(CutOrientation::Vertical).empty())
-        orientation_ = CutOrientation::Vertical;
-    else if (!availableCutPlanes(CutOrientation::Horizontal).empty())
-        orientation_ = CutOrientation::Horizontal;
-    else
-        return;
+    // Stay in the current kind of cut: an azimuth cut moves to the peak's elevation and an
+    // elevation cut to the peak's azimuth. Switch only when this dataset lacks that kind.
+    if (availableCutPlanes(orientation_).empty()) {
+        const auto other = orientation_ == CutOrientation::Vertical
+            ? CutOrientation::Horizontal : CutOrientation::Vertical;
+        if (availableCutPlanes(other).empty()) return;
+        orientation_ = other;
+    }
     refreshCutControls();
     auto peakPlane = orientation_ == CutOrientation::Vertical
         ? std::fmod(peak->phiDegrees + 360.0, 360.0) : peak->thetaDegrees;
