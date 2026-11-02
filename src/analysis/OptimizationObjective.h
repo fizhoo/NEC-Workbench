@@ -93,6 +93,7 @@ struct OptimizationObjectiveSpec {
     DirectionalEvaluationMode directionalEvaluationMode{
         DirectionalEvaluationMode::SpecifiedDirection};
     RadiationComponent radiationComponent{RadiationComponent::Total};
+    FrontToRearRegion frontToRearRegion{FrontToRearRegion::ForwardAzimuthCut};
 };
 
 struct OptimizationObjectiveResult {

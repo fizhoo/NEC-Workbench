@@ -1960,6 +1960,24 @@ auto main(int argc, char* argv[]) -> int
         return NECWB_SMOKE_FAILURE("candidate review geometry or size persistence");
     if (optimizationCandidateReviewDefaultSize != expectedCandidateReviewSize)
         return NECWB_SMOKE_FAILURE("candidate review responsive default size");
+    auto* optimizationFrontToRearRegion = optimization.findChild<QComboBox*>(
+        QStringLiteral("optimizationFrontToRearRegion"));
+    auto frontToRearRegionSelectable = false;
+    if (optimizationFrontToRearRegion != nullptr && optimizationObjectiveCriteria != nullptr) {
+        const auto defaultLabel = optimizationObjectiveCriteria->item(5, 0)->text();
+        const auto previousRegion = optimizationFrontToRearRegion->currentIndex();
+        optimizationFrontToRearRegion->setCurrentIndex(optimizationFrontToRearRegion->findData(
+            static_cast<int>(necwb::analysis::FrontToRearRegion::RearHemisphere3D)));
+        application.processEvents();
+        frontToRearRegionSelectable = optimizationFrontToRearRegion->count() == 2
+            && defaultLabel == QStringLiteral("F/R (dB)")
+            && optimizationObjectiveCriteria->item(5, 0)->text()
+                == QStringLiteral("F/R (3D rear hemisphere) (dB)")
+            && optimizationObjectiveCriteria->item(5, 0)->toolTip().contains(
+                QStringLiteral("any elevation"));
+        optimizationFrontToRearRegion->setCurrentIndex(previousRegion);
+        application.processEvents();
+    }
     if (optimizationConfiguration == nullptr
         || optimizationWorkspaceSplitter == nullptr
         || optimizationWorkspaceSplitter->orientation() != Qt::Horizontal
@@ -2036,6 +2054,7 @@ auto main(int argc, char* argv[]) -> int
         || !objectivePresetsValid
         || !directionalPresetReadinessValid
         || !directionalPresetAutoSeeded
+        || !frontToRearRegionSelectable
         || optimizationObjectiveCriteria == nullptr
         || optimizationSwrWeight == nullptr || optimizationSwrWeight->value() != 1.0
         || optimizationResistanceWeight == nullptr || optimizationResistanceWeight->value() != 0.0

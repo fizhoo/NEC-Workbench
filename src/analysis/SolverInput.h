@@ -42,13 +42,16 @@ enum class RadiationSweepMode {
 [[nodiscard]] auto prepareDirectionalOptimizationInput(std::string_view source,
     double frequencyMHz, double thetaDegrees, double phiDegrees,
     bool includeOppositeDirection, bool includeRearRegion = false) -> std::string;
+// `includeRearHemisphere` adds a 5-degree grid so F/R (3D rear hemisphere) can see
+// samples outside the forward cut.
 [[nodiscard]] auto prepareDirectionalOptimizationInput(std::string_view source,
     std::span<const double> frequenciesMHz, double thetaDegrees, double phiDegrees,
-    bool includeOppositeDirection, bool includeRearRegion = false) -> std::string;
+    bool includeOppositeDirection, bool includeRearRegion = false,
+    bool includeRearHemisphere = false) -> std::string;
 [[nodiscard]] auto prepareDirectionalCutOptimizationInput(std::string_view source,
     std::span<const double> frequenciesMHz, DirectionalEvaluationMode mode,
     double cutAngleDegrees, bool includeOppositeDirection,
-    bool includeRearRegion = false) -> std::string;
+    bool includeRearRegion = false, bool includeRearHemisphere = false) -> std::string;
 
 [[nodiscard]] auto prepareMaximumGainSearchInput(std::string_view source,
     double frequencyMHz, bool aboveGroundOnly) -> std::string;

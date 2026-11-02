@@ -451,7 +451,8 @@ void OptimizationWorkspace::updateSetupSummaries()
             == analysis::DirectionalEvaluationMode::SpecifiedDirection
         ? tr("gain at the specified direction") : tr("peak gain in the selected cut");
     const std::array names{tr("SWR"), tr("resistance"), tr("reactance"),
-        gainName, tr("F/B"), tr("F/R")};
+        gainName, tr("F/B"), fromCore(analysis::frontToRearName(
+            setup.objective.frontToRearRegion))};
     const std::array units{QString{}, tr(" Ω"), tr(" Ω"), tr(" dBi"), tr(" dB"), tr(" dB")};
     const std::array goals{setup.objective.swrGoal, setup.objective.resistanceGoal,
         setup.objective.reactanceGoal, setup.objective.forwardGainGoal,
@@ -852,6 +853,7 @@ void OptimizationWorkspace::updateReadiness()
                 || goal == analysis::OptimizationGoal::GoodEnough));
     }
     radiationComponentControl_->setEnabled(editable && directional);
+    frontToRearRegionControl_->setEnabled(editable && directional);
     updateLatestPatternPeakControls();
     const auto explicitMode = selectedFrequencyMode() == FrequencyMode::Explicit;
     frequencyTable_->setEnabled(editable && explicitMode);
@@ -978,6 +980,8 @@ void OptimizationWorkspace::startSweep()
             static_cast<int>(activeObjective_.directionalEvaluationMode)},
         {QStringLiteral("radiationComponent"),
             static_cast<int>(activeObjective_.radiationComponent)},
+        {QStringLiteral("frontToRearRegion"),
+            static_cast<int>(activeObjective_.frontToRearRegion)},
         {QStringLiteral("frequencyMode"), activeObjective_.kind
                 == analysis::OptimizationObjectiveKind::SwrAtFrequency
             ? QStringLiteral("objective-frequency")

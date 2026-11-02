@@ -61,7 +61,10 @@ struct GainText {
 [[nodiscard]] auto referenceLevelText(double referenceDbi) -> std::string;
 
 [[nodiscard]] auto frontToBackDefinition() -> std::string;
-[[nodiscard]] auto frontToRearDefinition(DirectionalEvaluationMode mode) -> std::string;
+[[nodiscard]] auto frontToRearDefinition(DirectionalEvaluationMode mode,
+    FrontToRearRegion region = FrontToRearRegion::ForwardAzimuthCut) -> std::string;
+// "F/R" or "F/R (3D rear hemisphere)"
+[[nodiscard]] auto frontToRearName(FrontToRearRegion region) -> std::string;
 
 // The widest RP step next to the given sample along theta and phi, among samples at the
 // same frequency and pattern dataset. Empty when the sample has no neighbours.

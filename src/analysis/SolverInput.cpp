@@ -2,6 +2,7 @@
 
 #include "nec/NecParser.h"
 #include "nec/NecWriter.h"
+#include "nec/ParseNumber.h"
 
 #include <algorithm>
 #include <array>
@@ -48,6 +49,26 @@ auto joinLines(const std::vector<std::string>& lines) -> std::string
 }
 
 // F/B's back direction: the same elevation turned 180 degrees in azimuth.
+auto hasGround(const nec::NecDocument& document) -> bool
+{
+    return std::ranges::any_of(document.cards(), [](const auto& card) {
+        double type{};
+        return card.kind == nec::NecCardKind::Ground && !card.fields.empty()
+            && nec::parseNumber(card.fields.front(), type) && type != -1.0;
+    });
+}
+
+// Over ground nothing radiates below the horizon, so the grid stops there.
+auto rearHemisphereGrid(const nec::NecDocument& document) -> model::RadiationPatternRequest
+{
+    model::RadiationPatternRequest grid;
+    grid.thetaCount = hasGround(document) ? 19 : 37;
+    grid.phiCount = 72;
+    grid.thetaStep = 5.0;
+    grid.phiStep = 5.0;
+    return grid;
+}
+
 auto frontToBackDirection(double thetaDegrees, double phiDegrees) -> std::pair<double, double>
 {
     auto backPhi = std::fmod(phiDegrees + 180.0, 360.0);
@@ -273,7 +294,8 @@ auto prepareDirectionalOptimizationInput(std::string_view source,
 
 auto prepareDirectionalOptimizationInput(std::string_view source,
     std::span<const double> frequenciesMHz, double thetaDegrees, double phiDegrees,
-    bool includeOppositeDirection, bool includeRearRegion) -> std::string
+    bool includeOppositeDirection, bool includeRearRegion,
+    bool includeRearHemisphere) -> std::string
 {
     if (!std::isfinite(thetaDegrees) || !std::isfinite(phiDegrees))
         return prepareImpedanceInput(source);
@@ -321,6 +343,8 @@ auto prepareDirectionalOptimizationInput(std::string_view source,
         } else if (includeOppositeDirection) {
             requests.push_back(writer.writeRadiationPatternCard(back));
         }
+        if (includeRearHemisphere)
+            requests.push_back(writer.writeRadiationPatternCard(rearHemisphereGrid(document)));
     }
 
     std::vector<std::string> lines;
@@ -343,7 +367,7 @@ auto prepareDirectionalOptimizationInput(std::string_view source,
 auto prepareDirectionalCutOptimizationInput(std::string_view source,
     std::span<const double> frequenciesMHz, DirectionalEvaluationMode mode,
     double cutAngleDegrees, bool includeOppositeDirection,
-    bool includeRearRegion) -> std::string
+    bool includeRearRegion, bool includeRearHemisphere) -> std::string
 {
     (void)includeOppositeDirection;
     (void)includeRearRegion;
@@ -383,6 +407,7 @@ auto prepareDirectionalCutOptimizationInput(std::string_view source,
     std::vector<model::RadiationPatternRequest> patterns{primary};
 
     const auto document = nec::NecParser{}.parse(normalizeSolverDeck(source));
+    if (includeRearHemisphere) patterns.push_back(rearHemisphereGrid(document));
     const nec::NecWriter writer;
     std::vector<std::string> requests;
     requests.reserve(frequencies.size() * (2U + patterns.size()));
@@ -426,12 +451,14 @@ auto prepareOptimizationInput(std::string_view source,
         || objective.frontToBackWeight > 0.0
         || objective.frontToRearWeight > 0.0;
     if (directional) {
+        const auto rearHemisphere = objective.frontToRearWeight > 0.0
+            && objective.frontToRearRegion == FrontToRearRegion::RearHemisphere3D;
         if (objective.directionalEvaluationMode
             == DirectionalEvaluationMode::SpecifiedDirection) {
             return prepareDirectionalOptimizationInput(source, frequenciesMHz,
                 objective.forwardThetaDegrees, objective.forwardPhiDegrees,
                 objective.frontToBackWeight > 0.0,
-                objective.frontToRearWeight > 0.0);
+                objective.frontToRearWeight > 0.0, rearHemisphere);
         }
         return prepareDirectionalCutOptimizationInput(source, frequenciesMHz,
             objective.directionalEvaluationMode,
@@ -439,7 +466,7 @@ auto prepareOptimizationInput(std::string_view source,
                     == DirectionalEvaluationMode::StrongestInAzimuthCut
                 ? objective.forwardThetaDegrees : objective.forwardPhiDegrees,
             objective.frontToBackWeight > 0.0,
-            objective.frontToRearWeight > 0.0);
+            objective.frontToRearWeight > 0.0, rearHemisphere);
     }
     return frequencyPlan.mode == FrequencyPlanMode::Explicit
         ? prepareExplicitFrequencyInput(source, frequenciesMHz)

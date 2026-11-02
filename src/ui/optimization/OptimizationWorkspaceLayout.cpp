@@ -720,6 +720,20 @@ auto OptimizationWorkspace::buildObjectiveSection(QWidget* parent) -> QGroupBox*
     radiationComponentControl_->addItem(tr("Horizontal"), static_cast<int>(analysis::RadiationComponent::Horizontal));
     radiationComponentControl_->addItem(tr("RHCP"), static_cast<int>(analysis::RadiationComponent::RightHandCircular));
     radiationComponentControl_->addItem(tr("LHCP"), static_cast<int>(analysis::RadiationComponent::LeftHandCircular));
+    frontToRearRegionControl_ = new QComboBox(this);
+    frontToRearRegionControl_->setObjectName(QStringLiteral("optimizationFrontToRearRegion"));
+    frontToRearRegionControl_->addItem(tr("F/R (forward azimuth cut)"),
+        static_cast<int>(analysis::FrontToRearRegion::ForwardAzimuthCut));
+    frontToRearRegionControl_->addItem(fromCore(analysis::frontToRearName(
+            analysis::FrontToRearRegion::RearHemisphere3D)),
+        static_cast<int>(analysis::FrontToRearRegion::RearHemisphere3D));
+    for (auto index = 0; index < frontToRearRegionControl_->count(); ++index) {
+        frontToRearRegionControl_->setItemData(index, fromCore(analysis::frontToRearDefinition(
+                analysis::DirectionalEvaluationMode::SpecifiedDirection,
+                static_cast<analysis::FrontToRearRegion>(
+                    frontToRearRegionControl_->itemData(index).toInt()))),
+            Qt::ToolTipRole);
+    }
     objectiveCriteriaTable_->resizeRowsToContents();
     auto criteriaHeight = objectiveCriteriaTable_->horizontalHeader()->sizeHint().height()
         + 2 * objectiveCriteriaTable_->frameWidth();
@@ -797,6 +811,8 @@ auto OptimizationWorkspace::buildObjectiveSection(QWidget* parent) -> QGroupBox*
     objectiveForm->addRow(directionSetupLabel_, directionSetupPanel_);
     radiationComponentLabel_ = new QLabel(tr("Radiation component"), objectiveSettings);
     objectiveForm->addRow(radiationComponentLabel_, radiationComponentControl_);
+    frontToRearRegionLabel_ = new QLabel(tr("F/R rear region"), objectiveSettings);
+    objectiveForm->addRow(frontToRearRegionLabel_, frontToRearRegionControl_);
     latestPatternPeakPanel_ = new QWidget(objectiveSettings);
     latestPatternPeakPanel_->setObjectName(
         QStringLiteral("optimizationLatestPatternPeakPanel"));
@@ -1090,6 +1106,11 @@ void OptimizationWorkspace::connectObjectiveSignals()
         applyingObjectivePreset_ = true;
         restoreObjectiveSetup(defaults);
         applyingObjectivePreset_ = false;
+        updateObjectiveControls();
+        updateWorkload();
+        updateReadiness();
+    });
+    connect(frontToRearRegionControl_, &QComboBox::currentIndexChanged, this, [this] {
         updateObjectiveControls();
         updateWorkload();
         updateReadiness();

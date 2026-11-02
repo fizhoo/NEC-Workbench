@@ -98,6 +98,7 @@ void OptimizationWorkspace::applySelectedObjectivePreset()
     objective.forwardPhiDegrees = current.forwardPhiDegrees;
     objective.directionalEvaluationMode = current.directionalEvaluationMode;
     objective.radiationComponent = current.radiationComponent;
+    objective.frontToRearRegion = current.frontToRearRegion;
     if (directionalPresetRequiresSetup()
         && current.directionalEvaluationMode == analysis::DirectionalEvaluationMode::SpecifiedDirection
         && !directionSetupConfigured_) {
@@ -135,6 +136,8 @@ void OptimizationWorkspace::updateObjectivePresetControls()
     directionSetupPanel_->setVisible(directional);
     radiationComponentLabel_->setVisible(directional);
     radiationComponentControl_->setVisible(directional);
+    frontToRearRegionLabel_->setVisible(directional);
+    frontToRearRegionControl_->setVisible(directional);
     latestPatternPeakFieldLabel_->setVisible(directional);
     latestPatternPeakPanel_->setVisible(directional);
     directionalFrequencyNote_->setVisible(custom);
@@ -191,6 +194,9 @@ void OptimizationWorkspace::updateObjectiveControls()
         directionalPresetRequiresSetup() && !directionSetupReady_
             ? QStringLiteral("color: #9a3030;") : QString{});
     radiationComponentControl_->setEnabled(directional && !isRunning() && !historicalSession_);
+    frontToRearRegionControl_->setEnabled(directional && !isRunning() && !historicalSession_);
+    frontToRearRegionControl_->setToolTip(frontToRearRegionControl_->currentData(
+        Qt::ToolTipRole).toString());
     auto* gainCriterion = objectiveCriteriaTable_->item(3, 0);
     gainCriterion->setText(trackedCut
         ? tr("Peak Gain in Cut (dBi)") : tr("Gain at Direction (dBi)"));
@@ -204,8 +210,14 @@ void OptimizationWorkspace::updateObjectiveControls()
         : tr("Gain at the specified elevation, azimuth, frequency, and radiation component."));
     // F/R depends on the evaluation mode; say which rule is active.
     const auto frontToRear = fromCore(analysis::frontToRearDefinition(
-        objective.directionalEvaluationMode));
+        objective.directionalEvaluationMode, objective.frontToRearRegion));
+    const auto hemisphere = objective.frontToRearRegion
+        == analysis::FrontToRearRegion::RearHemisphere3D;
+    objectiveCriteriaTable_->item(5, 0)->setText(tr("%1 (dB)")
+        .arg(fromCore(analysis::frontToRearName(objective.frontToRearRegion))));
     objectiveCriteriaTable_->item(5, 0)->setToolTip(frontToRear);
+    resultsTable_->horizontalHeaderItem(FrontToRearColumn)->setText(
+        hemisphere ? tr("F/R 3D (dB)") : tr("F/R (dB)"));
     resultsTable_->horizontalHeaderItem(FrontToRearColumn)->setToolTip(frontToRear);
     updateObjectivePresetControls();
     updateLatestPatternPeakControls();
@@ -423,7 +435,8 @@ void OptimizationWorkspace::restoreObjectiveSetup(
              static_cast<QObject*>(forwardGainWeightControl_),
              static_cast<QObject*>(frontToBackWeightControl_),
              static_cast<QObject*>(frontToRearWeightControl_),
-             static_cast<QObject*>(radiationComponentControl_)})
+             static_cast<QObject*>(radiationComponentControl_),
+             static_cast<QObject*>(frontToRearRegionControl_)})
         blockers.emplace_back(control);
     for (auto row = 0; row < 6; ++row) {
         blockers.emplace_back(objectiveGoalControls_[row]);
@@ -466,6 +479,9 @@ void OptimizationWorkspace::restoreObjectiveSetup(
     const auto componentIndex = radiationComponentControl_->findData(
         static_cast<int>(objective.radiationComponent));
     if (componentIndex >= 0) radiationComponentControl_->setCurrentIndex(componentIndex);
+    const auto regionIndex = frontToRearRegionControl_->findData(
+        static_cast<int>(objective.frontToRearRegion));
+    if (regionIndex >= 0) frontToRearRegionControl_->setCurrentIndex(regionIndex);
 }
 
 auto OptimizationWorkspace::selectedObjective() const -> analysis::OptimizationObjectiveSpec
@@ -508,6 +524,8 @@ auto OptimizationWorkspace::selectedObjective() const -> analysis::OptimizationO
         .directionalEvaluationMode = directionalEvaluationMode_,
         .radiationComponent = static_cast<analysis::RadiationComponent>(
             radiationComponentControl_->currentData().toInt()),
+        .frontToRearRegion = static_cast<analysis::FrontToRearRegion>(
+            frontToRearRegionControl_->currentData().toInt()),
     };
 }
 

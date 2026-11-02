@@ -385,7 +385,9 @@ samples, so request a finer RP to locate it.
 F/B compares the peak with the same elevation angle turned 180° in azimuth, as other
 amateur modeling programs do, so an elevated beam over ground still has an F/B. If the
 pattern does not contain that sample, F/B is unavailable rather than substituted with
-minimum gain. See [Directional Metrics](optimization-math.md#directional-metrics). F/R uses the documented rear azimuth cut and is not a full rear-hemisphere search.
+minimum gain. See [Directional Metrics](optimization-math.md#directional-metrics). F/R
+compares the front with the strongest sample at the same elevation and more than 90°
+away in azimuth; it is not a full rear-hemisphere search.
 
 ### Runs and Historical Review
 
@@ -516,7 +518,11 @@ are more expensive than a specified direction and may switch between competing
 lobes. Candidate frequency details show the elevation and azimuth actually selected
 (NEC θ/φ in the cell tooltip). F/B
 compares the front with the same elevation turned 180° in azimuth; F/R uses the
-strongest sample in the rear half of the requested cut. See
+strongest sample at the lobe's elevation more than 90° away in azimuth, the same rule
+as the Radiation window. An elevation cut has no azimuth spread, so there F/R uses the
+back half of the cut. **F/R rear region** can switch to **F/R (3D rear hemisphere)**,
+which takes the strongest sample more than 90° from the front at any elevation and adds
+a 5° grid to every candidate run so those samples exist. See
 [Directional Metrics](optimization-math.md#directional-metrics) for the exact definitions.
 
 **Find Maximum Gain…** runs a temporary one-frequency, 5-degree radiation grid

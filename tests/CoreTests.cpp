@@ -3394,12 +3394,64 @@ void testFrontToRearDefinitions()
             && inCut.front().frontToBackDb
             && std::abs(*inCut.front().frontToBackDb - 18.0) < 1.0e-12,
         "in-cut F/R uses the strongest rear sample at the forward elevation");
-    const auto hemisphere = necwb::analysis::radiationTrackedCutFrequencyMetrics(samples,
+    const auto trackedInCut = necwb::analysis::radiationTrackedCutFrequencyMetrics(samples,
         necwb::analysis::RadiationComponent::Total,
         necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 90.0);
+    expect(trackedInCut.size() == 1 && trackedInCut.front().frontToRearDb
+            && std::abs(*trackedInCut.front().frontToRearDb - 18.0) < 1.0e-12,
+        "tracked azimuth-cut F/R defaults to the forward azimuth cut");
+    const auto hemisphere = necwb::analysis::radiationTrackedCutFrequencyMetrics(samples,
+        necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 90.0,
+        necwb::analysis::FrontToRearRegion::RearHemisphere3D);
+    const auto specifiedHemisphere = necwb::analysis::radiationFrequencyMetrics(samples,
+        necwb::analysis::RadiationComponent::Total, 90.0, 0.0,
+        necwb::analysis::FrontToRearRegion::RearHemisphere3D);
     expect(hemisphere.size() == 1 && hemisphere.front().frontToRearDb
-            && std::abs(*hemisphere.front().frontToRearDb - 6.0) < 1.0e-12,
+            && std::abs(*hemisphere.front().frontToRearDb - 6.0) < 1.0e-12
+            && specifiedHemisphere.size() == 1 && specifiedHemisphere.front().frontToRearDb
+            && std::abs(*specifiedHemisphere.front().frontToRearDb - 6.0) < 1.0e-12,
         "3D rear-hemisphere F/R picks up off-cut samples near broadside and the zenith");
+
+    // On an elevated azimuth cut the 3D rule drops rear side lobes just past 90 degrees, and
+    // above El 45 degrees it finds no rear samples at all.
+    const auto elevatedCut = [](double theta) {
+        std::vector<RadiationSample> cut;
+        for (auto phi = 0.0; phi < 360.0; phi += 5.0) {
+            auto gain = -15.0;
+            if (phi == 0.0) gain = 8.0;
+            if (phi == 95.0) gain = 2.0;
+            if (phi == 180.0) gain = -10.0;
+            cut.push_back({.frequencyMHz = 146.0, .thetaDegrees = theta, .phiDegrees = phi,
+                .totalGainDb = gain});
+        }
+        return cut;
+    };
+    const auto el30 = elevatedCut(60.0);
+    const auto el30InCut = necwb::analysis::radiationTrackedCutFrequencyMetrics(el30,
+        necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 60.0);
+    const auto el30Hemisphere = necwb::analysis::radiationTrackedCutFrequencyMetrics(el30,
+        necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 60.0,
+        necwb::analysis::FrontToRearRegion::RearHemisphere3D);
+    expect(el30InCut.front().frontToRearDb
+            && std::abs(*el30InCut.front().frontToRearDb - 6.0) < 1.0e-12
+            && el30Hemisphere.front().frontToRearDb
+            && std::abs(*el30Hemisphere.front().frontToRearDb - 18.0) < 1.0e-12,
+        "an elevated azimuth cut counts the rear side lobe at Az 95 degrees");
+    const auto el50 = elevatedCut(40.0);
+    const auto el50InCut = necwb::analysis::radiationTrackedCutFrequencyMetrics(el50,
+        necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 40.0);
+    const auto el50Hemisphere = necwb::analysis::radiationTrackedCutFrequencyMetrics(el50,
+        necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 40.0,
+        necwb::analysis::FrontToRearRegion::RearHemisphere3D);
+    expect(el50InCut.front().frontToRearDb
+            && std::abs(*el50InCut.front().frontToRearDb - 6.0) < 1.0e-12
+            && !el50Hemisphere.front().frontToRearDb,
+        "in-cut F/R still works above El 45 degrees");
 
     // The optimizer's own deck holds only the azimuth cut, where the two rules agree at the
     // horizon; with the same samples the optimizer and the display report the same F/R.
@@ -3428,12 +3480,57 @@ void testFrontToRearDefinitions()
             && std::abs(*display.front().frontToRearDb - 18.0) < 1.0e-12,
         "optimizer F/R matches the displayed F/R on the same horizon cut");
 
+    auto elevatedObjective = objective;
+    elevatedObjective.forwardThetaDegrees = 60.0;
+    necwb::analysis::AnalysisResult elevated;
+    elevated.radiation = el30;
+    const auto elevatedScore = necwb::analysis::evaluateOptimizationObjective(
+        elevated, elevatedObjective);
+    const auto elevatedDisplay = necwb::analysis::radiationFrequencyMetrics(el30,
+        necwb::analysis::RadiationComponent::Total, 60.0, 0.0);
+    elevatedObjective.frontToRearRegion = necwb::analysis::FrontToRearRegion::RearHemisphere3D;
+    const auto elevatedHemisphereScore = necwb::analysis::evaluateOptimizationObjective(
+        elevated, elevatedObjective);
+    expect(elevatedScore && elevatedScore->frontToRearDb
+            && *elevatedScore->frontToRearDb == *elevatedDisplay.front().frontToRearDb
+            && elevatedHemisphereScore && elevatedHemisphereScore->frontToRearDb
+            && std::abs(*elevatedHemisphereScore->frontToRearDb - 18.0) < 1.0e-12,
+        "optimizer F/R matches the display on an elevated cut unless 3D is chosen");
+
+    const std::string groundDeck = "GW 1 11 -5 0 10 5 0 10 0.001\nGE 1\nGN 2 0 0 0 13 0.005\n"
+        "EX 0 1 6 0 1 0\nFR 0 1 0 0 14.2 0\nEN\n";
+    necwb::analysis::OptimizationObjectiveSpec deckObjective{
+        .kind = necwb::analysis::OptimizationObjectiveKind::SwrAtFrequency,
+        .targetFrequencyMHz = 14.2,
+        .frontToRearWeight = 1.0,
+        .forwardThetaDegrees = 70.0,
+        .forwardPhiDegrees = 90.0,
+        .directionalEvaluationMode =
+            necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut,
+    };
+    const auto inCutDeck = necwb::analysis::prepareOptimizationInput(groundDeck,
+        {necwb::analysis::FrequencyPlanMode::Explicit, {14.2}, {}}, deckObjective);
+    deckObjective.frontToRearRegion = necwb::analysis::FrontToRearRegion::RearHemisphere3D;
+    const auto hemisphereDeck = necwb::analysis::prepareOptimizationInput(groundDeck,
+        {necwb::analysis::FrequencyPlanMode::Explicit, {14.2}, {}}, deckObjective);
+    expect(inCutDeck.find("RP 0 19 72") == std::string::npos
+            && hemisphereDeck.find("RP 0 19 72 1000 0 0 5 5") != std::string::npos,
+        "3D rear-hemisphere F/R requests an above-ground grid only when chosen");
+
     expect(necwb::analysis::frontToRearDefinition(
                necwb::analysis::DirectionalEvaluationMode::SpecifiedDirection)
                 .find("azimuth more than 90°") != std::string::npos
             && necwb::analysis::frontToRearDefinition(
                 necwb::analysis::DirectionalEvaluationMode::StrongestInElevationCut)
                 .find("high angles") != std::string::npos
+            && necwb::analysis::frontToRearDefinition(
+                necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut)
+                == necwb::analysis::frontToRearDefinition(
+                    necwb::analysis::DirectionalEvaluationMode::SpecifiedDirection)
+            && necwb::analysis::frontToRearDefinition(
+                necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut,
+                necwb::analysis::FrontToRearRegion::RearHemisphere3D)
+                .starts_with("F/R (3D rear hemisphere)")
             && necwb::analysis::frontToBackDefinition().find("azimuth + 180°")
                 != std::string::npos,
         "F/B and F/R definitions say what is compared");

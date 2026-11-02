@@ -92,6 +92,31 @@ auto strongestRearSample(std::span<const RadiationSample> samples, double freque
                                  : RadiationMetricAvailability::Missing};
 }
 
+auto strongestHemisphereSample(std::span<const RadiationSample> samples, double frequencyMHz,
+    const std::array<double, 3>& frontDirection, RadiationComponent component)
+    -> RearSampleSearch
+{
+    const RadiationSample* strongest{};
+    auto strongestGain = -std::numeric_limits<double>::infinity();
+    auto hasCoverage = false;
+    for (const auto& sample : samples) {
+        if (std::abs(sample.frequencyMHz - frequencyMHz) > frequencyToleranceMHz) continue;
+        if (directionDot(unitDirection(sample.thetaDegrees, sample.phiDegrees),
+                frontDirection) > angleToleranceDegrees)
+            continue;
+        hasCoverage = true;
+        const auto gain = radiationGainDb(sample, component);
+        if (std::isfinite(gain) && gain > -900.0 && gain > strongestGain) {
+            strongest = &sample;
+            strongestGain = gain;
+        }
+    }
+    if (strongest != nullptr)
+        return {strongest, RadiationMetricAvailability::Available};
+    return {nullptr, hasCoverage ? RadiationMetricAvailability::PatternNull
+                                 : RadiationMetricAvailability::Missing};
+}
+
 auto interpolatedCrossing(double outsideAngle, double outsideGain,
     double insideAngle, double insideGain, double threshold) -> double
 {
@@ -221,8 +246,8 @@ auto radiationPeakAtNearestFrequency(std::span<const RadiationSample> samples,
 }
 
 auto radiationFrequencyMetrics(std::span<const RadiationSample> samples,
-    RadiationComponent component, double forwardThetaDegrees,
-    double forwardPhiDegrees) -> std::vector<RadiationFrequencyMetric>
+    RadiationComponent component, double forwardThetaDegrees, double forwardPhiDegrees,
+    FrontToRearRegion rearRegion) -> std::vector<RadiationFrequencyMetric>
 {
     std::vector<double> frequencies;
     for (const auto& sample : samples) frequencies.push_back(sample.frequencyMHz);
@@ -256,8 +281,10 @@ auto radiationFrequencyMetrics(std::span<const RadiationSample> samples,
                         metric.backAvailability = RadiationMetricAvailability::PatternNull;
                     }
                 }
-                const auto rear = strongestRearSample(samples, frequencyMHz,
-                    forwardThetaDegrees, forwardPhiDegrees, component);
+                const auto rear = rearRegion == FrontToRearRegion::RearHemisphere3D
+                    ? strongestHemisphereSample(samples, frequencyMHz, frontDirection, component)
+                    : strongestRearSample(samples, frequencyMHz,
+                          forwardThetaDegrees, forwardPhiDegrees, component);
                 metric.rearAvailability = rear.availability;
                 if (rear.sample != nullptr) {
                     const auto rearGain = radiationGainDb(*rear.sample, component);
@@ -275,7 +302,7 @@ auto radiationFrequencyMetrics(std::span<const RadiationSample> samples,
 
 auto radiationTrackedCutFrequencyMetrics(std::span<const RadiationSample> samples,
     RadiationComponent component, DirectionalEvaluationMode mode,
-    double cutAngleDegrees) -> std::vector<RadiationFrequencyMetric>
+    double cutAngleDegrees, FrontToRearRegion rearRegion) -> std::vector<RadiationFrequencyMetric>
 {
     std::vector<double> frequencies;
     for (const auto& sample : samples) frequencies.push_back(sample.frequencyMHz);
@@ -338,28 +365,16 @@ auto radiationTrackedCutFrequencyMetrics(std::span<const RadiationSample> sample
             }
         }
 
-        auto hasRearCoverage = false;
-        const RadiationSample* rear{};
-        auto rearGain = -std::numeric_limits<double>::infinity();
-        for (const auto& sample : samples) {
-            if (std::abs(sample.frequencyMHz - frequencyMHz) > frequencyToleranceMHz)
-                continue;
-            if (directionDot(unitDirection(sample.thetaDegrees, sample.phiDegrees),
-                    frontDirection) > angleToleranceDegrees)
-                continue;
-            hasRearCoverage = true;
-            const auto gain = radiationGainDb(sample, component);
-            if (std::isfinite(gain) && gain > -900.0 && gain > rearGain) {
-                rear = &sample;
-                rearGain = gain;
-            }
-        }
-        if (rear != nullptr) {
-            metric.rearAvailability = RadiationMetricAvailability::Available;
-            metric.frontToRearDb = strongestGain - rearGain;
-        } else if (hasRearCoverage) {
-            metric.rearAvailability = RadiationMetricAvailability::PatternNull;
-        }
+        // An azimuth cut reads F/R around the compass at the lobe's elevation; the 3D rule
+        // shrinks that rear half on an elevated cut and leaves nothing above 45 degrees.
+        const auto rear = mode == DirectionalEvaluationMode::StrongestInAzimuthCut
+                && rearRegion == FrontToRearRegion::ForwardAzimuthCut
+            ? strongestRearSample(samples, frequencyMHz, front->thetaDegrees,
+                  front->phiDegrees, component)
+            : strongestHemisphereSample(samples, frequencyMHz, frontDirection, component);
+        metric.rearAvailability = rear.availability;
+        if (rear.sample != nullptr)
+            metric.frontToRearDb = strongestGain - radiationGainDb(*rear.sample, component);
         result.push_back(metric);
     }
     return result;

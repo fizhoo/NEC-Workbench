@@ -198,21 +198,25 @@ auto frontToBackDefinition() -> std::string
            "(same elevation, azimuth + 180°).";
 }
 
-auto frontToRearDefinition(DirectionalEvaluationMode mode) -> std::string
+auto frontToRearName(FrontToRearRegion region) -> std::string
 {
-    switch (mode) {
-    case DirectionalEvaluationMode::SpecifiedDirection:
-        return "F/R: forward gain minus the strongest sample in the rear of the forward "
-               "azimuth cut (same elevation, azimuth more than 90° from forward).";
-    case DirectionalEvaluationMode::StrongestInAzimuthCut:
-        return "F/R: tracked lobe gain minus the strongest sample in this azimuth cut that is "
-               "more than 90° from the lobe in 3D. For an elevated cut the rear starts a few "
-               "degrees past 90° in azimuth.";
-    case DirectionalEvaluationMode::StrongestInElevationCut:
-        return "F/R: tracked lobe gain minus the strongest sample in this elevation cut that is "
-               "more than 90° from the lobe, including high angles over the back.";
+    return region == FrontToRearRegion::RearHemisphere3D ? "F/R (3D rear hemisphere)" : "F/R";
+}
+
+auto frontToRearDefinition(DirectionalEvaluationMode mode, FrontToRearRegion region)
+    -> std::string
+{
+    if (region == FrontToRearRegion::RearHemisphere3D) {
+        return "F/R (3D rear hemisphere): forward gain minus the strongest sample more than 90° "
+               "from forward in 3D, at any elevation, including high angles over the back.";
     }
-    return {};
+    if (mode == DirectionalEvaluationMode::StrongestInElevationCut) {
+        return "F/R: tracked lobe gain minus the strongest sample in the back half of this "
+               "elevation cut (more than 90° from the lobe), including high angles over the "
+               "back. An elevation cut has no azimuth spread to search.";
+    }
+    return "F/R: forward gain minus the strongest sample in the rear of the forward azimuth "
+           "cut (same elevation, azimuth more than 90° from forward).";
 }
 
 auto patternStepAround(std::span<const RadiationSample> samples,

@@ -288,6 +288,9 @@ auto OptimizationWorkspace::loadSession(const QString& sessionId) -> bool
         restoredObjective.radiationComponent = static_cast<analysis::RadiationComponent>(
             metadata.value(QStringLiteral("radiationComponent")).toInt(
                 static_cast<int>(analysis::RadiationComponent::Total)));
+        restoredObjective.frontToRearRegion = static_cast<analysis::FrontToRearRegion>(
+            metadata.value(QStringLiteral("frontToRearRegion")).toInt(
+                static_cast<int>(analysis::FrontToRearRegion::ForwardAzimuthCut)));
         if (metadata.contains(QStringLiteral("swrGoal"))) {
             restoredObjective.swrGoal = static_cast<analysis::OptimizationGoal>(
                 metadata.value(QStringLiteral("swrGoal")).toInt());
@@ -615,6 +618,8 @@ auto OptimizationWorkspace::writeCandidateMetadata(const Candidate& candidate) -
             static_cast<int>(activeObjective_.directionalEvaluationMode)},
         {QStringLiteral("radiationComponent"),
             static_cast<int>(activeObjective_.radiationComponent)},
+        {QStringLiteral("frontToRearRegion"),
+            static_cast<int>(activeObjective_.frontToRearRegion)},
         {QStringLiteral("frequencyMode"), activeObjective_.kind
                 == analysis::OptimizationObjectiveKind::SwrAtFrequency
             ? QStringLiteral("objective-frequency")
