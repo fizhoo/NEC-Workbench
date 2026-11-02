@@ -4360,7 +4360,7 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
                         .phiDegrees = peak->metrics.peakPhiDegrees,
                         .component = analysis::RadiationComponent::Total,
                         .frequencyMHz = peak->frequencyMHz,
-                        .sampleStepDegrees = std::nullopt}).text))
+                        .sampleStep = std::nullopt}).text))
                     .arg(formatDecimal(peak->frequencyMHz));
                 runStore_.save(*currentRunRecord_);
             } else {

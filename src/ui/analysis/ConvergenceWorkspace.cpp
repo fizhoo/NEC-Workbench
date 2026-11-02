@@ -503,7 +503,7 @@ void ConvergenceWorkspace::populateStepResult(Step& step, const QByteArray& outp
             .thetaDegrees = peak->metrics.peakThetaDegrees,
             .phiDegrees = peak->metrics.peakPhiDegrees,
             .component = analysis::RadiationComponent::Total,
-            .frequencyMHz = peak->frequencyMHz, .sampleStepDegrees = std::nullopt});
+            .frequencyMHz = peak->frequencyMHz, .sampleStep = std::nullopt});
         resultsTable_->item(step.row, GainColumn)->setToolTip(tr("Sampled peak %1\n%2")
             .arg(fromCore(gain.text), fromCore(gain.toolTip)));
     }

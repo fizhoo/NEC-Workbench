@@ -519,7 +519,7 @@ void ControlPanel::refreshQuickResults()
         return analysis::formatGain({.gainDb = gain.gainDb,
             .thetaDegrees = gain.thetaDegrees, .phiDegrees = gain.phiDegrees,
             .frequencyMHz = gain.frequencyMHz,
-            .sampleStepDegrees = gain.sampleStepDegrees});
+            .sampleStep = gain.sampleStep});
     };
     const auto selectedGainText = summary.selectedGain
         ? std::optional{gainText(*summary.selectedGain)} : std::nullopt;

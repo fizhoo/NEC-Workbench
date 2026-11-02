@@ -34,14 +34,22 @@ struct PatternDirection {
 [[nodiscard]] auto patternDirection(double thetaDegrees, double phiDegrees) -> PatternDirection;
 [[nodiscard]] auto necThetaForElevation(double elevationDegrees) -> double;
 
+// The RP step next to a sampled peak, as entered on the RP card, and the true angular
+// spacing it gives there. Azimuth steps shrink toward the zenith, so precision is judged
+// from the spacing while notes quote the RP step.
+struct SampleStep {
+    double rpStepDegrees{};
+    double spacingDegrees{};
+};
+
 struct GainReading {
     double gainDb{};
     std::optional<double> thetaDegrees;
     std::optional<double> phiDegrees;
     RadiationComponent component{RadiationComponent::Total};
     std::optional<double> frequencyMHz;
-    // Set when the reading is a sampled peak; flagged when wider than CoarsePatternStepDegrees.
-    std::optional<double> sampleStepDegrees;
+    // Set when the reading is a sampled peak; see SampleStepPrecision.
+    std::optional<SampleStep> sampleStep;
 };
 
 struct GainText {
@@ -59,8 +67,9 @@ struct GainText {
 [[nodiscard]] auto radiationComponentName(RadiationComponent component) -> std::string;
 // "6.670 dBi @ El 0°, Az 0°"; non-total components are named after the unit.
 [[nodiscard]] auto formatGain(const GainReading& reading) -> GainText;
-[[nodiscard]] auto isCoarseSampleStep(std::optional<double> stepDegrees) -> bool;
-[[nodiscard]] auto sampleStepPrecision(std::optional<double> stepDegrees) -> SampleStepPrecision;
+// Both take the true angular spacing (SampleStep::spacingDegrees).
+[[nodiscard]] auto isCoarseSampleStep(std::optional<double> spacingDegrees) -> bool;
+[[nodiscard]] auto sampleStepPrecision(std::optional<double> spacingDegrees) -> SampleStepPrecision;
 [[nodiscard]] auto coarseSampleNote(double stepDegrees) -> std::string;
 
 // "Azimuth cut at El 10°" for a fixed-theta cut.
@@ -76,9 +85,10 @@ struct GainText {
 // "F/R" or "F/R (3D rear hemisphere)"
 [[nodiscard]] auto frontToRearName(FrontToRearRegion region) -> std::string;
 
-// The widest RP step next to the given sample along theta and phi, among samples at the
-// same frequency and pattern dataset. Empty when the sample has no neighbours.
+// The widest spacing to the given sample's neighbours along theta and phi, among samples
+// at the same frequency and pattern dataset. Phi steps are scaled by sin(theta) to their
+// true spacing on the sphere. Empty when there are no neighbours.
 [[nodiscard]] auto patternStepAround(std::span<const RadiationSample> samples,
-    const RadiationSample& peak) -> std::optional<double>;
+    const RadiationSample& peak) -> std::optional<SampleStep>;
 
 }

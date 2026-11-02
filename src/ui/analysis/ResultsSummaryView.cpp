@@ -212,7 +212,7 @@ void ResultsSummaryView::refresh()
         const auto gain = analysis::formatGain({.gainDb = metrics.peakGainDb,
             .thetaDegrees = metrics.peakThetaDegrees, .phiDegrees = metrics.peakPhiDegrees,
             .frequencyMHz = selectedFrequency_,
-            .sampleStepDegrees = peak != selectedRadiation.end()
+            .sampleStep = peak != selectedRadiation.end()
                 ? analysis::patternStepAround(selectedRadiation, *peak) : std::nullopt});
         auto text = tr("Peak %1").arg(fromCore(gain.text));
         if (metrics.tiedPeaks.size() > 1)

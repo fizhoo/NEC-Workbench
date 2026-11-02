@@ -75,9 +75,10 @@ auto strongestRearSample(std::span<const RadiationSample> samples, double freque
         if (std::abs(sample.frequencyMHz - frequencyMHz) > frequencyToleranceMHz
             || std::abs(sample.thetaDegrees - forwardThetaDegrees) > angleToleranceDegrees)
             continue;
+        // Rear means behind: the sides at exactly 90 degrees are not counted.
         const auto offset = normalizedDegrees(sample.phiDegrees - forwardPhiDegrees);
-        if (offset < 90.0 - angleToleranceDegrees
-            || offset > 270.0 + angleToleranceDegrees)
+        if (offset <= 90.0 + angleToleranceDegrees
+            || offset >= 270.0 - angleToleranceDegrees)
             continue;
         hasCoverage = true;
         const auto gain = radiationGainDb(sample, component);
@@ -101,8 +102,10 @@ auto strongestHemisphereSample(std::span<const RadiationSample> samples, double 
     auto hasCoverage = false;
     for (const auto& sample : samples) {
         if (std::abs(sample.frequencyMHz - frequencyMHz) > frequencyToleranceMHz) continue;
+        // Strictly behind: a sample exactly 90 degrees away (the zenith for a horizon
+        // front) is not rear.
         if (directionDot(unitDirection(sample.thetaDegrees, sample.phiDegrees),
-                frontDirection) > angleToleranceDegrees)
+                frontDirection) >= -angleToleranceDegrees)
             continue;
         hasCoverage = true;
         const auto gain = radiationGainDb(sample, component);

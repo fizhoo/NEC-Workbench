@@ -427,6 +427,10 @@ Every peak is a calculated sample, so its precision depends on the RP step aroun
 | over 2°, up to 5° | `… @ El 10°, Az 0° (5° grid)` | Good for locating the lobe; the true peak may be a degree or two away and a few tenths of a dB higher. |
 | over 5° | `… (sampled, RP step 10°)` | The true peak may sit well between samples; request a finer RP. |
 
+Azimuth steps are judged by their true spacing, which shrinks toward the zenith: a 10°
+azimuth step at El 80° is only about 1.7° apart, so a high-angle peak is not flagged
+for it. The note still quotes the RP step as entered.
+
 **Add Cuts Through Peak** (Analysis › Requests) adds 1° cuts through the peak. After
 the next run the finer sample wins and the note disappears.
 

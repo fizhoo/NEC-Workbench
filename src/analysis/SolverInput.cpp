@@ -2,8 +2,8 @@
 
 #include "analysis/PatternRequests.h"
 #include "nec/NecParser.h"
+#include "nec/NecSetupConverter.h"
 #include "nec/NecWriter.h"
-#include "nec/ParseNumber.h"
 
 #include <algorithm>
 #include <array>
@@ -49,21 +49,13 @@ auto joinLines(const std::vector<std::string>& lines) -> std::string
     return output.str();
 }
 
-// F/B's back direction: the same elevation turned 180 degrees in azimuth.
-auto hasGround(const nec::NecDocument& document) -> bool
-{
-    return std::ranges::any_of(document.cards(), [](const auto& card) {
-        double type{};
-        return card.kind == nec::NecCardKind::Ground && !card.fields.empty()
-            && nec::parseNumber(card.fields.front(), type) && type != -1.0;
-    });
-}
-
+// Uses the same ground rule as the Requests editor: the model setup's GN card.
 auto rearHemisphereGrid(const nec::NecDocument& document) -> model::RadiationPatternRequest
 {
-    return fullPatternRequest(hasGround(document));
+    return fullPatternRequest(hasGroundBelow(nec::NecSetupConverter{}.convert(document)));
 }
 
+// F/B's back direction: the same elevation turned 180 degrees in azimuth.
 auto frontToBackDirection(double thetaDegrees, double phiDegrees) -> std::pair<double, double>
 {
     auto backPhi = std::fmod(phiDegrees + 180.0, 360.0);

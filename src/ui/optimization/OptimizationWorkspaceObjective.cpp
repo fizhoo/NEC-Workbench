@@ -251,7 +251,7 @@ void OptimizationWorkspace::updateLatestPatternPeakControls()
             .arg(fromCore(analysis::formatGain({.gainDb = peak->metrics.peakGainDb,
                 .thetaDegrees = peak->metrics.peakThetaDegrees,
                 .phiDegrees = peak->metrics.peakPhiDegrees, .component = component,
-                .frequencyMHz = peak->frequencyMHz, .sampleStepDegrees = std::nullopt}).text))
+                .frequencyMHz = peak->frequencyMHz, .sampleStep = std::nullopt}).text))
             .arg(formatDecimal(peak->frequencyMHz));
         if (mode != analysis::DirectionalEvaluationMode::SpecifiedDirection) {
             const auto cutAngle = mode

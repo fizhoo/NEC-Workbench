@@ -998,7 +998,7 @@ protected:
                     {.gainDb = maxGain, .thetaDegrees = metrics.peakThetaDegrees,
                         .phiDegrees = metrics.peakPhiDegrees,
                         .component = settings_.component, .frequencyMHz = settings_.frequencyMHz,
-                        .sampleStepDegrees = std::nullopt}).text));
+                        .sampleStep = std::nullopt}).text));
             }
             if (referenceMaximum)
                 status += tr(" · Historical overlay %1 shown dashed").arg(referenceLabel_);
@@ -1721,7 +1721,7 @@ void RadiationPatternView::refresh()
         const auto peakGain = analysis::formatGain({.gainDb = metrics.peakGainDb,
             .thetaDegrees = peakPoint->thetaDegrees, .phiDegrees = peakPoint->phiDegrees,
             .component = settings.component, .frequencyMHz = settings.frequencyMHz,
-            .sampleStepDegrees = peakSample != nullptr
+            .sampleStep = peakSample != nullptr
                 ? analysis::patternStepAround(result_.radiation, *peakSample) : std::nullopt});
         auto peakText = tr("Peak in this cut %1").arg(fromCore(peakGain.text));
         if (metrics.tiedPeakAnglesDegrees.size() > 1) {
@@ -1757,7 +1757,7 @@ void RadiationPatternView::refresh()
             const auto patternGain = analysis::formatGain({.gainDb = pattern.peakGainDb,
                 .thetaDegrees = pattern.peakThetaDegrees, .phiDegrees = pattern.peakPhiDegrees,
                 .component = settings.component, .frequencyMHz = settings.frequencyMHz,
-                .sampleStepDegrees = analysis::patternStepAround(atFrequency, *sample)});
+                .sampleStep = analysis::patternStepAround(atFrequency, *sample)});
             patternPeakText = tr(" · Sampled peak (all RP data) %1, outside this cut")
                 .arg(fromCore(patternGain.text));
             patternPeakToolTip = tr("\nSampled peak: strongest sample in all RP data at this "
@@ -2091,7 +2091,7 @@ void Radiation3DView::refresh()
         const auto peakGain = analysis::formatGain({.gainDb = metrics.peakGainDb,
             .thetaDegrees = metrics.peakThetaDegrees, .phiDegrees = metrics.peakPhiDegrees,
             .component = settings.component, .frequencyMHz = settings.frequencyMHz,
-            .sampleStepDegrees = analysis::patternStepAround(radiation, *peak)});
+            .sampleStep = analysis::patternStepAround(radiation, *peak)});
         auto text = tr("%1 MHz · %2 · Dataset peak %3 · %4 · %5 phi plane(s)")
             .arg(formatDecimal(settings.frequencyMHz), runContext_, fromCore(peakGain.text),
                 frontToBackText)

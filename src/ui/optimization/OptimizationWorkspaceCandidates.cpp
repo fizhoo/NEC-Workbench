@@ -290,7 +290,7 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
                 .phiDegrees = candidate.evaluation->forwardPhiDegrees,
                 .component = activeObjective_.radiationComponent,
                 .frequencyMHz = candidate.evaluation->forwardGainFrequencyMHz,
-                .sampleStepDegrees = std::nullopt}).text)));
+                .sampleStep = std::nullopt}).text)));
         else if (candidate.evaluation->frontToRearDb)
             header.append(tr("F/R %1 dB")
                 .arg(formatDecimal(*candidate.evaluation->frontToRearDb)));

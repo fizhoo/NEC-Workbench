@@ -43,8 +43,9 @@ auto componentAdjective(RadiationComponent component) -> std::string
 }
 
 // Gap to the nearest distinct value on each side of `value`; `circular` wraps at 360.
-void neighbourGaps(std::vector<double> values, double value, bool circular,
-    std::optional<double>& widest)
+// `scale` converts an angle gap into angular distance on the sphere.
+void neighbourGaps(std::vector<double> values, double value, bool circular, double scale,
+    std::optional<SampleStep>& widest)
 {
     std::ranges::sort(values);
     const auto duplicates = std::ranges::unique(values, [](double left, double right) {
@@ -63,8 +64,9 @@ void neighbourGaps(std::vector<double> values, double value, bool circular,
         interior = std::max(interior, values[next] - values[next - 1]);
     const auto closing = values.front() + 360.0 - values.back();
     const auto wraps = circular && closing <= interior + angleToleranceDegrees;
-    const auto record = [&widest](double gap) {
-        if (gap > angleToleranceDegrees) widest = std::max(widest.value_or(0.0), gap);
+    const auto record = [&widest, scale](double gap) {
+        if (gap <= angleToleranceDegrees) return;
+        if (!widest || gap * scale > widest->spacingDegrees) widest = SampleStep{gap, gap * scale};
     };
     if (index > 0) record(values[index] - values[index - 1]);
     else if (wraps) record(closing);
@@ -139,15 +141,15 @@ auto radiationComponentName(RadiationComponent component) -> std::string
     return {};
 }
 
-auto isCoarseSampleStep(std::optional<double> stepDegrees) -> bool
+auto isCoarseSampleStep(std::optional<double> spacingDegrees) -> bool
 {
-    return stepDegrees && *stepDegrees > CoarsePatternStepDegrees + angleToleranceDegrees;
+    return spacingDegrees && *spacingDegrees > CoarsePatternStepDegrees + angleToleranceDegrees;
 }
 
-auto sampleStepPrecision(std::optional<double> stepDegrees) -> SampleStepPrecision
+auto sampleStepPrecision(std::optional<double> spacingDegrees) -> SampleStepPrecision
 {
-    if (isCoarseSampleStep(stepDegrees)) return SampleStepPrecision::Coarse;
-    if (stepDegrees && *stepDegrees > FinePatternStepDegrees + angleToleranceDegrees)
+    if (isCoarseSampleStep(spacingDegrees)) return SampleStepPrecision::Coarse;
+    if (spacingDegrees && *spacingDegrees > FinePatternStepDegrees + angleToleranceDegrees)
         return SampleStepPrecision::Grid;
     return SampleStepPrecision::Fine;
 }
@@ -167,11 +169,13 @@ auto formatGain(const GainReading& reading) -> GainText
     result.text += known
         ? " @ " + formatDirection(*reading.thetaDegrees, *reading.phiDegrees)
         : std::string{", direction unavailable"};
-    const auto precision = sampleStepPrecision(reading.sampleStepDegrees);
+    const auto precision = sampleStepPrecision(reading.sampleStep
+        ? std::optional{reading.sampleStep->spacingDegrees} : std::nullopt);
+    const auto rpStep = reading.sampleStep ? reading.sampleStep->rpStepDegrees : 0.0;
     if (precision == SampleStepPrecision::Coarse)
-        result.text += " (" + coarseSampleNote(*reading.sampleStepDegrees) + ")";
+        result.text += " (" + coarseSampleNote(rpStep) + ")";
     else if (precision == SampleStepPrecision::Grid)
-        result.text += " (" + formatAngle(*reading.sampleStepDegrees) + " grid)";
+        result.text += " (" + formatAngle(rpStep) + " grid)";
 
     result.toolTip = known
         ? "NEC " + formatNecDirection(*reading.thetaDegrees, *reading.phiDegrees)
@@ -181,14 +185,14 @@ auto formatGain(const GainReading& reading) -> GainText
     result.toolTip += " · " + radiationComponentName(reading.component) + " gain";
     if (precision == SampleStepPrecision::Coarse) {
         result.toolTip += "\nSampled peak: the RP step around this sample is "
-            + formatAngle(*reading.sampleStepDegrees)
+            + formatAngle(rpStep)
             + ", so the true peak may sit between samples. Request a finer RP step "
               "(5° or less) to locate it.";
     } else if (precision == SampleStepPrecision::Grid) {
-        result.toolTip += "\nSampled on a " + formatAngle(*reading.sampleStepDegrees)
+        result.toolTip += "\nSampled on a " + formatAngle(rpStep)
             + " RP grid: good for locating the lobe, but the true peak may be a degree or two "
-              "away and a few tenths of a dB higher. Add Cuts Through Peak (Analysis › "
-              "Requests) adds 1° cuts through it.";
+              "away and a few tenths of a dB higher. Use Add Cuts Through Peak (Analysis › "
+              "Requests) to add 1° cuts through it.";
     }
     return result;
 }
@@ -224,7 +228,9 @@ auto frontToRearDefinition(DirectionalEvaluationMode mode, FrontToRearRegion reg
 {
     if (region == FrontToRearRegion::RearHemisphere3D) {
         return "F/R (3D rear hemisphere): forward gain minus the strongest sample more than 90° "
-               "from forward in 3D, at any elevation, including high angles over the back.";
+               "from forward in 3D, at any elevation, including high angles over the back. "
+               "In the optimizer this adds a 5° pattern grid to every candidate run, so runs "
+               "are slower.";
     }
     if (mode == DirectionalEvaluationMode::StrongestInElevationCut) {
         return "F/R: tracked lobe gain minus the strongest sample in the back half of this "
@@ -236,7 +242,7 @@ auto frontToRearDefinition(DirectionalEvaluationMode mode, FrontToRearRegion reg
 }
 
 auto patternStepAround(std::span<const RadiationSample> samples,
-    const RadiationSample& peak) -> std::optional<double>
+    const RadiationSample& peak) -> std::optional<SampleStep>
 {
     std::vector<double> thetaValues;
     std::vector<double> phiValues;
@@ -248,11 +254,15 @@ auto patternStepAround(std::span<const RadiationSample> samples,
         if (std::abs(sample.thetaDegrees - peak.thetaDegrees) <= angleToleranceDegrees)
             phiValues.push_back(normalizedAzimuth(sample.phiDegrees));
     }
-    std::optional<double> widest;
-    neighbourGaps(std::move(thetaValues), peak.thetaDegrees, false, widest);
-    // Every phi at the zenith or nadir is the same direction.
-    if (std::abs(std::sin(peak.thetaDegrees * std::numbers::pi / 180.0)) > 1.0e-9)
-        neighbourGaps(std::move(phiValues), normalizedAzimuth(peak.phiDegrees), true, widest);
+    std::optional<SampleStep> widest;
+    neighbourGaps(std::move(thetaValues), peak.thetaDegrees, false, 1.0, widest);
+    // Azimuth steps shrink toward the zenith: 10 degrees of phi at El 80 is about 1.7
+    // degrees apart. Every phi at the zenith or nadir is the same direction.
+    const auto phiScale = std::abs(std::sin(peak.thetaDegrees * std::numbers::pi / 180.0));
+    if (phiScale > 1.0e-9) {
+        neighbourGaps(std::move(phiValues), normalizedAzimuth(peak.phiDegrees), true,
+            phiScale, widest);
+    }
     return widest;
 }
 
