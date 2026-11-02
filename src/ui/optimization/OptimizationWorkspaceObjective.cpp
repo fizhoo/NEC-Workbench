@@ -235,9 +235,9 @@ void OptimizationWorkspace::updateLatestPatternPeakControls()
     const auto editable = !isRunning() && !historicalSession_;
     const auto usable = peak && peak->sampleCount > 1;
     findMaximumGainButton_->setText(maximumGainSearchRequested_
-            ? tr("Finding Maximum…")
+            ? tr("Finding Sampled Peak…")
             : usable || maximumGainDirectionStale_
-                ? tr("Update Maximum…") : tr("Find Maximum Gain…"));
+                ? tr("Update Sampled Peak…") : tr("Find Sampled Peak (5° grid)…"));
     findMaximumGainButton_->setEnabled(editable && !externalRunActive_
         && modelValid_ && static_cast<bool>(findMaximumGainCallback_)
         && !maximumGainSearchRequested_);
@@ -245,7 +245,7 @@ void OptimizationWorkspace::updateLatestPatternPeakControls()
     const auto mode = directionalEvaluationMode_;
     useLatestPatternPeakButton_->setText(mode
             == analysis::DirectionalEvaluationMode::SpecifiedDirection
-        ? tr("Use Latest Pattern Peak") : tr("Use Latest Peak to Set Cut"));
+        ? tr("Use Latest Sampled Peak") : tr("Use Latest Peak to Set Cut"));
     if (usable) {
         auto status = tr("%1 · %2 MHz")
             .arg(fromCore(analysis::formatGain({.gainDb = peak->metrics.peakGainDb,
@@ -282,14 +282,14 @@ void OptimizationWorkspace::updateLatestPatternPeakControls()
     }
     if (directionalPresetRequiresSetup()) {
         latestPatternPeakLabel_->setText(directionSetupReady_
-            ? tr("Direction is configured. Find Maximum Gain can replace it with a calculated peak.")
+            ? tr("Direction is configured. Find Sampled Peak can replace it with a calculated peak.")
             : maximumGainDirectionStale_
-                ? tr("Direction setup required. The previous maximum is stale; use Find Maximum Gain or Choose.")
-                : tr("Direction setup required. Use Find Maximum Gain or Choose."));
+                ? tr("Direction setup required. The previous sampled peak is stale; use Find Sampled Peak or Choose.")
+                : tr("Direction setup required. Use Find Sampled Peak or Choose."));
         return;
     }
     latestPatternPeakLabel_->setText(maximumGainDirectionStale_
-        ? tr("Maximum-gain direction is stale because the model changed. Run again to update it.")
+        ? tr("Sampled-peak direction is stale because the model changed. Run again to update it.")
         : latestRadiation_.empty()
             ? tr("Run the active model with a radiation pattern first.")
             : tr("The latest run has no usable multi-angle pattern near the optimization frequencies."));

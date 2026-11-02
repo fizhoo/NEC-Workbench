@@ -800,10 +800,10 @@ auto OptimizationWorkspace::buildObjectiveSection(QWidget* parent) -> QGroupBox*
     directionSetupSummaryLabel_->setWordWrap(true);
     directionSetupButton_ = new QPushButton(tr("Choose…"), directionSetupPanel_);
     directionSetupButton_->setObjectName(QStringLiteral("optimizationChooseDirection"));
-    findMaximumGainButton_ = new QPushButton(tr("Find Maximum Gain…"), directionSetupPanel_);
+    findMaximumGainButton_ = new QPushButton(tr("Find Sampled Peak (5° grid)…"), directionSetupPanel_);
     findMaximumGainButton_->setObjectName(QStringLiteral("optimizationFindMaximumGain"));
     findMaximumGainButton_->setToolTip(tr(
-        "Runs a temporary radiation-pattern calculation to find the model's maximum-gain direction and use it as the default optimization pattern slice. It does not start optimization or modify the NEC model."));
+        "Runs a temporary 5° radiation grid to find the model's sampled peak and use its direction as the default optimization pattern slice. The true peak may lie between grid points. It does not start optimization or modify the NEC model."));
     directionSetupLayout->addWidget(directionSetupSummaryLabel_, 1);
     directionSetupLayout->addWidget(findMaximumGainButton_);
     directionSetupLayout->addWidget(directionSetupButton_);
@@ -819,11 +819,11 @@ auto OptimizationWorkspace::buildObjectiveSection(QWidget* parent) -> QGroupBox*
     auto* latestPatternPeakLayout = new QHBoxLayout(latestPatternPeakPanel_);
     latestPatternPeakLayout->setContentsMargins(0, 0, 0, 0);
     useLatestPatternPeakButton_ = new QPushButton(
-        tr("Use Latest Pattern Peak"), latestPatternPeakPanel_);
+        tr("Use Latest Sampled Peak"), latestPatternPeakPanel_);
     useLatestPatternPeakButton_->setObjectName(
         QStringLiteral("optimizationUseLatestPatternPeak"));
     useLatestPatternPeakButton_->setToolTip(tr(
-        "Set the forward theta and phi from the latest active-model radiation pattern."));
+        "Set the forward direction from the sampled peak of the latest active-model radiation pattern."));
     useLatestPatternPeakButton_->hide();
     latestPatternPeakLabel_ = new QLabel(latestPatternPeakPanel_);
     latestPatternPeakLabel_->setObjectName(
@@ -831,7 +831,7 @@ auto OptimizationWorkspace::buildObjectiveSection(QWidget* parent) -> QGroupBox*
     latestPatternPeakLabel_->setWordWrap(true);
     latestPatternPeakLayout->addWidget(useLatestPatternPeakButton_);
     latestPatternPeakLayout->addWidget(latestPatternPeakLabel_, 1);
-    latestPatternPeakFieldLabel_ = new QLabel(tr("Pattern peak"), objectiveSettings);
+    latestPatternPeakFieldLabel_ = new QLabel(tr("Sampled peak"), objectiveSettings);
     objectiveForm->addRow(latestPatternPeakFieldLabel_, latestPatternPeakPanel_);
     directionalFrequencyNote_ = new QLabel(objectiveSettings);
     directionalFrequencyNote_->setObjectName(

@@ -516,7 +516,7 @@ void OptimizationWorkspace::updateSetupSummaries()
     const auto objectiveWarning = criteria.isEmpty()
         ? tr("No criteria are enabled. Click Edit… and set a weight above zero.")
         : directionalPresetRequiresSetup() && !directionSetupReady_
-            ? tr("Direction setup required. Click Edit… and use Find Maximum Gain or Choose.")
+            ? tr("Direction setup required. Click Edit… and use Find Sampled Peak or Choose.")
             : QString{};
     objectiveWarningLabel_->setText(objectiveWarning);
     objectiveWarningLabel_->setVisible(!objectiveWarning.isEmpty() && !historicalSession_);
@@ -768,7 +768,7 @@ auto OptimizationWorkspace::readinessBlocker(const StudySetup& setup) const -> Q
             + objective.frontToRearWeight <= 0.0)
         return tr("Set at least one objective weight above zero.");
     if (directionalPresetRequiresSetup() && !directionSetupReady_)
-        return tr("Direction setup required. Open Objective Edit… and use Find Maximum Gain or Choose.");
+        return tr("Direction setup required. Open Objective Edit… and use Find Sampled Peak or Choose.");
     if (!modelValid_) return tr("Fix the model check errors before optimizing.");
     if (externalRunActive_)
         return tr("Another analysis is running. Optimization can start when it finishes.");

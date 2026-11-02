@@ -3317,10 +3317,26 @@ void testGainDirectionFormatting()
         .phiDegrees = 0.0, .sampleStepDegrees = 10.0});
     const auto fine = necwb::analysis::formatGain({.gainDb = 8.0, .thetaDegrees = 80.0,
         .phiDegrees = 0.0, .sampleStepDegrees = 5.0});
+    const auto oneDegree = necwb::analysis::formatGain({.gainDb = 8.0, .thetaDegrees = 80.0,
+        .phiDegrees = 0.0, .sampleStepDegrees = 1.0});
+    const auto twoDegree = necwb::analysis::formatGain({.gainDb = 8.0, .thetaDegrees = 80.0,
+        .phiDegrees = 0.0, .sampleStepDegrees = 2.0});
     expect(coarse.text == "8.000 dBi @ El 10°, Az 0° (sampled, RP step 10°)"
             && coarse.toolTip.find("between samples") != std::string::npos
-            && fine.text == "8.000 dBi @ El 10°, Az 0°",
-        "coarse RP steps flag the peak as sampled");
+            && fine.text == "8.000 dBi @ El 10°, Az 0° (5° grid)"
+            && fine.toolTip.find("Add Cuts Through Peak") != std::string::npos
+            && oneDegree.text == "8.000 dBi @ El 10°, Az 0°"
+            && twoDegree.text == "8.000 dBi @ El 10°, Az 0°",
+        "RP steps over 5° are flagged as sampled, 2-5° get a grid note, 2° or finer none");
+    expect(necwb::analysis::sampleStepPrecision(std::nullopt)
+                == necwb::analysis::SampleStepPrecision::Fine
+            && necwb::analysis::sampleStepPrecision(3.0)
+                == necwb::analysis::SampleStepPrecision::Grid
+            && necwb::analysis::sampleStepPrecision(5.0)
+                == necwb::analysis::SampleStepPrecision::Grid
+            && necwb::analysis::sampleStepPrecision(6.0)
+                == necwb::analysis::SampleStepPrecision::Coarse,
+        "sample step precision tiers");
 
     expect(necwb::analysis::azimuthCutName(80.0) == "Azimuth cut at El 10°"
             && necwb::analysis::elevationCutName(45.0) == "Elevation cut at Az 45°"

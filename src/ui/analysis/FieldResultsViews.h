@@ -107,6 +107,8 @@ private:
     RadiationPolarWidget* plot_{};
     CutOrientation orientation_{CutOrientation::Vertical};
     QString runContext_;
+    // Shown once after Show ... Cut switches dataset; any later change clears it.
+    QString datasetSwitchNote_;
     SettingsChangedCallback settingsChangedCallback_;
     bool updatingSettings_{};
 };

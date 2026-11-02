@@ -524,11 +524,11 @@ void ControlPanel::refreshQuickResults()
     const auto selectedGainText = summary.selectedGain
         ? std::optional{gainText(*summary.selectedGain)} : std::nullopt;
     gainResult_->setToolTip(selectedGainText
-        ? tr("Pattern peak at the selected frequency: %1\n%2")
+        ? tr("Peak at this frequency (all RP data): %1\n%2")
               .arg(fromCore(selectedGainText->text), fromCore(selectedGainText->toolTip))
         : QString{});
     frontToBackResult_->setToolTip(summary.selectedGain
-        ? tr("%1\nForward direction: the pattern peak, %2.")
+        ? tr("%1\nForward direction: the peak at this frequency, %2.")
               .arg(fromCore(analysis::frontToBackDefinition()),
                   fromCore(analysis::formatDirection(summary.selectedGain->thetaDegrees,
                       summary.selectedGain->phiDegrees)))
@@ -545,17 +545,19 @@ void ControlPanel::refreshQuickResults()
     QStringList extrema;
     QStringList extremaToolTips;
     if (selectedGainText) {
-        extrema.append(tr("Gain %1").arg(fromCore(selectedGainText->text)));
-        extremaToolTips.append(tr("Gain: pattern peak at the selected frequency · %1")
+        extrema.append(tr("Peak at this frequency %1").arg(fromCore(selectedGainText->text)));
+        extremaToolTips.append(tr("Peak at this frequency: strongest Total sample in all RP "
+            "data at the selected frequency · %1")
             .arg(fromCore(selectedGainText->toolTip)));
     }
     if (summary.minimumSwr) extrema.append(tr("Min SWR %1 @ %2 MHz")
         .arg(formatDecimal(summary.minimumSwr->swr), formatDecimal(summary.minimumSwr->frequencyMHz)));
     if (summary.peakGain) {
         const auto peak = gainText(*summary.peakGain);
-        extrema.append(tr("Peak gain %1, %2 MHz")
+        extrema.append(tr("Peak across the band %1, %2 MHz")
             .arg(fromCore(peak.text), formatDecimal(summary.peakGain->frequencyMHz)));
-        extremaToolTips.append(tr("Peak gain: strongest Total sample at any frequency · %1")
+        extremaToolTips.append(tr("Peak across the band: strongest Total sample at any "
+            "frequency · %1")
             .arg(fromCore(peak.toolTip)));
     }
     resultExtrema_->setText(extrema.join(QStringLiteral(" · ")));

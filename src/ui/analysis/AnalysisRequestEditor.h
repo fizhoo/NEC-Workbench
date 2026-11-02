@@ -33,7 +33,7 @@ public:
     [[nodiscard]] auto hasPendingEdits() const noexcept -> bool;
     void discardPendingEdits();
     [[nodiscard]] auto radiationFrequencyPlan() const -> analysis::FrequencyPlan;
-    // The last run's pattern peak; azimuth-cut presets and Add Cuts Through Peak use it.
+    // The last run's sampled peak; azimuth-cut presets and Add Cuts Through Peak use it.
     void setLatestPatternPeak(std::optional<analysis::PatternDirection> peak);
 
 signals:

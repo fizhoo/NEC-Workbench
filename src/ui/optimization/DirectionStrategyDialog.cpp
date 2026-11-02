@@ -210,7 +210,7 @@ DirectionStrategyDialog::DirectionStrategyDialog(
     previousPatternSlice_ = patternSlice();
 
     auto* actions = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-    auto* latestPeak = actions->addButton(tr("Use Latest Pattern Peak"),
+    auto* latestPeak = actions->addButton(tr("Use Latest Sampled Peak"),
         QDialogButtonBox::ActionRole);
     latestPeak->setEnabled(!radiation_.empty());
     connect(latestPeak, &QPushButton::clicked, this, [this] { useLatestPeak(); });

@@ -591,7 +591,7 @@ protected:
         QMenu menu(this);
         const auto* useNearest = menu.addAction(tr("Use This Sample as Forward Direction (%1)")
             .arg(fromCore(analysis::formatDirection(nearest->thetaDegrees, nearest->phiDegrees))));
-        const auto* usePeak = menu.addAction(tr("Use Cut Maximum as Forward Direction (%1)")
+        const auto* usePeak = menu.addAction(tr("Use Peak in This Cut as Forward Direction (%1)")
             .arg(fromCore(analysis::formatDirection(peak->thetaDegrees, peak->phiDegrees))));
         const auto* chosen = menu.exec(event->globalPos());
         if (chosen == useNearest)
@@ -721,7 +721,7 @@ protected:
         const auto reference = referenceText(maxGain);
         setProperty("referenceLevel", reference);
         painter.drawText(8, 20, painter.fontMetrics().elidedText(
-            tr("%1 · Max in this cut %2 dBi · %3")
+            tr("%1 · Peak in this cut %2 dBi · %3")
                 .arg(cutName(), formatDecimal(maxGain), reference),
             Qt::ElideRight, width() - 16));
         if (!referenceSamples_.empty()) {
@@ -911,7 +911,7 @@ protected:
         const auto* useNearest = menu.addAction(tr("Use This Sample as Forward Direction (%1)")
             .arg(fromCore(analysis::formatDirection(
                 nearest->sample->thetaDegrees, nearest->sample->phiDegrees))));
-        const auto* usePeak = menu.addAction(tr("Use Pattern Peak as Forward Direction (%1)")
+        const auto* usePeak = menu.addAction(tr("Use Dataset Peak as Forward Direction (%1)")
             .arg(fromCore(analysis::formatDirection(
                 metrics.peakThetaDegrees, metrics.peakPhiDegrees))));
         const auto* chosen = menu.exec(event->globalPos());
@@ -994,7 +994,7 @@ protected:
             auto status = tr("Drag to orbit · wheel to zoom · zoom %1×").arg(formatDecimal(zoom_));
             if (hasRadiation) {
                 const auto metrics = analysis::radiationMetrics(samples_, settings_.component);
-                status += tr(" · Pattern peak %1").arg(fromCore(analysis::formatGain(
+                status += tr(" · Dataset peak %1").arg(fromCore(analysis::formatGain(
                     {.gainDb = maxGain, .thetaDegrees = metrics.peakThetaDegrees,
                         .phiDegrees = metrics.peakPhiDegrees,
                         .component = settings_.component, .frequencyMHz = settings_.frequencyMHz,
@@ -1402,9 +1402,9 @@ RadiationPatternView::RadiationPatternView(QWidget* parent) : QWidget(parent)
     orientationButton_->setObjectName(QStringLiteral("radiation2DOrientation"));
     auto* next = new QPushButton(tr("Angle ▶"), this);
     next->setToolTip(tr("Select the next calculated angle"));
-    maxGainCutButton_ = new QPushButton(tr("Max-Gain Cut"), this);
-    maxGainCutButton_->setToolTip(tr("Move to the cut through the strongest sample: an azimuth "
-        "cut at the peak's elevation, or an elevation cut at the peak's azimuth."));
+    maxGainCutButton_ = new QPushButton(tr("Go to Peak"), this);
+    maxGainCutButton_->setToolTip(tr("Move this cut to the strongest sample in the selected RP "
+        "dataset: an azimuth cut to that sample's elevation, an elevation cut to its azimuth."));
     maxGainCutButton_->setObjectName(QStringLiteral("radiation2DMaxGainCut"));
     exportImageButton_ = new QPushButton(tr("Image…"), this);
     exportImageButton_->setToolTip(tr("Export pattern image"));
@@ -1436,12 +1436,18 @@ RadiationPatternView::RadiationPatternView(QWidget* parent) : QWidget(parent)
     });
     layout->addLayout(form); layout->addLayout(navigation); layout->addWidget(summary_);
     layout->addWidget(hoverReadout_); layout->addWidget(plot_, 1);
-    connect(frequency_, &QComboBox::currentIndexChanged, this, [this] { refreshDatasets(); settingsChanged(); });
-    connect(dataset_, &QComboBox::currentIndexChanged, this, [this] { refreshCutControls(); });
-    connect(component_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
-    connect(scale_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
-    connect(floor_, &QComboBox::currentIndexChanged, this, [this] { refresh(); settingsChanged(); });
-    connect(phi_, &QComboBox::currentIndexChanged, this, [this] { refresh(); });
+    connect(frequency_, &QComboBox::currentIndexChanged, this, [this] {
+        datasetSwitchNote_.clear(); refreshDatasets(); settingsChanged(); });
+    connect(dataset_, &QComboBox::currentIndexChanged, this, [this] {
+        datasetSwitchNote_.clear(); refreshCutControls(); });
+    connect(component_, &QComboBox::currentIndexChanged, this, [this] {
+        datasetSwitchNote_.clear(); refresh(); settingsChanged(); });
+    connect(scale_, &QComboBox::currentIndexChanged, this, [this] {
+        datasetSwitchNote_.clear(); refresh(); settingsChanged(); });
+    connect(floor_, &QComboBox::currentIndexChanged, this, [this] {
+        datasetSwitchNote_.clear(); refresh(); settingsChanged(); });
+    connect(phi_, &QComboBox::currentIndexChanged, this, [this] {
+        datasetSwitchNote_.clear(); refresh(); });
     connect(previous, &QPushButton::clicked, this, [this] { stepAngle(-1); });
     connect(next, &QPushButton::clicked, this, [this] { stepAngle(1); });
     connect(orientationButton_, &QPushButton::clicked, this, [this] { toggleOrientation(); });
@@ -1717,7 +1723,7 @@ void RadiationPatternView::refresh()
             .component = settings.component, .frequencyMHz = settings.frequencyMHz,
             .sampleStepDegrees = peakSample != nullptr
                 ? analysis::patternStepAround(result_.radiation, *peakSample) : std::nullopt});
-        auto peakText = tr("Max in this cut %1").arg(fromCore(peakGain.text));
+        auto peakText = tr("Peak in this cut %1").arg(fromCore(peakGain.text));
         if (metrics.tiedPeakAnglesDegrees.size() > 1) {
             QStringList tiedAngles;
             for (const auto tiedAngle : metrics.tiedPeakAnglesDegrees) {
@@ -1752,15 +1758,17 @@ void RadiationPatternView::refresh()
                 .thetaDegrees = pattern.peakThetaDegrees, .phiDegrees = pattern.peakPhiDegrees,
                 .component = settings.component, .frequencyMHz = settings.frequencyMHz,
                 .sampleStepDegrees = analysis::patternStepAround(atFrequency, *sample)});
-            patternPeakText = tr(" · Pattern peak %1, outside this cut")
+            patternPeakText = tr(" · Sampled peak (all RP data) %1, outside this cut")
                 .arg(fromCore(patternGain.text));
-            patternPeakToolTip = tr("\nPattern peak: strongest sample in all RP data at this "
+            patternPeakToolTip = tr("\nSampled peak: strongest sample in all RP data at this "
                 "frequency, not in this cut · %1").arg(fromCore(patternGain.toolTip));
         }
-        summary_->setText(tr("%1 MHz · %2 · %3 · %4 · %5 · %6%7 · Left/Right changes angle · Space changes cut")
+        const auto switchNote = datasetSwitchNote_.isEmpty()
+            ? QString{} : datasetSwitchNote_ + QStringLiteral(" · ");
+        summary_->setText(switchNote + tr("%1 MHz · %2 · %3 · %4 · %5 · %6%7 · Left/Right changes angle · Space changes cut")
             .arg(formatDecimal(settings.frequencyMHz), runContext_, cutName, peakText,
                 beamwidthText, frontToBackText, patternPeakText) + referenceText);
-        summary_->setToolTip(tr("Max in this cut: strongest sample in this cut (%1) · %2\n"
+        summary_->setToolTip(tr("Peak in this cut: strongest sample in this cut (%1) · %2\n"
             "HPBW: 3 dB beamwidth within this cut.\n%3 Forward is the cut maximum.%4")
             .arg(cutName, fromCore(peakGain.toolTip),
                 fromCore(analysis::frontToBackDefinition()), patternPeakToolTip));
@@ -1790,16 +1798,24 @@ void RadiationPatternView::toggleOrientation()
     const auto crossing = currentCutPeak();
     const auto next = orientation_ == CutOrientation::Vertical
         ? CutOrientation::Horizontal : CutOrientation::Vertical;
+    auto switchedDataset = false;
     if (availableCutPlanes(next).empty()) {
         const auto patternIndex = bestDatasetForCut(next);
         if (!patternIndex) return;
         orientation_ = next;
         dataset_->setCurrentIndex(dataset_->findData(*patternIndex));
+        switchedDataset = true;
     } else {
         orientation_ = next;
         refreshCutControls();
     }
     if (crossing) selectPlaneThrough(crossing->thetaDegrees, crossing->phiDegrees);
+    // Set after the programmatic changes above, which would otherwise clear it.
+    if (switchedDataset) {
+        datasetSwitchNote_ = tr("Switched to %1, crossing the previous cut's peak")
+            .arg(dataset_->currentText());
+        refresh();
+    }
 }
 void RadiationPatternView::stepAngle(int offset)
 {
@@ -2076,12 +2092,12 @@ void Radiation3DView::refresh()
             .thetaDegrees = metrics.peakThetaDegrees, .phiDegrees = metrics.peakPhiDegrees,
             .component = settings.component, .frequencyMHz = settings.frequencyMHz,
             .sampleStepDegrees = analysis::patternStepAround(radiation, *peak)});
-        auto text = tr("%1 MHz · %2 · Pattern peak %3 · %4 · %5 phi plane(s)")
+        auto text = tr("%1 MHz · %2 · Dataset peak %3 · %4 · %5 phi plane(s)")
             .arg(formatDecimal(settings.frequencyMHz), runContext_, fromCore(peakGain.text),
                 frontToBackText)
             .arg(planes.size());
-        summary_->setToolTip(tr("Pattern peak: strongest sample in this RP dataset · %1\n"
-            "%2 Forward is the pattern peak.")
+        summary_->setToolTip(tr("Dataset peak: strongest sample in this RP dataset · %1\n"
+            "%2 Forward is the dataset peak.")
             .arg(fromCore(peakGain.toolTip), fromCore(analysis::frontToBackDefinition())));
         if (metrics.tiedPeaks.size() > 1)
             text += tr(" · %1 tied peak directions").arg(metrics.tiedPeaks.size());
@@ -2168,7 +2184,7 @@ RadiationPerformanceView::RadiationPerformanceView(QWidget* parent)
     forwardAzimuth_->setRange(-360.0, 720.0);
     forwardAzimuth_->setDecimals(DisplayDecimalPlaces);
     forwardAzimuth_->setSuffix(QStringLiteral("°"));
-    usePatternPeak_ = new QPushButton(tr("Use Pattern Peak"), this);
+    usePatternPeak_ = new QPushButton(tr("Use Sampled Peak"), this);
     usePatternPeak_->setObjectName(QStringLiteral("radiationPerformanceUsePatternPeak"));
     const auto directionTip = tr(
         "Physical forward direction used for gain, F/B, and F/R. Elevation is measured "
@@ -2177,7 +2193,8 @@ RadiationPerformanceView::RadiationPerformanceView(QWidget* parent)
     forwardElevation_->setToolTip(directionTip);
     forwardAzimuth_->setToolTip(directionTip);
     usePatternPeak_->setToolTip(tr(
-        "Set the direction to the strongest gain sample at the selected frequency."));
+        "Set the direction to the sampled peak: the strongest gain sample in all RP data at "
+        "the selected frequency."));
     controls->addWidget(new QLabel(tr("Component"), this));
     controls->addWidget(component_);
     controls->addSpacing(12);
@@ -2390,7 +2407,7 @@ void RadiationPerformanceView::refresh()
     readout_->setText(tr("%1 · %2 MHz").arg(readout.join(QStringLiteral(" · ")),
         formatDecimal(selectedMetric->frequencyMHz)));
     readout_->setToolTip(tr("Forward direction %1 · %2 gain\n%3\n%4\n"
-        "Set the direction above, use Pattern Peak, or right-click a 2D or 3D pattern.")
+        "Set the direction above, use Sampled Peak, or right-click a 2D or 3D pattern.")
         .arg(direction, componentName(component),
             fromCore(analysis::frontToBackDefinition()),
             fromCore(analysis::frontToRearDefinition(
@@ -2398,14 +2415,14 @@ void RadiationPerformanceView::refresh()
     if (selectedMetric->forwardAvailability == analysis::RadiationMetricAvailability::PatternNull) {
         summary_->setText(tr(
             "%1 is a pattern null at %2 MHz. Choose another sampled direction or use "
-            "Pattern Peak. · %3")
+            "Sampled Peak. · %3")
             .arg(direction, formatDecimal(selectedMetric->frequencyMHz), runContext_));
         return;
     }
     if (selectedMetric->forwardAvailability == analysis::RadiationMetricAvailability::Missing) {
         summary_->setText(tr(
             "%1 has no matching RP sample at %2 MHz. Exact samples are not interpolated; "
-            "choose another direction or use Pattern Peak. · %3")
+            "choose another direction or use Sampled Peak. · %3")
             .arg(direction, formatDecimal(selectedMetric->frequencyMHz), runContext_));
         return;
     }

@@ -1466,7 +1466,7 @@ auto main(int argc, char* argv[]) -> int
                 QStringLiteral("Direction setup required"))
             && optimizationLatestPatternPeakStatus != nullptr
             && optimizationLatestPatternPeakStatus->text().contains(
-                QStringLiteral("Use Find Maximum Gain or Choose"))
+                QStringLiteral("Use Find Sampled Peak or Choose"))
             && optimizationRun != nullptr && !optimizationRun->isEnabled()
             && optimizationRun->toolTip().contains(
                 QStringLiteral("Direction setup required"))
@@ -1529,7 +1529,7 @@ auto main(int argc, char* argv[]) -> int
     optimization.setModelValid(false);
     const auto maximumGainActionValid = optimizationFindMaximumGain != nullptr
         && requestedMaximumGainFrequency > 0.0
-        && optimizationFindMaximumGain->text() == QStringLiteral("Find Maximum Gain…")
+        && optimizationFindMaximumGain->text() == QStringLiteral("Find Sampled Peak (5° grid)…")
         && optimizationFindMaximumGain->toolTip().contains(
             QStringLiteral("does not start optimization or modify the NEC model"));
     necwb::analysis::AnalysisResult latestPattern;
@@ -1916,7 +1916,7 @@ auto main(int argc, char* argv[]) -> int
     const auto staleDirectionReported = staleDirectionStatus != nullptr
         && staleDirectionStatus->text().contains(QStringLiteral("direction is stale"))
         && staleDirectionButton != nullptr
-        && staleDirectionButton->text() == QStringLiteral("Update Maximum…");
+        && staleDirectionButton->text() == QStringLiteral("Update Sampled Peak…");
     necwb::ui::OptimizationComparePanel directionalComparison;
     necwb::analysis::AnalysisResult directionalCandidateResult;
     necwb::analysis::AnalysisResult directionalBaselineResult;
@@ -2625,7 +2625,7 @@ auto main(int argc, char* argv[]) -> int
     const auto radiationExportReady = radiation2DExportImage->isEnabled()
         && radiation2DExportData->isEnabled() && radiation3DExportImage->isEnabled()
         && radiation3DExportData->isEnabled();
-    // Max-Gain Cut keeps the kind of cut: elevation at the peak's azimuth (phi 60),
+    // Go to Peak keeps the kind of cut: elevation at the peak's azimuth (phi 60),
     // azimuth at the peak's elevation (theta 75).
     radiation2DOrientation->click();
     radiation2DMaxGainCut->click();
@@ -2656,7 +2656,7 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("radiation2DSummary"));
     const auto signedThetaTiesNormalized = signedThetaSummary != nullptr
         && signedThetaSummary->text().contains(QStringLiteral("Elevation cut at Az 0°"))
-        && signedThetaSummary->text().contains(QStringLiteral("Max in this cut 8.200 dBi @ El 20°, Az 180°"))
+        && signedThetaSummary->text().contains(QStringLiteral("Peak in this cut 8.200 dBi @ El 20°, Az 180°"))
         && signedThetaSummary->text().contains(QStringLiteral("tied at El 20°, Az 0°"))
         && !signedThetaSummary->text().contains(QStringLiteral("430"));
     auto* signedThetaPlot = signedThetaView.findChild<QWidget*>(
@@ -2682,9 +2682,9 @@ auto main(int argc, char* argv[]) -> int
     const auto offCutPeakNamed = offCutSummary != nullptr && offCutPlot != nullptr
         && offCutSummary->text().contains(QStringLiteral("Elevation cut at Az 0°"))
         && offCutSummary->text().contains(QStringLiteral(
-            "Max in this cut 5.000 dBi @ El 10°, Az 0° (sampled, RP step 10°)"))
+            "Peak in this cut 5.000 dBi @ El 10°, Az 0° (sampled, RP step 10°)"))
         && offCutSummary->text().contains(QStringLiteral(
-            "Pattern peak 8.000 dBi @ El 10°, Az 90° (sampled, RP step 30°), outside this cut"))
+            "Sampled peak (all RP data) 8.000 dBi @ El 10°, Az 90° (sampled, RP step 30°), outside this cut"))
         && offCutSummary->toolTip().contains(QStringLiteral("F/B:"))
         && offCutPlot->property("cutName").toString() == QStringLiteral("Elevation cut at Az 0°");
     necwb::ui::RadiationPerformanceView offCutPerformance;
@@ -2731,8 +2731,11 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("radiation2DCutPlane"));
     auto* crossingToggle = crossingCutsView.findChild<QPushButton*>(
         QStringLiteral("radiation2DOrientation"));
+    auto* crossingSummary = crossingCutsView.findChild<QLabel*>(
+        QStringLiteral("radiation2DSummary"));
     auto crossingCutsPair = false;
-    if (crossingDataset != nullptr && crossingPlane != nullptr && crossingToggle != nullptr) {
+    if (crossingDataset != nullptr && crossingPlane != nullptr && crossingToggle != nullptr
+        && crossingSummary != nullptr) {
         crossingDataset->setCurrentIndex(crossingDataset->findData(2));
         application.processEvents();
         // An elevation-cut dataset no longer offers two-point "azimuth cuts" of its own.
@@ -2742,10 +2745,17 @@ auto main(int argc, char* argv[]) -> int
         crossingToggle->click();
         application.processEvents();
         const auto toFineAzimuth = crossingDataset->currentData().toInt() == 1
-            && crossingPlane->currentData().toDouble() == 80.0;
+            && crossingPlane->currentData().toDouble() == 80.0
+            && crossingSummary->text().startsWith(QStringLiteral("Switched to RP 2"));
+        // The note is one-time: the next change clears it.
+        crossingCutsView.findChild<QComboBox*>(QStringLiteral("radiation2DScale"))
+            ->setCurrentIndex(1);
+        application.processEvents();
+        const auto switchNoteClears = !crossingSummary->text().contains(
+            QStringLiteral("Switched to"));
         crossingToggle->click();
         application.processEvents();
-        crossingCutsPair = elevationOnly && toFineAzimuth
+        crossingCutsPair = elevationOnly && toFineAzimuth && switchNoteClears
             && crossingDataset->currentData().toInt() == 2
             && crossingPlane->currentData().toDouble() == 0.0;
     }
@@ -2913,7 +2923,7 @@ auto main(int argc, char* argv[]) -> int
         && controlPanelQuickResults != nullptr
         && controlPanelExtrema != nullptr
         && controlPanelExtrema->text().contains(QStringLiteral("Min SWR"))
-        && controlPanelExtrema->text().contains(QStringLiteral("Peak gain"))
+        && controlPanelExtrema->text().contains(QStringLiteral("Peak across the band"))
         && controlPanelExtrema->text().contains(QStringLiteral("dBi @ El"))
         && controlPanelFooter != nullptr
         && controlPanelFooter->text().contains(QStringLiteral("Last run"))

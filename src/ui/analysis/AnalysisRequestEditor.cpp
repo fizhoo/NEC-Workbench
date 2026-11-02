@@ -650,7 +650,7 @@ void AnalysisRequestEditor::refreshPatternPendingState()
         : patternPending_
             ? tr("Apply or discard the current pattern edit first.")
             : tr("Add a 1° azimuth cut at El %1 and a 1° elevation cut at Az %2, crossing at "
-                 "the last run's pattern peak.")
+                 "the last run's sampled peak.")
                   .arg(fromCore(analysis::formatAngle(latestPeak_->elevationDegrees)),
                       fromCore(analysis::formatAngle(latestPeak_->azimuthDegrees))));
 }
@@ -731,7 +731,7 @@ void AnalysisRequestEditor::refreshCutAngleControl()
             fromCore(analysis::formatAngle(pattern.thetaStart))));
         cutAngleControl_->setToolTip(tr(
             "Elevation above the horizon for this top-down cut. Over ground the main lobe is "
-            "usually 5–30° up; run a full pattern first and use its pattern-peak elevation."));
+            "usually 5–30° up; run a full pattern first and use its sampled-peak elevation."));
     } else {
         cutAngleLabel_->setText(tr("At azimuth"));
         cutAngleControl_->setRange(0.0, 360.0);

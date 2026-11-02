@@ -441,7 +441,7 @@ void OptimizationWorkspace::applyCandidate(int row, bool runAfterApply)
             ? tr("%1 The model changed; the optimization baseline will be rebuilt before the next optimization.")
                 .arg(appliedText)
             : maximumGainDirectionStale_
-                ? tr("%1 The fixed direction came from the previous pattern; update maximum gain or choose a direction before optimizing again.")
+                ? tr("%1 The fixed direction came from the previous pattern; update the sampled peak or choose a direction before optimizing again.")
                     .arg(appliedText)
                 : appliedText);
     }

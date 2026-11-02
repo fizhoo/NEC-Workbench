@@ -176,7 +176,7 @@ radiation records. Views consume these records rather than reparsing output.
   never compose that text themselves. `analysis/PatternRequests` builds the RP
   presets (5° grid, azimuth cut at an elevation, elevation cut through an azimuth,
   cuts through a peak). The Requests editor, the optimizer's rear-hemisphere grid, and
-  Find Maximum Gain all use them.
+  Find Sampled Peak all use them.
 - Historical views use the archived generated deck for the matching antenna overlay.
 
 Directional metrics share one non-widget implementation. Forward gain uses an

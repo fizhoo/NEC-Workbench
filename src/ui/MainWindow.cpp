@@ -3906,7 +3906,7 @@ auto MainWindow::startOptimizationPeakSearch(double frequencyMHz) -> bool
         || !analysis::isBackendRunnable(solverBackendId_.toStdString())
         || !executable.exists() || !executable.isFile() || !executable.isExecutable()) {
         statusBar()->showMessage(tr(
-            "Maximum-gain search canceled: check the model and selected solver."), 5000);
+            "Sampled-peak search canceled: check the model and selected solver."), 5000);
         return false;
     }
 
@@ -3914,7 +3914,7 @@ auto MainWindow::startOptimizationPeakSearch(double frequencyMHz) -> bool
     const auto& resolution = cache.resolution();
     if (!resolution.ok()) {
         statusBar()->showMessage(tr(
-            "Maximum-gain search canceled: model expressions could not be resolved."), 5000);
+            "Sampled-peak search canceled: model expressions could not be resolved."), 5000);
         return false;
     }
     const auto aboveGroundOnly = currentSetup_.ground
@@ -3922,10 +3922,10 @@ auto MainWindow::startOptimizationPeakSearch(double frequencyMHz) -> bool
     const auto solverInput = analysis::prepareMaximumGainSearchInput(
         resolution.generatedDeck, frequencyMHz, aboveGroundOnly);
     currentPeakSearchFrequencyMHz_ = frequencyMHz;
-    const auto summary = tr("Maximum gain at %1 MHz").arg(formatDecimal(frequencyMHz));
+    const auto summary = tr("Sampled peak (5° grid) at %1 MHz").arg(formatDecimal(frequencyMHz));
     startAnalysisRun(std::string(cache.source()), solverInput,
         QStringLiteral("optimization-peak-search"), summary,
-        tr("Finding maximum gain"), SolverRunPurpose::OptimizationPeakSearch);
+        tr("Finding sampled peak"), SolverRunPurpose::OptimizationPeakSearch);
     return solverRunner_->isRunning();
 }
 
@@ -4354,7 +4354,7 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             if (peak && peak->sampleCount > 1) {
                 peakGainParsed = true;
                 optimizationWorkspace_->setLatestAnalysisResult(result);
-                currentRunRecord_->summary = tr("Maximum %1 · %2 MHz")
+                currentRunRecord_->summary = tr("Sampled peak %1 · %2 MHz")
                     .arg(fromCore(analysis::formatGain({.gainDb = peak->metrics.peakGainDb,
                         .thetaDegrees = peak->metrics.peakThetaDegrees,
                         .phiDegrees = peak->metrics.peakPhiDegrees,
@@ -4365,7 +4365,7 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
                 runStore_.save(*currentRunRecord_);
             } else {
                 appendSolverOutput(tr(
-                    "\nThe maximum-gain search produced no usable multi-angle radiation pattern.\n"));
+                    "\nThe sampled-peak search produced no usable multi-angle radiation pattern.\n"));
             }
         }
     } else if (processSucceeded && currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
@@ -4410,7 +4410,7 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
         status = tr("Failed (AGT result missing)");
     } else if (currentRunPurpose_ == SolverRunPurpose::OptimizationPeakSearch
         && processSucceeded) {
-        status = tr("Failed (maximum gain missing)");
+        status = tr("Failed (sampled peak missing)");
     } else if (currentRunPurpose_ == SolverRunPurpose::OptimizationBaseline
         && processSucceeded) {
         status = tr("Failed (baseline results missing)");
@@ -4449,7 +4449,7 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     const auto activity = currentRunPurpose_ == SolverRunPurpose::AverageGainTest
         ? tr("Average Gain Test")
         : currentRunPurpose_ == SolverRunPurpose::OptimizationPeakSearch
-            ? tr("Maximum-gain search")
+            ? tr("Sampled-peak search")
         : currentRunPurpose_ == SolverRunPurpose::OptimizationBaseline
             ? tr("Optimization baseline")
         : currentRunRecord_ && currentRunRecord_->runType == QStringLiteral("quick-sweep")

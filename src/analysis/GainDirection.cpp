@@ -144,6 +144,14 @@ auto isCoarseSampleStep(std::optional<double> stepDegrees) -> bool
     return stepDegrees && *stepDegrees > CoarsePatternStepDegrees + angleToleranceDegrees;
 }
 
+auto sampleStepPrecision(std::optional<double> stepDegrees) -> SampleStepPrecision
+{
+    if (isCoarseSampleStep(stepDegrees)) return SampleStepPrecision::Coarse;
+    if (stepDegrees && *stepDegrees > FinePatternStepDegrees + angleToleranceDegrees)
+        return SampleStepPrecision::Grid;
+    return SampleStepPrecision::Fine;
+}
+
 auto coarseSampleNote(double stepDegrees) -> std::string
 {
     return "sampled, RP step " + formatAngle(stepDegrees);
@@ -159,8 +167,11 @@ auto formatGain(const GainReading& reading) -> GainText
     result.text += known
         ? " @ " + formatDirection(*reading.thetaDegrees, *reading.phiDegrees)
         : std::string{", direction unavailable"};
-    const auto coarse = isCoarseSampleStep(reading.sampleStepDegrees);
-    if (coarse) result.text += " (" + coarseSampleNote(*reading.sampleStepDegrees) + ")";
+    const auto precision = sampleStepPrecision(reading.sampleStepDegrees);
+    if (precision == SampleStepPrecision::Coarse)
+        result.text += " (" + coarseSampleNote(*reading.sampleStepDegrees) + ")";
+    else if (precision == SampleStepPrecision::Grid)
+        result.text += " (" + formatAngle(*reading.sampleStepDegrees) + " grid)";
 
     result.toolTip = known
         ? "NEC " + formatNecDirection(*reading.thetaDegrees, *reading.phiDegrees)
@@ -168,11 +179,16 @@ auto formatGain(const GainReading& reading) -> GainText
     if (reading.frequencyMHz)
         result.toolTip += " · " + formatDisplayDecimal(*reading.frequencyMHz) + " MHz";
     result.toolTip += " · " + radiationComponentName(reading.component) + " gain";
-    if (coarse) {
+    if (precision == SampleStepPrecision::Coarse) {
         result.toolTip += "\nSampled peak: the RP step around this sample is "
             + formatAngle(*reading.sampleStepDegrees)
             + ", so the true peak may sit between samples. Request a finer RP step "
               "(5° or less) to locate it.";
+    } else if (precision == SampleStepPrecision::Grid) {
+        result.toolTip += "\nSampled on a " + formatAngle(*reading.sampleStepDegrees)
+            + " RP grid: good for locating the lobe, but the true peak may be a degree or two "
+              "away and a few tenths of a dB higher. Add Cuts Through Peak (Analysis › "
+              "Requests) adds 1° cuts through it.";
     }
     return result;
 }

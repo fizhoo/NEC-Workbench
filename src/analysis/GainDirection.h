@@ -13,6 +13,15 @@ inline constexpr auto DisplayDecimalPlaces = 3;
 
 // RP steps wider than this around a peak can hide the true maximum between samples.
 inline constexpr auto CoarsePatternStepDegrees = 5.0;
+// Peaks on steps wider than this, up to CoarsePatternStepDegrees, get a soft grid note:
+// fine for locating a lobe, a little rough for its exact angle and gain.
+inline constexpr auto FinePatternStepDegrees = 2.0;
+
+enum class SampleStepPrecision {
+    Fine,   // step of FinePatternStepDegrees or less, or not a sampled peak
+    Grid,   // up to CoarsePatternStepDegrees: "(5° grid)"
+    Coarse  // wider: "(sampled, RP step 10°)"
+};
 
 // A physical direction as antenna users read it: elevation above the horizon and azimuth.
 struct PatternDirection {
@@ -51,6 +60,7 @@ struct GainText {
 // "6.670 dBi @ El 0°, Az 0°"; non-total components are named after the unit.
 [[nodiscard]] auto formatGain(const GainReading& reading) -> GainText;
 [[nodiscard]] auto isCoarseSampleStep(std::optional<double> stepDegrees) -> bool;
+[[nodiscard]] auto sampleStepPrecision(std::optional<double> stepDegrees) -> SampleStepPrecision;
 [[nodiscard]] auto coarseSampleNote(double stepDegrees) -> std::string;
 
 // "Azimuth cut at El 10°" for a fixed-theta cut.
