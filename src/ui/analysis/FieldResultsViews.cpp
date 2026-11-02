@@ -148,8 +148,8 @@ void populateRadiationFrequencies(QComboBox* control,
 auto patternDatasetLabel(int index, const PatternDatasetStats& stats) -> QString
 {
     QString kind;
-    if (stats.theta.size() == 1 && stats.phi.size() > 1) kind = QObject::tr("Horizontal cut");
-    else if (stats.theta.size() > 1 && stats.phi.size() <= 2) kind = QObject::tr("Vertical cut");
+    if (stats.theta.size() == 1 && stats.phi.size() > 1) kind = QObject::tr("Azimuth cut");
+    else if (stats.theta.size() > 1 && stats.phi.size() <= 2) kind = QObject::tr("Elevation cut");
     else if (stats.theta.size() > 1 && stats.phi.size() > 2) kind = QObject::tr("Full grid");
     else kind = QObject::tr("Partial grid");
     return QObject::tr("RP %1 — %2 (%3×%4)").arg(index + 1).arg(kind)
@@ -620,8 +620,10 @@ protected:
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
         painter.fillRect(rect(), palette().brush(QPalette::Base));
-        const auto radius = std::max(1.0, std::min(width(), height()) / 2.0 - 55.0);
-        const QPointF center(width() / 2.0, height() / 2.0 + 8.0);
+        const auto plot = frame();
+        const auto& center = plot.center;
+        const auto radius = plot.radius;
+        setProperty("upperHalf", plot.upperHalf);
         auto maxGain = 0.0;
         if (!samples_.empty()) {
             maxGain = std::ranges::max(samples_, {},
@@ -650,7 +652,12 @@ protected:
         for (auto ring = 1; ring <= 4; ++ring) {
             const auto ringRadius = radius * ring / 4;
             painter.setPen(gridColor);
-            painter.drawEllipse(center, ringRadius, ringRadius);
+            if (plot.upperHalf) {
+                painter.drawArc(QRectF(center.x() - ringRadius, center.y() - ringRadius,
+                    2.0 * ringRadius, 2.0 * ringRadius), 0, 180 * 16);
+            } else {
+                painter.drawEllipse(center, ringRadius, ringRadius);
+            }
             const auto ringDb = innerDb + (outerDb - innerDb) * ring / 4.0;
             drawRingLabel(QPointF(center.x() + 5, center.y() - ringRadius - 2),
                 settings_.scale == analysis::RadiationScale::Normalized
@@ -658,16 +665,15 @@ protected:
                     : tr("%1 dBi").arg(formatDecimal(ringDb)));
         }
         for (auto angle = 0; angle < 360; angle += 30) {
-            const auto radians = angle * std::numbers::pi / 180.0;
+            if (plot.upperHalf && angle > 90 && angle < 270) continue;
             painter.setPen(gridColor);
-            painter.drawLine(center, center + QPointF(std::sin(radians), -std::cos(radians)) * radius);
-            const auto labelPoint = center
-                + QPointF(std::sin(radians), -std::cos(radians)) * (radius + 18.0);
+            painter.drawLine(center, screenPoint(plot, angle, radius));
+            const auto labelPoint = screenPoint(plot, angle, radius + 18.0);
             painter.setPen(labelColor);
-            // Vertical cuts are labelled in elevation: the horizon is level and the zenith is up.
+            // Elevation cuts are labelled in elevation: the horizon is level and the zenith is up.
             const auto label = vertical_
                 ? fromCore(analysis::formatAngle(angle <= 180 ? 90.0 - angle : angle - 270.0))
-                : angle == 0 ? tr("0°/360°") : tr("%1°").arg(angle);
+                : tr("%1°").arg(angle);
             painter.drawText(QRectF(labelPoint.x() - 22, labelPoint.y() - 9, 44, 18),
                 Qt::AlignCenter, label);
         }
@@ -684,7 +690,8 @@ protected:
         }
         painter.setPen(QPen(palette().color(QPalette::Text), 1.5));
         painter.drawLine(center - QPointF(radius, 0), center + QPointF(radius, 0));
-        painter.drawLine(center - QPointF(0, radius), center + QPointF(0, radius));
+        painter.drawLine(center - QPointF(0, radius),
+            plot.upperHalf ? center : center + QPointF(0, radius));
         if (samples_.empty()) {
             painter.drawText(rect(), Qt::AlignCenter, tr("No radiation samples"));
             return;
@@ -699,9 +706,7 @@ protected:
                     ? sample.y() - peak : sample.y();
                 const auto normalized = std::clamp(
                     (displayedDb - innerDb) / (outerDb - innerDb), 0.0, 1.0);
-                const auto radians = sample.x() * std::numbers::pi / 180.0;
-                const auto point = center
-                    + QPointF(std::sin(radians), -std::cos(radians)) * radius * normalized;
+                const auto point = screenPoint(plot, sample.x(), radius * normalized);
                 started ? path.lineTo(point) : path.moveTo(point);
                 started = true;
             }
@@ -733,39 +738,77 @@ protected:
             painter.drawText(left + 25, 40, label);
         }
         if (tracking_) {
-            auto cursorAngle = std::atan2(cursor_.x() - center.x(), center.y() - cursor_.y())
-                * 180.0 / std::numbers::pi;
-            if (cursorAngle < 0.0) cursorAngle += 360.0;
-            const auto circularDistance = [cursorAngle](const QPointF& sample) {
-                const auto difference = std::abs(sample.x() - cursorAngle);
-                return std::min(difference, 360.0 - difference);
-            };
-            const auto nearest = std::ranges::min_element(samples_, {}, circularDistance);
+            const auto nearest = nearestSample(cursor_);
             const auto displayedDb = settings_.scale == analysis::RadiationScale::Normalized
                 ? nearest->y() - maxGain : nearest->y();
             const auto normalized = std::clamp((displayedDb - innerDb) / (outerDb - innerDb), 0.0, 1.0);
-            const auto radians = nearest->x() * std::numbers::pi / 180.0;
-            const auto marker = center
-                + QPointF(std::sin(radians), -std::cos(radians)) * radius * normalized;
+            const auto marker = screenPoint(plot, nearest->x(), radius * normalized);
             painter.setPen(QPen(QColor(35, 115, 220), 1));
             painter.setBrush(QColor(35, 115, 220));
             painter.drawEllipse(marker, 4, 4);
         }
     }
 private:
+    struct PlotFrame {
+        QPointF center;
+        double radius{};
+        bool upperHalf{};
+    };
+
+    // An elevation cut with nothing below the horizon (a model over ground) is drawn as the
+    // upper semicircle, as other amateur modeling programs do.
+    [[nodiscard]] auto frame() const -> PlotFrame
+    {
+        const auto aboveHorizon = vertical_ && !cut_.empty()
+            && std::ranges::all_of(cut_, [](const auto& point) {
+                   return analysis::patternDirection(point.thetaDegrees, point.phiDegrees)
+                       .elevationDegrees >= -1.0e-6;
+               });
+        if (aboveHorizon) {
+            const auto radius = std::max(1.0, std::min(width() / 2.0 - 55.0, height() - 115.0));
+            return {QPointF(width() / 2.0, std::min(height() - 32.0, 80.0 + radius)), radius, true};
+        }
+        return {QPointF(width() / 2.0, height() / 2.0 + 8.0),
+            std::max(1.0, std::min(width(), height()) / 2.0 - 55.0), false};
+    }
+    // Elevation cuts put the zenith up and the plane's azimuth on the right, turning
+    // clockwise in NEC theta. Azimuth cuts are seen from above: Az 0° (+X) on the right,
+    // counterclockwise toward +Y.
+    [[nodiscard]] auto screenPoint(const PlotFrame& plot, double angleDegrees,
+        double distance) const -> QPointF
+    {
+        const auto radians = angleDegrees * std::numbers::pi / 180.0;
+        return plot.center + (vertical_ ? QPointF(std::sin(radians), -std::cos(radians))
+                                        : QPointF(std::cos(radians), -std::sin(radians)))
+            * distance;
+    }
+    [[nodiscard]] auto angleAt(const QPointF& position) const -> double
+    {
+        const auto center = frame().center;
+        const auto right = position.x() - center.x();
+        const auto up = center.y() - position.y();
+        auto angle = (vertical_ ? std::atan2(right, up) : std::atan2(up, right))
+            * 180.0 / std::numbers::pi;
+        if (angle < 0.0) angle += 360.0;
+        return angle;
+    }
+    [[nodiscard]] static auto angularDistance(double first, double second) -> double
+    {
+        const auto difference = std::abs(std::remainder(first - second, 360.0));
+        return std::min(difference, 360.0 - difference);
+    }
+    [[nodiscard]] auto nearestSample(const QPointF& position) const
+        -> std::vector<QPointF>::const_iterator
+    {
+        const auto cursorAngle = angleAt(position);
+        return std::ranges::min_element(samples_, {}, [cursorAngle](const QPointF& sample) {
+            return angularDistance(sample.x(), cursorAngle);
+        });
+    }
     [[nodiscard]] auto nearestSampleText(const QPointF& position) const -> QString
     {
         if (samples_.empty()) return {};
-        const QPointF center(width() / 2.0, height() / 2.0 + 8.0);
-        auto cursorAngle = std::atan2(position.x() - center.x(),
-                               center.y() - position.y())
-            * 180.0 / std::numbers::pi;
-        if (cursorAngle < 0.0) cursorAngle += 360.0;
-        const auto nearest = std::ranges::min_element(samples_, {},
-            [cursorAngle](const QPointF& sample) {
-                const auto difference = std::abs(sample.x() - cursorAngle);
-                return std::min(difference, 360.0 - difference);
-            });
+        const auto nearest = nearestSample(position);
         const auto maxGain = std::ranges::max(samples_, {},
             [](const QPointF& point) { return point.y(); }).y();
         const auto& direction = cut_[static_cast<std::size_t>(
@@ -788,15 +831,8 @@ private:
     [[nodiscard]] auto nearestCutPoint(const QPointF& position) const
         -> const analysis::RadiationCutPoint*
     {
-        const QPointF center(width() / 2.0, height() / 2.0 + 8.0);
-        auto cursorAngle = std::atan2(position.x() - center.x(), center.y() - position.y())
-            * 180.0 / std::numbers::pi;
-        if (cursorAngle < 0.0) cursorAngle += 360.0;
-        return &*std::ranges::min_element(cut_, {}, [cursorAngle](const auto& point) {
-            const auto difference = std::abs(std::fmod(point.angleDegrees + 360.0, 360.0)
-                - cursorAngle);
-            return std::min(difference, 360.0 - difference);
-        });
+        return &cut_[static_cast<std::size_t>(
+            std::distance(samples_.begin(), nearestSample(position)))];
     }
 
     std::vector<QPointF> samples_;
@@ -1362,7 +1398,7 @@ RadiationPatternView::RadiationPatternView(QWidget* parent) : QWidget(parent)
     auto* navigation = new QHBoxLayout;
     auto* previous = new QPushButton(tr("◀ Angle"), this);
     previous->setToolTip(tr("Select the previous calculated angle"));
-    orientationButton_ = new QPushButton(tr("Vertical"), this);
+    orientationButton_ = new QPushButton(tr("Show Azimuth Cut"), this);
     orientationButton_->setObjectName(QStringLiteral("radiation2DOrientation"));
     auto* next = new QPushButton(tr("Angle ▶"), this);
     next->setToolTip(tr("Select the next calculated angle"));
@@ -1545,7 +1581,7 @@ void RadiationPatternView::refreshCutControls()
     else if (orientation_ == CutOrientation::Horizontal && !horizontalAvailable && verticalAvailable)
         orientation_ = CutOrientation::Vertical;
     orientationButton_->setText(orientation_ == CutOrientation::Vertical
-        ? tr("Vertical") : tr("Horizontal"));
+        ? tr("Show Azimuth Cut") : tr("Show Elevation Cut"));
     cutLabel_->setText(orientation_ == CutOrientation::Vertical
         ? tr("Elevation cut at Az") : tr("Azimuth cut at El"));
     const auto oppositeOrientation = orientation_ == CutOrientation::Vertical
@@ -1554,7 +1590,7 @@ void RadiationPatternView::refreshCutControls()
         || uniqueDatasetForCut(oppositeOrientation).has_value();
     orientationButton_->setEnabled(oppositeAvailable);
     if (verticalAvailable && horizontalAvailable)
-        orientationButton_->setToolTip(tr("Switch between vertical and horizontal cuts."));
+        orientationButton_->setToolTip(tr("Switch to the other kind of cut. An elevation cut is a side view at one azimuth; an azimuth cut is a top view at one elevation."));
     else if (oppositeAvailable)
         orientationButton_->setToolTip(tr("Switch to the RP dataset containing the opposite cut."));
     else if (verticalAvailable || horizontalAvailable)

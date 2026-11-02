@@ -350,14 +350,19 @@ wire with that tag in deck order, and tag 0 means an absolute segment number.
 
 The radiation frequency selector includes only frequencies with pattern data.
 
-- **2D Pattern** selects vertical or horizontal cuts, cycles available angles,
+- **2D Pattern** switches between elevation cuts (a side view at one azimuth) and
+  azimuth cuts (a top view at one elevation) with **Show Azimuth Cut** / **Show
+  Elevation Cut**, cycles available angles,
   reports peak and interpolated 3 dB beamwidth when computable, and probes nearby
   samples under the pointer. Every cut says which cut it is ("Elevation cut at Az 0°",
   "Azimuth cut at El 10°") and labels its strongest sample "Max in this cut". When other
   RP data at the same frequency has a stronger sample, the summary adds "Pattern peak …,
   outside this cut". In Normalized mode the plot and the hover readout state the
-  reference level, for example "0 dB = 7.410 dBi". Vertical cuts are labelled in
-  elevation, with the horizon level and the cut's two azimuths marked at each side. A compatible historical overlay is drawn as a muted dashed
+  reference level, for example "0 dB = 7.410 dBi". Elevation cuts are labelled in
+  elevation, with the horizon level and the cut's two azimuths marked at each side;
+  when the pattern has nothing below the horizon (a model over ground) the plot is the
+  upper semicircle. Azimuth cuts are seen from above, with Az 0° (+X) on the right and
+  azimuth increasing counterclockwise toward +Y, as in EZNEC. A compatible historical overlay is drawn as a muted dashed
   trace. Workbench requires the same frequency, cut orientation/plane, and angular
   sample grid; it reports the historical overlay as unavailable rather than interpolating.
   Normalized mode normalizes each trace to its own peak for shape comparison;

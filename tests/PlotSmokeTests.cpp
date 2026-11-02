@@ -2566,21 +2566,21 @@ auto main(int argc, char* argv[]) -> int
     radiation2DDataset->setCurrentIndex(radiation2DDataset->findData(1));
     application.processEvents();
     const auto horizontalDatasetSelectsCompatibleCut = radiation2DOrientation->isEnabled()
-        && radiation2DOrientation->text() == QStringLiteral("Horizontal")
+        && radiation2DOrientation->text() == QStringLiteral("Show Elevation Cut")
         && radiation2DCutPlane->count() == 1
         && radiation2DCutPlane->currentData().toDouble() == 62.0
         && radiation2DSummary->text().contains(QStringLiteral("peak"));
     radiation2DOrientation->click();
     application.processEvents();
     const auto separateDatasetsSwitchCuts = radiation2DDataset->currentData().toInt() == 0
-        && radiation2DOrientation->text() == QStringLiteral("Vertical")
+        && radiation2DOrientation->text() == QStringLiteral("Show Azimuth Cut")
         && radiation2DCutPlane->count() == 6;
     radiation2DDataset->setCurrentIndex(radiation2DDataset->findData(1));
     application.processEvents();
     radiation2DMaxGainCut->click();
     application.processEvents();
     const auto horizontalMaxGainCutStaysCompatible = radiation2DOrientation->text()
-        == QStringLiteral("Horizontal") && radiation2DCutPlane->currentData().toDouble() == 62.0;
+        == QStringLiteral("Show Elevation Cut") && radiation2DCutPlane->currentData().toDouble() == 62.0;
     radiation2DDataset->setCurrentIndex(radiation2DDataset->findData(0));
     application.processEvents();
     const auto radiationControlsSynchronized = radiation3DComponent->currentData()
@@ -2609,7 +2609,7 @@ auto main(int argc, char* argv[]) -> int
     radiation2DOrientation->click();
     radiation2DMaxGainCut->click();
     application.processEvents();
-    const auto maxGainCutSelected = radiation2DOrientation->text() == QStringLiteral("Vertical")
+    const auto maxGainCutSelected = radiation2DOrientation->text() == QStringLiteral("Show Azimuth Cut")
         && radiation2DCutPlane->currentData().toDouble() == 60.0
         && radiation2DSummary->text().contains(QStringLiteral("20.000 dBi"));
     necwb::analysis::AnalysisResult signedThetaResult;

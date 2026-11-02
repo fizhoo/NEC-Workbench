@@ -74,16 +74,16 @@ protected:
         painter.drawLine(QPointF(center.x(), center.y() - radius),
             QPointF(center.x(), center.y() + radius));
         painter.setPen(foreground);
+        // Both slices put 0° on the right and turn counterclockwise: azimuth as seen from
+        // above, elevation up from the horizon.
         painter.drawText(QRectF(center.x() - 30.0, center.y() - radius - 20.0, 60.0, 18.0),
-            Qt::AlignCenter, elevation_ ? QStringLiteral("90°") : QStringLiteral("0°"));
+            Qt::AlignCenter, QStringLiteral("90°"));
         painter.drawText(QRectF(center.x() + radius + 3.0, center.y() - 9.0, 45.0, 18.0),
-            Qt::AlignLeft | Qt::AlignVCenter,
-            elevation_ ? QStringLiteral("0°") : QStringLiteral("90°"));
+            Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("0°"));
         painter.drawText(QRectF(center.x() - 30.0, center.y() + radius + 2.0, 60.0, 18.0),
-            Qt::AlignCenter, elevation_ ? QStringLiteral("−90°") : QStringLiteral("180°"));
+            Qt::AlignCenter, elevation_ ? QStringLiteral("−90°") : QStringLiteral("270°"));
         painter.drawText(QRectF(center.x() - radius - 48.0, center.y() - 9.0, 45.0, 18.0),
-            Qt::AlignRight | Qt::AlignVCenter,
-            elevation_ ? QStringLiteral("180°") : QStringLiteral("270°"));
+            Qt::AlignRight | Qt::AlignVCenter, QStringLiteral("180°"));
         if (points_.size() < 2) {
             painter.drawText(rect().adjusted(20, 35, -20, -35),
                 Qt::AlignCenter | Qt::TextWordWrap, emptyText_);
@@ -96,9 +96,7 @@ protected:
         auto first = true;
         for (const auto& point : points_) {
             const auto radial = radius * std::clamp((point.gainDb - floor) / 30.0, 0.0, 1.0);
-            const auto radians = (elevation_ ? -point.angleDegrees
-                                             : point.angleDegrees - 90.0)
-                * std::numbers::pi / 180.0;
+            const auto radians = -point.angleDegrees * std::numbers::pi / 180.0;
             const QPointF plotted{center.x() + radial * std::cos(radians),
                 center.y() + radial * std::sin(radians)};
             if (first) {
@@ -117,9 +115,7 @@ protected:
         });
         const auto markerRadius = radius
             * std::clamp((nearest->gainDb - floor) / 30.0, 0.0, 1.0);
-        const auto markerRadians = (elevation_ ? -nearest->angleDegrees
-                                               : nearest->angleDegrees - 90.0)
-            * std::numbers::pi / 180.0;
+        const auto markerRadians = -nearest->angleDegrees * std::numbers::pi / 180.0;
         const QPointF markerPoint{center.x() + markerRadius * std::cos(markerRadians),
             center.y() + markerRadius * std::sin(markerRadians)};
         painter.setBrush(QColor(220, 45, 45));
