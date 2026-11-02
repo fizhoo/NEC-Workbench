@@ -1,10 +1,13 @@
 #pragma once
 
 #include "analysis/FrequencyPlan.h"
+#include "analysis/GainDirection.h"
 #include "model/ModelSetup.h"
 
 #include <QStringList>
 #include <QWidget>
+
+#include <optional>
 
 class QCheckBox;
 class QComboBox;
@@ -30,6 +33,8 @@ public:
     [[nodiscard]] auto hasPendingEdits() const noexcept -> bool;
     void discardPendingEdits();
     [[nodiscard]] auto radiationFrequencyPlan() const -> analysis::FrequencyPlan;
+    // The last run's pattern peak; azimuth-cut presets and Add Cuts Through Peak use it.
+    void setLatestPatternPeak(std::optional<analysis::PatternDirection> peak);
 
 signals:
     void executionChanged(bool enabled, model::ExecutionRequest execution);
@@ -41,6 +46,11 @@ private:
     [[nodiscard]] auto angularCount(double start, double end, double step) const -> int;
     void addPatternDraft(const model::RadiationPatternRequest& pattern);
     void applyPatternPreset(int typeValue);
+    void setPatternFields(const model::RadiationPatternRequest& pattern);
+    void applyCutAngle();
+    void refreshCutAngleControl();
+    void addCutsThroughPeak();
+    [[nodiscard]] auto overGround() const -> bool;
     void loadSelectedPattern();
     void updatePatternTypeFromFields();
     void updatePatternControls();
@@ -97,6 +107,11 @@ private:
     QPushButton* deletePatternButton_{};
     QPushButton* applyPatternButton_{};
     QPushButton* applyFrequencyButton_{};
+    QLabel* cutAngleLabel_{};
+    QDoubleSpinBox* cutAngleControl_{};
+    QLabel* cutAngleHint_{};
+    QPushButton* cutsThroughPeakButton_{};
+    std::optional<analysis::PatternDirection> latestPeak_;
     int lastPatternPreset_{-1};
     bool loadingPattern_{};
     bool patternPending_{};

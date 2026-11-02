@@ -4320,6 +4320,12 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             radiation3DView_->setModel(currentModel_);
             radiation3DView_->setResults(result, context);
             radiationPerformanceView_->setResults(result, context);
+            if (const auto peak = analysis::radiationMetrics(
+                    result.radiation, analysis::RadiationComponent::Total);
+                peak.valid && result.radiation.size() > 1) {
+                analysisRequestEditor_->setLatestPatternPeak(analysis::patternDirection(
+                    peak.peakThetaDegrees, peak.peakPhiDegrees));
+            }
             setDisplayedResults(result);
             optimizationWorkspace_->setLatestAnalysisResult(result);
             displayedRunDirectory_ = currentRunDirectory_;

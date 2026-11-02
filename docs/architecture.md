@@ -171,6 +171,12 @@ radiation records. Views consume these records rather than reparsing output.
   instantaneous current over the RF cycle. The Currents window's Antenna tab and the
   table's relative-phase column both consume this core result.
 - Radiation datasets retain their frequency and request identity.
+- `analysis/GainDirection` turns NEC θ/φ into elevation/azimuth and formats every
+  displayed gain, cut name, reference level, and F/B or F/R definition, so widgets
+  never compose that text themselves. `analysis/PatternRequests` builds the RP
+  presets (5° grid, azimuth cut at an elevation, elevation cut through an azimuth,
+  cuts through a peak). The Requests editor, the optimizer's rear-hemisphere grid, and
+  Find Maximum Gain all use them.
 - Historical views use the archived generated deck for the matching antenna overlay.
 
 Directional metrics share one non-widget implementation. Forward gain uses an

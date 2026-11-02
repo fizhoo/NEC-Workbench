@@ -860,7 +860,8 @@ auto StructuredCardEditor::defaultCard(int familyIndex) const -> QString
             .arg(wires.front().first).arg((wires.front().second+1)/2)
             .arg(second.first).arg((second.second+1)/2);
     }
-    if (family.mnemonic == QStringLiteral("RP")) return QStringLiteral("RP 0 37 1 1000 0 0 5 0 0 0");
+    // An elevation cut through Az 0°, front and back.
+    if (family.mnemonic == QStringLiteral("RP")) return QStringLiteral("RP 0 37 2 1000 0 0 5 180 0 0");
     if (family.mnemonic == QStringLiteral("XQ")) return QStringLiteral("XQ 0");
     if (family.mnemonic == QStringLiteral("Z0")) return QStringLiteral("Z0 50");
     return {};

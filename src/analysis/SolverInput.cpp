@@ -1,5 +1,6 @@
 #include "analysis/SolverInput.h"
 
+#include "analysis/PatternRequests.h"
 #include "nec/NecParser.h"
 #include "nec/NecWriter.h"
 #include "nec/ParseNumber.h"
@@ -58,15 +59,9 @@ auto hasGround(const nec::NecDocument& document) -> bool
     });
 }
 
-// Over ground nothing radiates below the horizon, so the grid stops there.
 auto rearHemisphereGrid(const nec::NecDocument& document) -> model::RadiationPatternRequest
 {
-    model::RadiationPatternRequest grid;
-    grid.thetaCount = hasGround(document) ? 19 : 37;
-    grid.phiCount = 72;
-    grid.thetaStep = 5.0;
-    grid.phiStep = 5.0;
-    return grid;
+    return fullPatternRequest(hasGround(document));
 }
 
 auto frontToBackDirection(double thetaDegrees, double phiDegrees) -> std::pair<double, double>
@@ -483,13 +478,7 @@ auto prepareMaximumGainSearchInput(std::string_view source,
     const nec::NecWriter writer;
     model::FrequencyDefinition frequency;
     frequency.startMHz = frequencyMHz;
-    model::RadiationPatternRequest pattern;
-    pattern.thetaCount = aboveGroundOnly ? 19 : 37;
-    pattern.phiCount = 72;
-    pattern.thetaStart = 0.0;
-    pattern.phiStart = 0.0;
-    pattern.thetaStep = 5.0;
-    pattern.phiStep = 5.0;
+    const auto pattern = fullPatternRequest(aboveGroundOnly);
     const std::array requests{
         writer.writeFrequencyCard(frequency),
         std::string{"XQ 0"},

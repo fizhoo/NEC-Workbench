@@ -11,6 +11,7 @@
 #include "analysis/OptimizationBaseline.h"
 #include "analysis/OptimizationObjective.h"
 #include "analysis/OptimizationPreset.h"
+#include "analysis/PatternRequests.h"
 #include "analysis/ReferenceRunSelection.h"
 #include "analysis/ResultSummary.h"
 #include "analysis/SegmentationConvergence.h"
@@ -3536,6 +3537,42 @@ void testFrontToRearDefinitions()
         "F/B and F/R definitions say what is compared");
 }
 
+void testPatternRequestPresets()
+{
+    const auto freeSpaceGrid = necwb::analysis::fullPatternRequest(false);
+    const auto groundGrid = necwb::analysis::fullPatternRequest(true);
+    expect(freeSpaceGrid.thetaCount == 37 && freeSpaceGrid.phiCount == 72
+            && freeSpaceGrid.thetaStep == 5.0 && freeSpaceGrid.phiStep == 5.0
+            && groundGrid.thetaCount == 19 && groundGrid.phiCount == 72,
+        "the full grid is 5 by 5 degrees and stops at the horizon over ground");
+    const auto azimuth = necwb::analysis::azimuthCutRequest(10.0);
+    expect(azimuth.thetaCount == 1 && azimuth.thetaStart == 80.0
+            && azimuth.phiCount == 360 && azimuth.phiStep == 1.0,
+        "an azimuth cut at El 10 degrees is NEC theta 80");
+    const auto elevation = necwb::analysis::elevationCutRequest(45.0, true);
+    const auto freeElevation = necwb::analysis::elevationCutRequest(45.0, false);
+    expect(elevation.thetaCount == 91 && elevation.thetaStep == 1.0
+            && elevation.phiCount == 2 && elevation.phiStart == 45.0
+            && elevation.phiStep == 180.0 && freeElevation.thetaCount == 181,
+        "an elevation cut covers front and back, above the horizon over ground");
+    const auto behind = necwb::analysis::elevationCutRequest(270.0, true);
+    expect(behind.phiStart == 90.0 && behind.phiStep == 180.0,
+        "an elevation cut past Az 180 uses the same plane from its other side");
+    const auto cuts = necwb::analysis::cutsThroughPeak({12.0, 30.0}, true);
+    expect(cuts[0].thetaStart == 78.0 && cuts[0].phiCount == 360
+            && cuts[1].phiStart == 30.0 && cuts[1].thetaCount == 91,
+        "cuts through the peak cross at its elevation and azimuth");
+    necwb::model::ModelSetup setup;
+    const auto freeSpace = !necwb::analysis::hasGroundBelow(setup);
+    setup.ground = necwb::model::GroundDefinition{};
+    const auto explicitFreeSpace = !necwb::analysis::hasGroundBelow(setup);
+    setup.ground->type = necwb::model::GroundType::SommerfeldNorton;
+    expect(freeSpace && explicitFreeSpace && necwb::analysis::hasGroundBelow(setup)
+            && necwb::analysis::defaultCutElevation(true) == 10.0
+            && necwb::analysis::defaultCutElevation(false) == 0.0,
+        "ground detection and default cut elevation");
+}
+
 auto main() -> int
 {
     testReferenceRunSelection();
@@ -3594,6 +3631,7 @@ auto main() -> int
     testGainDirectionFormatting();
     testPatternSampleStep();
     testFrontToRearDefinitions();
+    testPatternRequestPresets();
 
     if (failures != 0) {
         std::cerr << failures << " test assertion(s) failed\n";

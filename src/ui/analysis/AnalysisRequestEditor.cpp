@@ -1,5 +1,6 @@
 #include "ui/analysis/AnalysisRequestEditor.h"
 
+#include "analysis/PatternRequests.h"
 #include "ui/DisplayFormat.h"
 #include "ui/PendingEditIndicator.h"
 
@@ -59,8 +60,8 @@ auto patternTypeName(PatternType type) -> QString
 {
     switch (type) {
     case PatternType::Full3D: return QObject::tr("Full 3D pattern");
-    case PatternType::Horizontal: return QObject::tr("Horizontal cut");
-    case PatternType::Vertical: return QObject::tr("Vertical cut");
+    case PatternType::Horizontal: return QObject::tr("Azimuth cut");
+    case PatternType::Vertical: return QObject::tr("Elevation cut");
     case PatternType::Custom: return QObject::tr("Custom RP grid");
     }
     return {};
@@ -252,6 +253,8 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
     auto* addPattern = new QPushButton(tr("Add Pattern"), patternGroup);
     addPattern->setObjectName(QStringLiteral("addRadiationPatternButton"));
     auto* duplicatePattern = new QPushButton(tr("Duplicate"), patternGroup);
+    cutsThroughPeakButton_ = new QPushButton(tr("Add Cuts Through Peak"), patternGroup);
+    cutsThroughPeakButton_->setObjectName(QStringLiteral("addCutsThroughPeakButton"));
     deletePatternButton_ = new QPushButton(tr("Delete Pattern"), patternGroup);
     deletePatternButton_->setObjectName(QStringLiteral("deleteRadiationPatternButton"));
     deletePatternButton_->setToolTip(tr(
@@ -259,6 +262,7 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
     patternButtons->addWidget(addPattern);
     patternButtons->addWidget(duplicatePattern);
     patternButtons->addWidget(deletePatternButton_);
+    patternButtons->addWidget(cutsThroughPeakButton_);
     patternButtons->addStretch();
     patternLayout->addLayout(patternButtons);
     auto* patternActionHint = new QLabel(tr(
@@ -284,8 +288,18 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
         static_cast<int>(PatternType::Custom));
     resetPatternButton_ = new QPushButton(tr("Reset to Preset"), patternControls_);
     resetPatternButton_->setObjectName(QStringLiteral("resetRadiationPatternButton"));
+    // Cuts are entered as an elevation or azimuth; the NEC theta/phi fields follow.
+    cutAngleLabel_ = new QLabel(patternControls_);
+    cutAngleControl_ = angleControl(patternControls_, -90.0, 360.0);
+    cutAngleControl_->setObjectName(QStringLiteral("radiationCutAngle"));
+    cutAngleHint_ = new QLabel(patternControls_);
+    cutAngleHint_->setObjectName(QStringLiteral("radiationCutAngleHint"));
     patternTypeRow->addWidget(new QLabel(tr("Pattern type:"), patternControls_));
     patternTypeRow->addWidget(patternTypeControl_);
+    patternTypeRow->addSpacing(12);
+    patternTypeRow->addWidget(cutAngleLabel_);
+    patternTypeRow->addWidget(cutAngleControl_);
+    patternTypeRow->addWidget(cutAngleHint_);
     patternTypeRow->addStretch();
     patternTypeRow->addWidget(resetPatternButton_);
     selectedPatternLayout->addLayout(patternTypeRow);
@@ -357,7 +371,7 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
             setPatternPending(true);
             return;
         }
-        addPatternDraft({37, 36, 0.0, 0.0, 5.0, 10.0, 0});
+        addPatternDraft(analysis::fullPatternRequest(overGround()));
     });
     connect(duplicatePattern, &QPushButton::clicked, this, [this] {
         if (patterns_->currentRow() < 0) return;
@@ -409,6 +423,11 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
         applyPatternPreset(typeValue);
         setPatternPending(true);
     });
+    connect(cutAngleControl_, &QDoubleSpinBox::valueChanged, this, [this] {
+        if (loadingPattern_) return;
+        applyCutAngle();
+    });
+    connect(cutsThroughPeakButton_, &QPushButton::clicked, this, [this] { addCutsThroughPeak(); });
     connect(resetPatternButton_, &QPushButton::clicked, this, [this] {
         if (lastPatternPreset_ >= 0) {
             applyPatternPreset(lastPatternPreset_);
@@ -421,6 +440,7 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
             [this] {
                 if (loadingPattern_) return;
                 updatePatternTypeFromFields();
+                refreshCutAngleControl();
                 updatePatternControls();
                 setPatternPending(true);
             });
@@ -490,6 +510,8 @@ AnalysisRequestEditor::AnalysisRequestEditor(QWidget* parent) : QWidget(parent)
     appliedFrequencySelection_ = captureFrequencySelection();
     setFrequencyPending(false);
     updatePatternControls();
+    refreshCutAngleControl();
+    refreshPatternPendingState();
     setReadiness({tr("Model has not been checked yet.")});
 }
 
@@ -621,6 +643,16 @@ void AnalysisRequestEditor::refreshPatternPendingState()
     }();
     patternPending_ = patternPending_ || deletionPending;
     setPendingEditIndicator(applyPatternButton_, patternPending_);
+    // Adding cuts rebuilds the table, so it waits until the current edit is applied.
+    cutsThroughPeakButton_->setEnabled(latestPeak_.has_value() && !patternPending_);
+    cutsThroughPeakButton_->setToolTip(!latestPeak_
+        ? tr("Run a pattern first: this adds 1° azimuth and elevation cuts through its peak.")
+        : patternPending_
+            ? tr("Apply or discard the current pattern edit first.")
+            : tr("Add a 1° azimuth cut at El %1 and a 1° elevation cut at Az %2, crossing at "
+                 "the last run's pattern peak.")
+                  .arg(fromCore(analysis::formatAngle(latestPeak_->elevationDegrees)),
+                      fromCore(analysis::formatAngle(latestPeak_->azimuthDegrees))));
 }
 
 void AnalysisRequestEditor::applyPatternPreset(int typeValue)
@@ -631,23 +663,110 @@ void AnalysisRequestEditor::applyPatternPreset(int typeValue)
         updatePatternControls();
         return;
     }
-    loadingPattern_ = true;
-    patternTypeControl_->setCurrentIndex(patternTypeControl_->findData(typeValue));
+    {
+        const QSignalBlocker blocker(patternTypeControl_);
+        patternTypeControl_->setCurrentIndex(patternTypeControl_->findData(typeValue));
+    }
+    // An azimuth cut starts at the last run's takeoff angle when there is one.
+    const auto elevation = latestPeak_ ? latestPeak_->elevationDegrees
+                                       : analysis::defaultCutElevation(overGround());
+    const auto azimuth = latestPeak_ ? latestPeak_->azimuthDegrees : 0.0;
     switch (type) {
-    case PatternType::Full3D:
-        thetaStartControl_->setValue(0); thetaEndControl_->setValue(180); thetaStepControl_->setValue(5);
-        phiStartControl_->setValue(0); phiEndControl_->setValue(350); phiStepControl_->setValue(10); break;
-    case PatternType::Horizontal:
-        thetaStartControl_->setValue(90); thetaEndControl_->setValue(90); thetaStepControl_->setValue(1);
-        phiStartControl_->setValue(0); phiEndControl_->setValue(359); phiStepControl_->setValue(1); break;
+    case PatternType::Full3D: setPatternFields(analysis::fullPatternRequest(overGround())); break;
+    case PatternType::Horizontal: setPatternFields(analysis::azimuthCutRequest(elevation)); break;
     case PatternType::Vertical:
-        thetaStartControl_->setValue(0); thetaEndControl_->setValue(180); thetaStepControl_->setValue(1);
-        phiStartControl_->setValue(0); phiEndControl_->setValue(180); phiStepControl_->setValue(180); break;
+        setPatternFields(analysis::elevationCutRequest(azimuth, overGround())); break;
     case PatternType::Custom: break;
     }
-    loadingPattern_ = false;
     resetPatternButton_->setEnabled(true);
     updatePatternControls();
+}
+
+void AnalysisRequestEditor::setPatternFields(const model::RadiationPatternRequest& pattern)
+{
+    loadingPattern_ = true;
+    thetaStartControl_->setValue(pattern.thetaStart);
+    thetaEndControl_->setValue(pattern.thetaStart + (pattern.thetaCount - 1) * pattern.thetaStep);
+    thetaStepControl_->setValue(std::max(pattern.thetaStep, 0.001));
+    phiStartControl_->setValue(pattern.phiStart);
+    phiEndControl_->setValue(pattern.phiStart + (pattern.phiCount - 1) * pattern.phiStep);
+    phiStepControl_->setValue(std::max(pattern.phiStep, 0.001));
+    loadingPattern_ = false;
+    refreshCutAngleControl();
+}
+
+void AnalysisRequestEditor::applyCutAngle()
+{
+    const auto type = static_cast<PatternType>(patternTypeControl_->currentData().toInt());
+    auto pattern = patternRequest();
+    if (type == PatternType::Horizontal) {
+        pattern.thetaStart = analysis::necThetaForElevation(cutAngleControl_->value());
+    } else if (type == PatternType::Vertical) {
+        const auto plane = analysis::elevationCutRequest(cutAngleControl_->value(), overGround());
+        pattern.phiStart = plane.phiStart;
+    } else {
+        return;
+    }
+    setPatternFields(pattern);
+    updatePatternControls();
+    setPatternPending(true);
+}
+
+void AnalysisRequestEditor::refreshCutAngleControl()
+{
+    const auto pattern = patternRequest();
+    const auto type = patternType(pattern);
+    const auto cut = type == PatternType::Horizontal || type == PatternType::Vertical;
+    cutAngleLabel_->setVisible(cut);
+    cutAngleControl_->setVisible(cut);
+    cutAngleHint_->setVisible(cut);
+    if (!cut) return;
+    const QSignalBlocker blocker(cutAngleControl_);
+    if (type == PatternType::Horizontal) {
+        const auto elevation = analysis::patternDirection(pattern.thetaStart, 0.0).elevationDegrees;
+        cutAngleLabel_->setText(tr("At elevation"));
+        cutAngleControl_->setRange(-90.0, 90.0);
+        cutAngleControl_->setValue(elevation);
+        cutAngleHint_->setText(tr("NEC θ %1").arg(
+            fromCore(analysis::formatAngle(pattern.thetaStart))));
+        cutAngleControl_->setToolTip(tr(
+            "Elevation above the horizon for this top-down cut. Over ground the main lobe is "
+            "usually 5–30° up; run a full pattern first and use its pattern-peak elevation."));
+    } else {
+        cutAngleLabel_->setText(tr("At azimuth"));
+        cutAngleControl_->setRange(0.0, 360.0);
+        cutAngleControl_->setValue(analysis::patternDirection(90.0, pattern.phiStart).azimuthDegrees);
+        cutAngleHint_->setText(tr("Az %1 and %2 (front and back)").arg(
+            fromCore(analysis::formatAngle(
+                analysis::patternDirection(90.0, pattern.phiStart).azimuthDegrees)),
+            fromCore(analysis::formatAngle(
+                analysis::patternDirection(90.0, pattern.phiStart + 180.0).azimuthDegrees))));
+        cutAngleControl_->setToolTip(tr(
+            "Azimuth of this side-view cut; it also covers the opposite azimuth behind."));
+    }
+}
+
+void AnalysisRequestEditor::setLatestPatternPeak(std::optional<analysis::PatternDirection> peak)
+{
+    latestPeak_ = peak;
+    refreshPatternPendingState();
+}
+
+auto AnalysisRequestEditor::overGround() const -> bool
+{
+    return analysis::hasGroundBelow(setup_);
+}
+
+void AnalysisRequestEditor::addCutsThroughPeak()
+{
+    if (!latestPeak_) return;
+    for (const auto& cut : analysis::cutsThroughPeak(*latestPeak_, overGround())) {
+        const auto exists = std::ranges::any_of(setup_.radiationPatterns, [&cut](auto pattern) {
+            pattern.sourceLine = 0;
+            return pattern == cut;
+        });
+        if (!exists) emit patternChanged(cut);
+    }
 }
 
 void AnalysisRequestEditor::loadSelectedPattern()
@@ -676,10 +795,11 @@ void AnalysisRequestEditor::loadSelectedPattern()
     phiEndControl_->setValue(pattern.phiStart + (pattern.phiCount - 1) * pattern.phiStep);
     phiStepControl_->setValue(std::max(pattern.phiStep, 0.001));
     loadingPattern_ = false;
+    refreshCutAngleControl();
     resetPatternButton_->setEnabled(lastPatternPreset_ >= 0);
     const auto pendingDeletion = patternDeletionPending(row);
     for (auto* control : {thetaStartControl_, thetaEndControl_, thetaStepControl_,
-             phiStartControl_, phiEndControl_, phiStepControl_})
+             phiStartControl_, phiEndControl_, phiStepControl_, cutAngleControl_})
         control->setEnabled(!pendingDeletion);
     patternTypeControl_->setEnabled(!pendingDeletion);
     resetPatternButton_->setEnabled(!pendingDeletion && lastPatternPreset_ >= 0);

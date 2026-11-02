@@ -1554,24 +1554,68 @@ auto RadiationPatternView::availableCutPlanes(CutOrientation orientation, int pa
         }
     }
     std::vector<double> planes;
+    // Two samples are only a front/back pair (an elevation cut's 0° and 180° at one
+    // elevation), not a pattern.
     for (const auto& samples : samplesByPlane) {
-        if (samples.sweepAngles.size() >= 2) planes.push_back(samples.plane);
+        if (samples.sweepAngles.size() >= 3) planes.push_back(samples.plane);
     }
     std::ranges::sort(planes);
     return planes;
 }
-auto RadiationPatternView::uniqueDatasetForCut(CutOrientation orientation) const -> std::optional<int>
+auto RadiationPatternView::currentCutPeak() const -> std::optional<analysis::RadiationCutPoint>
 {
-    std::optional<int> match;
-    const auto selectedIndex = selectedPatternIndex(dataset_);
+    const auto settings = displaySettings(frequency_, component_, scale_, floor_);
+    const auto cut = radiationCutSamples(result_, settings.frequencyMHz,
+        selectedPatternIndex(dataset_), orientation_ == CutOrientation::Vertical,
+        phi_->currentData().toDouble(), settings.component);
+    if (cut.empty()) return std::nullopt;
+    return *std::ranges::max_element(cut, {}, &analysis::RadiationCutPoint::gainDb);
+}
+// Another dataset holding the other kind of cut: prefer the one whose cut crosses the
+// current cut at its maximum, then the one with the most samples along that cut.
+auto RadiationPatternView::bestDatasetForCut(CutOrientation orientation) const -> std::optional<int>
+{
+    const auto settings = displaySettings(frequency_, component_, scale_, floor_);
+    const auto crossing = currentCutPeak();
+    const auto vertical = orientation == CutOrientation::Vertical;
+    std::optional<int> best;
+    std::pair<bool, std::size_t> bestScore{};
     for (auto index = 0; index < dataset_->count(); ++index) {
         const auto patternIndex = dataset_->itemData(index).toInt();
-        if (patternIndex == selectedIndex || availableCutPlanes(orientation, patternIndex).empty())
-            continue;
-        if (match) return std::nullopt;
-        match = patternIndex;
+        if (patternIndex == selectedPatternIndex(dataset_)) continue;
+        const auto planes = availableCutPlanes(orientation, patternIndex);
+        if (planes.empty()) continue;
+        auto samples = std::size_t{};
+        if (crossing) {
+            auto plane = vertical ? std::fmod(crossing->phiDegrees + 360.0, 360.0)
+                                  : crossing->thetaDegrees;
+            if (vertical && plane >= 180.0) plane -= 180.0;
+            samples = radiationCutSamples(result_, settings.frequencyMHz, patternIndex,
+                vertical, plane, settings.component).size();
+        }
+        const std::pair score{samples >= 3, samples};
+        if (!best || score > bestScore) {
+            best = patternIndex;
+            bestScore = score;
+        }
     }
-    return match;
+    return best;
+}
+void RadiationPatternView::selectPlaneThrough(double thetaDegrees, double phiDegrees)
+{
+    auto plane = orientation_ == CutOrientation::Vertical
+        ? std::fmod(phiDegrees + 360.0, 360.0) : thetaDegrees;
+    if (orientation_ == CutOrientation::Vertical && plane >= 180.0) plane -= 180.0;
+    auto nearestIndex = -1;
+    auto nearestDistance = std::numeric_limits<double>::infinity();
+    for (auto index = 0; index < phi_->count(); ++index) {
+        const auto distance = std::abs(phi_->itemData(index).toDouble() - plane);
+        if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestIndex = index;
+        }
+    }
+    if (nearestIndex >= 0) phi_->setCurrentIndex(nearestIndex);
 }
 void RadiationPatternView::refreshCutControls()
 {
@@ -1585,20 +1629,31 @@ void RadiationPatternView::refreshCutControls()
         ? tr("Show Azimuth Cut") : tr("Show Elevation Cut"));
     cutLabel_->setText(orientation_ == CutOrientation::Vertical
         ? tr("Elevation cut at Az") : tr("Azimuth cut at El"));
+    refreshSelectors();
+    // The crossing dataset depends on the selected cut, so decide after the selectors fill.
     const auto oppositeOrientation = orientation_ == CutOrientation::Vertical
         ? CutOrientation::Horizontal : CutOrientation::Vertical;
-    const auto oppositeAvailable = !availableCutPlanes(oppositeOrientation).empty()
-        || uniqueDatasetForCut(oppositeOrientation).has_value();
-    orientationButton_->setEnabled(oppositeAvailable);
-    if (verticalAvailable && horizontalAvailable)
-        orientationButton_->setToolTip(tr("Switch to the other kind of cut. An elevation cut is a side view at one azimuth; an azimuth cut is a top view at one elevation."));
-    else if (oppositeAvailable)
-        orientationButton_->setToolTip(tr("Switch to the RP dataset containing the opposite cut."));
-    else if (verticalAvailable || horizontalAvailable)
-        orientationButton_->setToolTip(tr("No unambiguous opposite cut is available at this frequency."));
-    else
+    const auto otherDataset = availableCutPlanes(oppositeOrientation).empty()
+        ? bestDatasetForCut(oppositeOrientation) : std::nullopt;
+    const auto oppositeName = oppositeOrientation == CutOrientation::Vertical
+        ? tr("elevation cut") : tr("azimuth cut");
+    orientationButton_->setEnabled((verticalAvailable && horizontalAvailable)
+        || otherDataset.has_value());
+    if (verticalAvailable && horizontalAvailable) {
+        orientationButton_->setToolTip(tr("Show the %1 crossing this cut at its maximum. "
+            "An elevation cut is a side view at one azimuth; an azimuth cut is a top view at "
+            "one elevation.").arg(oppositeName));
+    } else if (otherDataset) {
+        orientationButton_->setToolTip(tr("This dataset has no %1. Switch to %2, whose %1 "
+            "crosses this cut at its maximum.")
+            .arg(oppositeName, dataset_->itemText(dataset_->findData(*otherDataset))));
+    } else if (verticalAvailable || horizontalAvailable) {
+        orientationButton_->setToolTip(tr("No RP dataset at this frequency has an %1. Add one "
+            "in Analysis › Requests (Add Cuts Through Peak adds a matching pair).")
+            .arg(oppositeName));
+    } else {
         orientationButton_->setToolTip(tr("The selected RP dataset has insufficient samples for a 2D cut."));
-    refreshSelectors();
+    }
 }
 void RadiationPatternView::refreshSelectors()
 {
@@ -1731,17 +1786,20 @@ void RadiationPatternView::refresh()
 }
 void RadiationPatternView::toggleOrientation()
 {
+    // Land on the cut that crosses the current one at its maximum.
+    const auto crossing = currentCutPeak();
     const auto next = orientation_ == CutOrientation::Vertical
         ? CutOrientation::Horizontal : CutOrientation::Vertical;
     if (availableCutPlanes(next).empty()) {
-        const auto patternIndex = uniqueDatasetForCut(next);
+        const auto patternIndex = bestDatasetForCut(next);
         if (!patternIndex) return;
         orientation_ = next;
         dataset_->setCurrentIndex(dataset_->findData(*patternIndex));
-        return;
+    } else {
+        orientation_ = next;
+        refreshCutControls();
     }
-    orientation_ = next;
-    refreshCutControls();
+    if (crossing) selectPlaneThrough(crossing->thetaDegrees, crossing->phiDegrees);
 }
 void RadiationPatternView::stepAngle(int offset)
 {
@@ -1772,19 +1830,7 @@ void RadiationPatternView::showMaxGainCut()
         orientation_ = other;
     }
     refreshCutControls();
-    auto peakPlane = orientation_ == CutOrientation::Vertical
-        ? std::fmod(peak->phiDegrees + 360.0, 360.0) : peak->thetaDegrees;
-    if (orientation_ == CutOrientation::Vertical && peakPlane >= 180.0) peakPlane -= 180.0;
-    auto nearestIndex = -1;
-    auto nearestDistance = std::numeric_limits<double>::infinity();
-    for (auto index = 0; index < phi_->count(); ++index) {
-        const auto distance = std::abs(phi_->itemData(index).toDouble() - peakPlane);
-        if (distance < nearestDistance) {
-            nearestDistance = distance;
-            nearestIndex = index;
-        }
-    }
-    if (nearestIndex >= 0) phi_->setCurrentIndex(nearestIndex);
+    selectPlaneThrough(peak->thetaDegrees, peak->phiDegrees);
 }
 void RadiationPatternView::settingsChanged()
 {

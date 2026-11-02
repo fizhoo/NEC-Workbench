@@ -44,6 +44,8 @@ add_library(necwb_core
     src/analysis/OptimizationObjective.cpp
     src/analysis/OptimizationPreset.cpp
     src/analysis/OptimizationPreset.h
+    src/analysis/PatternRequests.cpp
+    src/analysis/PatternRequests.h
     src/analysis/ReferenceRunSelection.cpp
     src/analysis/ReferenceRunSelection.h
     src/analysis/ResultSummary.cpp

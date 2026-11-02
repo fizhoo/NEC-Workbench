@@ -2699,6 +2699,56 @@ auto main(int argc, char* argv[]) -> int
         && offCutElevation->value() == 10.0
         && offCutReadout->text().contains(QStringLiteral("Gain toward El 10°, Az 90°: 8.000 dBi"))
         && offCutReadout->toolTip().contains(QStringLiteral("F/R:"));
+    necwb::analysis::AnalysisResult crossingCutsResult;
+    const auto lobe = [](double theta, double phi) {
+        const auto azimuthOffset = std::abs(std::remainder(phi, 360.0));
+        return 10.0 - 0.3 * std::abs(theta - 80.0) - 0.05 * azimuthOffset;
+    };
+    for (auto theta = 0; theta <= 90; theta += 5) {
+        for (auto phi = 0; phi < 360; phi += 5) {
+            const auto gain = lobe(theta, phi);
+            crossingCutsResult.radiation.push_back({146.0, static_cast<double>(theta),
+                static_cast<double>(phi), gain, -999.99, gain});
+        }
+    }
+    for (auto phi = 0; phi < 360; ++phi) {
+        const auto gain = lobe(80.0, phi);
+        crossingCutsResult.radiation.push_back({146.0, 80.0, static_cast<double>(phi),
+            gain, -999.99, gain, {}, {}, {}, 1});
+    }
+    for (auto theta = 0; theta <= 90; ++theta) {
+        for (const auto phi : {0.0, 180.0}) {
+            const auto gain = lobe(theta, phi);
+            crossingCutsResult.radiation.push_back({146.0, static_cast<double>(theta), phi,
+                gain, -999.99, gain, {}, {}, {}, 2});
+        }
+    }
+    necwb::ui::RadiationPatternView crossingCutsView;
+    crossingCutsView.setResults(crossingCutsResult, QStringLiteral("crossing-test"));
+    auto* crossingDataset = crossingCutsView.findChild<QComboBox*>(
+        QStringLiteral("radiation2DDataset"));
+    auto* crossingPlane = crossingCutsView.findChild<QComboBox*>(
+        QStringLiteral("radiation2DCutPlane"));
+    auto* crossingToggle = crossingCutsView.findChild<QPushButton*>(
+        QStringLiteral("radiation2DOrientation"));
+    auto crossingCutsPair = false;
+    if (crossingDataset != nullptr && crossingPlane != nullptr && crossingToggle != nullptr) {
+        crossingDataset->setCurrentIndex(crossingDataset->findData(2));
+        application.processEvents();
+        // An elevation-cut dataset no longer offers two-point "azimuth cuts" of its own.
+        const auto elevationOnly = crossingToggle->text() == QStringLiteral("Show Azimuth Cut")
+            && crossingToggle->isEnabled()
+            && crossingToggle->toolTip().contains(QStringLiteral("RP 2"));
+        crossingToggle->click();
+        application.processEvents();
+        const auto toFineAzimuth = crossingDataset->currentData().toInt() == 1
+            && crossingPlane->currentData().toDouble() == 80.0;
+        crossingToggle->click();
+        application.processEvents();
+        crossingCutsPair = elevationOnly && toFineAzimuth
+            && crossingDataset->currentData().toInt() == 2
+            && crossingPlane->currentData().toDouble() == 0.0;
+    }
     necwb::ui::RadiationPatternView emptyRadiation2D;
     emptyRadiation2D.setResults({}, QStringLiteral("empty-radiation-test"));
     auto* emptyRadiationFrequency = emptyRadiation2D.findChild<QComboBox*>(
@@ -3578,11 +3628,11 @@ auto main(int argc, char* argv[]) -> int
         && resetPattern->isEnabled();
     resetPattern->click();
     const auto fullGridPresetRestored = patternType->currentData().toInt() == 0
-        && phiEnd->value() == 350.0;
+        && phiEnd->value() == 355.0;
     addPattern->click();
     patternType->setCurrentIndex(patternType->findData(1));
     const auto patternDraftPreviewVisible = requestTable->item(
-            requestTable->currentRow(), 0)->text().contains(QStringLiteral("Horizontal cut"))
+            requestTable->currentRow(), 0)->text().contains(QStringLiteral("Azimuth cut"))
         && requestTable->item(requestTable->currentRow(), 0)->text().contains(
             QStringLiteral("Draft"));
     applyPattern->click();
@@ -3592,9 +3642,40 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("Draft"));
     const auto patternEditorBaseValid = requestTable->rowCount() == 3
         && requestTable->item(0, 0)->text() == QStringLiteral("Full 3D pattern")
-        && requestTable->item(1, 0)->text() == QStringLiteral("Horizontal cut")
+        && requestTable->item(1, 0)->text() == QStringLiteral("Azimuth cut")
         && emittedPattern.sourceLine == 0 && emittedPattern.thetaCount == 1
         && emittedPattern.phiCount == 360 && emittedPattern.phiStep == 1.0;
+    auto* cutAngle = requestEditor.findChild<QDoubleSpinBox*>(
+        QStringLiteral("radiationCutAngle"));
+    auto* cutAngleHint = requestEditor.findChild<QLabel*>(
+        QStringLiteral("radiationCutAngleHint"));
+    auto* cutsThroughPeak = requestEditor.findChild<QPushButton*>(
+        QStringLiteral("addCutsThroughPeakButton"));
+    auto cutAngleEntersElevation = false;
+    auto cutsThroughPeakAdded = false;
+    if (cutAngle != nullptr && cutAngleHint != nullptr && cutsThroughPeak != nullptr) {
+        requestTable->selectRow(1);
+        application.processEvents();
+        const auto showsElevation = cutAngle->isVisibleTo(&requestEditor)
+            && cutAngle->value() == 28.0 && cutAngleHint->text() == QStringLiteral("NEC θ 62°");
+        cutAngle->setValue(10.0);
+        cutAngleEntersElevation = showsElevation && thetaStart->value() == 80.0
+            && thetaEnd->value() == 80.0 && cutAngleHint->text() == QStringLiteral("NEC θ 80°");
+        requestEditor.discardPendingEdits();
+        const auto disabledWithoutRun = !cutsThroughPeak->isEnabled();
+        std::vector<necwb::model::RadiationPatternRequest> addedCuts;
+        const auto connection = QObject::connect(&requestEditor,
+            &necwb::ui::AnalysisRequestEditor::patternChanged,
+            [&addedCuts](const auto& pattern) { addedCuts.push_back(pattern); });
+        requestEditor.setLatestPatternPeak(necwb::analysis::PatternDirection{12.0, 30.0});
+        cutsThroughPeak->click();
+        QObject::disconnect(connection);
+        cutsThroughPeakAdded = disabledWithoutRun && addedCuts.size() == 2
+            && addedCuts[0].thetaCount == 1 && addedCuts[0].thetaStart == 78.0
+            && addedCuts[0].phiCount == 360 && addedCuts[0].phiStep == 1.0
+            && addedCuts[1].thetaCount == 181 && addedCuts[1].phiCount == 2
+            && addedCuts[1].phiStart == 30.0 && addedCuts[1].phiStep == 180.0;
+    }
     patternFrequencyMode->setCurrentIndex(patternFrequencyMode->findData(3));
     patternContinuousStart->setValue(7.0);
     patternContinuousStop->setValue(7.2);
@@ -3695,7 +3776,7 @@ auto main(int argc, char* argv[]) -> int
         && deletionDraftVisible && deletionDraftRestores && deletionAppliesExplicitly
         && patternFrequencySelectionValid && patternFrequenciesInitializeFromModel
         && sameModelRefreshPreservesPatternFrequencies && resetActionRestoresModelFrequencies
-        && newModelResetsPatternFrequencies;
+        && newModelResetsPatternFrequencies && cutAngleEntersElevation && cutsThroughPeakAdded;
     auto* shutdownRequestEditor = new necwb::ui::AnalysisRequestEditor;
     shutdownRequestEditor->setData(requestSetup);
     auto* shutdownFrequencyMode = shutdownRequestEditor->findChild<QComboBox*>(
@@ -4008,6 +4089,7 @@ auto main(int argc, char* argv[]) -> int
         && horizontalMaxGainCutStaysCompatible && radiationMetricsVisible
         && radiationExportReady && maxGainCutSelected && signedThetaTiesNormalized
         && signedThetaCutStaysOpen && offCutPeakNamed && forwardDirectionReadout
+        && crossingCutsPair
         && missingRadiationReported
         && missingRadiationDisablesDataExport
         && resultOriginPreserved && semanticResultExtent

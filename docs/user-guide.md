@@ -247,6 +247,35 @@ known theta/phi grid; changing a populated field creates a visible draft that is
 committed with **Apply Pattern Changes**. Deleting a pattern first dims and marks its
 row; Apply commits the deletion, while Restore or discarding page edits keeps it.
 
+| Preset | What it computes |
+|---|---|
+| Full 3D pattern | Every elevation and azimuth on a 5° grid. **Add Pattern** starts here. |
+| Azimuth cut | A top view: every azimuth, 1° apart, at one elevation. Enter it in **At elevation**. |
+| Elevation cut | A side view: every elevation, 1° apart, through one azimuth and the azimuth behind it. Enter it in **At azimuth**. |
+| Custom RP grid | Any other theta/phi range, edited directly. |
+
+When the model has ground, the presets stop at the horizon, since nothing radiates
+below it. Next to **At elevation** the editor shows the NEC angle it writes: NEC θ is
+measured down from straight up, so El 10° is θ 80°. The Theta and Phi fields below
+always show the NEC values.
+
+**Choosing the elevation for an azimuth cut.** In free space the main beam is usually
+at the horizon (El 0°). Over ground it lifts off: the lowest lobe of a horizontal
+antenna sits at about sin(El) ≈ λ / (4 × height), roughly 30° at ½ λ up, 14° at 1 λ
+and 7° at 2 λ. You can't know the exact takeoff angle before running, so the usual
+workflow is two steps:
+
+1. Run the Full 3D pattern (or an elevation cut) and read the pattern peak, for
+   example "Pattern peak 12.960 dBi @ El 10°, Az 0°".
+2. Click **Add Cuts Through Peak**. It adds a 1° azimuth cut at the peak's elevation
+   and a 1° elevation cut at the peak's azimuth, crossing at the peak. Run again for
+   smooth, finely sampled cuts.
+
+After a run, the Azimuth cut preset also starts at the last pattern peak's elevation.
+Before any run it starts at El 10° over ground and El 0° in free space. Add Cuts
+Through Peak waits until a pending pattern edit is applied or discarded, and skips a
+cut that already exists.
+
 Pattern frequencies may follow the model sweep, use one frequency, use an explicit
 list, or use a custom continuous range. Explicit pattern frequencies do not replace
 the model sweep used for impedance and currents. Workbench generates the necessary
@@ -354,7 +383,15 @@ The radiation frequency selector includes only frequencies with pattern data.
   azimuth cuts (a top view at one elevation) with **Show Azimuth Cut** / **Show
   Elevation Cut**, cycles available angles,
   reports peak and interpolated 3 dB beamwidth when computable, and probes nearby
-  samples under the pointer. Every cut says which cut it is ("Elevation cut at Az 0°",
+  samples under the pointer. Each RP request is a separate **Pattern dataset**. The
+  Show … Cut button moves to the cut that crosses the current one at its maximum. When
+  the current dataset holds only one kind of cut, such as a 1° azimuth cut, it switches
+  to the dataset whose crossing cut has the most samples, so the two cuts from **Add
+  Cuts Through Peak** flip back and forth as a pair. The button's tooltip names the
+  dataset it will use, or says why none qualifies. An azimuth cut needs at least three
+  azimuths, so an elevation-cut dataset (just 0° and 180° at each elevation) offers no
+  azimuth cuts of its own. **Max-Gain Cut** keeps the kind of cut: an azimuth cut moves
+  to the peak's elevation, an elevation cut to the peak's azimuth. Every cut says which cut it is ("Elevation cut at Az 0°",
   "Azimuth cut at El 10°") and labels its strongest sample "Max in this cut". When other
   RP data at the same frequency has a stronger sample, the summary adds "Pattern peak …,
   outside this cut". In Normalized mode the plot and the hover readout state the

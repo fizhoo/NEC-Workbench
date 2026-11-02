@@ -74,7 +74,9 @@ private:
     [[nodiscard]] auto availableCutPlanes(CutOrientation orientation) const -> std::vector<double>;
     [[nodiscard]] auto availableCutPlanes(CutOrientation orientation, int patternIndex) const
         -> std::vector<double>;
-    [[nodiscard]] auto uniqueDatasetForCut(CutOrientation orientation) const -> std::optional<int>;
+    [[nodiscard]] auto bestDatasetForCut(CutOrientation orientation) const -> std::optional<int>;
+    [[nodiscard]] auto currentCutPeak() const -> std::optional<analysis::RadiationCutPoint>;
+    void selectPlaneThrough(double thetaDegrees, double phiDegrees);
     void refreshCutControls();
     void refreshSelectors();
     void refreshDatasets();
