@@ -260,6 +260,8 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     resultExtrema_ = new QLabel(panel);
     resultExtrema_->setObjectName(QStringLiteral("controlPanelResultExtrema"));
     resultExtrema_->setWordWrap(true);
+    // A long wrapped line would otherwise widen the whole panel through its width hint.
+    resultExtrema_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* qualityHeading = new QLabel(tr("MODEL QUALITY"), panel);
     qualityHeading->setFont(resultsFont);
     auto* qualityGrid = new QGridLayout;
