@@ -20,6 +20,12 @@ inline auto formatDecimal(double value) -> QString
     return QString::number(value, 'f', DisplayDecimalPlaces);
 }
 
+// SWR reference impedance, e.g. "50 Ω" or "12.5 Ω".
+inline auto formatReferenceImpedance(double ohms) -> QString
+{
+    return QString::number(ohms, 'g', 6) + QStringLiteral(" Ω");
+}
+
 inline auto fromCore(const std::string& text) -> QString
 {
     return QString::fromStdString(text);

@@ -132,8 +132,8 @@ void testHistoricalOverlayCompatibility()
     historical.referenceImpedanceOhms = 75.0;
     compatibility = necwb::analysis::evaluateHistoricalOverlayCompatibility(
         current, historical);
-    expect(compatibility.impedance == HistoricalOverlayStatus::Partial,
-        "historical overlay reports differing reference impedance as partial");
+    expect(compatibility.impedance == HistoricalOverlayStatus::Compatible,
+        "historical overlay ignores reference impedance because SWR is recomputed");
 
     for (auto& sample : historical.feedpoints) sample.frequencyMHz += 10.0;
     for (auto& sample : historical.radiation) sample.frequencyMHz += 10.0;

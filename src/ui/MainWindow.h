@@ -255,6 +255,7 @@ private:
     void displayRunArtifacts(const QString& directory, const QString& context);
     void setDisplayedResults(const analysis::AnalysisResult& result);
     void clearDisplayedResults();
+    void applyReferenceImpedance(double ohms);
     void pushGeometrySourceEdit(const QString& description, QString updatedSource);
     void applyGeometrySource(const QString& description, const QString& source,
         EditorDestination destination, int geometryTab, int analysisTab, int sourceTab);
@@ -416,6 +417,9 @@ private:
     QString latestStoredRunDirectory_;
     QString currentRunOutputPath_;
     QString displayedRunDirectory_;
+    // Z0-free solver decks, so a Z0-only edit can refresh SWR instead of staling results.
+    std::string pendingRunDeck_;
+    std::string liveResultsDeck_;
     QString activeModelResultsDirectory_;
     QString activeModelResultsContext_;
     AnalysisRunStore runStore_;

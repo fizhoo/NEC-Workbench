@@ -56,6 +56,7 @@ public:
     void setReferenceVisible(bool visible);
     void setReferenceControlVisible(bool visible);
     void setSelectedFrequency(double frequencyMHz);
+    void setReferenceImpedance(double ohms);
     void configureForCompactReview();
 
 private:
@@ -67,7 +68,6 @@ private:
     SweepPlotWidget* impedancePlot_{};
     SweepPlotWidget* swrPlot_{};
     QSplitter* splitter_{};
-    QWidget* swrPanel_{};
     std::optional<analysis::AnalysisResult> result_;
     std::optional<analysis::AnalysisResult> referenceResult_;
     QString runDirectory_;

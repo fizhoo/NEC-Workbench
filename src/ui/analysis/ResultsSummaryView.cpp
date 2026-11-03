@@ -193,9 +193,9 @@ void ResultsSummaryView::refresh()
             .arg(formatDecimal(std::abs(selectedFeedpoint->impedance.imag())))
             .arg(selectedFeedpoint->wireTag).arg(selectedFeedpoint->segment));
     swrLabel_->setText(std::isfinite(minimumSwr)
-        ? tr("%1 minimum · %2 maximum · %3 Ω reference")
+        ? tr("%1 minimum · %2 maximum · Z0 %3")
             .arg(formatDecimal(minimumSwr), formatDecimal(maximumSwr),
-                formatDecimal(result_.referenceImpedanceOhms))
+                formatReferenceImpedance(result_.referenceImpedanceOhms))
         : tr("No finite SWR values"));
 
     std::vector<analysis::RadiationSample> selectedRadiation;

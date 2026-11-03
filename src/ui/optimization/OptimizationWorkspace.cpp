@@ -94,10 +94,12 @@ auto optimizationPresetSummary(analysis::OptimizationPresetId id,
 {
     switch (id) {
     case analysis::OptimizationPresetId::MinimizeSwr:
-        return QObject::tr("Minimize the highest SWR across all selected frequencies.");
+        return QObject::tr("Minimize the highest SWR (Z0 %1) across all selected frequencies.")
+            .arg(formatReferenceImpedance(objective.referenceImpedance));
     case analysis::OptimizationPresetId::SwrLimit:
-        return QObject::tr("Accept any candidate whose maximum SWR is at or below %1.")
-            .arg(formatDecimal(objective.swrTarget));
+        return QObject::tr("Accept any candidate whose maximum SWR (Z0 %1) is at or below %2.")
+            .arg(formatReferenceImpedance(objective.referenceImpedance),
+                formatDecimal(objective.swrTarget));
     case analysis::OptimizationPresetId::FeedpointMatch:
         return QObject::tr(
             "Keep feedpoint resistance near %1 Ω and reactance near 0 Ω across the band.")

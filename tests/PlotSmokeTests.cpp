@@ -636,10 +636,17 @@ auto main(int argc, char* argv[]) -> int
     referenceResult.referenceImpedanceOhms = 75.0;
     view.setReferenceResults(referenceResult, QStringLiteral("different-z0"));
     application.processEvents();
+    // The overlay's SWR is recomputed at the current Z0 rather than hidden.
     if (impedanceSweepPlot->property("referenceSeriesCount").toInt() != 2
-        || swrSweepPlot->property("referenceSeriesCount").toInt() != 0) {
+        || swrSweepPlot->property("referenceSeriesCount").toInt() != 1
+        || !swrSweepPlot->property("title").toString().contains(QStringLiteral("Z0 50 Ω"))) {
         return NECWB_SMOKE_FAILURE("reference plots with differing Z0");
     }
+    view.setReferenceImpedance(200.0);
+    application.processEvents();
+    if (!swrSweepPlot->property("title").toString().contains(QStringLiteral("Z0 200 Ω")))
+        return NECWB_SMOKE_FAILURE("SWR plot follows a Z0 change");
+    view.setReferenceImpedance(50.0);
     if (sweepShowReference == nullptr || !sweepReferenceDefaultsHidden || !sweepReferenceCanHide
         || swrScaleControl == nullptr || swrScaleControl->count() != 4
         || swrScaleControl->currentText() != QStringLiteral("Logarithmic")) {
@@ -660,6 +667,23 @@ auto main(int argc, char* argv[]) -> int
     }
     plotSettings.sync();
     if (!alternateScalesWork) return NECWB_SMOKE_FAILURE("alternate SWR scales");
+    swrScaleControl->setCurrentIndex(0);
+    view.resize(900, 520);
+    application.processEvents();
+    QPainter stackedPainter(&image);
+    view.render(&stackedPainter);
+    stackedPainter.end();
+    const auto stackedPlotsShareSpace
+        = std::abs(impedanceSweepPlot->height() - swrSweepPlot->height()) <= 2
+        && swrSweepPlot->height() >= 200
+        && impedanceSweepPlot->property("plotLeftMargin").toDouble()
+            == swrSweepPlot->property("plotLeftMargin").toDouble()
+        && impedanceSweepPlot->property("plotRightMargin").toDouble()
+            == swrSweepPlot->property("plotRightMargin").toDouble()
+        && swrSweepPlot->property("leftAxisVisibleTickLabels").toInt() >= 2
+        && swrSweepPlot->property("leftAxisVisibleTickLabels").toInt()
+            <= swrSweepPlot->property("leftAxisTickCount").toInt();
+    if (!stackedPlotsShareSpace) return NECWB_SMOKE_FAILURE("stacked sweep plot layout");
     necwb::ui::CandidatePlotsView candidatePlots;
     candidatePlots.resize(760, 360);
     const std::vector<necwb::ui::CandidatePlotPoint> candidatePoints{
@@ -2903,6 +2927,21 @@ auto main(int argc, char* argv[]) -> int
     application.processEvents();
     const auto staleStateVisible = controlPanelStale != nullptr && controlPanelStale->isVisible()
         && controlPanelQuickResults != nullptr && !controlPanelQuickResults->isEnabled();
+    controlPanel.setResults(result, QStringLiteral("Model: test.nec · Run: controlPanel"), false);
+    auto* controlPanelFrequency = controlPanel.findChild<QComboBox*>(
+        QStringLiteral("controlPanelResultFrequency"));
+    const auto selectedQuickIndex = controlPanelFrequency->count() - 1;
+    controlPanelFrequency->setCurrentIndex(selectedQuickIndex);
+    auto changedZ0Result = result;
+    changedZ0Result.referenceImpedanceOhms = 200.0;
+    controlPanel.updateReferenceImpedance(changedZ0Result);
+    const auto controlPanelSwrLabels = controlPanel.findChildren<QLabel*>();
+    const auto quickResultsFollowZ0 = controlPanelFrequency->currentIndex() == selectedQuickIndex
+        && controlPanelExtrema->text().contains(QStringLiteral("(Z0 200 Ω)"))
+        && std::ranges::any_of(controlPanelSwrLabels, [](const QLabel* swrLabel) {
+            return swrLabel->text() == QStringLiteral("SWR (200 Ω)");
+        });
+    if (!quickResultsFollowZ0) return NECWB_SMOKE_FAILURE("quick results follow a Z0 change");
     controlPanel.setResults(result, QStringLiteral("Model: test.nec · Run: controlPanel"), false);
     if (controlPanelAverageGainRun != nullptr) controlPanelAverageGainRun->click();
     if (controlPanelConvergenceRun != nullptr) controlPanelConvergenceRun->click();

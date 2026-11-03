@@ -8,6 +8,8 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
+#include <optional>
+
 namespace necwb::ui {
 namespace {
 
@@ -43,8 +45,10 @@ ImpedanceResultsView::ImpedanceResultsView(QWidget* parent)
 void ImpedanceResultsView::setResults(const analysis::AnalysisResult& result,
     const QString& runDirectory)
 {
+    result_ = result;
+    runDirectory_ = runDirectory;
     table_->horizontalHeaderItem(7)->setText(
-        tr("SWR (%1 Ω)").arg(formatDecimal(result.referenceImpedanceOhms)));
+        tr("SWR (%1)").arg(formatReferenceImpedance(result.referenceImpedanceOhms)));
     table_->setRowCount(0);
     for (const auto& feedpoint : result.feedpoints) {
         const auto row = table_->rowCount();
@@ -71,10 +75,21 @@ void ImpedanceResultsView::setResults(const analysis::AnalysisResult& result,
     }
     summary_->setText(result.feedpoints.empty()
             ? tr("No supported antenna-input rows were found in %1.").arg(runDirectory)
-            : tr("%1 feedpoint result(s) parsed from %2. SWR uses a %3 Ω reference.")
+            : tr("%1 feedpoint result(s) parsed from %2. SWR uses a %3 reference.")
                 .arg(result.feedpoints.size()).arg(runDirectory)
-                .arg(formatDecimal(result.referenceImpedanceOhms)));
+                .arg(formatReferenceImpedance(result.referenceImpedanceOhms)));
     table_->resizeColumnsToContents();
+}
+
+void ImpedanceResultsView::setReferenceImpedance(double ohms)
+{
+    const auto* selected = table_->currentRow() >= 0 ? table_->item(table_->currentRow(), 0) : nullptr;
+    const auto selectedFrequency = selected != nullptr
+        ? std::optional{selected->data(FrequencyRole).toDouble()} : std::nullopt;
+    result_.referenceImpedanceOhms = ohms;
+    const auto runDirectory = runDirectory_;
+    setResults(result_, runDirectory);
+    if (selectedFrequency) setSelectedFrequency(*selectedFrequency);
 }
 
 void ImpedanceResultsView::setSelectedFrequency(double frequencyMHz)

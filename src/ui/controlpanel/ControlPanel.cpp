@@ -253,7 +253,7 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     };
     addMetric(0, 0, tr("Rin"), resistanceResult_, false);
     addMetric(0, 1, tr("Xin"), reactanceResult_, false);
-    addMetric(1, 0, tr("SWR"), swrResult_, false);
+    addMetric(1, 0, tr("SWR"), swrResult_, false, &swrResultLabel_);
     addMetric(1, 1, tr("Gain"), gainResult_, true, &gainResultLabel_);
     addMetric(2, 0, tr("F/B"), frontToBackResult_, true,
         &frontToBackResultLabel_);
@@ -468,6 +468,7 @@ void ControlPanel::setResults(const analysis::AnalysisResult& result,
     });
     resultStatus_ = !hasResults
         ? tr("Results none") : stale ? tr("Results stale") : tr("Results current");
+    referenceImpedanceOhms_ = result.referenceImpedanceOhms;
     std::vector<double> frequencies;
     for (const auto& value : result.feedpoints) frequencies.push_back(value.frequencyMHz);
     for (const auto& value : result.radiation) frequencies.push_back(value.frequencyMHz);
@@ -495,6 +496,17 @@ void ControlPanel::setResults(const analysis::AnalysisResult& result,
         refreshResultLauncher(workspace);
 }
 
+void ControlPanel::updateReferenceImpedance(const analysis::AnalysisResult& result)
+{
+    referenceImpedanceOhms_ = result.referenceImpedanceOhms;
+    for (auto index = 0; index < resultFrequency_->count()
+         && index < static_cast<int>(resultSummaries_.size()); ++index) {
+        resultSummaries_[static_cast<std::size_t>(index)] = analysis::summarizeResults(
+            result, resultFrequency_->itemData(index).toDouble());
+    }
+    refreshQuickResults();
+}
+
 void ControlPanel::refreshQuickResults()
 {
     const auto index = resultFrequency_->currentIndex();
@@ -512,6 +524,12 @@ void ControlPanel::refreshQuickResults()
         set(resistanceResult_, std::nullopt); set(reactanceResult_, std::nullopt);
         set(swrResult_, std::nullopt);
     }
+    const auto referenceImpedance = formatReferenceImpedance(referenceImpedanceOhms_);
+    swrResultLabel_->setText(tr("SWR (%1)").arg(referenceImpedance));
+    const auto swrToolTip = tr("SWR against the Z0 %1 reference impedance set in Setup.")
+        .arg(referenceImpedance);
+    swrResultLabel_->setToolTip(swrToolTip);
+    swrResult_->setToolTip(swrToolTip);
     set(gainResult_, summary.selectedGain
         ? std::optional<double>{summary.selectedGain->gainDb} : std::nullopt, tr(" dBi"));
     set(frontToBackResult_, summary.selectedFrontToBackDb, tr(" dB"));
@@ -550,8 +568,9 @@ void ControlPanel::refreshQuickResults()
             "data at the selected frequency · %1")
             .arg(fromCore(selectedGainText->toolTip)));
     }
-    if (summary.minimumSwr) extrema.append(tr("Min SWR %1 @ %2 MHz")
-        .arg(formatDecimal(summary.minimumSwr->swr), formatDecimal(summary.minimumSwr->frequencyMHz)));
+    if (summary.minimumSwr) extrema.append(tr("Min SWR %1 @ %2 MHz (Z0 %3)")
+        .arg(formatDecimal(summary.minimumSwr->swr), formatDecimal(summary.minimumSwr->frequencyMHz),
+            referenceImpedance));
     if (summary.peakGain) {
         const auto peak = gainText(*summary.peakGain);
         extrema.append(tr("Peak across the band %1, %2 MHz")

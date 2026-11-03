@@ -178,7 +178,7 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
             }
             breakdown.append(description);
         };
-        addCriterion(tr("SWR"), activeObjective_.swrWeight,
+        addCriterion(tr("SWR (Z0 %1)").arg(formatReferenceImpedance(activeObjective_.referenceImpedance)), activeObjective_.swrWeight,
             activeObjective_.swrGoal, activeObjective_.swrGoodEnoughDirection,
             activeObjective_.swrAggregation, activeObjective_.swrTarget,
             evaluation->swr, evaluation->swrComponent, {});
@@ -235,7 +235,7 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
                     formatDecimal(summary->average), formatDecimal(summary->maximum),
                     formatDecimal(summary->maximumFrequencyMHz)));
         };
-        addSummary(tr("SWR"), {}, evaluation->swrSummary);
+        addSummary(tr("SWR (Z0 %1)").arg(formatReferenceImpedance(activeObjective_.referenceImpedance)), {}, evaluation->swrSummary);
         addSummary(tr("Gain"), tr("dBi"), evaluation->forwardGainSummary);
         addSummary(tr("F/B"), tr("dB"), evaluation->frontToBackSummary);
         addSummary(tr("F/R"), tr("dB"), evaluation->frontToRearSummary);
@@ -276,9 +276,10 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
         auto score = tr("score %1").arg(formatDecimal(candidate.evaluation->score));
         header.append(score);
         if (candidate.evaluation->swrSummary) {
-            header.append(tr("min SWR %1 @ %2 MHz")
+            header.append(tr("min SWR %1 @ %2 MHz (Z0 %3)")
                 .arg(formatDecimal(candidate.evaluation->swrSummary->minimum),
-                    formatDecimal(candidate.evaluation->swrSummary->minimumFrequencyMHz)));
+                    formatDecimal(candidate.evaluation->swrSummary->minimumFrequencyMHz),
+                    formatReferenceImpedance(activeObjective_.referenceImpedance)));
         }
         if (candidate.evaluation->frontToBackDb)
             header.append(tr("F/B %1 dB")
@@ -535,7 +536,8 @@ void OptimizationWorkspace::updateComparisonCandidate()
             .arg(formatDecimal(candidate.evaluation->score))
             .arg(candidate.evaluation->evaluatedFrequencyCount);
         if (candidate.evaluation->feedpoint) {
-            breakdown += tr("\nReduced SWR: %1\nReduced impedance: %2 %3 j%4 Ω")
+            breakdown += tr("\nReduced SWR (Z0 %1): %2\nReduced impedance: %3 %4 j%5 Ω")
+                .arg(formatReferenceImpedance(activeObjective_.referenceImpedance))
                 .arg(formatDecimal(candidate.evaluation->swr))
                 .arg(formatDecimal(candidate.evaluation->feedpoint->impedance.real()))
                 .arg(candidate.evaluation->feedpoint->impedance.imag() < 0.0

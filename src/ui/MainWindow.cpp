@@ -2970,8 +2970,13 @@ void MainWindow::clearCheckResults()
         ControlPanel::StudyState::Stale);
     controlPanel_->setStudyStatus(ControlPanel::Study::Convergence,
         ControlPanel::StudyState::Stale);
-    if (resultsAvailable_) controlPanel_->markResultsStale();
-    if (resultsAvailable_) {
+    const auto solverDeckUnchanged = resultsAvailable_ && !liveResultsStale_
+        && !liveResultsDeck_.empty() && cache.resolution().ok()
+        && analysis::normalizeSolverDeck(cache.resolution().generatedDeck) == liveResultsDeck_;
+    if (solverDeckUnchanged) {
+        applyReferenceImpedance(model::referenceImpedanceOhms(dashboardSetup));
+    } else if (resultsAvailable_) {
+        controlPanel_->markResultsStale();
         liveResultsStale_ = true;
         setLiveResultStatus(tr("Stale — model changed; run again"));
     }
@@ -3936,6 +3941,9 @@ void MainWindow::startAnalysisRun(const std::string& authoredSource,
     const auto backendSolverInput = analysis::formatSolverInputForBackend(
         solverInput, solverBackendId_.toStdString());
     currentRunPurpose_ = purpose;
+    const auto& resolution = activeSource().resolution();
+    pendingRunDeck_ = resolution.ok()
+        ? analysis::normalizeSolverDeck(resolution.generatedDeck) : std::string{};
     currentRunRecord_ = runStore_.create(solverBackendId_, currentFile_.isEmpty()
         ? QStringLiteral("Untitled model.nec") : currentFile_, runType);
     currentRunRecord_->summary = summary;
@@ -4336,6 +4344,7 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
                 solverBackendId_, true, modelErrorCount_, modelWarningCount_);
             resultsAvailable_ = true;
             liveResultsStale_ = false;
+            liveResultsDeck_ = pendingRunDeck_;
             setLiveResultStatus(tr("Current"));
             analysisResultsAvailable = !result.feedpoints.empty() || !result.currents.empty()
                 || !result.radiation.empty();
@@ -4985,6 +4994,7 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
     displayedRunDirectory_ = directory;
     resultsAvailable_ = true;
     liveResultsStale_ = false;
+    liveResultsDeck_.clear();
     setLiveResultStatus(tr("Current"));
     if (!result.feedpoints.empty()) resultWindowCoordinator_->showImpedance();
     else if (!result.radiation.empty()) resultWindowCoordinator_->showRadiation();
@@ -5076,7 +5086,20 @@ void MainWindow::clearDisplayedResults()
     displayedRunDirectory_.clear();
     resultsAvailable_ = false;
     liveResultsStale_ = false;
+    liveResultsDeck_.clear();
     setLiveResultStatus(tr("No results"));
+}
+
+void MainWindow::applyReferenceImpedance(double ohms)
+{
+    if (nearlyEqual(displayedResults_.referenceImpedanceOhms, ohms)) return;
+    displayedResults_.referenceImpedanceOhms = ohms;
+    analysisResultsView_->setReferenceImpedance(ohms);
+    visualizePlotsView_->setReferenceImpedance(ohms);
+    controlPanel_->updateReferenceImpedance(displayedResults_);
+    updateResultReference();
+    statusBar()->showMessage(tr("SWR recalculated for Z0 %1 — no new run needed.")
+        .arg(formatReferenceImpedance(ohms)), 4000);
 }
 
 void MainWindow::editWire(const model::Wire& original, const model::Wire& updated)

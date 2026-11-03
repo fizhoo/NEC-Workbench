@@ -1048,6 +1048,13 @@ void OptimizationWorkspace::connectObjectiveSignals()
             || preset == analysis::OptimizationPresetId::SwrAndGain)
             applySelectedObjectivePreset();
     });
+    const auto updateSwrCriterionLabel = [this] {
+        if (auto* item = objectiveCriteriaTable_->item(0, 0)) item->setText(tr("SWR (Z0 %1)")
+            .arg(formatReferenceImpedance(referenceImpedanceControl_->value())));
+    };
+    updateSwrCriterionLabel();
+    connect(referenceImpedanceControl_, &QDoubleSpinBox::valueChanged, this,
+        updateSwrCriterionLabel);
     connect(referenceImpedanceControl_, &QDoubleSpinBox::valueChanged, this, [this] {
         if (selectedObjectivePreset() == analysis::OptimizationPresetId::Custom)
             updateObjectiveControls();

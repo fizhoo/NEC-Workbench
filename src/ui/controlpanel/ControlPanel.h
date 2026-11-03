@@ -66,6 +66,8 @@ public:
         std::size_t errors, std::size_t warnings);
     void setResults(const analysis::AnalysisResult& result, const QString& context, bool stale);
     void markResultsStale();
+    // Recomputes SWR after a Z0 change without moving the selected frequency.
+    void updateReferenceImpedance(const analysis::AnalysisResult& result);
     void setStudyStatus(Study study, StudyState state, const QString& text = {},
         const QString& toolTip = {});
     void clearStudy(Study study);
@@ -110,6 +112,7 @@ private:
     QLabel* resultExtrema_{};
     QToolButton* resistanceResult_{};
     QToolButton* reactanceResult_{};
+    QLabel* swrResultLabel_{};
     QToolButton* swrResult_{};
     QLabel* gainResultLabel_{};
     QToolButton* gainResult_{};
@@ -133,6 +136,7 @@ private:
     QString resultContext_;
     QString lastRunText_{tr("No completed run")};
     std::vector<analysis::ResultSummary> resultSummaries_;
+    double referenceImpedanceOhms_{50.0};
     bool modified_{};
     bool resultsStale_{};
 };
