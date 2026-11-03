@@ -4,12 +4,14 @@
 #include "analysis/AverageGainTest.h"
 #include "analysis/DifferentialEvolutionSearch.h"
 #include "analysis/FrequencyPlan.h"
+#include "analysis/GainDirection.h"
 #include "analysis/HistoricalOverlayCompatibility.h"
 #include "analysis/NecOutputParser.h"
 #include "analysis/NelderMeadSearch.h"
 #include "analysis/OptimizationBaseline.h"
 #include "analysis/OptimizationObjective.h"
 #include "analysis/OptimizationPreset.h"
+#include "analysis/PatternRequests.h"
 #include "analysis/ReferenceRunSelection.h"
 #include "analysis/ResultSummary.h"
 #include "analysis/SegmentationConvergence.h"
@@ -130,8 +132,8 @@ void testHistoricalOverlayCompatibility()
     historical.referenceImpedanceOhms = 75.0;
     compatibility = necwb::analysis::evaluateHistoricalOverlayCompatibility(
         current, historical);
-    expect(compatibility.impedance == HistoricalOverlayStatus::Partial,
-        "historical overlay reports differing reference impedance as partial");
+    expect(compatibility.impedance == HistoricalOverlayStatus::Compatible,
+        "historical overlay ignores reference impedance because SWR is recomputed");
 
     for (auto& sample : historical.feedpoints) sample.frequencyMHz += 10.0;
     for (auto& sample : historical.radiation) sample.frequencyMHz += 10.0;
@@ -1933,6 +1935,15 @@ void testRadiationSweepSolverInput()
     expect(normalizedWithoutCe.find("CM opening note") != std::string::npos
             && normalizedWithoutCe.find("CM inline note") == std::string::npos,
         "solver normalization recognizes inline comments even without an explicit CE card");
+    const auto withoutZ0 = necwb::analysis::solverDeckIdentity(
+        "CM note\nCE\nGW 1 1 0 0 0 1 0 0 .001\nGE 0\nEX 0 1 1 0 1 0\nEN\n");
+    expect(withoutZ0 == necwb::analysis::solverDeckIdentity(
+                "CM note\nCE\nGW 1 1 0 0 0 1 0 0 .001\nGE 0\nZ0 200\nEX 0 1 1 0 1 0\nEN\n")
+            && withoutZ0 == necwb::analysis::solverDeckIdentity(
+                "CM note\nCE\nGW 1 1 0 0 0 1 0 0 .001\nGE 0\nEX 0 1 1 0 1 0\nZ0 75\nEN\n")
+            && withoutZ0 != necwb::analysis::solverDeckIdentity(
+                "CM note\nCE\nGW 1 1 0 0 0 2 0 0 .001\nGE 0\nEX 0 1 1 0 1 0\nEN\n"),
+        "solver deck identity ignores adding, moving or changing a Z0 card");
     const std::string source =
         "CM sweep\nCE\nCM inline geometry note\nGW 1 11 0 0 0 1 0 0 .001\nGE 0\n"
         "EX 0 1 6 0 1 0\nFR 0 3 0 0 14 0.25\nGN 2 0 0 0 13 .005\nXQ 0\n"
@@ -2402,10 +2413,12 @@ void testOptimizationObjectives()
     frontToRearObjective.frontToRearWeight = 1.0;
     const auto frontToRearScore = necwb::analysis::evaluateOptimizationObjective(
         directional, frontToRearObjective);
+    // The samples exactly at the sides (phi 90 and 270) are not rear, so the back sample
+    // at phi 180 is the strongest rear response.
     expect(frontToRearScore && frontToRearScore->rearGainDb
-            && std::abs(*frontToRearScore->rearGainDb - (-2.0)) < 1.0e-12
+            && std::abs(*frontToRearScore->rearGainDb - (-12.8)) < 1.0e-12
             && frontToRearScore->frontToRearDb
-            && std::abs(*frontToRearScore->frontToRearDb - 9.2) < 1.0e-12,
+            && std::abs(*frontToRearScore->frontToRearDb - 20.0) < 1.0e-12,
         "F/R objective uses the strongest response in the rear azimuth half");
     directional.radiation.erase(directional.radiation.begin() + 1);
     expect(!necwb::analysis::evaluateOptimizationObjective(
@@ -2503,7 +2516,7 @@ void testOptimizationObjectives()
             && directionalFrequencyMetrics.front().frontToBackDb
             && *directionalFrequencyMetrics.front().frontToBackDb == 20.0
             && directionalFrequencyMetrics.back().frontToRearDb
-            && *directionalFrequencyMetrics.back().frontToRearDb == 4.0,
+            && *directionalFrequencyMetrics.back().frontToRearDb == 8.0,
         "shared radiation frequency metrics retain gain, F/B, and F/R");
 
     const auto trackedCutMetrics = necwb::analysis::radiationTrackedCutFrequencyMetrics(
@@ -2613,8 +2626,9 @@ void testOptimizationObjectives()
     frontToRearMinimax.frontToRearWeight = 1.0;
     const auto frontToRearSweepScore = necwb::analysis::evaluateOptimizationObjective(
         directionalSweep, frontToRearMinimax);
+    // F/R is 20 dB at 144 MHz and 8 dB at 148 MHz; the side samples are not rear.
     expect(frontToRearSweepScore && frontToRearSweepScore->frontToRearDb
-            && *frontToRearSweepScore->frontToRearDb == 4.0
+            && *frontToRearSweepScore->frontToRearDb == 8.0
             && frontToRearSweepScore->frontToRearFrequencyMHz
             && *frontToRearSweepScore->frontToRearFrequencyMHz == 148.0,
         "directional minimax retains the lowest F/R across frequencies");
@@ -2624,12 +2638,12 @@ void testOptimizationObjectives()
     const auto averageDirectionalScore = necwb::analysis::evaluateOptimizationObjective(
         directionalSweep, directionalAverage);
     expect(averageDirectionalScore && averageDirectionalScore->frontToRearDb
-            && *averageDirectionalScore->frontToRearDb == 6.0
-            && std::abs(averageDirectionalScore->score - (-0.6)) < 1.0e-12
+            && *averageDirectionalScore->frontToRearDb == 14.0
+            && std::abs(averageDirectionalScore->score - (-1.4)) < 1.0e-12
             && averageDirectionalScore->frontToRearSummary
-            && averageDirectionalScore->frontToRearSummary->minimum == 4.0
-            && averageDirectionalScore->frontToRearSummary->average == 6.0
-            && averageDirectionalScore->frontToRearSummary->maximum == 8.0,
+            && averageDirectionalScore->frontToRearSummary->minimum == 8.0
+            && averageDirectionalScore->frontToRearSummary->average == 14.0
+            && averageDirectionalScore->frontToRearSummary->maximum == 20.0,
         "directional average objective reports mean F/R and range statistics");
 
     auto perCriterionGain = necwb::analysis::OptimizationObjectiveSpec{};
@@ -3254,6 +3268,404 @@ void testSegmentCurrentDisplay()
         "currents after an undrawn flat spiral are still shown on their wire");
 }
 
+void testGainDirectionFormatting()
+{
+    using necwb::analysis::RadiationComponent;
+    const auto horizon = necwb::analysis::patternDirection(90.0, 0.0);
+    expect(horizon.elevationDegrees == 0.0 && horizon.azimuthDegrees == 0.0,
+        "theta 90 is the horizon");
+    const auto elevated = necwb::analysis::patternDirection(75.0, 45.0);
+    expect(std::abs(elevated.elevationDegrees - 15.0) < 1.0e-12
+            && elevated.azimuthDegrees == 45.0,
+        "elevation is 90 degrees minus theta");
+    const auto belowHorizon = necwb::analysis::patternDirection(120.0, 10.0);
+    expect(std::abs(belowHorizon.elevationDegrees + 30.0) < 1.0e-12,
+        "theta past 90 gives a negative elevation");
+    const auto signedTheta = necwb::analysis::patternDirection(-70.0, 0.0);
+    expect(std::abs(signedTheta.elevationDegrees - 20.0) < 1.0e-12
+            && std::abs(signedTheta.azimuthDegrees - 180.0) < 1.0e-12,
+        "negative theta is the opposite azimuth");
+    const auto wrapped = necwb::analysis::patternDirection(90.0, 450.0);
+    const auto negative = necwb::analysis::patternDirection(90.0, -90.0);
+    const auto full = necwb::analysis::patternDirection(90.0, 360.0);
+    expect(std::abs(wrapped.azimuthDegrees - 90.0) < 1.0e-12
+            && std::abs(negative.azimuthDegrees - 270.0) < 1.0e-12
+            && full.azimuthDegrees == 0.0,
+        "azimuth wraps into [0, 360)");
+    expect(necwb::analysis::necThetaForElevation(15.0) == 75.0,
+        "NEC theta from elevation");
+
+    expect(necwb::analysis::formatAngle(0.0) == "0°"
+            && necwb::analysis::formatAngle(12.5) == "12.5°"
+            && necwb::analysis::formatAngle(-0.0001) == "0°"
+            && necwb::analysis::formatAngle(-30.0) == "-30°",
+        "angles drop zero decimals");
+    expect(necwb::analysis::formatDisplayDecimal(6.67) == "6.670"
+            && necwb::analysis::formatDisplayDecimal(-0.0) == "0.000"
+            && necwb::analysis::formatDisplayDecimal(0.0001) == "1.000e-04",
+        "core decimal format matches the UI formatDecimal rule");
+
+    const auto total = necwb::analysis::formatGain({.gainDb = 6.67, .thetaDegrees = 90.0,
+        .phiDegrees = 0.0, .frequencyMHz = 146.0});
+    expect(total.text == "6.670 dBi @ El 0°, Az 0°",
+        "total gain names its direction in elevation and azimuth");
+    expect(total.toolTip.find("NEC θ 90°, φ 0°") != std::string::npos
+            && total.toolTip.find("146.000 MHz") != std::string::npos
+            && total.toolTip.find("Total gain") != std::string::npos,
+        "gain tooltip carries NEC angles, frequency, and component");
+    const auto vertical = necwb::analysis::formatGain({.gainDb = 6.1, .thetaDegrees = 80.0,
+        .phiDegrees = 405.0, .component = RadiationComponent::Vertical});
+    expect(vertical.text == "6.100 dBi vertical @ El 10°, Az 45°",
+        "non-total components are named and azimuth wraps");
+    const auto lowAngle = necwb::analysis::formatGain({.gainDb = -3.0, .thetaDegrees = 95.0,
+        .phiDegrees = 0.0, .component = RadiationComponent::Horizontal});
+    expect(lowAngle.text == "-3.000 dBi horizontal @ El -5°, Az 0°",
+        "negative elevations are shown below the horizon");
+    const auto unknown = necwb::analysis::formatGain({.gainDb = 2.0});
+    expect(unknown.text == "2.000 dBi, direction unavailable"
+            && unknown.toolTip.find("not known") != std::string::npos,
+        "an unknown direction is stated rather than hidden");
+    const auto coarse = necwb::analysis::formatGain({.gainDb = 8.0, .thetaDegrees = 80.0,
+        .phiDegrees = 0.0,
+        .sampleStep = necwb::analysis::SampleStep{10.0, 10.0}});
+    const auto fine = necwb::analysis::formatGain({.gainDb = 8.0, .thetaDegrees = 80.0,
+        .phiDegrees = 0.0,
+        .sampleStep = necwb::analysis::SampleStep{5.0, 5.0}});
+    const auto oneDegree = necwb::analysis::formatGain({.gainDb = 8.0, .thetaDegrees = 80.0,
+        .phiDegrees = 0.0,
+        .sampleStep = necwb::analysis::SampleStep{1.0, 1.0}});
+    const auto twoDegree = necwb::analysis::formatGain({.gainDb = 8.0, .thetaDegrees = 80.0,
+        .phiDegrees = 0.0,
+        .sampleStep = necwb::analysis::SampleStep{2.0, 2.0}});
+    expect(coarse.text == "8.000 dBi @ El 10°, Az 0° (sampled, RP step 10°)"
+            && coarse.toolTip.find("between samples") != std::string::npos
+            && fine.text == "8.000 dBi @ El 10°, Az 0° (5° grid)"
+            && fine.toolTip.find("Add Cuts Through Peak") != std::string::npos
+            && oneDegree.text == "8.000 dBi @ El 10°, Az 0°"
+            && twoDegree.text == "8.000 dBi @ El 10°, Az 0°",
+        "RP steps over 5° are flagged as sampled, 2-5° get a grid note, 2° or finer none");
+    expect(necwb::analysis::sampleStepPrecision(std::nullopt)
+                == necwb::analysis::SampleStepPrecision::Fine
+            && necwb::analysis::sampleStepPrecision(3.0)
+                == necwb::analysis::SampleStepPrecision::Grid
+            && necwb::analysis::sampleStepPrecision(5.0)
+                == necwb::analysis::SampleStepPrecision::Grid
+            && necwb::analysis::sampleStepPrecision(6.0)
+                == necwb::analysis::SampleStepPrecision::Coarse,
+        "sample step precision tiers");
+
+    expect(necwb::analysis::azimuthCutName(80.0) == "Azimuth cut at El 10°"
+            && necwb::analysis::elevationCutName(45.0) == "Elevation cut at Az 45°"
+            && necwb::analysis::referenceLevelText(6.67) == "0 dB = 6.670 dBi",
+        "cut names and reference level read in words");
+}
+
+void testPatternSampleStep()
+{
+    const auto grid = [](double step) {
+        std::vector<necwb::analysis::RadiationSample> samples;
+        for (auto theta = 0.0; theta <= 90.0 + 1.0e-9; theta += step) {
+            for (auto phi = 0.0; phi < 360.0 - 1.0e-9; phi += step) {
+                samples.push_back({.frequencyMHz = 14.2, .thetaDegrees = theta,
+                    .phiDegrees = phi, .totalGainDb = theta == 80.0 && phi == 0.0 ? 9.0 : 0.0});
+            }
+        }
+        return samples;
+    };
+    const auto coarseGrid = grid(10.0);
+    const auto coarsePeak = std::ranges::find_if(coarseGrid, [](const auto& sample) {
+        return sample.thetaDegrees == 80.0 && sample.phiDegrees == 0.0;
+    });
+    const auto coarseStep = necwb::analysis::patternStepAround(coarseGrid, *coarsePeak);
+    expect(coarseStep && std::abs(coarseStep->rpStepDegrees - 10.0) < 1.0e-9
+            && necwb::analysis::isCoarseSampleStep(coarseStep->spacingDegrees),
+        "a 10 degree grid is a coarse sampled peak, including the phi wrap");
+    const auto fineGrid = grid(5.0);
+    const auto finePeak = std::ranges::find_if(fineGrid, [](const auto& sample) {
+        return sample.thetaDegrees == 80.0 && sample.phiDegrees == 0.0;
+    });
+    const auto fineStep = necwb::analysis::patternStepAround(fineGrid, *finePeak);
+    expect(fineStep && std::abs(fineStep->rpStepDegrees - 5.0) < 1.0e-9
+            && !necwb::analysis::isCoarseSampleStep(fineStep->spacingDegrees),
+        "a 5 degree grid is not flagged");
+    const std::array single{necwb::analysis::RadiationSample{.frequencyMHz = 14.2,
+        .thetaDegrees = 90.0, .phiDegrees = 0.0, .totalGainDb = 2.0}};
+    expect(!necwb::analysis::patternStepAround(single, single.front()),
+        "a single sample has no step");
+
+    necwb::analysis::AnalysisResult result;
+    result.radiation = coarseGrid;
+    const auto summary = necwb::analysis::summarizeResults(result, 14.2);
+    expect(summary.selectedGain && summary.selectedGain->sampleStep
+            && std::abs(summary.selectedGain->sampleStep->rpStepDegrees - 10.0) < 1.0e-9,
+        "result summaries carry the RP step around the peak");
+}
+
+void testFrontToRearDefinitions()
+{
+    using necwb::analysis::RadiationSample;
+    // A clean back lobe in the horizon cut, with stronger off-cut rear radiation at a high
+    // angle near broadside and near the zenith.
+    std::vector<RadiationSample> samples;
+    for (auto phi = 0.0; phi < 360.0; phi += 45.0) {
+        auto gain = -15.0;
+        if (phi == 0.0) gain = 8.0;
+        if (phi == 45.0 || phi == 315.0) gain = 4.0;
+        if (phi == 180.0) gain = -10.0;
+        samples.push_back({.frequencyMHz = 146.0, .thetaDegrees = 90.0, .phiDegrees = phi,
+            .totalGainDb = gain});
+    }
+    samples.push_back({.frequencyMHz = 146.0, .thetaDegrees = 60.0, .phiDegrees = 100.0,
+        .totalGainDb = 2.0, .patternIndex = 1});
+    samples.push_back({.frequencyMHz = 146.0, .thetaDegrees = 5.0, .phiDegrees = 180.0,
+        .totalGainDb = 1.0, .patternIndex = 1});
+
+    const auto inCut = necwb::analysis::radiationFrequencyMetrics(samples,
+        necwb::analysis::RadiationComponent::Total, 90.0, 0.0);
+    expect(inCut.size() == 1 && inCut.front().frontToRearDb
+            && std::abs(*inCut.front().frontToRearDb - 18.0) < 1.0e-12
+            && inCut.front().frontToBackDb
+            && std::abs(*inCut.front().frontToBackDb - 18.0) < 1.0e-12,
+        "in-cut F/R uses the strongest rear sample at the forward elevation");
+    const auto trackedInCut = necwb::analysis::radiationTrackedCutFrequencyMetrics(samples,
+        necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 90.0);
+    expect(trackedInCut.size() == 1 && trackedInCut.front().frontToRearDb
+            && std::abs(*trackedInCut.front().frontToRearDb - 18.0) < 1.0e-12,
+        "tracked azimuth-cut F/R defaults to the forward azimuth cut");
+    const auto hemisphere = necwb::analysis::radiationTrackedCutFrequencyMetrics(samples,
+        necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 90.0,
+        necwb::analysis::FrontToRearRegion::RearHemisphere3D);
+    const auto specifiedHemisphere = necwb::analysis::radiationFrequencyMetrics(samples,
+        necwb::analysis::RadiationComponent::Total, 90.0, 0.0,
+        necwb::analysis::FrontToRearRegion::RearHemisphere3D);
+    expect(hemisphere.size() == 1 && hemisphere.front().frontToRearDb
+            && std::abs(*hemisphere.front().frontToRearDb - 6.0) < 1.0e-12
+            && specifiedHemisphere.size() == 1 && specifiedHemisphere.front().frontToRearDb
+            && std::abs(*specifiedHemisphere.front().frontToRearDb - 6.0) < 1.0e-12,
+        "3D rear-hemisphere F/R picks up off-cut samples near broadside and the zenith");
+
+    // On an elevated azimuth cut the 3D rule drops rear side lobes just past 90 degrees, and
+    // above El 45 degrees it finds no rear samples at all.
+    const auto elevatedCut = [](double theta) {
+        std::vector<RadiationSample> cut;
+        for (auto phi = 0.0; phi < 360.0; phi += 5.0) {
+            auto gain = -15.0;
+            if (phi == 0.0) gain = 8.0;
+            if (phi == 95.0) gain = 2.0;
+            if (phi == 180.0) gain = -10.0;
+            cut.push_back({.frequencyMHz = 146.0, .thetaDegrees = theta, .phiDegrees = phi,
+                .totalGainDb = gain});
+        }
+        return cut;
+    };
+    const auto el30 = elevatedCut(60.0);
+    const auto el30InCut = necwb::analysis::radiationTrackedCutFrequencyMetrics(el30,
+        necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 60.0);
+    const auto el30Hemisphere = necwb::analysis::radiationTrackedCutFrequencyMetrics(el30,
+        necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 60.0,
+        necwb::analysis::FrontToRearRegion::RearHemisphere3D);
+    expect(el30InCut.front().frontToRearDb
+            && std::abs(*el30InCut.front().frontToRearDb - 6.0) < 1.0e-12
+            && el30Hemisphere.front().frontToRearDb
+            && std::abs(*el30Hemisphere.front().frontToRearDb - 18.0) < 1.0e-12,
+        "an elevated azimuth cut counts the rear side lobe at Az 95 degrees");
+    const auto el50 = elevatedCut(40.0);
+    const auto el50InCut = necwb::analysis::radiationTrackedCutFrequencyMetrics(el50,
+        necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 40.0);
+    const auto el50Hemisphere = necwb::analysis::radiationTrackedCutFrequencyMetrics(el50,
+        necwb::analysis::RadiationComponent::Total,
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 40.0,
+        necwb::analysis::FrontToRearRegion::RearHemisphere3D);
+    expect(el50InCut.front().frontToRearDb
+            && std::abs(*el50InCut.front().frontToRearDb - 6.0) < 1.0e-12
+            && !el50Hemisphere.front().frontToRearDb,
+        "in-cut F/R still works above El 45 degrees");
+
+    // The optimizer's own deck holds only the azimuth cut, where the two rules agree at the
+    // horizon; with the same samples the optimizer and the display report the same F/R.
+    necwb::analysis::AnalysisResult cutOnly;
+    for (const auto& sample : samples)
+        if (sample.patternIndex == 0) cutOnly.radiation.push_back(sample);
+    necwb::analysis::OptimizationObjectiveSpec objective{
+        .kind = necwb::analysis::OptimizationObjectiveKind::SwrAtFrequency,
+        .targetFrequencyMHz = 146.0,
+        .swrWeight = 0.0,
+        .frontToRearWeight = 1.0,
+        .forwardThetaDegrees = 90.0,
+        .forwardPhiDegrees = 0.0,
+    };
+    const auto display = necwb::analysis::radiationFrequencyMetrics(cutOnly.radiation,
+        necwb::analysis::RadiationComponent::Total, 90.0, 0.0);
+    const auto specified = necwb::analysis::evaluateOptimizationObjective(cutOnly, objective);
+    objective.directionalEvaluationMode =
+        necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut;
+    const auto tracked = necwb::analysis::evaluateOptimizationObjective(cutOnly, objective);
+    expect(display.size() == 1 && display.front().frontToRearDb
+            && specified && specified->frontToRearDb
+            && tracked && tracked->frontToRearDb
+            && *specified->frontToRearDb == *display.front().frontToRearDb
+            && *tracked->frontToRearDb == *display.front().frontToRearDb
+            && std::abs(*display.front().frontToRearDb - 18.0) < 1.0e-12,
+        "optimizer F/R matches the displayed F/R on the same horizon cut");
+
+    auto elevatedObjective = objective;
+    elevatedObjective.forwardThetaDegrees = 60.0;
+    necwb::analysis::AnalysisResult elevated;
+    elevated.radiation = el30;
+    const auto elevatedScore = necwb::analysis::evaluateOptimizationObjective(
+        elevated, elevatedObjective);
+    const auto elevatedDisplay = necwb::analysis::radiationFrequencyMetrics(el30,
+        necwb::analysis::RadiationComponent::Total, 60.0, 0.0);
+    elevatedObjective.frontToRearRegion = necwb::analysis::FrontToRearRegion::RearHemisphere3D;
+    const auto elevatedHemisphereScore = necwb::analysis::evaluateOptimizationObjective(
+        elevated, elevatedObjective);
+    expect(elevatedScore && elevatedScore->frontToRearDb
+            && *elevatedScore->frontToRearDb == *elevatedDisplay.front().frontToRearDb
+            && elevatedHemisphereScore && elevatedHemisphereScore->frontToRearDb
+            && std::abs(*elevatedHemisphereScore->frontToRearDb - 18.0) < 1.0e-12,
+        "optimizer F/R matches the display on an elevated cut unless 3D is chosen");
+
+    const std::string groundDeck = "GW 1 11 -5 0 10 5 0 10 0.001\nGE 1\nGN 2 0 0 0 13 0.005\n"
+        "EX 0 1 6 0 1 0\nFR 0 1 0 0 14.2 0\nEN\n";
+    necwb::analysis::OptimizationObjectiveSpec deckObjective{
+        .kind = necwb::analysis::OptimizationObjectiveKind::SwrAtFrequency,
+        .targetFrequencyMHz = 14.2,
+        .frontToRearWeight = 1.0,
+        .forwardThetaDegrees = 70.0,
+        .forwardPhiDegrees = 90.0,
+        .directionalEvaluationMode =
+            necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut,
+    };
+    const auto inCutDeck = necwb::analysis::prepareOptimizationInput(groundDeck,
+        {necwb::analysis::FrequencyPlanMode::Explicit, {14.2}, {}}, deckObjective);
+    deckObjective.frontToRearRegion = necwb::analysis::FrontToRearRegion::RearHemisphere3D;
+    const auto hemisphereDeck = necwb::analysis::prepareOptimizationInput(groundDeck,
+        {necwb::analysis::FrequencyPlanMode::Explicit, {14.2}, {}}, deckObjective);
+    expect(inCutDeck.find("RP 0 19 72") == std::string::npos
+            && hemisphereDeck.find("RP 0 19 72 1000 0 0 5 5") != std::string::npos,
+        "3D rear-hemisphere F/R requests an above-ground grid only when chosen");
+
+    expect(necwb::analysis::frontToRearDefinition(
+               necwb::analysis::DirectionalEvaluationMode::SpecifiedDirection)
+                .find("azimuth more than 90°") != std::string::npos
+            && necwb::analysis::frontToRearDefinition(
+                necwb::analysis::DirectionalEvaluationMode::StrongestInElevationCut)
+                .find("high angles") != std::string::npos
+            && necwb::analysis::frontToRearDefinition(
+                necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut)
+                == necwb::analysis::frontToRearDefinition(
+                    necwb::analysis::DirectionalEvaluationMode::SpecifiedDirection)
+            && necwb::analysis::frontToRearDefinition(
+                necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut,
+                necwb::analysis::FrontToRearRegion::RearHemisphere3D)
+                .starts_with("F/R (3D rear hemisphere)")
+            && necwb::analysis::frontToBackDefinition().find("azimuth + 180°")
+                != std::string::npos,
+        "F/B and F/R definitions say what is compared");
+}
+
+void testPatternRequestPresets()
+{
+    const auto freeSpaceGrid = necwb::analysis::fullPatternRequest(false);
+    const auto groundGrid = necwb::analysis::fullPatternRequest(true);
+    expect(freeSpaceGrid.thetaCount == 37 && freeSpaceGrid.phiCount == 72
+            && freeSpaceGrid.thetaStep == 5.0 && freeSpaceGrid.phiStep == 5.0
+            && groundGrid.thetaCount == 19 && groundGrid.phiCount == 72,
+        "the full grid is 5 by 5 degrees and stops at the horizon over ground");
+    const auto azimuth = necwb::analysis::azimuthCutRequest(10.0);
+    expect(azimuth.thetaCount == 1 && azimuth.thetaStart == 80.0
+            && azimuth.phiCount == 360 && azimuth.phiStep == 1.0,
+        "an azimuth cut at El 10 degrees is NEC theta 80");
+    const auto elevation = necwb::analysis::elevationCutRequest(45.0, true);
+    const auto freeElevation = necwb::analysis::elevationCutRequest(45.0, false);
+    expect(elevation.thetaCount == 91 && elevation.thetaStep == 1.0
+            && elevation.phiCount == 2 && elevation.phiStart == 45.0
+            && elevation.phiStep == 180.0 && freeElevation.thetaCount == 181,
+        "an elevation cut covers front and back, above the horizon over ground");
+    const auto behind = necwb::analysis::elevationCutRequest(270.0, true);
+    expect(behind.phiStart == 90.0 && behind.phiStep == 180.0,
+        "an elevation cut past Az 180 uses the same plane from its other side");
+    const auto cuts = necwb::analysis::cutsThroughPeak({12.0, 30.0}, true);
+    expect(cuts[0].thetaStart == 78.0 && cuts[0].phiCount == 360
+            && cuts[1].phiStart == 30.0 && cuts[1].thetaCount == 91,
+        "cuts through the peak cross at its elevation and azimuth");
+    necwb::model::ModelSetup setup;
+    const auto freeSpace = !necwb::analysis::hasGroundBelow(setup);
+    setup.ground = necwb::model::GroundDefinition{};
+    const auto explicitFreeSpace = !necwb::analysis::hasGroundBelow(setup);
+    setup.ground->type = necwb::model::GroundType::SommerfeldNorton;
+    expect(freeSpace && explicitFreeSpace && necwb::analysis::hasGroundBelow(setup)
+            && necwb::analysis::defaultCutElevation(true) == 10.0
+            && necwb::analysis::defaultCutElevation(false) == 0.0,
+        "ground detection and default cut elevation");
+}
+
+void testRearBoundaryAndHighAngleSteps()
+{
+    using necwb::analysis::RadiationSample;
+    // Front at the horizon; a strong zenith sample is exactly 90 degrees away, and strong
+    // side samples sit exactly at Az 90 and 270. None of them is behind the antenna.
+    std::vector<RadiationSample> samples;
+    for (auto phi = 0.0; phi < 360.0; phi += 90.0) {
+        const auto gain = phi == 0.0 ? 8.0 : phi == 180.0 ? -10.0 : 3.0;
+        samples.push_back({.frequencyMHz = 146.0, .thetaDegrees = 90.0, .phiDegrees = phi,
+            .totalGainDb = gain});
+    }
+    samples.push_back({.frequencyMHz = 146.0, .thetaDegrees = 0.0, .phiDegrees = 0.0,
+        .totalGainDb = 4.0});
+    samples.push_back({.frequencyMHz = 146.0, .thetaDegrees = 45.0, .phiDegrees = 180.0,
+        .totalGainDb = -1.0});
+    const auto inCut = necwb::analysis::radiationFrequencyMetrics(samples,
+        necwb::analysis::RadiationComponent::Total, 90.0, 0.0);
+    const auto hemisphere = necwb::analysis::radiationFrequencyMetrics(samples,
+        necwb::analysis::RadiationComponent::Total, 90.0, 0.0,
+        necwb::analysis::FrontToRearRegion::RearHemisphere3D);
+    expect(inCut.front().frontToRearDb
+            && std::abs(*inCut.front().frontToRearDb - 18.0) < 1.0e-12
+            && hemisphere.front().frontToRearDb
+            && std::abs(*hemisphere.front().frontToRearDb - 9.0) < 1.0e-12,
+        "rear means strictly more than 90 degrees: sides and zenith are not rear");
+
+    // A 10-degree phi step is about 1.7 degrees apart at El 80 but nearly 10 at El 10.
+    const auto stepAt = [](double peakTheta) {
+        std::vector<RadiationSample> grid;
+        for (const auto theta : {peakTheta - 1.0, peakTheta, peakTheta + 1.0}) {
+            for (auto phi = 0.0; phi < 360.0; phi += 10.0) {
+                grid.push_back({.frequencyMHz = 146.0, .thetaDegrees = theta,
+                    .phiDegrees = phi, .totalGainDb = theta == peakTheta && phi == 0.0
+                        ? 5.0 : 0.0});
+            }
+        }
+        const auto peak = std::ranges::find_if(grid, [peakTheta](const auto& sample) {
+            return sample.thetaDegrees == peakTheta && sample.phiDegrees == 0.0;
+        });
+        return necwb::analysis::patternStepAround(grid, *peak);
+    };
+    const auto highAngle = stepAt(10.0);
+    const auto lowAngle = stepAt(80.0);
+    // At El 80 the widest true spacing is the 1-degree theta step, not the 1.7-degree
+    // phi step; at El 10 the 10-degree phi step dominates and is quoted as typed.
+    expect(highAngle && highAngle->spacingDegrees < 2.0
+            && necwb::analysis::sampleStepPrecision(highAngle->spacingDegrees)
+                == necwb::analysis::SampleStepPrecision::Fine
+            && lowAngle && lowAngle->rpStepDegrees == 10.0
+            && necwb::analysis::sampleStepPrecision(lowAngle->spacingDegrees)
+                == necwb::analysis::SampleStepPrecision::Coarse,
+        "azimuth steps count as their true spacing near the zenith");
+    const auto nearZenith = necwb::analysis::formatGain({.gainDb = 5.0, .thetaDegrees = 10.0,
+        .phiDegrees = 0.0, .sampleStep = highAngle});
+    const auto lowLobe = necwb::analysis::formatGain({.gainDb = 5.0, .thetaDegrees = 80.0,
+        .phiDegrees = 0.0, .sampleStep = lowAngle});
+    expect(nearZenith.text == "5.000 dBi @ El 80°, Az 0°"
+            && lowLobe.text == "5.000 dBi @ El 10°, Az 0° (sampled, RP step 10°)",
+        "notes quote the RP step as typed, judged by the true spacing");
+}
+
 auto main() -> int
 {
     testReferenceRunSelection();
@@ -3309,6 +3721,11 @@ auto main() -> int
     testSegmentationConvergencePreparation();
     testSharedTagReferences();
     testUnrenderedSegmentNumbering();
+    testGainDirectionFormatting();
+    testPatternSampleStep();
+    testFrontToRearDefinitions();
+    testPatternRequestPresets();
+    testRearBoundaryAndHighAngleSteps();
 
     if (failures != 0) {
         std::cerr << failures << " test assertion(s) failed\n";

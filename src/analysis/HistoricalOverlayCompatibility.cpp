@@ -25,10 +25,9 @@ auto impedanceCompatibility(const AnalysisResult& current,
         if (found) ++matched;
     }
     if (matched == 0) return HistoricalOverlayStatus::NoMatchingData;
-    if (matched != current.feedpoints.size()
-        || !nearlyEqual(current.referenceImpedanceOhms,
-            historical.referenceImpedanceOhms)) return HistoricalOverlayStatus::Partial;
-    return HistoricalOverlayStatus::Compatible;
+    // Z0 does not matter: the overlay's SWR is recomputed against the current reference.
+    return matched == current.feedpoints.size()
+        ? HistoricalOverlayStatus::Compatible : HistoricalOverlayStatus::Partial;
 }
 
 auto radiationCompatibility(const AnalysisResult& current,

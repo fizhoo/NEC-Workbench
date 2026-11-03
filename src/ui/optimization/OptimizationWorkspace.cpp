@@ -94,10 +94,12 @@ auto optimizationPresetSummary(analysis::OptimizationPresetId id,
 {
     switch (id) {
     case analysis::OptimizationPresetId::MinimizeSwr:
-        return QObject::tr("Minimize the highest SWR across all selected frequencies.");
+        return QObject::tr("Minimize the highest SWR (Z0 %1) across all selected frequencies.")
+            .arg(formatReferenceImpedance(objective.referenceImpedance));
     case analysis::OptimizationPresetId::SwrLimit:
-        return QObject::tr("Accept any candidate whose maximum SWR is at or below %1.")
-            .arg(formatDecimal(objective.swrTarget));
+        return QObject::tr("Accept any candidate whose maximum SWR (Z0 %1) is at or below %2.")
+            .arg(formatReferenceImpedance(objective.referenceImpedance),
+                formatDecimal(objective.swrTarget));
     case analysis::OptimizationPresetId::FeedpointMatch:
         return QObject::tr(
             "Keep feedpoint resistance near %1 Ω and reactance near 0 Ω across the band.")
@@ -451,7 +453,8 @@ void OptimizationWorkspace::updateSetupSummaries()
             == analysis::DirectionalEvaluationMode::SpecifiedDirection
         ? tr("gain at the specified direction") : tr("peak gain in the selected cut");
     const std::array names{tr("SWR"), tr("resistance"), tr("reactance"),
-        gainName, tr("F/B"), tr("F/R")};
+        gainName, tr("F/B"), fromCore(analysis::frontToRearName(
+            setup.objective.frontToRearRegion))};
     const std::array units{QString{}, tr(" Ω"), tr(" Ω"), tr(" dBi"), tr(" dB"), tr(" dB")};
     const std::array goals{setup.objective.swrGoal, setup.objective.resistanceGoal,
         setup.objective.reactanceGoal, setup.objective.forwardGainGoal,
@@ -478,16 +481,19 @@ void OptimizationWorkspace::updateSetupSummaries()
     QString directionSummary;
     if (setup.objective.directionalEvaluationMode
         == analysis::DirectionalEvaluationMode::StrongestInAzimuthCut) {
-        directionSummary = tr("\nTrack peak in azimuth cut at θ %1°")
-            .arg(formatDecimal(setup.objective.forwardThetaDegrees));
+        directionSummary = tr("\nTrack peak · %1 (NEC θ %2)")
+            .arg(fromCore(analysis::azimuthCutName(setup.objective.forwardThetaDegrees)),
+                fromCore(analysis::formatAngle(setup.objective.forwardThetaDegrees)));
     } else if (setup.objective.directionalEvaluationMode
         == analysis::DirectionalEvaluationMode::StrongestInElevationCut) {
-        directionSummary = tr("\nTrack peak in elevation cut at φ %1°")
-            .arg(formatDecimal(setup.objective.forwardPhiDegrees));
+        directionSummary = tr("\nTrack peak · %1")
+            .arg(fromCore(analysis::elevationCutName(setup.objective.forwardPhiDegrees)));
     } else {
-        directionSummary = tr("\nEvaluate fixed direction θ %1°, φ %2°")
-            .arg(formatDecimal(setup.objective.forwardThetaDegrees))
-            .arg(formatDecimal(setup.objective.forwardPhiDegrees));
+        directionSummary = tr("\nEvaluate fixed direction %1 (NEC %2)")
+            .arg(fromCore(analysis::formatDirection(setup.objective.forwardThetaDegrees,
+                     setup.objective.forwardPhiDegrees)),
+                fromCore(analysis::formatNecDirection(setup.objective.forwardThetaDegrees,
+                    setup.objective.forwardPhiDegrees)));
     }
     const auto preset = selectedObjectivePreset();
     const auto directional = setup.objective.forwardGainWeight > 0.0
@@ -512,7 +518,7 @@ void OptimizationWorkspace::updateSetupSummaries()
     const auto objectiveWarning = criteria.isEmpty()
         ? tr("No criteria are enabled. Click Edit… and set a weight above zero.")
         : directionalPresetRequiresSetup() && !directionSetupReady_
-            ? tr("Direction setup required. Click Edit… and use Find Maximum Gain or Choose.")
+            ? tr("Direction setup required. Click Edit… and use Find Sampled Peak or Choose.")
             : QString{};
     objectiveWarningLabel_->setText(objectiveWarning);
     objectiveWarningLabel_->setVisible(!objectiveWarning.isEmpty() && !historicalSession_);
@@ -764,7 +770,7 @@ auto OptimizationWorkspace::readinessBlocker(const StudySetup& setup) const -> Q
             + objective.frontToRearWeight <= 0.0)
         return tr("Set at least one objective weight above zero.");
     if (directionalPresetRequiresSetup() && !directionSetupReady_)
-        return tr("Direction setup required. Open Objective Edit… and use Find Maximum Gain or Choose.");
+        return tr("Direction setup required. Open Objective Edit… and use Find Sampled Peak or Choose.");
     if (!modelValid_) return tr("Fix the model check errors before optimizing.");
     if (externalRunActive_)
         return tr("Another analysis is running. Optimization can start when it finishes.");
@@ -849,6 +855,7 @@ void OptimizationWorkspace::updateReadiness()
                 || goal == analysis::OptimizationGoal::GoodEnough));
     }
     radiationComponentControl_->setEnabled(editable && directional);
+    frontToRearRegionControl_->setEnabled(editable && directional);
     updateLatestPatternPeakControls();
     const auto explicitMode = selectedFrequencyMode() == FrequencyMode::Explicit;
     frequencyTable_->setEnabled(editable && explicitMode);
@@ -975,6 +982,8 @@ void OptimizationWorkspace::startSweep()
             static_cast<int>(activeObjective_.directionalEvaluationMode)},
         {QStringLiteral("radiationComponent"),
             static_cast<int>(activeObjective_.radiationComponent)},
+        {QStringLiteral("frontToRearRegion"),
+            static_cast<int>(activeObjective_.frontToRearRegion)},
         {QStringLiteral("frequencyMode"), activeObjective_.kind
                 == analysis::OptimizationObjectiveKind::SwrAtFrequency
             ? QStringLiteral("objective-frequency")

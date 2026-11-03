@@ -1536,6 +1536,12 @@ void MainWindow::createResultWindows()
         radiationPatternView_->setComponent(component);
         radiation3DView_->setComponent(component);
     });
+    const auto useAsForwardDirection = [this, radiationTabs](double theta, double phi) {
+        radiationPerformanceView_->setForwardDirection(theta, phi);
+        radiationTabs->setCurrentWidget(radiationPerformanceView_);
+    };
+    radiationPatternView_->setForwardDirectionCallback(useAsForwardDirection);
+    radiation3DView_->setForwardDirectionCallback(useAsForwardDirection);
 
     auto* rawOutputContent = new QWidget(resultWindowsHost_);
     auto* rawOutputLayout = new QVBoxLayout(rawOutputContent);
@@ -2964,8 +2970,13 @@ void MainWindow::clearCheckResults()
         ControlPanel::StudyState::Stale);
     controlPanel_->setStudyStatus(ControlPanel::Study::Convergence,
         ControlPanel::StudyState::Stale);
-    if (resultsAvailable_) controlPanel_->markResultsStale();
-    if (resultsAvailable_) {
+    const auto solverDeckUnchanged = resultsAvailable_ && !liveResultsStale_
+        && !liveResultsDeck_.empty() && cache.resolution().ok()
+        && analysis::solverDeckIdentity(cache.resolution().generatedDeck) == liveResultsDeck_;
+    if (solverDeckUnchanged) {
+        applyReferenceImpedance(model::referenceImpedanceOhms(dashboardSetup));
+    } else if (resultsAvailable_) {
+        controlPanel_->markResultsStale();
         liveResultsStale_ = true;
         setLiveResultStatus(tr("Stale — model changed; run again"));
     }
@@ -3900,7 +3911,7 @@ auto MainWindow::startOptimizationPeakSearch(double frequencyMHz) -> bool
         || !analysis::isBackendRunnable(solverBackendId_.toStdString())
         || !executable.exists() || !executable.isFile() || !executable.isExecutable()) {
         statusBar()->showMessage(tr(
-            "Maximum-gain search canceled: check the model and selected solver."), 5000);
+            "Sampled-peak search canceled: check the model and selected solver."), 5000);
         return false;
     }
 
@@ -3908,7 +3919,7 @@ auto MainWindow::startOptimizationPeakSearch(double frequencyMHz) -> bool
     const auto& resolution = cache.resolution();
     if (!resolution.ok()) {
         statusBar()->showMessage(tr(
-            "Maximum-gain search canceled: model expressions could not be resolved."), 5000);
+            "Sampled-peak search canceled: model expressions could not be resolved."), 5000);
         return false;
     }
     const auto aboveGroundOnly = currentSetup_.ground
@@ -3916,10 +3927,10 @@ auto MainWindow::startOptimizationPeakSearch(double frequencyMHz) -> bool
     const auto solverInput = analysis::prepareMaximumGainSearchInput(
         resolution.generatedDeck, frequencyMHz, aboveGroundOnly);
     currentPeakSearchFrequencyMHz_ = frequencyMHz;
-    const auto summary = tr("Maximum gain at %1 MHz").arg(formatDecimal(frequencyMHz));
+    const auto summary = tr("Sampled peak (5° grid) at %1 MHz").arg(formatDecimal(frequencyMHz));
     startAnalysisRun(std::string(cache.source()), solverInput,
         QStringLiteral("optimization-peak-search"), summary,
-        tr("Finding maximum gain"), SolverRunPurpose::OptimizationPeakSearch);
+        tr("Finding sampled peak"), SolverRunPurpose::OptimizationPeakSearch);
     return solverRunner_->isRunning();
 }
 
@@ -3930,6 +3941,9 @@ void MainWindow::startAnalysisRun(const std::string& authoredSource,
     const auto backendSolverInput = analysis::formatSolverInputForBackend(
         solverInput, solverBackendId_.toStdString());
     currentRunPurpose_ = purpose;
+    const auto& resolution = activeSource().resolution();
+    pendingRunDeck_ = resolution.ok()
+        ? analysis::solverDeckIdentity(resolution.generatedDeck) : std::string{};
     currentRunRecord_ = runStore_.create(solverBackendId_, currentFile_.isEmpty()
         ? QStringLiteral("Untitled model.nec") : currentFile_, runType);
     currentRunRecord_->summary = summary;
@@ -4314,6 +4328,12 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             radiation3DView_->setModel(currentModel_);
             radiation3DView_->setResults(result, context);
             radiationPerformanceView_->setResults(result, context);
+            if (const auto peak = analysis::radiationMetrics(
+                    result.radiation, analysis::RadiationComponent::Total);
+                peak.valid && result.radiation.size() > 1) {
+                analysisRequestEditor_->setLatestPatternPeak(analysis::patternDirection(
+                    peak.peakThetaDegrees, peak.peakPhiDegrees));
+            }
             setDisplayedResults(result);
             optimizationWorkspace_->setLatestAnalysisResult(result);
             displayedRunDirectory_ = currentRunDirectory_;
@@ -4324,6 +4344,7 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
                 solverBackendId_, true, modelErrorCount_, modelWarningCount_);
             resultsAvailable_ = true;
             liveResultsStale_ = false;
+            liveResultsDeck_ = pendingRunDeck_;
             setLiveResultStatus(tr("Current"));
             analysisResultsAvailable = !result.feedpoints.empty() || !result.currents.empty()
                 || !result.radiation.empty();
@@ -4342,16 +4363,18 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             if (peak && peak->sampleCount > 1) {
                 peakGainParsed = true;
                 optimizationWorkspace_->setLatestAnalysisResult(result);
-                currentRunRecord_->summary = tr(
-                    "Maximum %1 dBi at elevation %2°, azimuth %3° · %4 MHz")
-                    .arg(formatDecimal(peak->metrics.peakGainDb))
-                    .arg(formatDecimal(90.0 - peak->metrics.peakThetaDegrees))
-                    .arg(formatDecimal(peak->metrics.peakPhiDegrees))
+                currentRunRecord_->summary = tr("Sampled peak %1 · %2 MHz")
+                    .arg(fromCore(analysis::formatGain({.gainDb = peak->metrics.peakGainDb,
+                        .thetaDegrees = peak->metrics.peakThetaDegrees,
+                        .phiDegrees = peak->metrics.peakPhiDegrees,
+                        .component = analysis::RadiationComponent::Total,
+                        .frequencyMHz = peak->frequencyMHz,
+                        .sampleStep = std::nullopt}).text))
                     .arg(formatDecimal(peak->frequencyMHz));
                 runStore_.save(*currentRunRecord_);
             } else {
                 appendSolverOutput(tr(
-                    "\nThe maximum-gain search produced no usable multi-angle radiation pattern.\n"));
+                    "\nThe sampled-peak search produced no usable multi-angle radiation pattern.\n"));
             }
         }
     } else if (processSucceeded && currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
@@ -4396,7 +4419,7 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
         status = tr("Failed (AGT result missing)");
     } else if (currentRunPurpose_ == SolverRunPurpose::OptimizationPeakSearch
         && processSucceeded) {
-        status = tr("Failed (maximum gain missing)");
+        status = tr("Failed (sampled peak missing)");
     } else if (currentRunPurpose_ == SolverRunPurpose::OptimizationBaseline
         && processSucceeded) {
         status = tr("Failed (baseline results missing)");
@@ -4435,7 +4458,7 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     const auto activity = currentRunPurpose_ == SolverRunPurpose::AverageGainTest
         ? tr("Average Gain Test")
         : currentRunPurpose_ == SolverRunPurpose::OptimizationPeakSearch
-            ? tr("Maximum-gain search")
+            ? tr("Sampled-peak search")
         : currentRunPurpose_ == SolverRunPurpose::OptimizationBaseline
             ? tr("Optimization baseline")
         : currentRunRecord_ && currentRunRecord_->runType == QStringLiteral("quick-sweep")
@@ -4971,6 +4994,7 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
     displayedRunDirectory_ = directory;
     resultsAvailable_ = true;
     liveResultsStale_ = false;
+    liveResultsDeck_.clear();
     setLiveResultStatus(tr("Current"));
     if (!result.feedpoints.empty()) resultWindowCoordinator_->showImpedance();
     else if (!result.radiation.empty()) resultWindowCoordinator_->showRadiation();
@@ -5062,7 +5086,20 @@ void MainWindow::clearDisplayedResults()
     displayedRunDirectory_.clear();
     resultsAvailable_ = false;
     liveResultsStale_ = false;
+    liveResultsDeck_.clear();
     setLiveResultStatus(tr("No results"));
+}
+
+void MainWindow::applyReferenceImpedance(double ohms)
+{
+    if (nearlyEqual(displayedResults_.referenceImpedanceOhms, ohms)) return;
+    displayedResults_.referenceImpedanceOhms = ohms;
+    analysisResultsView_->setReferenceImpedance(ohms);
+    visualizePlotsView_->setReferenceImpedance(ohms);
+    controlPanel_->updateReferenceImpedance(displayedResults_);
+    updateResultReference();
+    statusBar()->showMessage(tr("SWR recalculated for Z0 %1 — no new run needed.")
+        .arg(formatReferenceImpedance(ohms)), 4000);
 }
 
 void MainWindow::editWire(const model::Wire& original, const model::Wire& updated)

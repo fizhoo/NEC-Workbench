@@ -215,8 +215,9 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     connect(modelRows_, &QTableWidget::cellClicked, this, [this](int row, int) {
         if (openEditor_) openEditor_(static_cast<Editor>(row));
     });
-    auto* latestHeading = new QLabel(tr("QUICK RESULTS"), panel);
-    latestHeading->setFont(resultsFont);
+    quickResultsHeading_ = new QLabel(tr("QUICK RESULTS"), panel);
+    quickResultsHeading_->setObjectName(QStringLiteral("controlPanelQuickResultsHeading"));
+    quickResultsHeading_->setFont(resultsFont);
     auto* frequencyRow = new QHBoxLayout;
     frequencyRow->addWidget(new QLabel(tr("At:"), panel));
     resultFrequency_ = new QComboBox(panel);
@@ -253,13 +254,15 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     };
     addMetric(0, 0, tr("Rin"), resistanceResult_, false);
     addMetric(0, 1, tr("Xin"), reactanceResult_, false);
-    addMetric(1, 0, tr("SWR"), swrResult_, false);
+    addMetric(1, 0, tr("SWR"), swrResult_, false, &swrResultLabel_);
     addMetric(1, 1, tr("Gain"), gainResult_, true, &gainResultLabel_);
     addMetric(2, 0, tr("F/B"), frontToBackResult_, true,
         &frontToBackResultLabel_);
     resultExtrema_ = new QLabel(panel);
     resultExtrema_->setObjectName(QStringLiteral("controlPanelResultExtrema"));
     resultExtrema_->setWordWrap(true);
+    // A long wrapped line would otherwise widen the whole panel through its width hint.
+    resultExtrema_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* qualityHeading = new QLabel(tr("MODEL QUALITY"), panel);
     qualityHeading->setFont(resultsFont);
     auto* qualityGrid = new QGridLayout;
@@ -284,7 +287,7 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     modelArea->addWidget(modelHeading);
     modelArea->addWidget(modelRows_);
     modelArea->addSpacing(3);
-    modelArea->addWidget(latestHeading);
+    modelArea->addWidget(quickResultsHeading_);
     modelArea->addLayout(frequencyRow);
     modelArea->addWidget(quickResults_);
     modelArea->addWidget(resultExtrema_);
@@ -468,6 +471,7 @@ void ControlPanel::setResults(const analysis::AnalysisResult& result,
     });
     resultStatus_ = !hasResults
         ? tr("Results none") : stale ? tr("Results stale") : tr("Results current");
+    referenceImpedanceOhms_ = result.referenceImpedanceOhms;
     std::vector<double> frequencies;
     for (const auto& value : result.feedpoints) frequencies.push_back(value.frequencyMHz);
     for (const auto& value : result.radiation) frequencies.push_back(value.frequencyMHz);
@@ -495,6 +499,17 @@ void ControlPanel::setResults(const analysis::AnalysisResult& result,
         refreshResultLauncher(workspace);
 }
 
+void ControlPanel::updateReferenceImpedance(const analysis::AnalysisResult& result)
+{
+    referenceImpedanceOhms_ = result.referenceImpedanceOhms;
+    for (auto index = 0; index < resultFrequency_->count()
+         && index < static_cast<int>(resultSummaries_.size()); ++index) {
+        resultSummaries_[static_cast<std::size_t>(index)] = analysis::summarizeResults(
+            result, resultFrequency_->itemData(index).toDouble());
+    }
+    refreshQuickResults();
+}
+
 void ControlPanel::refreshQuickResults()
 {
     const auto index = resultFrequency_->currentIndex();
@@ -512,9 +527,35 @@ void ControlPanel::refreshQuickResults()
         set(resistanceResult_, std::nullopt); set(reactanceResult_, std::nullopt);
         set(swrResult_, std::nullopt);
     }
+    const auto referenceImpedance = formatReferenceImpedance(referenceImpedanceOhms_);
+    // Z0 goes in the heading: on the SWR label it would widen the grid and the panel.
+    quickResultsHeading_->setText(tr("QUICK RESULTS · Z0 %1").arg(referenceImpedance));
+    const auto swrToolTip = tr("SWR against the Z0 %1 reference impedance set in Setup.")
+        .arg(referenceImpedance);
+    quickResultsHeading_->setToolTip(swrToolTip);
+    swrResultLabel_->setToolTip(swrToolTip);
+    swrResult_->setToolTip(swrToolTip);
     set(gainResult_, summary.selectedGain
         ? std::optional<double>{summary.selectedGain->gainDb} : std::nullopt, tr(" dBi"));
     set(frontToBackResult_, summary.selectedFrontToBackDb, tr(" dB"));
+    const auto gainText = [](const analysis::PeakGainSummary& gain) {
+        return analysis::formatGain({.gainDb = gain.gainDb,
+            .thetaDegrees = gain.thetaDegrees, .phiDegrees = gain.phiDegrees,
+            .frequencyMHz = gain.frequencyMHz,
+            .sampleStep = gain.sampleStep});
+    };
+    const auto selectedGainText = summary.selectedGain
+        ? std::optional{gainText(*summary.selectedGain)} : std::nullopt;
+    gainResult_->setToolTip(selectedGainText
+        ? tr("Peak at this frequency (all RP data): %1\n%2")
+              .arg(fromCore(selectedGainText->text), fromCore(selectedGainText->toolTip))
+        : QString{});
+    frontToBackResult_->setToolTip(summary.selectedGain
+        ? tr("%1\nForward direction: the peak at this frequency, %2.")
+              .arg(fromCore(analysis::frontToBackDefinition()),
+                  fromCore(analysis::formatDirection(summary.selectedGain->thetaDegrees,
+                      summary.selectedGain->phiDegrees)))
+        : QString{});
     const std::array radiationRows{
         std::tuple{gainResultLabel_, gainResult_, summary.selectedGain.has_value()},
         std::tuple{frontToBackResultLabel_, frontToBackResult_,
@@ -523,12 +564,28 @@ void ControlPanel::refreshQuickResults()
         label->setVisible(visible);
         value->setVisible(visible);
     }
+    // The compact grid has no room for directions, so they go on the wrapping line below.
     QStringList extrema;
-    if (summary.minimumSwr) extrema.append(tr("Min SWR %1 @ %2 MHz")
-        .arg(formatDecimal(summary.minimumSwr->swr), formatDecimal(summary.minimumSwr->frequencyMHz)));
-    if (summary.peakGain) extrema.append(tr("Peak gain %1 dBi @ %2 MHz")
-        .arg(formatDecimal(summary.peakGain->gainDb), formatDecimal(summary.peakGain->frequencyMHz)));
+    QStringList extremaToolTips;
+    if (selectedGainText) {
+        extrema.append(tr("Peak at this frequency %1").arg(fromCore(selectedGainText->text)));
+        extremaToolTips.append(tr("Peak at this frequency: strongest Total sample in all RP "
+            "data at the selected frequency · %1")
+            .arg(fromCore(selectedGainText->toolTip)));
+    }
+    if (summary.minimumSwr) extrema.append(tr("Min SWR %1 @ %2 MHz (Z0 %3)")
+        .arg(formatDecimal(summary.minimumSwr->swr), formatDecimal(summary.minimumSwr->frequencyMHz),
+            referenceImpedance));
+    if (summary.peakGain) {
+        const auto peak = gainText(*summary.peakGain);
+        extrema.append(tr("Peak across the band %1, %2 MHz")
+            .arg(fromCore(peak.text), formatDecimal(summary.peakGain->frequencyMHz)));
+        extremaToolTips.append(tr("Peak across the band: strongest Total sample at any "
+            "frequency · %1")
+            .arg(fromCore(peak.toolTip)));
+    }
     resultExtrema_->setText(extrema.join(QStringLiteral(" · ")));
+    resultExtrema_->setToolTip(extremaToolTips.join(QStringLiteral("\n")));
     quickResults_->setEnabled(!resultsStale_);
     resultStale_->setVisible(resultsStale_);
 }

@@ -117,13 +117,14 @@ auto directionalMetricsFor(const AnalysisResult& analysis,
         == DirectionalEvaluationMode::SpecifiedDirection) {
         return radiationFrequencyMetrics(analysis.radiation,
             objective.radiationComponent, objective.forwardThetaDegrees,
-            objective.forwardPhiDegrees);
+            objective.forwardPhiDegrees, objective.frontToRearRegion);
     }
     const auto cutAngle = objective.directionalEvaluationMode
             == DirectionalEvaluationMode::StrongestInAzimuthCut
         ? objective.forwardThetaDegrees : objective.forwardPhiDegrees;
     return radiationTrackedCutFrequencyMetrics(analysis.radiation,
-        objective.radiationComponent, objective.directionalEvaluationMode, cutAngle);
+        objective.radiationComponent, objective.directionalEvaluationMode, cutAngle,
+        objective.frontToRearRegion);
 }
 
 auto evaluateObjective(const AnalysisResult& analysis,

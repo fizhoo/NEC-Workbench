@@ -15,8 +15,11 @@ public:
 
     void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
     void setSelectedFrequency(double frequencyMHz);
+    void setReferenceImpedance(double ohms);
 
 private:
+    analysis::AnalysisResult result_;
+    QString runDirectory_;
     QLabel* summary_{};
     QTableWidget* table_{};
 };

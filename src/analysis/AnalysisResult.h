@@ -60,6 +60,16 @@ enum class DirectionalEvaluationMode {
     StrongestInElevationCut
 };
 
+// Where F/R looks for the strongest rear sample.
+enum class FrontToRearRegion {
+    // Same elevation as the front, azimuth more than 90 degrees away, as amateur modeling
+    // programs read F/R. An elevation cut has no azimuth spread, so it uses the back half
+    // of its own plane.
+    ForwardAzimuthCut,
+    // Any sample more than 90 degrees from the front in 3D, at any elevation.
+    RearHemisphere3D
+};
+
 struct RadiationSample {
     double frequencyMHz{};
     double thetaDegrees{};
@@ -151,11 +161,13 @@ struct AnalysisResult {
     std::span<const RadiationSample> samples, RadiationComponent component,
     double targetFrequencyMHz) -> std::optional<RadiationPeak>;
 [[nodiscard]] auto radiationFrequencyMetrics(std::span<const RadiationSample> samples,
-    RadiationComponent component, double forwardThetaDegrees,
-    double forwardPhiDegrees) -> std::vector<RadiationFrequencyMetric>;
+    RadiationComponent component, double forwardThetaDegrees, double forwardPhiDegrees,
+    FrontToRearRegion rearRegion = FrontToRearRegion::ForwardAzimuthCut)
+    -> std::vector<RadiationFrequencyMetric>;
 [[nodiscard]] auto radiationTrackedCutFrequencyMetrics(
     std::span<const RadiationSample> samples, RadiationComponent component,
-    DirectionalEvaluationMode mode, double cutAngleDegrees)
+    DirectionalEvaluationMode mode, double cutAngleDegrees,
+    FrontToRearRegion rearRegion = FrontToRearRegion::ForwardAzimuthCut)
     -> std::vector<RadiationFrequencyMetric>;
 [[nodiscard]] auto radiationCutMetrics(std::span<const RadiationCutPoint> samples,
     bool wraps) -> RadiationCutMetrics;

@@ -262,11 +262,13 @@ private:
     QPushButton* directionSetupButton_{};
     QPushButton* findMaximumGainButton_{};
     QComboBox* radiationComponentControl_{};
+    QComboBox* frontToRearRegionControl_{};
     QPushButton* useLatestPatternPeakButton_{};
     QLabel* latestPatternPeakLabel_{};
     QWidget* latestPatternPeakPanel_{};
     QLabel* latestPatternPeakFieldLabel_{};
     QLabel* radiationComponentLabel_{};
+    QLabel* frontToRearRegionLabel_{};
     QComboBox* frequencyModeControl_{};
     QWidget* explicitFrequencyPanel_{};
     QWidget* continuousFrequencyPanel_{};

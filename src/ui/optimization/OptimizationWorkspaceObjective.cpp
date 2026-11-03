@@ -98,6 +98,7 @@ void OptimizationWorkspace::applySelectedObjectivePreset()
     objective.forwardPhiDegrees = current.forwardPhiDegrees;
     objective.directionalEvaluationMode = current.directionalEvaluationMode;
     objective.radiationComponent = current.radiationComponent;
+    objective.frontToRearRegion = current.frontToRearRegion;
     if (directionalPresetRequiresSetup()
         && current.directionalEvaluationMode == analysis::DirectionalEvaluationMode::SpecifiedDirection
         && !directionSetupConfigured_) {
@@ -135,6 +136,8 @@ void OptimizationWorkspace::updateObjectivePresetControls()
     directionSetupPanel_->setVisible(directional);
     radiationComponentLabel_->setVisible(directional);
     radiationComponentControl_->setVisible(directional);
+    frontToRearRegionLabel_->setVisible(directional);
+    frontToRearRegionControl_->setVisible(directional);
     latestPatternPeakFieldLabel_->setVisible(directional);
     latestPatternPeakPanel_->setVisible(directional);
     directionalFrequencyNote_->setVisible(custom);
@@ -191,17 +194,31 @@ void OptimizationWorkspace::updateObjectiveControls()
         directionalPresetRequiresSetup() && !directionSetupReady_
             ? QStringLiteral("color: #9a3030;") : QString{});
     radiationComponentControl_->setEnabled(directional && !isRunning() && !historicalSession_);
+    frontToRearRegionControl_->setEnabled(directional && !isRunning() && !historicalSession_);
+    frontToRearRegionControl_->setToolTip(frontToRearRegionControl_->currentData(
+        Qt::ToolTipRole).toString());
     auto* gainCriterion = objectiveCriteriaTable_->item(3, 0);
     gainCriterion->setText(trackedCut
         ? tr("Peak Gain in Cut (dBi)") : tr("Gain at Direction (dBi)"));
     gainCriterion->setToolTip(trackedCut
         ? tr("Highest gain found in the selected azimuth or elevation cut.")
-        : tr("Gain at the specified physical theta and phi direction."));
+        : tr("Gain at the specified physical elevation and azimuth."));
     resultsTable_->horizontalHeaderItem(GainColumn)->setText(trackedCut
         ? tr("Peak Gain (dBi)") : tr("Gain (dBi)"));
     resultsTable_->horizontalHeaderItem(GainColumn)->setToolTip(trackedCut
         ? tr("Highest gain found in the selected cut for this candidate.")
-        : tr("Gain at the specified theta, phi, frequency, and radiation component."));
+        : tr("Gain at the specified elevation, azimuth, frequency, and radiation component."));
+    // F/R depends on the evaluation mode; say which rule is active.
+    const auto frontToRear = fromCore(analysis::frontToRearDefinition(
+        objective.directionalEvaluationMode, objective.frontToRearRegion));
+    const auto hemisphere = objective.frontToRearRegion
+        == analysis::FrontToRearRegion::RearHemisphere3D;
+    objectiveCriteriaTable_->item(5, 0)->setText(tr("%1 (dB)")
+        .arg(fromCore(analysis::frontToRearName(objective.frontToRearRegion))));
+    objectiveCriteriaTable_->item(5, 0)->setToolTip(frontToRear);
+    resultsTable_->horizontalHeaderItem(FrontToRearColumn)->setText(
+        hemisphere ? tr("F/R 3D (dB)") : tr("F/R (dB)"));
+    resultsTable_->horizontalHeaderItem(FrontToRearColumn)->setToolTip(frontToRear);
     updateObjectivePresetControls();
     updateLatestPatternPeakControls();
     updateFrequencyControls();
@@ -218,9 +235,9 @@ void OptimizationWorkspace::updateLatestPatternPeakControls()
     const auto editable = !isRunning() && !historicalSession_;
     const auto usable = peak && peak->sampleCount > 1;
     findMaximumGainButton_->setText(maximumGainSearchRequested_
-            ? tr("Finding Maximum…")
+            ? tr("Finding Sampled Peak…")
             : usable || maximumGainDirectionStale_
-                ? tr("Update Maximum…") : tr("Find Maximum Gain…"));
+                ? tr("Update Sampled Peak…") : tr("Find Sampled Peak (5° grid)…"));
     findMaximumGainButton_->setEnabled(editable && !externalRunActive_
         && modelValid_ && static_cast<bool>(findMaximumGainCallback_)
         && !maximumGainSearchRequested_);
@@ -228,13 +245,13 @@ void OptimizationWorkspace::updateLatestPatternPeakControls()
     const auto mode = directionalEvaluationMode_;
     useLatestPatternPeakButton_->setText(mode
             == analysis::DirectionalEvaluationMode::SpecifiedDirection
-        ? tr("Use Latest Pattern Peak") : tr("Use Latest Peak to Set Cut"));
+        ? tr("Use Latest Sampled Peak") : tr("Use Latest Peak to Set Cut"));
     if (usable) {
-        auto status = tr(
-            "%1 dBi at elevation %2°, azimuth %3° · %4 MHz")
-            .arg(formatDecimal(peak->metrics.peakGainDb))
-            .arg(formatDecimal(90.0 - peak->metrics.peakThetaDegrees))
-            .arg(formatDecimal(peak->metrics.peakPhiDegrees))
+        auto status = tr("%1 · %2 MHz")
+            .arg(fromCore(analysis::formatGain({.gainDb = peak->metrics.peakGainDb,
+                .thetaDegrees = peak->metrics.peakThetaDegrees,
+                .phiDegrees = peak->metrics.peakPhiDegrees, .component = component,
+                .frequencyMHz = peak->frequencyMHz, .sampleStep = std::nullopt}).text))
             .arg(formatDecimal(peak->frequencyMHz));
         if (mode != analysis::DirectionalEvaluationMode::SpecifiedDirection) {
             const auto cutAngle = mode
@@ -250,12 +267,14 @@ void OptimizationWorkspace::updateLatestPatternPeakControls()
                     == analysis::RadiationMetricAvailability::PatternNull) {
                 status += mode
                         == analysis::DirectionalEvaluationMode::StrongestInAzimuthCut
-                    ? tr(" · Warning: θ %1° cut contains only pattern nulls; latest peak suggests θ %2°")
-                          .arg(formatDecimal(cutAngle))
-                          .arg(formatDecimal(peak->metrics.peakThetaDegrees))
-                    : tr(" · Warning: φ %1° cut contains only pattern nulls; latest peak suggests φ %2°")
-                          .arg(formatDecimal(cutAngle))
-                          .arg(formatDecimal(peak->metrics.peakPhiDegrees));
+                    ? tr(" · Warning: %1 contains only pattern nulls; latest peak suggests El %2")
+                          .arg(fromCore(analysis::azimuthCutName(cutAngle)),
+                              fromCore(analysis::formatAngle(analysis::patternDirection(
+                                  peak->metrics.peakThetaDegrees, 0.0).elevationDegrees)))
+                    : tr(" · Warning: %1 contains only pattern nulls; latest peak suggests Az %2")
+                          .arg(fromCore(analysis::elevationCutName(cutAngle)),
+                              fromCore(analysis::formatAngle(analysis::patternDirection(
+                                  90.0, peak->metrics.peakPhiDegrees).azimuthDegrees)));
             }
         }
         latestPatternPeakLabel_->setText(status);
@@ -263,14 +282,14 @@ void OptimizationWorkspace::updateLatestPatternPeakControls()
     }
     if (directionalPresetRequiresSetup()) {
         latestPatternPeakLabel_->setText(directionSetupReady_
-            ? tr("Direction is configured. Find Maximum Gain can replace it with a calculated peak.")
+            ? tr("Direction is configured. Find Sampled Peak can replace it with a calculated peak.")
             : maximumGainDirectionStale_
-                ? tr("Direction setup required. The previous maximum is stale; use Find Maximum Gain or Choose.")
-                : tr("Direction setup required. Use Find Maximum Gain or Choose."));
+                ? tr("Direction setup required. The previous sampled peak is stale; use Find Sampled Peak or Choose.")
+                : tr("Direction setup required. Use Find Sampled Peak or Choose."));
         return;
     }
     latestPatternPeakLabel_->setText(maximumGainDirectionStale_
-        ? tr("Maximum-gain direction is stale because the model changed. Run again to update it.")
+        ? tr("Sampled-peak direction is stale because the model changed. Run again to update it.")
         : latestRadiation_.empty()
             ? tr("Run the active model with a radiation pattern first.")
             : tr("The latest run has no usable multi-angle pattern near the optimization frequencies."));
@@ -416,7 +435,8 @@ void OptimizationWorkspace::restoreObjectiveSetup(
              static_cast<QObject*>(forwardGainWeightControl_),
              static_cast<QObject*>(frontToBackWeightControl_),
              static_cast<QObject*>(frontToRearWeightControl_),
-             static_cast<QObject*>(radiationComponentControl_)})
+             static_cast<QObject*>(radiationComponentControl_),
+             static_cast<QObject*>(frontToRearRegionControl_)})
         blockers.emplace_back(control);
     for (auto row = 0; row < 6; ++row) {
         blockers.emplace_back(objectiveGoalControls_[row]);
@@ -459,6 +479,9 @@ void OptimizationWorkspace::restoreObjectiveSetup(
     const auto componentIndex = radiationComponentControl_->findData(
         static_cast<int>(objective.radiationComponent));
     if (componentIndex >= 0) radiationComponentControl_->setCurrentIndex(componentIndex);
+    const auto regionIndex = frontToRearRegionControl_->findData(
+        static_cast<int>(objective.frontToRearRegion));
+    if (regionIndex >= 0) frontToRearRegionControl_->setCurrentIndex(regionIndex);
 }
 
 auto OptimizationWorkspace::selectedObjective() const -> analysis::OptimizationObjectiveSpec
@@ -501,6 +524,8 @@ auto OptimizationWorkspace::selectedObjective() const -> analysis::OptimizationO
         .directionalEvaluationMode = directionalEvaluationMode_,
         .radiationComponent = static_cast<analysis::RadiationComponent>(
             radiationComponentControl_->currentData().toInt()),
+        .frontToRearRegion = static_cast<analysis::FrontToRearRegion>(
+            frontToRearRegionControl_->currentData().toInt()),
     };
 }
 

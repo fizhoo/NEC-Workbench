@@ -247,6 +247,35 @@ known theta/phi grid; changing a populated field creates a visible draft that is
 committed with **Apply Pattern Changes**. Deleting a pattern first dims and marks its
 row; Apply commits the deletion, while Restore or discarding page edits keeps it.
 
+| Preset | What it computes |
+|---|---|
+| Full 3D pattern | Every elevation and azimuth on a 5° grid. **Add Pattern** starts here. |
+| Azimuth cut | A top view: every azimuth, 1° apart, at one elevation. Enter it in **At elevation**. |
+| Elevation cut | A side view: every elevation, 1° apart, through one azimuth and the azimuth behind it. Enter it in **At azimuth**. |
+| Custom RP grid | Any other theta/phi range, edited directly. |
+
+When the model has ground, the presets stop at the horizon, since nothing radiates
+below it. Next to **At elevation** the editor shows the NEC angle it writes: NEC θ is
+measured down from straight up, so El 10° is θ 80°. The Theta and Phi fields below
+always show the NEC values.
+
+**Choosing the elevation for an azimuth cut.** In free space the main beam is usually
+at the horizon (El 0°). Over ground it lifts off: the lowest lobe of a horizontal
+antenna sits at about sin(El) ≈ λ / (4 × height), roughly 30° at ½ λ up, 14° at 1 λ
+and 7° at 2 λ. You can't know the exact takeoff angle before running, so the usual
+workflow is two steps:
+
+1. Run the Full 3D pattern (or an elevation cut) and read its sampled peak, for
+   example "12.960 dBi @ El 10°, Az 0° (5° grid)" on Home.
+2. Click **Add Cuts Through Peak**. It adds a 1° azimuth cut at the peak's elevation
+   and a 1° elevation cut at the peak's azimuth, crossing at the peak. Run again for
+   smooth, finely sampled cuts.
+
+After a run, the Azimuth cut preset also starts at the last sampled peak's elevation.
+Before any run it starts at El 10° over ground and El 0° in free space. Add Cuts
+Through Peak waits until a pending pattern edit is applied or discarded, and skips a
+cut that already exists.
+
 Pattern frequencies may follow the model sweep, use one frequency, use an explicit
 list, or use a custom continuous range. Explicit pattern frequencies do not replace
 the model sweep used for impedance and currents. Workbench generates the necessary
@@ -350,9 +379,29 @@ wire with that tag in deck order, and tag 0 means an absolute segment number.
 
 The radiation frequency selector includes only frequencies with pattern data.
 
-- **2D Pattern** selects vertical or horizontal cuts, cycles available angles,
+- **2D Pattern** switches between elevation cuts (a side view at one azimuth) and
+  azimuth cuts (a top view at one elevation) with **Show Azimuth Cut** / **Show
+  Elevation Cut**, cycles available angles,
   reports peak and interpolated 3 dB beamwidth when computable, and probes nearby
-  samples under the pointer. A compatible historical overlay is drawn as a muted dashed
+  samples under the pointer. Each RP request is a separate **Pattern dataset**. The
+  Show … Cut button moves to the cut that crosses the current one at its maximum. When
+  the current dataset holds only one kind of cut, such as a 1° azimuth cut, it switches
+  to the dataset whose crossing cut has the most samples, so the two cuts from **Add
+  Cuts Through Peak** flip back and forth as a pair. The button's tooltip names the
+  dataset it will use, or says why none qualifies, and after a switch the summary
+  starts with "Switched to RP 3 …, crossing the previous cut's peak" until the next
+  change. An azimuth cut needs at least three azimuths, so an elevation-cut dataset
+  (just 0° and 180° at each elevation) offers no azimuth cuts of its own. **Go to
+  Peak** moves the current cut to the dataset peak, keeping the kind of cut: an azimuth
+  cut moves to the peak's elevation, an elevation cut to its azimuth. Every cut says
+  which cut it is ("Elevation cut at Az 0°", "Azimuth cut at El 10°") and labels its
+  strongest sample "Peak in this cut". When other RP data at the same frequency has a
+  stronger sample, the summary adds "Sampled peak (all RP data) …, outside this cut". In Normalized mode the plot and the hover readout state the
+  reference level, for example "0 dB = 7.410 dBi". Elevation cuts are labelled in
+  elevation, with the horizon level and the cut's two azimuths marked at each side;
+  when the pattern has nothing below the horizon (a model over ground) the plot is the
+  upper semicircle. Azimuth cuts are seen from above, with Az 0° (+X) on the right and
+  azimuth increasing counterclockwise toward +Y, as in EZNEC. A compatible historical overlay is drawn as a muted dashed
   trace. Workbench requires the same frequency, cut orientation/plane, and angular
   sample grid; it reports the historical overlay as unavailable rather than interpolating.
   Normalized mode normalizes each trace to its own peak for shape comparison;
@@ -361,12 +410,47 @@ The radiation frequency selector includes only frequencies with pattern data.
   overlays. A compatible historical grid appears as a muted dashed wireframe. It
   does not invent missing angular coverage.
 - **Performance vs Frequency** shows available forward gain, F/B, and F/R metrics,
-  with compatible historical curves shown dashed.
+  with compatible historical curves shown dashed. The line above the plot reads
+  "Gain toward El 15°, Az 45°: 5.900 dBi" for the selected frequency. Right-click a
+  sample on the 2D or 3D pattern and choose **Use This Sample as Forward Direction** to
+  set the forward elevation and azimuth from it.
+
+Gains are shown as "6.670 dBi @ El 0°, Az 0°": elevation is measured above the horizon
+(NEC θ = 90° − El) and azimuth is NEC φ. Tooltips give the NEC θ/φ, frequency, and
+component, and a component other than Total is named ("dBi vertical").
+
+Every peak is a calculated sample, so its precision depends on the RP step around it:
+
+| RP step around the peak | Shown as | Meaning |
+|---|---|---|
+| 2° or finer | `12.960 dBi @ El 10°, Az 0°` | Close to the true peak. |
+| over 2°, up to 5° | `… @ El 10°, Az 0° (5° grid)` | Good for locating the lobe; the true peak may be a degree or two away and a few tenths of a dB higher. |
+| over 5° | `… (sampled, RP step 10°)` | The true peak may sit well between samples; request a finer RP. |
+
+Azimuth steps are judged by their true spacing, which shrinks toward the zenith: a 10°
+azimuth step at El 80° is only about 1.7° apart, so a high-angle peak is not flagged
+for it. The note still quotes the RP step as entered.
+
+**Add Cuts Through Peak** (Analysis › Requests) adds 1° cuts through the peak. After
+the next run the finer sample wins and the note disappears.
+
+**Which peak is which?** Each label says how much of the pattern it searched:
+
+| Label | Where | Searches |
+|---|---|---|
+| Peak in this cut | 2D Pattern | the cut on screen |
+| Dataset peak | 3D Pattern; **Go to Peak** | the selected RP dataset |
+| Sampled peak (all RP data) | 2D Pattern note; **Use Sampled Peak** | every RP dataset at the selected frequency |
+| Peak at this frequency | Home | every RP dataset at the selected frequency |
+| Peak across the band | Home | every frequency |
+| Sampled peak (5° grid) | Optimizer **Find Sampled Peak** | a temporary 5° grid at one frequency |
 
 F/B compares the peak with the same elevation angle turned 180° in azimuth, as other
 amateur modeling programs do, so an elevated beam over ground still has an F/B. If the
 pattern does not contain that sample, F/B is unavailable rather than substituted with
-minimum gain. See [Directional Metrics](optimization-math.md#directional-metrics). F/R uses the documented rear azimuth cut and is not a full rear-hemisphere search.
+minimum gain. See [Directional Metrics](optimization-math.md#directional-metrics). F/R
+compares the front with the strongest sample at the same elevation and more than 90°
+away in azimuth; it is not a full rear-hemisphere search.
 
 ### Runs and Historical Review
 
@@ -494,20 +578,27 @@ available, Workbench initially fills the slice from its maximum-gain direction.
 
 Tracked cuts use 5-degree samples. They can follow a lobe as geometry changes, but
 are more expensive than a specified direction and may switch between competing
-lobes. Candidate frequency details show the theta and phi actually selected. F/B
+lobes. Candidate frequency details show the elevation and azimuth actually selected
+(NEC θ/φ in the cell tooltip). F/B
 compares the front with the same elevation turned 180° in azimuth; F/R uses the
-strongest sample in the rear half of the requested cut. See
+strongest sample at the lobe's elevation more than 90° away in azimuth, the same rule
+as the Radiation window. An elevation cut has no azimuth spread, so there F/R uses the
+back half of the cut. **F/R rear region** can switch to **F/R (3D rear hemisphere)**,
+which takes the strongest sample more than 90° from the front at any elevation and adds
+a 5° grid to every candidate run so those samples exist. See
 [Directional Metrics](optimization-math.md#directional-metrics) for the exact definitions.
 
-**Find Maximum Gain…** runs a temporary one-frequency, 5-degree radiation grid
-at the first optimization frequency and uses its peak to seed the default slice.
+**Find Sampled Peak (5° grid)…** runs a temporary one-frequency, 5-degree radiation grid
+at the first optimization frequency and uses its sampled peak to seed the default slice.
+The true peak may lie between grid points; tracked cuts still find the strongest
+sample in every candidate.
 It does not start optimization or modify the authored NEC model. Over ground it
 searches the upper hemisphere; in free space it searches the full sphere. The
-button changes to **Update Maximum…** after a usable result and reports when that
+button changes to **Update Sampled Peak…** after a usable result and reports when that
 direction becomes stale after a model change.
 
 An ordinary active-model run with a multi-angle radiation pattern can provide the
-same seed. **Use Latest Pattern Peak** then copies the peak theta/phi from the
+same seed. **Use Latest Sampled Peak** then copies the peak direction from the
 latest active-model pattern nearest the first optimization frequency.
 When a valid latest pattern exists, enabling a tracked directional objective or
 selecting a tracked strategy automatically seeds the cut from that pattern's peak.

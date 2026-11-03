@@ -1,6 +1,8 @@
 #include "analysis/SolverInput.h"
 
+#include "analysis/PatternRequests.h"
 #include "nec/NecParser.h"
+#include "nec/NecSetupConverter.h"
 #include "nec/NecWriter.h"
 
 #include <algorithm>
@@ -47,6 +49,12 @@ auto joinLines(const std::vector<std::string>& lines) -> std::string
     return output.str();
 }
 
+// Uses the same ground rule as the Requests editor: the model setup's GN card.
+auto rearHemisphereGrid(const nec::NecDocument& document) -> model::RadiationPatternRequest
+{
+    return fullPatternRequest(hasGroundBelow(nec::NecSetupConverter{}.convert(document)));
+}
+
 // F/B's back direction: the same elevation turned 180 degrees in azimuth.
 auto frontToBackDirection(double thetaDegrees, double phiDegrees) -> std::pair<double, double>
 {
@@ -57,7 +65,9 @@ auto frontToBackDirection(double thetaDegrees, double phiDegrees) -> std::pair<d
 
 }
 
-auto normalizeSolverDeck(std::string_view source) -> std::string
+namespace {
+
+auto normalizedDeck(std::string_view source, bool keepStrippedLines) -> std::string
 {
     const auto document = nec::NecParser{}.parse(source);
     auto openingCommentBlock = true;
@@ -67,15 +77,30 @@ auto normalizeSolverDeck(std::string_view source) -> std::string
         const auto& card = cards[index];
         const auto inlineComment = card.mnemonic == "CM" && !openingCommentBlock;
         const auto compatibilityMetadata = card.kind == nec::NecCardKind::ReferenceImpedance;
-        if (!inlineComment && !compatibilityMetadata) output << card.sourceText;
+        const auto stripped = inlineComment || compatibilityMetadata;
+        if (!stripped) output << card.sourceText;
         if (card.mnemonic == "CE"
             || (card.kind != nec::NecCardKind::Blank && card.mnemonic != "CM")) {
             openingCommentBlock = false;
         }
-        if (index + 1 < cards.size() || document.hasFinalLineEnding())
+        if ((keepStrippedLines || !stripped)
+            && (index + 1 < cards.size() || document.hasFinalLineEnding()))
             output << document.lineEnding();
     }
     return output.str();
+}
+
+}
+
+// Stripped cards keep their line so setup source lines still index the result.
+auto normalizeSolverDeck(std::string_view source) -> std::string
+{
+    return normalizedDeck(source, true);
+}
+
+auto solverDeckIdentity(std::string_view source) -> std::string
+{
+    return normalizedDeck(source, false);
 }
 
 auto formatSolverInputForBackend(std::string_view source,
@@ -273,7 +298,8 @@ auto prepareDirectionalOptimizationInput(std::string_view source,
 
 auto prepareDirectionalOptimizationInput(std::string_view source,
     std::span<const double> frequenciesMHz, double thetaDegrees, double phiDegrees,
-    bool includeOppositeDirection, bool includeRearRegion) -> std::string
+    bool includeOppositeDirection, bool includeRearRegion,
+    bool includeRearHemisphere) -> std::string
 {
     if (!std::isfinite(thetaDegrees) || !std::isfinite(phiDegrees))
         return prepareImpedanceInput(source);
@@ -321,6 +347,8 @@ auto prepareDirectionalOptimizationInput(std::string_view source,
         } else if (includeOppositeDirection) {
             requests.push_back(writer.writeRadiationPatternCard(back));
         }
+        if (includeRearHemisphere)
+            requests.push_back(writer.writeRadiationPatternCard(rearHemisphereGrid(document)));
     }
 
     std::vector<std::string> lines;
@@ -343,7 +371,7 @@ auto prepareDirectionalOptimizationInput(std::string_view source,
 auto prepareDirectionalCutOptimizationInput(std::string_view source,
     std::span<const double> frequenciesMHz, DirectionalEvaluationMode mode,
     double cutAngleDegrees, bool includeOppositeDirection,
-    bool includeRearRegion) -> std::string
+    bool includeRearRegion, bool includeRearHemisphere) -> std::string
 {
     (void)includeOppositeDirection;
     (void)includeRearRegion;
@@ -383,6 +411,7 @@ auto prepareDirectionalCutOptimizationInput(std::string_view source,
     std::vector<model::RadiationPatternRequest> patterns{primary};
 
     const auto document = nec::NecParser{}.parse(normalizeSolverDeck(source));
+    if (includeRearHemisphere) patterns.push_back(rearHemisphereGrid(document));
     const nec::NecWriter writer;
     std::vector<std::string> requests;
     requests.reserve(frequencies.size() * (2U + patterns.size()));
@@ -426,12 +455,14 @@ auto prepareOptimizationInput(std::string_view source,
         || objective.frontToBackWeight > 0.0
         || objective.frontToRearWeight > 0.0;
     if (directional) {
+        const auto rearHemisphere = objective.frontToRearWeight > 0.0
+            && objective.frontToRearRegion == FrontToRearRegion::RearHemisphere3D;
         if (objective.directionalEvaluationMode
             == DirectionalEvaluationMode::SpecifiedDirection) {
             return prepareDirectionalOptimizationInput(source, frequenciesMHz,
                 objective.forwardThetaDegrees, objective.forwardPhiDegrees,
                 objective.frontToBackWeight > 0.0,
-                objective.frontToRearWeight > 0.0);
+                objective.frontToRearWeight > 0.0, rearHemisphere);
         }
         return prepareDirectionalCutOptimizationInput(source, frequenciesMHz,
             objective.directionalEvaluationMode,
@@ -439,7 +470,7 @@ auto prepareOptimizationInput(std::string_view source,
                     == DirectionalEvaluationMode::StrongestInAzimuthCut
                 ? objective.forwardThetaDegrees : objective.forwardPhiDegrees,
             objective.frontToBackWeight > 0.0,
-            objective.frontToRearWeight > 0.0);
+            objective.frontToRearWeight > 0.0, rearHemisphere);
     }
     return frequencyPlan.mode == FrequencyPlanMode::Explicit
         ? prepareExplicitFrequencyInput(source, frequenciesMHz)
@@ -456,13 +487,7 @@ auto prepareMaximumGainSearchInput(std::string_view source,
     const nec::NecWriter writer;
     model::FrequencyDefinition frequency;
     frequency.startMHz = frequencyMHz;
-    model::RadiationPatternRequest pattern;
-    pattern.thetaCount = aboveGroundOnly ? 19 : 37;
-    pattern.phiCount = 72;
-    pattern.thetaStart = 0.0;
-    pattern.phiStart = 0.0;
-    pattern.thetaStep = 5.0;
-    pattern.phiStep = 5.0;
+    const auto pattern = fullPatternRequest(aboveGroundOnly);
     const std::array requests{
         writer.writeFrequencyCard(frequency),
         std::string{"XQ 0"},

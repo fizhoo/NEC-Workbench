@@ -32,6 +32,8 @@ add_library(necwb_core
     src/analysis/DifferentialEvolutionSearch.h
     src/analysis/FrequencyPlan.cpp
     src/analysis/FrequencyComparison.h
+    src/analysis/GainDirection.cpp
+    src/analysis/GainDirection.h
     src/analysis/HistoricalOverlayCompatibility.cpp
     src/analysis/HistoricalOverlayCompatibility.h
     src/analysis/NecOutputParser.cpp
@@ -42,6 +44,8 @@ add_library(necwb_core
     src/analysis/OptimizationObjective.cpp
     src/analysis/OptimizationPreset.cpp
     src/analysis/OptimizationPreset.h
+    src/analysis/PatternRequests.cpp
+    src/analysis/PatternRequests.h
     src/analysis/ReferenceRunSelection.cpp
     src/analysis/ReferenceRunSelection.h
     src/analysis/ResultSummary.cpp

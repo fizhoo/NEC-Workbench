@@ -632,10 +632,9 @@ auto OptimizationWorkspace::buildObjectiveSection(QWidget* parent) -> QGroupBox*
     criterionItem(2, tr("Reactance (Ω)"), tr("Feedpoint reactance."));
     criterionItem(3, tr("Peak Gain in Cut (dBi)"),
         tr("Highest gain found in the selected azimuth or elevation cut."));
-    criterionItem(4, tr("F/B (dB)"),
-        tr("Forward gain minus gain exactly 180 degrees opposite."));
-    criterionItem(5, tr("F/R (dB)"),
-        tr("Forward gain minus the strongest response in the rear azimuth half."));
+    criterionItem(4, tr("F/B (dB)"), fromCore(analysis::frontToBackDefinition()));
+    criterionItem(5, tr("F/R (dB)"), fromCore(analysis::frontToRearDefinition(
+        analysis::DirectionalEvaluationMode::StrongestInAzimuthCut)));
     const auto weightControl = [this](const QString& name, double value) {
         auto* control = new FocusWheelDoubleSpinBox(objectiveCriteriaTable_);
         control->setObjectName(name);
@@ -721,6 +720,20 @@ auto OptimizationWorkspace::buildObjectiveSection(QWidget* parent) -> QGroupBox*
     radiationComponentControl_->addItem(tr("Horizontal"), static_cast<int>(analysis::RadiationComponent::Horizontal));
     radiationComponentControl_->addItem(tr("RHCP"), static_cast<int>(analysis::RadiationComponent::RightHandCircular));
     radiationComponentControl_->addItem(tr("LHCP"), static_cast<int>(analysis::RadiationComponent::LeftHandCircular));
+    frontToRearRegionControl_ = new QComboBox(this);
+    frontToRearRegionControl_->setObjectName(QStringLiteral("optimizationFrontToRearRegion"));
+    frontToRearRegionControl_->addItem(tr("F/R (forward azimuth cut)"),
+        static_cast<int>(analysis::FrontToRearRegion::ForwardAzimuthCut));
+    frontToRearRegionControl_->addItem(fromCore(analysis::frontToRearName(
+            analysis::FrontToRearRegion::RearHemisphere3D)),
+        static_cast<int>(analysis::FrontToRearRegion::RearHemisphere3D));
+    for (auto index = 0; index < frontToRearRegionControl_->count(); ++index) {
+        frontToRearRegionControl_->setItemData(index, fromCore(analysis::frontToRearDefinition(
+                analysis::DirectionalEvaluationMode::SpecifiedDirection,
+                static_cast<analysis::FrontToRearRegion>(
+                    frontToRearRegionControl_->itemData(index).toInt()))),
+            Qt::ToolTipRole);
+    }
     objectiveCriteriaTable_->resizeRowsToContents();
     auto criteriaHeight = objectiveCriteriaTable_->horizontalHeader()->sizeHint().height()
         + 2 * objectiveCriteriaTable_->frameWidth();
@@ -787,10 +800,10 @@ auto OptimizationWorkspace::buildObjectiveSection(QWidget* parent) -> QGroupBox*
     directionSetupSummaryLabel_->setWordWrap(true);
     directionSetupButton_ = new QPushButton(tr("Choose…"), directionSetupPanel_);
     directionSetupButton_->setObjectName(QStringLiteral("optimizationChooseDirection"));
-    findMaximumGainButton_ = new QPushButton(tr("Find Maximum Gain…"), directionSetupPanel_);
+    findMaximumGainButton_ = new QPushButton(tr("Find Sampled Peak (5° grid)…"), directionSetupPanel_);
     findMaximumGainButton_->setObjectName(QStringLiteral("optimizationFindMaximumGain"));
     findMaximumGainButton_->setToolTip(tr(
-        "Runs a temporary radiation-pattern calculation to find the model's maximum-gain direction and use it as the default optimization pattern slice. It does not start optimization or modify the NEC model."));
+        "Runs a temporary 5° radiation grid to find the model's sampled peak and use its direction as the default optimization pattern slice. The true peak may lie between grid points. It does not start optimization or modify the NEC model."));
     directionSetupLayout->addWidget(directionSetupSummaryLabel_, 1);
     directionSetupLayout->addWidget(findMaximumGainButton_);
     directionSetupLayout->addWidget(directionSetupButton_);
@@ -798,17 +811,19 @@ auto OptimizationWorkspace::buildObjectiveSection(QWidget* parent) -> QGroupBox*
     objectiveForm->addRow(directionSetupLabel_, directionSetupPanel_);
     radiationComponentLabel_ = new QLabel(tr("Radiation component"), objectiveSettings);
     objectiveForm->addRow(radiationComponentLabel_, radiationComponentControl_);
+    frontToRearRegionLabel_ = new QLabel(tr("F/R rear region"), objectiveSettings);
+    objectiveForm->addRow(frontToRearRegionLabel_, frontToRearRegionControl_);
     latestPatternPeakPanel_ = new QWidget(objectiveSettings);
     latestPatternPeakPanel_->setObjectName(
         QStringLiteral("optimizationLatestPatternPeakPanel"));
     auto* latestPatternPeakLayout = new QHBoxLayout(latestPatternPeakPanel_);
     latestPatternPeakLayout->setContentsMargins(0, 0, 0, 0);
     useLatestPatternPeakButton_ = new QPushButton(
-        tr("Use Latest Pattern Peak"), latestPatternPeakPanel_);
+        tr("Use Latest Sampled Peak"), latestPatternPeakPanel_);
     useLatestPatternPeakButton_->setObjectName(
         QStringLiteral("optimizationUseLatestPatternPeak"));
     useLatestPatternPeakButton_->setToolTip(tr(
-        "Set the forward theta and phi from the latest active-model radiation pattern."));
+        "Set the forward direction from the sampled peak of the latest active-model radiation pattern."));
     useLatestPatternPeakButton_->hide();
     latestPatternPeakLabel_ = new QLabel(latestPatternPeakPanel_);
     latestPatternPeakLabel_->setObjectName(
@@ -816,7 +831,7 @@ auto OptimizationWorkspace::buildObjectiveSection(QWidget* parent) -> QGroupBox*
     latestPatternPeakLabel_->setWordWrap(true);
     latestPatternPeakLayout->addWidget(useLatestPatternPeakButton_);
     latestPatternPeakLayout->addWidget(latestPatternPeakLabel_, 1);
-    latestPatternPeakFieldLabel_ = new QLabel(tr("Pattern peak"), objectiveSettings);
+    latestPatternPeakFieldLabel_ = new QLabel(tr("Sampled peak"), objectiveSettings);
     objectiveForm->addRow(latestPatternPeakFieldLabel_, latestPatternPeakPanel_);
     directionalFrequencyNote_ = new QLabel(objectiveSettings);
     directionalFrequencyNote_->setObjectName(
@@ -886,10 +901,11 @@ auto OptimizationWorkspace::buildResultsPanel() -> QWidget*
         tr("R (Ω)"), tr("X (Ω)"), tr("Gain (dBi)"), tr("F/B (dB)"), tr("F/R (dB)"), tr("Status"), tr("Run")});
     resultsTable_->horizontalHeaderItem(GainColumn)->setToolTip(tr(
         "Forward gain at the configured theta, phi, frequency, and radiation component."));
-    resultsTable_->horizontalHeaderItem(FrontToBackColumn)->setToolTip(tr(
-        "Gain in the configured forward direction minus gain at the physical opposite direction."));
-    resultsTable_->horizontalHeaderItem(FrontToRearColumn)->setToolTip(tr(
-        "Gain in the configured forward direction minus the strongest response in the rear 180° half of the configured azimuth cut."));
+    resultsTable_->horizontalHeaderItem(FrontToBackColumn)->setToolTip(
+        fromCore(analysis::frontToBackDefinition()));
+    resultsTable_->horizontalHeaderItem(FrontToRearColumn)->setToolTip(
+        fromCore(analysis::frontToRearDefinition(
+            analysis::DirectionalEvaluationMode::StrongestInAzimuthCut)));
     resultsTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     resultsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     resultsTable_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -979,7 +995,11 @@ void OptimizationWorkspace::buildCandidateDetailsWindow()
     candidateDetailsTable_->setHorizontalHeaderLabels(
         {tr("Frequency (MHz)"), tr("SWR"), tr("R (Ω)"), tr("X (Ω)"),
             tr("Gain (dBi)"), tr("F/B (dB)"), tr("F/R (dB)"),
-            tr("Theta (°)"), tr("Phi (°)")});
+            tr("El (°)"), tr("Az (°)")});
+    candidateDetailsTable_->horizontalHeaderItem(7)->setToolTip(tr(
+        "Elevation of the forward direction above the horizon (NEC θ = 90° − El)."));
+    candidateDetailsTable_->horizontalHeaderItem(8)->setToolTip(tr(
+        "Azimuth of the forward direction (NEC φ)."));
     candidateDetailsTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     candidateDetailsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     candidateDetailsTable_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -1028,6 +1048,13 @@ void OptimizationWorkspace::connectObjectiveSignals()
             || preset == analysis::OptimizationPresetId::SwrAndGain)
             applySelectedObjectivePreset();
     });
+    const auto updateSwrCriterionLabel = [this] {
+        if (auto* item = objectiveCriteriaTable_->item(0, 0)) item->setText(tr("SWR (Z0 %1)")
+            .arg(formatReferenceImpedance(referenceImpedanceControl_->value())));
+    };
+    updateSwrCriterionLabel();
+    connect(referenceImpedanceControl_, &QDoubleSpinBox::valueChanged, this,
+        updateSwrCriterionLabel);
     connect(referenceImpedanceControl_, &QDoubleSpinBox::valueChanged, this, [this] {
         if (selectedObjectivePreset() == analysis::OptimizationPresetId::Custom)
             updateObjectiveControls();
@@ -1086,6 +1113,11 @@ void OptimizationWorkspace::connectObjectiveSignals()
         applyingObjectivePreset_ = true;
         restoreObjectiveSetup(defaults);
         applyingObjectivePreset_ = false;
+        updateObjectiveControls();
+        updateWorkload();
+        updateReadiness();
+    });
+    connect(frontToRearRegionControl_, &QComboBox::currentIndexChanged, this, [this] {
         updateObjectiveControls();
         updateWorkload();
         updateReadiness();

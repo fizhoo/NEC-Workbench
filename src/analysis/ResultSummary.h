@@ -1,6 +1,7 @@
 #pragma once
 
 #include "analysis/AnalysisResult.h"
+#include "analysis/GainDirection.h"
 
 #include <complex>
 #include <optional>
@@ -41,6 +42,8 @@ struct PeakGainSummary {
     double phiDegrees{};
     int patternIndex{};
     RadiationDatasetKind datasetKind{RadiationDatasetKind::Point};
+    // RP step next to the peak sample; see patternStepAround.
+    std::optional<SampleStep> sampleStep;
 };
 
 struct ResultSummary {

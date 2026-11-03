@@ -178,8 +178,8 @@ auto main(int argc, char* argv[]) -> int
         && partialResult.availableMeasurements->feedpoint
         && partialResult.availableMeasurements->frequencyMetrics.size() == 2
         && partialResult.detail.contains(QStringLiteral("Forward gain is unavailable"))
-        && partialResult.detail.contains(QStringLiteral("theta 90.000"))
-        && partialResult.detail.contains(QStringLiteral("phi 0.000"));
+        && partialResult.detail.contains(QStringLiteral("El 0°, Az 0°"))
+        && partialResult.detail.contains(QStringLiteral("NEC θ 90°, φ 0°"));
 
     QTemporaryDir failureDirectory;
     if (!failureDirectory.isValid()) return EXIT_FAILURE;

@@ -129,10 +129,20 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
             optionalNumericItem(metrics.frontToBackDb));
         candidateDetailsTable_->setItem(detailRow, 6,
             optionalNumericItem(metrics.frontToRearDb));
-        candidateDetailsTable_->setItem(detailRow, 7,
-            optionalNumericItem(metrics.forwardThetaDegrees));
-        candidateDetailsTable_->setItem(detailRow, 8,
-            optionalNumericItem(metrics.forwardPhiDegrees));
+        const auto direction = metrics.forwardThetaDegrees && metrics.forwardPhiDegrees
+            ? std::optional{analysis::patternDirection(
+                  *metrics.forwardThetaDegrees, *metrics.forwardPhiDegrees)}
+            : std::nullopt;
+        candidateDetailsTable_->setItem(detailRow, 7, optionalNumericItem(direction
+            ? std::optional{direction->elevationDegrees} : std::nullopt));
+        candidateDetailsTable_->setItem(detailRow, 8, optionalNumericItem(direction
+            ? std::optional{direction->azimuthDegrees} : std::nullopt));
+        if (direction) {
+            const auto necDirection = tr("NEC %1").arg(fromCore(analysis::formatNecDirection(
+                *metrics.forwardThetaDegrees, *metrics.forwardPhiDegrees)));
+            candidateDetailsTable_->item(detailRow, 7)->setToolTip(necDirection);
+            candidateDetailsTable_->item(detailRow, 8)->setToolTip(necDirection);
+        }
         if (candidate.evaluation && evaluation->evaluatedFrequencyCount == 1
             && std::abs(evaluation->evaluationFrequencyMHz - metrics.frequencyMHz) < 1.0e-9) {
             for (auto column = 0; column < candidateDetailsTable_->columnCount(); ++column) {
@@ -168,7 +178,7 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
             }
             breakdown.append(description);
         };
-        addCriterion(tr("SWR"), activeObjective_.swrWeight,
+        addCriterion(tr("SWR (Z0 %1)").arg(formatReferenceImpedance(activeObjective_.referenceImpedance)), activeObjective_.swrWeight,
             activeObjective_.swrGoal, activeObjective_.swrGoodEnoughDirection,
             activeObjective_.swrAggregation, activeObjective_.swrTarget,
             evaluation->swr, evaluation->swrComponent, {});
@@ -225,7 +235,7 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
                     formatDecimal(summary->average), formatDecimal(summary->maximum),
                     formatDecimal(summary->maximumFrequencyMHz)));
         };
-        addSummary(tr("SWR"), {}, evaluation->swrSummary);
+        addSummary(tr("SWR (Z0 %1)").arg(formatReferenceImpedance(activeObjective_.referenceImpedance)), {}, evaluation->swrSummary);
         addSummary(tr("Gain"), tr("dBi"), evaluation->forwardGainSummary);
         addSummary(tr("F/B"), tr("dB"), evaluation->frontToBackSummary);
         addSummary(tr("F/R"), tr("dB"), evaluation->frontToRearSummary);
@@ -245,10 +255,14 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
                                     - *firstDirection->forwardPhiDegrees) > 1.0e-6);
                     });
                 breakdown.append(directionVaries
-                    ? tr("Tracked lobe direction varies by frequency; see Theta/Phi columns")
-                    : tr("Tracked lobe direction θ %1°, φ %2°")
-                          .arg(formatDecimal(*firstDirection->forwardThetaDegrees))
-                          .arg(formatDecimal(*firstDirection->forwardPhiDegrees)));
+                    ? tr("Tracked lobe direction varies by frequency; see El/Az columns")
+                    : tr("Tracked lobe direction %1 (NEC %2)")
+                          .arg(fromCore(analysis::formatDirection(
+                                   *firstDirection->forwardThetaDegrees,
+                                   *firstDirection->forwardPhiDegrees)),
+                              fromCore(analysis::formatNecDirection(
+                                  *firstDirection->forwardThetaDegrees,
+                                  *firstDirection->forwardPhiDegrees))));
             }
         }
     }
@@ -262,16 +276,22 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
         auto score = tr("score %1").arg(formatDecimal(candidate.evaluation->score));
         header.append(score);
         if (candidate.evaluation->swrSummary) {
-            header.append(tr("min SWR %1 @ %2 MHz")
+            header.append(tr("min SWR %1 @ %2 MHz (Z0 %3)")
                 .arg(formatDecimal(candidate.evaluation->swrSummary->minimum),
-                    formatDecimal(candidate.evaluation->swrSummary->minimumFrequencyMHz)));
+                    formatDecimal(candidate.evaluation->swrSummary->minimumFrequencyMHz),
+                    formatReferenceImpedance(activeObjective_.referenceImpedance)));
         }
         if (candidate.evaluation->frontToBackDb)
             header.append(tr("F/B %1 dB")
                 .arg(formatDecimal(*candidate.evaluation->frontToBackDb)));
         else if (candidate.evaluation->forwardGainDb)
-            header.append(tr("gain %1 dBi")
-                .arg(formatDecimal(*candidate.evaluation->forwardGainDb)));
+            header.append(tr("gain %1").arg(fromCore(analysis::formatGain({
+                .gainDb = *candidate.evaluation->forwardGainDb,
+                .thetaDegrees = candidate.evaluation->forwardThetaDegrees,
+                .phiDegrees = candidate.evaluation->forwardPhiDegrees,
+                .component = activeObjective_.radiationComponent,
+                .frequencyMHz = candidate.evaluation->forwardGainFrequencyMHz,
+                .sampleStep = std::nullopt}).text)));
         else if (candidate.evaluation->frontToRearDb)
             header.append(tr("F/R %1 dB")
                 .arg(formatDecimal(*candidate.evaluation->frontToRearDb)));
@@ -422,7 +442,7 @@ void OptimizationWorkspace::applyCandidate(int row, bool runAfterApply)
             ? tr("%1 The model changed; the optimization baseline will be rebuilt before the next optimization.")
                 .arg(appliedText)
             : maximumGainDirectionStale_
-                ? tr("%1 The fixed direction came from the previous pattern; update maximum gain or choose a direction before optimizing again.")
+                ? tr("%1 The fixed direction came from the previous pattern; update the sampled peak or choose a direction before optimizing again.")
                     .arg(appliedText)
                 : appliedText);
     }
@@ -516,7 +536,8 @@ void OptimizationWorkspace::updateComparisonCandidate()
             .arg(formatDecimal(candidate.evaluation->score))
             .arg(candidate.evaluation->evaluatedFrequencyCount);
         if (candidate.evaluation->feedpoint) {
-            breakdown += tr("\nReduced SWR: %1\nReduced impedance: %2 %3 j%4 Ω")
+            breakdown += tr("\nReduced SWR (Z0 %1): %2\nReduced impedance: %3 %4 j%5 Ω")
+                .arg(formatReferenceImpedance(activeObjective_.referenceImpedance))
                 .arg(formatDecimal(candidate.evaluation->swr))
                 .arg(formatDecimal(candidate.evaluation->feedpoint->impedance.real()))
                 .arg(candidate.evaluation->feedpoint->impedance.imag() < 0.0

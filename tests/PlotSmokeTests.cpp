@@ -636,10 +636,17 @@ auto main(int argc, char* argv[]) -> int
     referenceResult.referenceImpedanceOhms = 75.0;
     view.setReferenceResults(referenceResult, QStringLiteral("different-z0"));
     application.processEvents();
+    // The overlay's SWR is recomputed at the current Z0 rather than hidden.
     if (impedanceSweepPlot->property("referenceSeriesCount").toInt() != 2
-        || swrSweepPlot->property("referenceSeriesCount").toInt() != 0) {
+        || swrSweepPlot->property("referenceSeriesCount").toInt() != 1
+        || !swrSweepPlot->property("title").toString().contains(QStringLiteral("Z0 50 Ω"))) {
         return NECWB_SMOKE_FAILURE("reference plots with differing Z0");
     }
+    view.setReferenceImpedance(200.0);
+    application.processEvents();
+    if (!swrSweepPlot->property("title").toString().contains(QStringLiteral("Z0 200 Ω")))
+        return NECWB_SMOKE_FAILURE("SWR plot follows a Z0 change");
+    view.setReferenceImpedance(50.0);
     if (sweepShowReference == nullptr || !sweepReferenceDefaultsHidden || !sweepReferenceCanHide
         || swrScaleControl == nullptr || swrScaleControl->count() != 4
         || swrScaleControl->currentText() != QStringLiteral("Logarithmic")) {
@@ -660,6 +667,23 @@ auto main(int argc, char* argv[]) -> int
     }
     plotSettings.sync();
     if (!alternateScalesWork) return NECWB_SMOKE_FAILURE("alternate SWR scales");
+    swrScaleControl->setCurrentIndex(0);
+    view.resize(900, 520);
+    application.processEvents();
+    QPainter stackedPainter(&image);
+    view.render(&stackedPainter);
+    stackedPainter.end();
+    const auto stackedPlotsShareSpace
+        = std::abs(impedanceSweepPlot->height() - swrSweepPlot->height()) <= 2
+        && swrSweepPlot->height() >= 200
+        && impedanceSweepPlot->property("plotLeftMargin").toDouble()
+            == swrSweepPlot->property("plotLeftMargin").toDouble()
+        && impedanceSweepPlot->property("plotRightMargin").toDouble()
+            == swrSweepPlot->property("plotRightMargin").toDouble()
+        && swrSweepPlot->property("leftAxisVisibleTickLabels").toInt() >= 2
+        && swrSweepPlot->property("leftAxisVisibleTickLabels").toInt()
+            <= swrSweepPlot->property("leftAxisTickCount").toInt();
+    if (!stackedPlotsShareSpace) return NECWB_SMOKE_FAILURE("stacked sweep plot layout");
     necwb::ui::CandidatePlotsView candidatePlots;
     candidatePlots.resize(760, 360);
     const std::vector<necwb::ui::CandidatePlotPoint> candidatePoints{
@@ -1466,7 +1490,7 @@ auto main(int argc, char* argv[]) -> int
                 QStringLiteral("Direction setup required"))
             && optimizationLatestPatternPeakStatus != nullptr
             && optimizationLatestPatternPeakStatus->text().contains(
-                QStringLiteral("Use Find Maximum Gain or Choose"))
+                QStringLiteral("Use Find Sampled Peak or Choose"))
             && optimizationRun != nullptr && !optimizationRun->isEnabled()
             && optimizationRun->toolTip().contains(
                 QStringLiteral("Direction setup required"))
@@ -1529,7 +1553,7 @@ auto main(int argc, char* argv[]) -> int
     optimization.setModelValid(false);
     const auto maximumGainActionValid = optimizationFindMaximumGain != nullptr
         && requestedMaximumGainFrequency > 0.0
-        && optimizationFindMaximumGain->text() == QStringLiteral("Find Maximum Gain…")
+        && optimizationFindMaximumGain->text() == QStringLiteral("Find Sampled Peak (5° grid)…")
         && optimizationFindMaximumGain->toolTip().contains(
             QStringLiteral("does not start optimization or modify the NEC model"));
     necwb::analysis::AnalysisResult latestPattern;
@@ -1628,10 +1652,10 @@ auto main(int argc, char* argv[]) -> int
     const auto latestPatternPeakApplied = optimizationUseLatestPatternPeak != nullptr
         && optimizationUseLatestPatternPeak->isEnabled()
         && optimizationLatestPatternPeakStatus != nullptr
-        && optimizationLatestPatternPeakStatus->text().contains(QStringLiteral("35.000"))
+        && optimizationLatestPatternPeakStatus->text().contains(QStringLiteral("@ El 35°"))
         && optimizationObjectiveSummary != nullptr
         && optimizationObjectiveSummary->text().contains(
-            QStringLiteral("Track peak in azimuth cut at θ 55.000°"))
+            QStringLiteral("Track peak · Azimuth cut at El 35° (NEC θ 55°)"))
         && optimizationDirectionSetupSummary != nullptr
         && optimizationDirectionSetupSummary->text().contains(
             QStringLiteral("elevation 35.000°"));
@@ -1642,7 +1666,7 @@ auto main(int argc, char* argv[]) -> int
     application.processEvents();
     const auto replacedPatternPeakShown = optimizationLatestPatternPeakStatus != nullptr
         && optimizationLatestPatternPeakStatus->text().contains(
-            QStringLiteral("elevation 50.000°"));
+            QStringLiteral("@ El 50°"));
     const auto perCriterionDirectionalObjectiveValid = optimizationDirectionalFrequencyNote != nullptr
         && optimizationDirectionalFrequencyNote->text().contains(
             QStringLiteral("Each criterion independently"))
@@ -1916,7 +1940,7 @@ auto main(int argc, char* argv[]) -> int
     const auto staleDirectionReported = staleDirectionStatus != nullptr
         && staleDirectionStatus->text().contains(QStringLiteral("direction is stale"))
         && staleDirectionButton != nullptr
-        && staleDirectionButton->text() == QStringLiteral("Update Maximum…");
+        && staleDirectionButton->text() == QStringLiteral("Update Sampled Peak…");
     necwb::ui::OptimizationComparePanel directionalComparison;
     necwb::analysis::AnalysisResult directionalCandidateResult;
     necwb::analysis::AnalysisResult directionalBaselineResult;
@@ -1960,6 +1984,24 @@ auto main(int argc, char* argv[]) -> int
         return NECWB_SMOKE_FAILURE("candidate review geometry or size persistence");
     if (optimizationCandidateReviewDefaultSize != expectedCandidateReviewSize)
         return NECWB_SMOKE_FAILURE("candidate review responsive default size");
+    auto* optimizationFrontToRearRegion = optimization.findChild<QComboBox*>(
+        QStringLiteral("optimizationFrontToRearRegion"));
+    auto frontToRearRegionSelectable = false;
+    if (optimizationFrontToRearRegion != nullptr && optimizationObjectiveCriteria != nullptr) {
+        const auto defaultLabel = optimizationObjectiveCriteria->item(5, 0)->text();
+        const auto previousRegion = optimizationFrontToRearRegion->currentIndex();
+        optimizationFrontToRearRegion->setCurrentIndex(optimizationFrontToRearRegion->findData(
+            static_cast<int>(necwb::analysis::FrontToRearRegion::RearHemisphere3D)));
+        application.processEvents();
+        frontToRearRegionSelectable = optimizationFrontToRearRegion->count() == 2
+            && defaultLabel == QStringLiteral("F/R (dB)")
+            && optimizationObjectiveCriteria->item(5, 0)->text()
+                == QStringLiteral("F/R (3D rear hemisphere) (dB)")
+            && optimizationObjectiveCriteria->item(5, 0)->toolTip().contains(
+                QStringLiteral("any elevation"));
+        optimizationFrontToRearRegion->setCurrentIndex(previousRegion);
+        application.processEvents();
+    }
     if (optimizationConfiguration == nullptr
         || optimizationWorkspaceSplitter == nullptr
         || optimizationWorkspaceSplitter->orientation() != Qt::Horizontal
@@ -2036,6 +2078,7 @@ auto main(int argc, char* argv[]) -> int
         || !objectivePresetsValid
         || !directionalPresetReadinessValid
         || !directionalPresetAutoSeeded
+        || !frontToRearRegionSelectable
         || optimizationObjectiveCriteria == nullptr
         || optimizationSwrWeight == nullptr || optimizationSwrWeight->value() != 1.0
         || optimizationResistanceWeight == nullptr || optimizationResistanceWeight->value() != 0.0
@@ -2566,21 +2609,21 @@ auto main(int argc, char* argv[]) -> int
     radiation2DDataset->setCurrentIndex(radiation2DDataset->findData(1));
     application.processEvents();
     const auto horizontalDatasetSelectsCompatibleCut = radiation2DOrientation->isEnabled()
-        && radiation2DOrientation->text() == QStringLiteral("Horizontal")
+        && radiation2DOrientation->text() == QStringLiteral("Show Elevation Cut")
         && radiation2DCutPlane->count() == 1
         && radiation2DCutPlane->currentData().toDouble() == 62.0
         && radiation2DSummary->text().contains(QStringLiteral("peak"));
     radiation2DOrientation->click();
     application.processEvents();
     const auto separateDatasetsSwitchCuts = radiation2DDataset->currentData().toInt() == 0
-        && radiation2DOrientation->text() == QStringLiteral("Vertical")
+        && radiation2DOrientation->text() == QStringLiteral("Show Azimuth Cut")
         && radiation2DCutPlane->count() == 6;
     radiation2DDataset->setCurrentIndex(radiation2DDataset->findData(1));
     application.processEvents();
     radiation2DMaxGainCut->click();
     application.processEvents();
     const auto horizontalMaxGainCutStaysCompatible = radiation2DOrientation->text()
-        == QStringLiteral("Horizontal") && radiation2DCutPlane->currentData().toDouble() == 62.0;
+        == QStringLiteral("Show Elevation Cut") && radiation2DCutPlane->currentData().toDouble() == 62.0;
     radiation2DDataset->setCurrentIndex(radiation2DDataset->findData(0));
     application.processEvents();
     const auto radiationControlsSynchronized = radiation3DComponent->currentData()
@@ -2606,11 +2649,22 @@ auto main(int argc, char* argv[]) -> int
     const auto radiationExportReady = radiation2DExportImage->isEnabled()
         && radiation2DExportData->isEnabled() && radiation3DExportImage->isEnabled()
         && radiation3DExportData->isEnabled();
+    // Go to Peak keeps the kind of cut: elevation at the peak's azimuth (phi 60),
+    // azimuth at the peak's elevation (theta 75).
     radiation2DOrientation->click();
     radiation2DMaxGainCut->click();
     application.processEvents();
-    const auto maxGainCutSelected = radiation2DOrientation->text() == QStringLiteral("Vertical")
+    const auto elevationMaxGainCutSelected = radiation2DOrientation->text()
+            == QStringLiteral("Show Azimuth Cut")
         && radiation2DCutPlane->currentData().toDouble() == 60.0
+        && radiation2DSummary->text().contains(QStringLiteral("20.000 dBi"));
+    radiation2DOrientation->click();
+    radiation2DMaxGainCut->click();
+    application.processEvents();
+    const auto maxGainCutSelected = elevationMaxGainCutSelected
+        && radiation2DOrientation->text() == QStringLiteral("Show Elevation Cut")
+        && radiation2DCutPlane->currentData().toDouble() == 75.0
+        && radiation2DSummary->text().contains(QStringLiteral("Azimuth cut at El 15°"))
         && radiation2DSummary->text().contains(QStringLiteral("20.000 dBi"));
     necwb::analysis::AnalysisResult signedThetaResult;
     for (auto theta = -90; theta <= 90; theta += 10) {
@@ -2625,13 +2679,110 @@ auto main(int argc, char* argv[]) -> int
     auto* signedThetaSummary = signedThetaView.findChild<QLabel*>(
         QStringLiteral("radiation2DSummary"));
     const auto signedThetaTiesNormalized = signedThetaSummary != nullptr
-        && signedThetaSummary->text().contains(QStringLiteral("at -70.000°"))
-        && signedThetaSummary->text().contains(QStringLiteral("tied at 70.000°"))
+        && signedThetaSummary->text().contains(QStringLiteral("Elevation cut at Az 0°"))
+        && signedThetaSummary->text().contains(QStringLiteral("Peak in this cut 8.200 dBi @ El 20°, Az 180°"))
+        && signedThetaSummary->text().contains(QStringLiteral("tied at El 20°, Az 0°"))
         && !signedThetaSummary->text().contains(QStringLiteral("430"));
     auto* signedThetaPlot = signedThetaView.findChild<QWidget*>(
         QStringLiteral("radiationPolarPlot"));
     const auto signedThetaCutStaysOpen = signedThetaPlot != nullptr
         && !signedThetaPlot->property("closedPattern").toBool();
+    // A cut that misses the main lobe names its own maximum and points at the pattern peak.
+    necwb::analysis::AnalysisResult offCutPeakResult;
+    for (auto theta = -90; theta <= 90; theta += 10) {
+        const auto gain = theta == 80 ? 5.0 : -10.0;
+        offCutPeakResult.radiation.push_back({146.0, static_cast<double>(theta), 0.0,
+            gain, -999.99, gain});
+    }
+    for (auto phi = 0; phi < 360; phi += 30) {
+        const auto gain = phi == 90 ? 8.0 : 0.0;
+        offCutPeakResult.radiation.push_back({146.0, 80.0, static_cast<double>(phi),
+            gain, -999.99, gain, {}, {}, {}, 1});
+    }
+    necwb::ui::RadiationPatternView offCutPeakView;
+    offCutPeakView.setResults(offCutPeakResult, QStringLiteral("off-cut-test"));
+    auto* offCutSummary = offCutPeakView.findChild<QLabel*>(QStringLiteral("radiation2DSummary"));
+    auto* offCutPlot = offCutPeakView.findChild<QWidget*>(QStringLiteral("radiationPolarPlot"));
+    const auto offCutPeakNamed = offCutSummary != nullptr && offCutPlot != nullptr
+        && offCutSummary->text().contains(QStringLiteral("Elevation cut at Az 0°"))
+        && offCutSummary->text().contains(QStringLiteral(
+            "Peak in this cut 5.000 dBi @ El 10°, Az 0° (sampled, RP step 10°)"))
+        && offCutSummary->text().contains(QStringLiteral(
+            "Sampled peak (all RP data) 8.000 dBi @ El 10°, Az 90° (sampled, RP step 30°), outside this cut"))
+        && offCutSummary->toolTip().contains(QStringLiteral("F/B:"))
+        && offCutPlot->property("cutName").toString() == QStringLiteral("Elevation cut at Az 0°");
+    necwb::ui::RadiationPerformanceView offCutPerformance;
+    offCutPerformance.setResults(offCutPeakResult, QStringLiteral("off-cut-test"));
+    offCutPerformance.setSelectedFrequency(146.0);
+    offCutPerformance.setForwardDirection(80.0, 90.0);
+    auto* offCutReadout = offCutPerformance.findChild<QLabel*>(
+        QStringLiteral("radiationPerformanceReadout"));
+    auto* offCutElevation = offCutPerformance.findChild<QDoubleSpinBox*>(
+        QStringLiteral("radiationPerformanceElevation"));
+    const auto forwardDirectionReadout = offCutReadout != nullptr && offCutElevation != nullptr
+        && offCutElevation->value() == 10.0
+        && offCutReadout->text().contains(QStringLiteral("Gain toward El 10°, Az 90°: 8.000 dBi"))
+        && offCutReadout->toolTip().contains(QStringLiteral("F/R:"));
+    necwb::analysis::AnalysisResult crossingCutsResult;
+    const auto lobe = [](double theta, double phi) {
+        const auto azimuthOffset = std::abs(std::remainder(phi, 360.0));
+        return 10.0 - 0.3 * std::abs(theta - 80.0) - 0.05 * azimuthOffset;
+    };
+    for (auto theta = 0; theta <= 90; theta += 5) {
+        for (auto phi = 0; phi < 360; phi += 5) {
+            const auto gain = lobe(theta, phi);
+            crossingCutsResult.radiation.push_back({146.0, static_cast<double>(theta),
+                static_cast<double>(phi), gain, -999.99, gain});
+        }
+    }
+    for (auto phi = 0; phi < 360; ++phi) {
+        const auto gain = lobe(80.0, phi);
+        crossingCutsResult.radiation.push_back({146.0, 80.0, static_cast<double>(phi),
+            gain, -999.99, gain, {}, {}, {}, 1});
+    }
+    for (auto theta = 0; theta <= 90; ++theta) {
+        for (const auto phi : {0.0, 180.0}) {
+            const auto gain = lobe(theta, phi);
+            crossingCutsResult.radiation.push_back({146.0, static_cast<double>(theta), phi,
+                gain, -999.99, gain, {}, {}, {}, 2});
+        }
+    }
+    necwb::ui::RadiationPatternView crossingCutsView;
+    crossingCutsView.setResults(crossingCutsResult, QStringLiteral("crossing-test"));
+    auto* crossingDataset = crossingCutsView.findChild<QComboBox*>(
+        QStringLiteral("radiation2DDataset"));
+    auto* crossingPlane = crossingCutsView.findChild<QComboBox*>(
+        QStringLiteral("radiation2DCutPlane"));
+    auto* crossingToggle = crossingCutsView.findChild<QPushButton*>(
+        QStringLiteral("radiation2DOrientation"));
+    auto* crossingSummary = crossingCutsView.findChild<QLabel*>(
+        QStringLiteral("radiation2DSummary"));
+    auto crossingCutsPair = false;
+    if (crossingDataset != nullptr && crossingPlane != nullptr && crossingToggle != nullptr
+        && crossingSummary != nullptr) {
+        crossingDataset->setCurrentIndex(crossingDataset->findData(2));
+        application.processEvents();
+        // An elevation-cut dataset no longer offers two-point "azimuth cuts" of its own.
+        const auto elevationOnly = crossingToggle->text() == QStringLiteral("Show Azimuth Cut")
+            && crossingToggle->isEnabled()
+            && crossingToggle->toolTip().contains(QStringLiteral("RP 2"));
+        crossingToggle->click();
+        application.processEvents();
+        const auto toFineAzimuth = crossingDataset->currentData().toInt() == 1
+            && crossingPlane->currentData().toDouble() == 80.0
+            && crossingSummary->text().startsWith(QStringLiteral("Switched to RP 2"));
+        // The note is one-time: the next change clears it.
+        crossingCutsView.findChild<QComboBox*>(QStringLiteral("radiation2DScale"))
+            ->setCurrentIndex(1);
+        application.processEvents();
+        const auto switchNoteClears = !crossingSummary->text().contains(
+            QStringLiteral("Switched to"));
+        crossingToggle->click();
+        application.processEvents();
+        crossingCutsPair = elevationOnly && toFineAzimuth && switchNoteClears
+            && crossingDataset->currentData().toInt() == 2
+            && crossingPlane->currentData().toDouble() == 0.0;
+    }
     necwb::ui::RadiationPatternView emptyRadiation2D;
     emptyRadiation2D.setResults({}, QStringLiteral("empty-radiation-test"));
     auto* emptyRadiationFrequency = emptyRadiation2D.findChild<QComboBox*>(
@@ -2777,6 +2928,22 @@ auto main(int argc, char* argv[]) -> int
     const auto staleStateVisible = controlPanelStale != nullptr && controlPanelStale->isVisible()
         && controlPanelQuickResults != nullptr && !controlPanelQuickResults->isEnabled();
     controlPanel.setResults(result, QStringLiteral("Model: test.nec · Run: controlPanel"), false);
+    auto* controlPanelFrequency = controlPanel.findChild<QComboBox*>(
+        QStringLiteral("controlPanelResultFrequency"));
+    const auto selectedQuickIndex = controlPanelFrequency->count() - 1;
+    controlPanelFrequency->setCurrentIndex(selectedQuickIndex);
+    auto changedZ0Result = result;
+    changedZ0Result.referenceImpedanceOhms = 200.0;
+    controlPanel.updateReferenceImpedance(changedZ0Result);
+    const auto controlPanelSwrLabels = controlPanel.findChildren<QLabel*>();
+    const auto quickResultsFollowZ0 = controlPanelFrequency->currentIndex() == selectedQuickIndex
+        && controlPanelExtrema->text().contains(QStringLiteral("(Z0 200 Ω)"))
+        && std::ranges::any_of(controlPanelSwrLabels, [](const QLabel* swrLabel) {
+            return swrLabel->objectName() == QStringLiteral("controlPanelQuickResultsHeading")
+                && swrLabel->text().endsWith(QStringLiteral("Z0 200 Ω"));
+        });
+    if (!quickResultsFollowZ0) return NECWB_SMOKE_FAILURE("quick results follow a Z0 change");
+    controlPanel.setResults(result, QStringLiteral("Model: test.nec · Run: controlPanel"), false);
     if (controlPanelAverageGainRun != nullptr) controlPanelAverageGainRun->click();
     if (controlPanelConvergenceRun != nullptr) controlPanelConvergenceRun->click();
     if (controlPanelRuns != nullptr) controlPanelRuns->click();
@@ -2796,7 +2963,8 @@ auto main(int argc, char* argv[]) -> int
         && controlPanelQuickResults != nullptr
         && controlPanelExtrema != nullptr
         && controlPanelExtrema->text().contains(QStringLiteral("Min SWR"))
-        && controlPanelExtrema->text().contains(QStringLiteral("Peak gain"))
+        && controlPanelExtrema->text().contains(QStringLiteral("Peak across the band"))
+        && controlPanelExtrema->text().contains(QStringLiteral("dBi @ El"))
         && controlPanelFooter != nullptr
         && controlPanelFooter->text().contains(QStringLiteral("Last run"))
         && studiesCleared
@@ -2828,10 +2996,26 @@ auto main(int argc, char* argv[]) -> int
         && controlPanelAverageGainTriggered && controlPanelConvergenceTriggered;
     const auto controlPanelWindowStateVisible = controlPanelImpedance != nullptr
         && controlPanelImpedance->text().startsWith(QStringLiteral("●"));
-    if (!controlPanelActionsCorrect || !controlPanelStateVisible || !controlPanelDenseLayout
-        || !controlPanelWindowStateVisible || !runHistoryOpened
-        || !controlPanelWorkspaceOpened || !controlPanelGeometryOpened
-        || !controlPanelEditorOpened) {
+    // Named separately so a platform-only failure says which check broke.
+    const std::array controlPanelChecks{
+        std::pair{"actions", controlPanelActionsCorrect},
+        std::pair{"state", controlPanelStateVisible},
+        std::pair{"dense layout", controlPanelDenseLayout},
+        std::pair{"window state", controlPanelWindowStateVisible},
+        std::pair{"run history", runHistoryOpened},
+        std::pair{"workspace", controlPanelWorkspaceOpened},
+        std::pair{"geometry", controlPanelGeometryOpened},
+        std::pair{"editor", controlPanelEditorOpened},
+    };
+    for (const auto& [name, passed] : controlPanelChecks) {
+        if (passed) continue;
+        std::fprintf(stderr, "controlPanel %s failed: sizeHint %d, rows %d, row size %d, "
+            "extrema \"%s\", footer \"%s\"\n", name, controlPanel.sizeHint().width(),
+            controlPanelRows == nullptr ? -1 : controlPanelRows->height(),
+            controlPanelRows == nullptr ? -1
+                : controlPanelRows->verticalHeader()->defaultSectionSize(),
+            controlPanelExtrema == nullptr ? "" : qUtf8Printable(controlPanelExtrema->text()),
+            controlPanelFooter == nullptr ? "" : qUtf8Printable(controlPanelFooter->text()));
         return NECWB_SMOKE_FAILURE("controlPanel workspace");
     }
     QSettings detachableSettings;
@@ -3510,11 +3694,11 @@ auto main(int argc, char* argv[]) -> int
         && resetPattern->isEnabled();
     resetPattern->click();
     const auto fullGridPresetRestored = patternType->currentData().toInt() == 0
-        && phiEnd->value() == 350.0;
+        && phiEnd->value() == 355.0;
     addPattern->click();
     patternType->setCurrentIndex(patternType->findData(1));
     const auto patternDraftPreviewVisible = requestTable->item(
-            requestTable->currentRow(), 0)->text().contains(QStringLiteral("Horizontal cut"))
+            requestTable->currentRow(), 0)->text().contains(QStringLiteral("Azimuth cut"))
         && requestTable->item(requestTable->currentRow(), 0)->text().contains(
             QStringLiteral("Draft"));
     applyPattern->click();
@@ -3524,9 +3708,40 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("Draft"));
     const auto patternEditorBaseValid = requestTable->rowCount() == 3
         && requestTable->item(0, 0)->text() == QStringLiteral("Full 3D pattern")
-        && requestTable->item(1, 0)->text() == QStringLiteral("Horizontal cut")
+        && requestTable->item(1, 0)->text() == QStringLiteral("Azimuth cut")
         && emittedPattern.sourceLine == 0 && emittedPattern.thetaCount == 1
         && emittedPattern.phiCount == 360 && emittedPattern.phiStep == 1.0;
+    auto* cutAngle = requestEditor.findChild<QDoubleSpinBox*>(
+        QStringLiteral("radiationCutAngle"));
+    auto* cutAngleHint = requestEditor.findChild<QLabel*>(
+        QStringLiteral("radiationCutAngleHint"));
+    auto* cutsThroughPeak = requestEditor.findChild<QPushButton*>(
+        QStringLiteral("addCutsThroughPeakButton"));
+    auto cutAngleEntersElevation = false;
+    auto cutsThroughPeakAdded = false;
+    if (cutAngle != nullptr && cutAngleHint != nullptr && cutsThroughPeak != nullptr) {
+        requestTable->selectRow(1);
+        application.processEvents();
+        const auto showsElevation = cutAngle->isVisibleTo(&requestEditor)
+            && cutAngle->value() == 28.0 && cutAngleHint->text() == QStringLiteral("NEC θ 62°");
+        cutAngle->setValue(10.0);
+        cutAngleEntersElevation = showsElevation && thetaStart->value() == 80.0
+            && thetaEnd->value() == 80.0 && cutAngleHint->text() == QStringLiteral("NEC θ 80°");
+        requestEditor.discardPendingEdits();
+        const auto disabledWithoutRun = !cutsThroughPeak->isEnabled();
+        std::vector<necwb::model::RadiationPatternRequest> addedCuts;
+        const auto connection = QObject::connect(&requestEditor,
+            &necwb::ui::AnalysisRequestEditor::patternChanged,
+            [&addedCuts](const auto& pattern) { addedCuts.push_back(pattern); });
+        requestEditor.setLatestPatternPeak(necwb::analysis::PatternDirection{12.0, 30.0});
+        cutsThroughPeak->click();
+        QObject::disconnect(connection);
+        cutsThroughPeakAdded = disabledWithoutRun && addedCuts.size() == 2
+            && addedCuts[0].thetaCount == 1 && addedCuts[0].thetaStart == 78.0
+            && addedCuts[0].phiCount == 360 && addedCuts[0].phiStep == 1.0
+            && addedCuts[1].thetaCount == 181 && addedCuts[1].phiCount == 2
+            && addedCuts[1].phiStart == 30.0 && addedCuts[1].phiStep == 180.0;
+    }
     patternFrequencyMode->setCurrentIndex(patternFrequencyMode->findData(3));
     patternContinuousStart->setValue(7.0);
     patternContinuousStop->setValue(7.2);
@@ -3627,7 +3842,7 @@ auto main(int argc, char* argv[]) -> int
         && deletionDraftVisible && deletionDraftRestores && deletionAppliesExplicitly
         && patternFrequencySelectionValid && patternFrequenciesInitializeFromModel
         && sameModelRefreshPreservesPatternFrequencies && resetActionRestoresModelFrequencies
-        && newModelResetsPatternFrequencies;
+        && newModelResetsPatternFrequencies && cutAngleEntersElevation && cutsThroughPeakAdded;
     auto* shutdownRequestEditor = new necwb::ui::AnalysisRequestEditor;
     shutdownRequestEditor->setData(requestSetup);
     auto* shutdownFrequencyMode = shutdownRequestEditor->findChild<QComboBox*>(
@@ -3939,7 +4154,8 @@ auto main(int argc, char* argv[]) -> int
         && separateDatasetsSwitchCuts
         && horizontalMaxGainCutStaysCompatible && radiationMetricsVisible
         && radiationExportReady && maxGainCutSelected && signedThetaTiesNormalized
-        && signedThetaCutStaysOpen
+        && signedThetaCutStaysOpen && offCutPeakNamed && forwardDirectionReadout
+        && crossingCutsPair
         && missingRadiationReported
         && missingRadiationDisablesDataExport
         && resultOriginPreserved && semanticResultExtent
