@@ -2881,6 +2881,16 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("solver failed"));
     controlPanel.setResultWindowVisible(Workspace::Impedance, true);
     controlPanel.show(); application.processEvents();
+    // A finished convergence study reports a whole sentence; it must not widen the panel.
+    const auto widthBeforeLongStudy = controlPanel.minimumSizeHint().width();
+    const auto longStudy = QStringLiteral(
+        "Not yet stable across two consecutive refinements. Review the trend or add levels.");
+    controlPanel.setStudyStatus(Study::Convergence, StudyState::Complete, longStudy);
+    application.processEvents();
+    const auto longStudyKeepsWidth = controlPanel.minimumSizeHint().width() == widthBeforeLongStudy
+        && controlPanel.findChild<QLabel*>(QStringLiteral("controlPanelConvergenceState"))
+               ->toolTip() == longStudy;
+    controlPanel.clearStudy(Study::Convergence);
     QImage controlPanelImage(600, 520, QImage::Format_ARGB32_Premultiplied);
     controlPanelImage.fill(Qt::transparent); QPainter controlPanelPainter(&controlPanelImage);
     controlPanel.render(&controlPanelPainter); controlPanelPainter.end();
@@ -3001,6 +3011,7 @@ auto main(int argc, char* argv[]) -> int
         std::pair{"actions", controlPanelActionsCorrect},
         std::pair{"state", controlPanelStateVisible},
         std::pair{"dense layout", controlPanelDenseLayout},
+        std::pair{"long study status keeps width", longStudyKeepsWidth},
         std::pair{"window state", controlPanelWindowStateVisible},
         std::pair{"run history", runHistoryOpened},
         std::pair{"workspace", controlPanelWorkspaceOpened},

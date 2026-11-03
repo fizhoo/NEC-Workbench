@@ -17,6 +17,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
+#include <QPainter>
 #include <QSignalBlocker>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -31,6 +32,22 @@
 
 namespace necwb::ui {
 namespace {
+
+// A one-line label that ends in "…" when its text does not fit. A study's status can be a
+// whole sentence; as a plain label it would set the panel's minimum width and widen the
+// dashboard for good.
+class ElidedLabel final : public QLabel {
+public:
+    using QLabel::QLabel;
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.drawText(contentsRect(), alignment() | Qt::TextSingleLine,
+            fontMetrics().elidedText(text(), Qt::ElideRight, contentsRect().width()));
+    }
+};
 
 auto groundName(model::GroundType ground) -> QString
 {
@@ -277,14 +294,16 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
         QStringLiteral("controlPanelConvergenceRun")};
     for (auto row = 0; row < 2; ++row) {
         qualityGrid->addWidget(new QLabel(qualityNames[row], panel), row, 0);
-        studyStateLabels_[row] = new QLabel(tr("not run"), panel);
+        studyStateLabels_[row] = new ElidedLabel(tr("not run"), panel);
         studyStateLabels_[row]->setObjectName(stateNames[row]);
+        studyStateLabels_[row]->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         studyButtons_[row] = compactButton(tr("Run"), panel);
         studyButtons_[row]->setObjectName(buttonNames[row]);
         studyButtons_[row]->setAutoRaise(true);
         qualityGrid->addWidget(studyStateLabels_[row], row, 1);
         qualityGrid->addWidget(studyButtons_[row], row, 2);
     }
+    qualityGrid->setColumnStretch(1, 1);
     modelArea->addWidget(modelHeading);
     modelArea->addWidget(modelRows_);
     modelArea->addSpacing(3);
