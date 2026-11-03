@@ -5,7 +5,9 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <utility>
+#include <vector>
 
 #include <QComboBox>
 #include <QCoreApplication>
@@ -15,6 +17,8 @@
 #include <QPushButton>
 #include <QScrollBar>
 #include <QSignalBlocker>
+#include <QSpinBox>
+#include <QStyledItemDelegate>
 #include <QStyle>
 #include <QTableWidget>
 #include <QVBoxLayout>
@@ -22,16 +26,90 @@
 namespace necwb::ui {
 namespace {
 constexpr auto SourceLineRole = Qt::UserRole;
-// Cells under a dropdown keep its value here rather than as text, which would show around
-// the dropdown's edges. Setting it still emits itemChanged, which marks the row pending.
-constexpr auto ComboValueRole = Qt::UserRole + 1;
+// A cell chosen from a fixed list shows the choice's label and keeps its value here.
+constexpr auto ChoiceValueRole = Qt::UserRole + 1;
 
-// Rows tall enough for the dropdowns in them.
-void fitRowsToComboBoxes(QTableWidget* table)
-{
-    const QComboBox probe;
-    table->verticalHeader()->setDefaultSectionSize(probe.sizeHint().height() + 4);
-}
+// Cells show plain text and get an editor only while being edited: a dropdown of fixed
+// choices or of the model's wire tags, or a spin box of segment numbers on the row's wire.
+class CellEditorDelegate final : public QStyledItemDelegate {
+public:
+    enum class Kind { Choice, Wire, Segment };
+
+    CellEditorDelegate(Kind kind, QObject* parent) : QStyledItemDelegate(parent), kind_(kind) {}
+
+    // Choice cells: labels and the values stored in ChoiceValueRole.
+    std::vector<std::pair<QString, QVariant>> choices;
+    std::function<std::vector<int>()> wireTags;
+    // Segments on the wire with this tag; zero when there is no such wire.
+    std::function<int(int wireTag)> segmentCount;
+    // Segment cells: the column holding the row's wire tag.
+    int wireColumn{-1};
+    // Wire cells: segment columns to keep within the newly chosen wire.
+    std::vector<int> segmentColumns;
+
+    auto createEditor(QWidget* parent, const QStyleOptionViewItem&, const QModelIndex& index) const
+        -> QWidget* override
+    {
+        if (kind_ == Kind::Segment) {
+            auto* spin = new QSpinBox(parent);
+            const auto wireTag = index.siblingAtColumn(wireColumn).data().toString().toInt();
+            spin->setRange(1, std::max(1, segmentCount(wireTag)));
+            return spin;
+        }
+        auto* combo = new QComboBox(parent);
+        if (kind_ == Kind::Choice) {
+            for (const auto& [label, value] : choices) combo->addItem(label, value);
+        } else {
+            for (const auto tag : wireTags()) combo->addItem(QString::number(tag), tag);
+        }
+        // A choice takes effect as soon as it is picked, without leaving the cell.
+        connect(combo, &QComboBox::activated, this, [self = const_cast<CellEditorDelegate*>(this),
+                                                        combo] {
+            emit self->commitData(combo);
+            emit self->closeEditor(combo);
+        });
+        return combo;
+    }
+
+    void setEditorData(QWidget* editor, const QModelIndex& index) const override
+    {
+        if (auto* spin = qobject_cast<QSpinBox*>(editor)) {
+            spin->setValue(index.data().toString().toInt());
+        } else if (auto* combo = qobject_cast<QComboBox*>(editor)) {
+            const auto value = kind_ == Kind::Choice ? index.data(ChoiceValueRole)
+                                                     : QVariant(index.data().toString().toInt());
+            combo->setCurrentIndex(std::max(0, combo->findData(value)));
+            QMetaObject::invokeMethod(combo, &QComboBox::showPopup, Qt::QueuedConnection);
+        }
+    }
+
+    void setModelData(QWidget* editor, QAbstractItemModel* model,
+        const QModelIndex& index) const override
+    {
+        if (const auto* spin = qobject_cast<QSpinBox*>(editor)) {
+            model->setData(index, QString::number(spin->value()));
+            return;
+        }
+        const auto* combo = qobject_cast<QComboBox*>(editor);
+        if (combo == nullptr || combo->currentIndex() < 0) return;
+        if (kind_ == Kind::Choice) {
+            model->setData(index, combo->currentData(), ChoiceValueRole);
+            model->setData(index, combo->currentText());
+            return;
+        }
+        const auto wireTag = combo->currentData().toInt();
+        model->setData(index, QString::number(wireTag));
+        const auto count = segmentCount(wireTag);
+        for (const auto column : segmentColumns) {
+            const auto segment = index.siblingAtColumn(column);
+            if (segment.data().toString().toInt() > count)
+                model->setData(segment, QString::number(count));
+        }
+    }
+
+private:
+    Kind kind_;
+};
 
 // Tables show between two and six rows, then scroll, so an empty table stays small and the
 // spare height collects below the last section instead of inside every table.
@@ -110,32 +188,45 @@ auto sourceLineAt(QTableWidget* table, int row) -> std::size_t
 
 auto loadTypeAt(QTableWidget* table, int row) -> int
 {
-    if (row < 0) return -1;
-    if (const auto* combo = qobject_cast<QComboBox*>(table->cellWidget(row, 0))) {
-        if (const auto data = combo->currentData(); data.isValid()) return data.toInt();
-    }
-    return table->item(row, 0) == nullptr ? -1
-        : table->item(row, 0)->data(ComboValueRole).toInt();
+    if (row < 0 || table->item(row, TypeColumn) == nullptr) return -1;
+    const auto value = table->item(row, TypeColumn)->data(ChoiceValueRole);
+    return value.isValid() ? value.toInt() : -1;
 }
 
 auto entireWireAt(QTableWidget* table, int row) -> bool
 {
-    if (row < 0) return false;
-    if (const auto* combo = qobject_cast<QComboBox*>(table->cellWidget(row, ScopeColumn))) {
-        return combo->currentData().toBool();
-    }
-    return false;
+    return row >= 0 && table->item(row, ScopeColumn) != nullptr
+        && table->item(row, ScopeColumn)->data(ChoiceValueRole).toBool();
 }
 
-auto comboIntAt(QTableWidget* table, int row, int column, bool* valid = nullptr) -> int
+auto cellIntAt(QTableWidget* table, int row, int column, bool* valid = nullptr) -> int
 {
-    if (const auto* combo = qobject_cast<QComboBox*>(table->cellWidget(row, column))) {
-        const auto data = combo->currentData();
-        if (valid != nullptr) *valid = data.isValid();
-        return data.toInt();
+    auto ok = false;
+    const auto value = table->item(row, column) == nullptr
+        ? 0 : table->item(row, column)->text().toInt(&ok);
+    if (valid != nullptr) *valid = ok;
+    return value;
+}
+
+// Port cells of a TL or NT row, for "transmission-line end" or "network port".
+void setPortToolTips(QTableWidget* table, int row, const QString& subject)
+{
+    for (const auto column : {Wire1Column, Wire2Column}) {
+        table->item(row, column)->setToolTip(
+            QCoreApplication::translate("LoadNetworkEditor",
+                "Double-click to choose the GW wire tag for this %1.").arg(subject));
     }
-    if (valid != nullptr) *valid = false;
-    return 0;
+    for (const auto column : {Segment1Column, Segment2Column}) {
+        table->item(row, column)->setToolTip(
+            QCoreApplication::translate("LoadNetworkEditor",
+                "Double-click to choose the segment this %1 connects across.").arg(subject));
+    }
+}
+
+auto scopeLabel(bool entireWire) -> QString
+{
+    return entireWire ? QCoreApplication::translate("LoadNetworkEditor", "Entire wire")
+                      : QCoreApplication::translate("LoadNetworkEditor", "Segment range");
 }
 
 auto displayScaleFor(int type, int column) -> double
@@ -218,7 +309,46 @@ LoadNetworkEditor::LoadNetworkEditor(QWidget* parent) : QWidget(parent)
     auto* deleteNetwork = new QPushButton(tr("Delete Selected Network"), this);
     deleteNetwork->setObjectName(QStringLiteral("deleteSelectedNetworkButton"));
     networkButtons->addWidget(addNetwork); networkButtons->addWidget(applyNetworkButton_); networkButtons->addWidget(deleteNetwork); networkButtons->addStretch();
-    for (auto* table : {loads_, lines_, networks_}) fitRowsToComboBoxes(table);
+    const auto wireTags = [this] {
+        std::vector<int> tags;
+        for (const auto& wire : model_.wires())
+            if (std::ranges::find(tags, wire.tag) == tags.end()) tags.push_back(wire.tag);
+        return tags;
+    };
+    const auto segmentCount = [this](int wireTag) {
+        const auto* wire = model_.wireByTag(wireTag);
+        return wire == nullptr ? 0 : wire->segments;
+    };
+    const auto wireEditor = [&](QTableWidget* table, int column, std::vector<int> segments) {
+        auto* delegate = new CellEditorDelegate(CellEditorDelegate::Kind::Wire, table);
+        delegate->wireTags = wireTags;
+        delegate->segmentCount = segmentCount;
+        delegate->segmentColumns = std::move(segments);
+        table->setItemDelegateForColumn(column, delegate);
+    };
+    const auto segmentEditor = [&](QTableWidget* table, int column, int wireColumn) {
+        auto* delegate = new CellEditorDelegate(CellEditorDelegate::Kind::Segment, table);
+        delegate->segmentCount = segmentCount;
+        delegate->wireColumn = wireColumn;
+        table->setItemDelegateForColumn(column, delegate);
+    };
+    auto* typeEditor = new CellEditorDelegate(CellEditorDelegate::Kind::Choice, loads_);
+    for (const auto& [number, label] : loadTypeChoices())
+        typeEditor->choices.emplace_back(QCoreApplication::translate("LoadNetworkEditor", label), number);
+    loads_->setItemDelegateForColumn(TypeColumn, typeEditor);
+    auto* scopeEditor = new CellEditorDelegate(CellEditorDelegate::Kind::Choice, loads_);
+    scopeEditor->choices = {{scopeLabel(true), true}, {scopeLabel(false), false}};
+    loads_->setItemDelegateForColumn(ScopeColumn, scopeEditor);
+    wireEditor(loads_, WireColumn, {FirstSegmentColumn, LastSegmentColumn});
+    segmentEditor(loads_, FirstSegmentColumn, WireColumn);
+    segmentEditor(loads_, LastSegmentColumn, WireColumn);
+    for (auto* table : {loads_, lines_, networks_}) table->setWordWrap(false);
+    for (auto* table : {lines_, networks_}) {
+        wireEditor(table, Wire1Column, {Segment1Column});
+        segmentEditor(table, Segment1Column, Wire1Column);
+        wireEditor(table, Wire2Column, {Segment2Column});
+        segmentEditor(table, Segment2Column, Wire2Column);
+    }
     showRowsOrEmptyMessage(loads_,
         tr("No loads. Click Add Load, or right-click a wire in Geometry."));
     showRowsOrEmptyMessage(lines_, tr("No transmission lines. Click Add Transmission Line, or "
@@ -349,8 +479,25 @@ LoadNetworkEditor::LoadNetworkEditor(QWidget* parent) : QWidget(parent)
             showSharingNotes(model::InsertionKind::LineEnd, row);
             if (const auto line = sourceLineAt(lines_, row)) emit transmissionLineSelected(line);
         });
-    connect(loads_, &QTableWidget::itemChanged, this,
-        [this] { if (!updating_) setLoadPending(true); });
+    connect(loads_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
+        if (updating_) return;
+        const auto row = item->row();
+        if (item->column() == TypeColumn) {
+            updateLoadValueFields(row, loadTypeAt(loads_, row));
+            updateLoadColumns(row);
+            loads_->resizeColumnToContents(TypeColumn);
+        } else if (item->column() == ScopeColumn) {
+            const auto entireWire = entireWireAt(loads_, row);
+            auto* first = loads_->item(row, FirstSegmentColumn);
+            auto* last = loads_->item(row, LastSegmentColumn);
+            if (!entireWire && first != nullptr && last != nullptr) {
+                if (first->text().toInt() <= 0) first->setText(QStringLiteral("1"));
+                if (last->text().toInt() <= 0) last->setText(first->text());
+            }
+            updateLoadSegmentFields(row, entireWire);
+        }
+        setLoadPending(true);
+    });
     connect(lines_, &QTableWidget::itemChanged, this, [this] {
         updateLineApplyState(); if (!updating_) setLinePending(true);
     });
@@ -381,6 +528,8 @@ void LoadNetworkEditor::setData(const model::AntennaModel& model, const model::M
     for (auto row = 0; row < static_cast<int>(setup.networks.size()); ++row) {
         setNetworkRow(row, setup.networks[row]);
     }
+    loads_->resizeColumnToContents(TypeColumn);
+    loads_->resizeColumnToContents(ScopeColumn);
     markSharedRows();
     selectLoad(selectedLoad);
     selectTransmissionLine(selectedLine);
@@ -588,7 +737,15 @@ invalid_value: validation_->setText(tr("Wire conductivity must be greater than z
 
 void LoadNetworkEditor::setLoadRow(int row, const model::LoadDefinition& value)
 {
-    const QStringList cells{{}, QString::number(value.wireTag), {},
+    const auto wasUpdating = updating_;
+    updating_ = true;
+    const auto entireWire = value.firstSegment == 0 && value.lastSegment == 0;
+    const auto type = std::ranges::find(loadTypeChoices(), value.type,
+        &std::pair<int, const char*>::first);
+    const QStringList cells{
+        type == loadTypeChoices().end() ? QString::number(value.type)
+            : QCoreApplication::translate("LoadNetworkEditor", type->second),
+        QString::number(value.wireTag), scopeLabel(entireWire),
         QString::number(value.firstSegment), QString::number(value.lastSegment),
         formatDecimal(value.value1 * displayScaleFor(value.type, Value1Column)),
         formatDecimal(value.value2 * displayScaleFor(value.type, Value2Column)),
@@ -598,45 +755,16 @@ void LoadNetworkEditor::setLoadRow(int row, const model::LoadDefinition& value)
         item->setData(SourceLineRole, static_cast<qulonglong>(value.sourceLine));
         loads_->setItem(row, column, item);
     }
-    loads_->item(row, 0)->setData(ComboValueRole, value.type);
-    auto* type = new QComboBox(loads_);
-    type->setObjectName(QStringLiteral("loadTypeCombo"));
-    for (const auto& [number, label] : loadTypeChoices()) {
-        type->addItem(QCoreApplication::translate("LoadNetworkEditor", label), number);
-    }
-    type->setCurrentIndex(type->findData(value.type));
-    connect(type, &QComboBox::currentIndexChanged, this, [this, row, type] {
-        const auto selectedType = type->currentData().toInt();
-        loads_->item(row, 0)->setData(ComboValueRole, selectedType);
-        loads_->setCurrentCell(row, 0);
-        updateLoadValueFields(row, selectedType);
-        updateLoadColumns(row);
-        if (!updating_) setLoadPending(true);
-    });
-    loads_->setCellWidget(row, 0, type);
-    type->setToolTip(tr("NEC-2 LD load type. The value columns change meaning with this selection."));
-
-    auto* scope = new QComboBox(loads_);
-    scope->setObjectName(QStringLiteral("loadScopeCombo"));
-    scope->addItem(tr("Entire wire"), true);
-    scope->addItem(tr("Segment range"), false);
-    scope->setCurrentIndex((value.firstSegment == 0 && value.lastSegment == 0) ? 0 : 1);
-    scope->setToolTip(tr("Apply the load to every segment on the tagged wire or to a segment range."));
-    connect(scope, &QComboBox::currentIndexChanged, this, [this, row, scope] {
-        const auto entireWire = scope->currentData().toBool();
-        if (!entireWire) {
-            auto* first = loads_->item(row, FirstSegmentColumn);
-            auto* last = loads_->item(row, LastSegmentColumn);
-            if (first->text().toInt() <= 0) first->setText(QStringLiteral("1"));
-            if (last->text().toInt() <= 0) last->setText(first->text());
-        }
-        updateLoadSegmentFields(row, entireWire);
-        loads_->setCurrentCell(row, ScopeColumn);
-        if (!updating_) setLoadPending(true);
-    });
-    loads_->setCellWidget(row, ScopeColumn, scope);
-    updateLoadSegmentFields(row, entireWireAt(loads_, row));
+    loads_->item(row, TypeColumn)->setData(ChoiceValueRole, value.type);
+    loads_->item(row, TypeColumn)->setToolTip(
+        tr("NEC-2 LD load type. The value columns change meaning with this selection."));
+    loads_->item(row, WireColumn)->setToolTip(tr("Double-click to choose the GW wire tag."));
+    loads_->item(row, ScopeColumn)->setData(ChoiceValueRole, entireWire);
+    loads_->item(row, ScopeColumn)->setToolTip(
+        tr("Apply the load to every segment on the tagged wire or to a segment range."));
+    updateLoadSegmentFields(row, entireWire);
     updateLoadValueFields(row, value.type);
+    updating_ = wasUpdating;
 }
 
 void LoadNetworkEditor::updateLoadColumns(int row)
@@ -710,23 +838,11 @@ void LoadNetworkEditor::updateLoadValueFields(int row, int type)
     }
 }
 
-void LoadNetworkEditor::populateSegmentChoices(
-    QComboBox* control, int wireTag, int selectedSegment)
-{
-    const QSignalBlocker blocker(control);
-    control->clear();
-    const auto* wire = model_.wireByTag(wireTag);
-    if (wire == nullptr) return;
-    for (auto segment = 1; segment <= wire->segments; ++segment) {
-        control->addItem(QString::number(segment), segment);
-    }
-    const auto selectedIndex = control->findData(selectedSegment);
-    control->setCurrentIndex(selectedIndex >= 0 ? selectedIndex : 0);
-}
-
 void LoadNetworkEditor::setLineRow(int row, const model::TransmissionLineDefinition& value)
 {
-    const QStringList cells{{}, {}, {}, {}, formatDecimal(value.characteristicImpedance),
+    const QStringList cells{QString::number(value.wireTag1), QString::number(value.segment1),
+        QString::number(value.wireTag2), QString::number(value.segment2),
+        formatDecimal(value.characteristicImpedance),
         formatDecimal(model::fromMeters(value.lengthMeters, lengthUnit_)),
         formatDecimal(value.shuntReal1), formatDecimal(value.shuntImaginary1),
         formatDecimal(value.shuntReal2), formatDecimal(value.shuntImaginary2)};
@@ -736,9 +852,7 @@ void LoadNetworkEditor::setLineRow(int row, const model::TransmissionLineDefinit
         lines_->setItem(row, column, item);
     }
 
-    const auto subject = tr("transmission-line endpoint");
-    addPortControls(lines_, row, 1, value.wireTag1, value.segment1, QStringLiteral("line"), subject);
-    addPortControls(lines_, row, 2, value.wireTag2, value.segment2, QStringLiteral("line"), subject);
+    setPortToolTips(lines_, row, tr("transmission-line end"));
 
     lines_->item(row, ImpedanceColumn)->setToolTip(
         tr("Characteristic impedance in ohms. A negative value creates a crossed line."));
@@ -751,56 +865,11 @@ void LoadNetworkEditor::setLineRow(int row, const model::TransmissionLineDefinit
     }
 }
 
-void LoadNetworkEditor::addPortControls(QTableWidget* table, int row, int port, int wireTag,
-    int segment, const QString& namePrefix, const QString& subject)
-{
-    const auto wireColumn = port == 1 ? Wire1Column : Wire2Column;
-    const auto segmentColumn = wireColumn + 1;
-    const auto updateApplyState = [this, table] {
-        if (table == networks_) updateNetworkApplyState();
-        else updateLineApplyState();
-    };
-    table->item(row, wireColumn)->setData(ComboValueRole, wireTag);
-    table->item(row, segmentColumn)->setData(ComboValueRole, segment);
-    auto* wireControl = new QComboBox(table);
-    wireControl->setObjectName(QStringLiteral("%1Wire%2Combo").arg(namePrefix).arg(port));
-    for (const auto& wire : model_.wires()) {
-        wireControl->addItem(tr("Wire %1").arg(wire.tag), wire.tag);
-    }
-    wireControl->setCurrentIndex(wireControl->findData(wireTag));
-    wireControl->setToolTip(tr("Choose the GW wire tag for this %1.").arg(subject));
-
-    auto* segmentControl = new QComboBox(table);
-    segmentControl->setObjectName(QStringLiteral("%1Segment%2Combo").arg(namePrefix).arg(port));
-    populateSegmentChoices(segmentControl, wireTag, segment);
-    segmentControl->setToolTip(tr("Choose the segment where this %1 connects.").arg(subject));
-
-    connect(wireControl, &QComboBox::currentIndexChanged, this,
-        [this, table, row, wireColumn, segmentColumn, wireControl, segmentControl,
-            updateApplyState] {
-            const auto wireTag = wireControl->currentData().toInt();
-            table->item(row, wireColumn)->setData(ComboValueRole, wireTag);
-            populateSegmentChoices(segmentControl, wireTag,
-                segmentControl->currentData().toInt());
-            table->item(row, segmentColumn)->setData(
-                ComboValueRole, segmentControl->currentData().toInt());
-            table->setCurrentCell(row, wireColumn);
-            updateApplyState();
-        });
-    connect(segmentControl, &QComboBox::currentIndexChanged, this,
-        [table, row, segmentColumn, segmentControl, updateApplyState] {
-            table->item(row, segmentColumn)->setData(
-                ComboValueRole, segmentControl->currentData().toInt());
-            table->setCurrentCell(row, segmentColumn);
-            updateApplyState();
-        });
-    table->setCellWidget(row, wireColumn, wireControl);
-    table->setCellWidget(row, segmentColumn, segmentControl);
-}
-
 void LoadNetworkEditor::setNetworkRow(int row, const model::NetworkDefinition& value)
 {
-    const QStringList cells{{}, {}, {}, {}, formatDecimal(value.y11Real), formatDecimal(value.y11Imaginary),
+    const QStringList cells{QString::number(value.wireTag1), QString::number(value.segment1),
+        QString::number(value.wireTag2), QString::number(value.segment2),
+        formatDecimal(value.y11Real), formatDecimal(value.y11Imaginary),
         formatDecimal(value.y12Real), formatDecimal(value.y12Imaginary),
         formatDecimal(value.y22Real), formatDecimal(value.y22Imaginary)};
     for (auto column = 0; column < cells.size(); ++column) {
@@ -808,11 +877,7 @@ void LoadNetworkEditor::setNetworkRow(int row, const model::NetworkDefinition& v
         item->setData(SourceLineRole, static_cast<qulonglong>(value.sourceLine));
         networks_->setItem(row, column, item);
     }
-    const auto subject = tr("network port");
-    addPortControls(networks_, row, 1, value.wireTag1, value.segment1,
-        QStringLiteral("network"), subject);
-    addPortControls(networks_, row, 2, value.wireTag2, value.segment2,
-        QStringLiteral("network"), subject);
+    setPortToolTips(networks_, row, tr("network port"));
     for (auto column = static_cast<int>(Y11RealColumn); column <= Y22ImaginaryColumn; ++column)
         networks_->item(row, column)->setToolTip(tr("Admittance in siemens."));
 }
@@ -829,8 +894,8 @@ void LoadNetworkEditor::updateNetworkApplyState()
         {std::pair{Wire1Column, Segment1Column}, std::pair{Wire2Column, Segment2Column}}) {
         bool validWire = false;
         bool validSegment = false;
-        const auto* wire = model_.wireByTag(comboIntAt(networks_, row, wireColumn, &validWire));
-        const auto segment = comboIntAt(networks_, row, segmentColumn, &validSegment);
+        const auto* wire = model_.wireByTag(cellIntAt(networks_, row, wireColumn, &validWire));
+        const auto segment = cellIntAt(networks_, row, segmentColumn, &validSegment);
         valid = valid && validWire && validSegment && wire != nullptr
             && segment >= 1 && segment <= wire->segments;
     }
@@ -853,10 +918,10 @@ void LoadNetworkEditor::updateLineApplyState()
     bool validSegment1 = false;
     bool validWire2 = false;
     bool validSegment2 = false;
-    const auto wire1 = comboIntAt(lines_, row, Wire1Column, &validWire1);
-    const auto segment1 = comboIntAt(lines_, row, Segment1Column, &validSegment1);
-    const auto wire2 = comboIntAt(lines_, row, Wire2Column, &validWire2);
-    const auto segment2 = comboIntAt(lines_, row, Segment2Column, &validSegment2);
+    const auto wire1 = cellIntAt(lines_, row, Wire1Column, &validWire1);
+    const auto segment1 = cellIntAt(lines_, row, Segment1Column, &validSegment1);
+    const auto wire2 = cellIntAt(lines_, row, Wire2Column, &validWire2);
+    const auto segment2 = cellIntAt(lines_, row, Segment2Column, &validSegment2);
     bool validImpedance = false;
     bool validLength = false;
     const auto impedance = lines_->item(row, ImpedanceColumn)->text().toDouble(&validImpedance);
@@ -904,7 +969,7 @@ void LoadNetworkEditor::applySelectedNetwork()
     auto valid = true;
     const auto integer = [this, row, &valid](int column) {
         bool ok = false;
-        const auto result = comboIntAt(networks_, row, column, &ok);
+        const auto result = cellIntAt(networks_, row, column, &ok);
         valid = valid && ok;
         return result;
     };
@@ -947,10 +1012,10 @@ void LoadNetworkEditor::applySelectedNetwork()
 void LoadNetworkEditor::applySelectedLine()
 {
     const auto row = lines_->currentRow(); if (row < 0) return; bool valid = true; model::TransmissionLineDefinition value;
-    value.wireTag1=comboIntAt(lines_,row,Wire1Column,&valid); if(!valid) goto invalid;
-    value.segment1=comboIntAt(lines_,row,Segment1Column,&valid); if(!valid) goto invalid;
-    value.wireTag2=comboIntAt(lines_,row,Wire2Column,&valid); if(!valid) goto invalid;
-    value.segment2=comboIntAt(lines_,row,Segment2Column,&valid); if(!valid) goto invalid;
+    value.wireTag1=cellIntAt(lines_,row,Wire1Column,&valid); if(!valid) goto invalid;
+    value.segment1=cellIntAt(lines_,row,Segment1Column,&valid); if(!valid) goto invalid;
+    value.wireTag2=cellIntAt(lines_,row,Wire2Column,&valid); if(!valid) goto invalid;
+    value.segment2=cellIntAt(lines_,row,Segment2Column,&valid); if(!valid) goto invalid;
     value.characteristicImpedance=lines_->item(row,ImpedanceColumn)->text().toDouble(&valid); if(!valid) goto invalid;
     value.lengthMeters=model::toMeters(lines_->item(row,LengthColumn)->text().toDouble(&valid), lengthUnit_); if(!valid) goto invalid;
     value.shuntReal1=lines_->item(row,ShuntReal1Column)->text().toDouble(&valid); if(!valid) goto invalid;

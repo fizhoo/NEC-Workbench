@@ -56,7 +56,9 @@
 #include <QListWidget>
 #include <QListView>
 #include <QMenu>
+#include <QAbstractItemDelegate>
 #include <QMouseEvent>
+#include <QSpinBox>
 #include <QPainter>
 #include <QPalette>
 #include <QPlainTextEdit>
@@ -85,6 +87,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <numbers>
 #include <vector>
 
@@ -3895,6 +3898,28 @@ auto main(int argc, char* argv[]) -> int
     attachmentImage.fill(Qt::transparent); QPainter attachmentPainter(&attachmentImage);
     attachment2D.render(&attachmentPainter); attachment3D.render(&attachmentPainter);
     attachmentPainter.end();
+    // Edits a Loads & Networks cell the way a double-click does, through its column's editor.
+    const auto editCell = [](QTableWidget* table, int row, int column, const QVariant& value) {
+        auto* delegate = table->itemDelegateForColumn(column);
+        const auto index = table->model()->index(row, column);
+        if (delegate == nullptr) return false;
+        std::unique_ptr<QWidget> editor(
+            delegate->createEditor(table->viewport(), QStyleOptionViewItem{}, index));
+        if (editor == nullptr) return false;
+        delegate->setEditorData(editor.get(), index);
+        if (auto* combo = qobject_cast<QComboBox*>(editor.get())) {
+            const auto found = combo->findData(value);
+            if (found < 0) return false;
+            combo->setCurrentIndex(found);
+        } else if (auto* spin = qobject_cast<QSpinBox*>(editor.get())) {
+            spin->setValue(value.toInt());
+            if (spin->value() != value.toInt()) return false;
+        } else {
+            return false;
+        }
+        delegate->setModelData(editor.get(), table->model(), index);
+        return true;
+    };
     {
         auto sharedSetup = attachmentSetup;
         sharedSetup.loads.push_back({4, 1, 3, 3, 300.0, 0.0, 0.0, 9});
@@ -3942,7 +3967,9 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("applySelectedNetworkButton"));
         if (networkTable == nullptr || addNetwork == nullptr || applyNetwork == nullptr
             || networkTable->rowCount() != 1
-            || networkTable->findChild<QComboBox*>(QStringLiteral("networkWire1Combo")) == nullptr)
+            || networkTable->item(0, 0)->text() != QStringLiteral("1")
+            || networkTable->item(0, 1)->text() != QStringLiteral("9")
+            || networkTable->cellWidget(0, 0) != nullptr)
             return NECWB_SMOKE_FAILURE("network table controls");
         std::optional<necwb::model::NetworkDefinition> emittedNetwork;
         QObject::connect(&sharedEditor, &necwb::ui::LoadNetworkEditor::networkChanged,
@@ -3999,10 +4026,8 @@ auto main(int argc, char* argv[]) -> int
     auto* applyLoad = loadNetwork.findChild<QPushButton*>(QStringLiteral("applySelectedLoadButton"));
     auto* applyLine = loadNetwork.findChild<QPushButton*>(QStringLiteral("applySelectedLineButton"));
     auto* loadValidation = loadNetwork.findChild<QLabel*>(QStringLiteral("loadNetworkValidation"));
-    auto* loadType = loadNetwork.findChild<QComboBox*>(QStringLiteral("loadTypeCombo"));
     if (loadTable == nullptr || lineTable == nullptr || addLoad == nullptr || addLine == nullptr
-        || applyLoad == nullptr || applyLine == nullptr
-        || loadValidation == nullptr || loadType == nullptr)
+        || applyLoad == nullptr || applyLine == nullptr || loadValidation == nullptr)
         return NECWB_SMOKE_FAILURE("loads and lines controls");
     if (loadTable->item(0, 5)->text() != QStringLiteral("50.000")
         || lineTable->item(0, 4)->text() != QStringLiteral("50.000")
@@ -4010,16 +4035,18 @@ auto main(int argc, char* argv[]) -> int
         || lineTable->horizontalHeaderItem(5)->text() != QStringLiteral("Length (ft)"))
         return NECWB_SMOKE_FAILURE("transmission-line columns");
     loadTable->selectRow(0);
-    if (loadType->count() != 6 || loadType->currentData().toInt() != 4
+    if (loadTable->item(0, 0)->text() != QStringLiteral("4 — Fixed complex impedance")
+        || loadTable->cellWidget(0, 0) != nullptr
         || loadTable->horizontalHeaderItem(5)->text() != QStringLiteral("Resistance (Ω)")
         || loadTable->horizontalHeaderItem(6)->text() != QStringLiteral("Reactance (Ω)")
         || loadTable->item(0, 7)->flags().testFlag(Qt::ItemIsEditable))
         return NECWB_SMOKE_FAILURE("load type 4 columns");
-    loadType->setCurrentIndex(loadType->findData(5));
-    if (loadTable->horizontalHeaderItem(5)->text() != QStringLiteral("Conductivity (MS/m)")
+    if (!editCell(loadTable, 0, 0, 5)
+        || loadTable->item(0, 0)->text() != QStringLiteral("5 — Wire conductivity")
+        || loadTable->horizontalHeaderItem(5)->text() != QStringLiteral("Conductivity (MS/m)")
         || loadTable->item(0, 6)->flags().testFlag(Qt::ItemIsEditable))
         return NECWB_SMOKE_FAILURE("load type 2 columns");
-    loadType->setCurrentIndex(loadType->findData(4));
+    if (!editCell(loadTable, 0, 0, 4)) return NECWB_SMOKE_FAILURE("load type editor");
     auto validLoadEmitted = false;
     auto emittedLoadType = -1;
     auto emittedLoadSourceLine = std::size_t{1};
@@ -4055,12 +4082,10 @@ auto main(int argc, char* argv[]) -> int
     loadTable->item(0, 1)->setText(QStringLiteral("1")); applyLoad->click();
     addLoad->click();
     const auto draftDidNotEmit = emittedLoadType == 4 && loadTable->rowCount() == 2;
-    auto* draftType = qobject_cast<QComboBox*>(loadTable->cellWidget(1, 0));
-    auto* draftScope = qobject_cast<QComboBox*>(loadTable->cellWidget(1, 2));
-    if (draftType == nullptr || draftScope == nullptr)
-        return NECWB_SMOKE_FAILURE("draft load controls");
-    draftType->setCurrentIndex(draftType->findData(2));
-    draftScope->setCurrentIndex(draftScope->findData(true));
+    if (!editCell(loadTable, 1, 0, 2) || !editCell(loadTable, 1, 2, true)
+        || loadTable->item(1, 2)->text() != QStringLiteral("Entire wire")
+        || loadTable->item(1, 3)->flags().testFlag(Qt::ItemIsEditable))
+        return NECWB_SMOKE_FAILURE("draft load editors");
     loadTable->item(1, 6)->setText(QStringLiteral("4.700"));
     loadTable->item(1, 7)->setText(QStringLiteral("22.000"));
     applyLoad->click();
@@ -4076,19 +4101,16 @@ auto main(int argc, char* argv[]) -> int
     const auto lineUnitConverted = std::abs(emittedLineLength - 3.048) < 1.0e-12;
     addLine->click();
     const auto lineDraftDidNotEmit = emittedLineSourceLine == 8 && lineTable->rowCount() == 2;
-    auto* draftWire1 = qobject_cast<QComboBox*>(lineTable->cellWidget(1, 0));
-    auto* draftSegment1 = qobject_cast<QComboBox*>(lineTable->cellWidget(1, 1));
-    auto* draftWire2 = qobject_cast<QComboBox*>(lineTable->cellWidget(1, 2));
-    auto* draftSegment2 = qobject_cast<QComboBox*>(lineTable->cellWidget(1, 3));
-    if (draftWire1 == nullptr || draftSegment1 == nullptr
-        || draftWire2 == nullptr || draftSegment2 == nullptr)
-        return NECWB_SMOKE_FAILURE("draft transmission-line controls");
+    // Segment editors stop at the row's wire; both test wires have 11 segments.
+    if (editCell(lineTable, 1, 1, 12) || !editCell(lineTable, 1, 1, 11)
+        || !editCell(lineTable, 1, 2, 1) || editCell(lineTable, 1, 0, 99))
+        return NECWB_SMOKE_FAILURE("draft transmission-line editors");
     applyLine->click();
     const auto lineDraftApplied = emittedLineSourceLine == 0
-        && draftWire1->currentData().toInt() == 1
-        && draftSegment1->currentData().toInt() == 1
-        && draftWire2->currentData().toInt() == 2
-        && draftSegment2->currentData().toInt() == 1;
+        && lineTable->item(1, 0)->text() == QStringLiteral("1")
+        && lineTable->item(1, 1)->text() == QStringLiteral("11")
+        && lineTable->item(1, 2)->text() == QStringLiteral("1")
+        && lineTable->item(1, 3)->text() == QStringLiteral("1");
     QTemporaryDir directory;
     necwb::ui::AnalysisRunStore store(directory.path());
     auto run = store.create(QStringLiteral("nec2"), QStringLiteral("/tmp/test-dipole.nec"));

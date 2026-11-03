@@ -9,7 +9,6 @@
 #include <QWidget>
 
 class QLabel;
-class QComboBox;
 class QPushButton;
 class QTableWidget;
 
@@ -45,11 +44,6 @@ private:
     void setLoadRow(int row, const model::LoadDefinition& load);
     void setLineRow(int row, const model::TransmissionLineDefinition& line);
     void setNetworkRow(int row, const model::NetworkDefinition& network);
-    // Wire and segment dropdowns for TL end or NT port 1 or 2, named <prefix>Wire<port>Combo
-    // and <prefix>Segment<port>Combo.
-    void addPortControls(QTableWidget* table, int row, int port, int wireTag, int segment,
-        const QString& namePrefix, const QString& subject);
-    void populateSegmentChoices(QComboBox* control, int wireTag, int selectedSegment);
     void updateLineApplyState();
     void updateNetworkApplyState();
     void updateLoadColumns(int row);
