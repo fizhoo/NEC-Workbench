@@ -1935,6 +1935,15 @@ void testRadiationSweepSolverInput()
     expect(normalizedWithoutCe.find("CM opening note") != std::string::npos
             && normalizedWithoutCe.find("CM inline note") == std::string::npos,
         "solver normalization recognizes inline comments even without an explicit CE card");
+    const auto withoutZ0 = necwb::analysis::solverDeckIdentity(
+        "CM note\nCE\nGW 1 1 0 0 0 1 0 0 .001\nGE 0\nEX 0 1 1 0 1 0\nEN\n");
+    expect(withoutZ0 == necwb::analysis::solverDeckIdentity(
+                "CM note\nCE\nGW 1 1 0 0 0 1 0 0 .001\nGE 0\nZ0 200\nEX 0 1 1 0 1 0\nEN\n")
+            && withoutZ0 == necwb::analysis::solverDeckIdentity(
+                "CM note\nCE\nGW 1 1 0 0 0 1 0 0 .001\nGE 0\nEX 0 1 1 0 1 0\nZ0 75\nEN\n")
+            && withoutZ0 != necwb::analysis::solverDeckIdentity(
+                "CM note\nCE\nGW 1 1 0 0 0 2 0 0 .001\nGE 0\nEX 0 1 1 0 1 0\nEN\n"),
+        "solver deck identity ignores adding, moving or changing a Z0 card");
     const std::string source =
         "CM sweep\nCE\nCM inline geometry note\nGW 1 11 0 0 0 1 0 0 .001\nGE 0\n"
         "EX 0 1 6 0 1 0\nFR 0 3 0 0 14 0.25\nGN 2 0 0 0 13 .005\nXQ 0\n"

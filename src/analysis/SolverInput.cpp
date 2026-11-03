@@ -65,7 +65,9 @@ auto frontToBackDirection(double thetaDegrees, double phiDegrees) -> std::pair<d
 
 }
 
-auto normalizeSolverDeck(std::string_view source) -> std::string
+namespace {
+
+auto normalizedDeck(std::string_view source, bool keepStrippedLines) -> std::string
 {
     const auto document = nec::NecParser{}.parse(source);
     auto openingCommentBlock = true;
@@ -75,15 +77,30 @@ auto normalizeSolverDeck(std::string_view source) -> std::string
         const auto& card = cards[index];
         const auto inlineComment = card.mnemonic == "CM" && !openingCommentBlock;
         const auto compatibilityMetadata = card.kind == nec::NecCardKind::ReferenceImpedance;
-        if (!inlineComment && !compatibilityMetadata) output << card.sourceText;
+        const auto stripped = inlineComment || compatibilityMetadata;
+        if (!stripped) output << card.sourceText;
         if (card.mnemonic == "CE"
             || (card.kind != nec::NecCardKind::Blank && card.mnemonic != "CM")) {
             openingCommentBlock = false;
         }
-        if (index + 1 < cards.size() || document.hasFinalLineEnding())
+        if ((keepStrippedLines || !stripped)
+            && (index + 1 < cards.size() || document.hasFinalLineEnding()))
             output << document.lineEnding();
     }
     return output.str();
+}
+
+}
+
+// Stripped cards keep their line so setup source lines still index the result.
+auto normalizeSolverDeck(std::string_view source) -> std::string
+{
+    return normalizedDeck(source, true);
+}
+
+auto solverDeckIdentity(std::string_view source) -> std::string
+{
+    return normalizedDeck(source, false);
 }
 
 auto formatSolverInputForBackend(std::string_view source,

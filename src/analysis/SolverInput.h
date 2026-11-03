@@ -19,6 +19,11 @@ enum class RadiationSweepMode {
 
 [[nodiscard]] auto normalizeSolverDeck(std::string_view source) -> std::string;
 
+// What the solver sees, for deciding whether results still apply. Unlike
+// normalizeSolverDeck, stripped Z0 lines leave no blank line, so adding or
+// removing a Z0 card does not change it.
+[[nodiscard]] auto solverDeckIdentity(std::string_view source) -> std::string;
+
 [[nodiscard]] auto formatSolverInputForBackend(std::string_view source,
     std::string_view backendId) -> std::string;
 

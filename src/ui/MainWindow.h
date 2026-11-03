@@ -417,7 +417,7 @@ private:
     QString latestStoredRunDirectory_;
     QString currentRunOutputPath_;
     QString displayedRunDirectory_;
-    // Z0-free solver decks, so a Z0-only edit can refresh SWR instead of staling results.
+    // Solver deck identities (Z0-free), so a Z0-only edit can refresh SWR instead of staling results.
     std::string pendingRunDeck_;
     std::string liveResultsDeck_;
     QString activeModelResultsDirectory_;

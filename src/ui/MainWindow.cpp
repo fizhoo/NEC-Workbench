@@ -2972,7 +2972,7 @@ void MainWindow::clearCheckResults()
         ControlPanel::StudyState::Stale);
     const auto solverDeckUnchanged = resultsAvailable_ && !liveResultsStale_
         && !liveResultsDeck_.empty() && cache.resolution().ok()
-        && analysis::normalizeSolverDeck(cache.resolution().generatedDeck) == liveResultsDeck_;
+        && analysis::solverDeckIdentity(cache.resolution().generatedDeck) == liveResultsDeck_;
     if (solverDeckUnchanged) {
         applyReferenceImpedance(model::referenceImpedanceOhms(dashboardSetup));
     } else if (resultsAvailable_) {
@@ -3943,7 +3943,7 @@ void MainWindow::startAnalysisRun(const std::string& authoredSource,
     currentRunPurpose_ = purpose;
     const auto& resolution = activeSource().resolution();
     pendingRunDeck_ = resolution.ok()
-        ? analysis::normalizeSolverDeck(resolution.generatedDeck) : std::string{};
+        ? analysis::solverDeckIdentity(resolution.generatedDeck) : std::string{};
     currentRunRecord_ = runStore_.create(solverBackendId_, currentFile_.isEmpty()
         ? QStringLiteral("Untitled model.nec") : currentFile_, runType);
     currentRunRecord_->summary = summary;

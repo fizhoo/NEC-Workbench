@@ -2995,10 +2995,26 @@ auto main(int argc, char* argv[]) -> int
         && controlPanelAverageGainTriggered && controlPanelConvergenceTriggered;
     const auto controlPanelWindowStateVisible = controlPanelImpedance != nullptr
         && controlPanelImpedance->text().startsWith(QStringLiteral("●"));
-    if (!controlPanelActionsCorrect || !controlPanelStateVisible || !controlPanelDenseLayout
-        || !controlPanelWindowStateVisible || !runHistoryOpened
-        || !controlPanelWorkspaceOpened || !controlPanelGeometryOpened
-        || !controlPanelEditorOpened) {
+    // Named separately so a platform-only failure says which check broke.
+    const std::array controlPanelChecks{
+        std::pair{"actions", controlPanelActionsCorrect},
+        std::pair{"state", controlPanelStateVisible},
+        std::pair{"dense layout", controlPanelDenseLayout},
+        std::pair{"window state", controlPanelWindowStateVisible},
+        std::pair{"run history", runHistoryOpened},
+        std::pair{"workspace", controlPanelWorkspaceOpened},
+        std::pair{"geometry", controlPanelGeometryOpened},
+        std::pair{"editor", controlPanelEditorOpened},
+    };
+    for (const auto& [name, passed] : controlPanelChecks) {
+        if (passed) continue;
+        std::fprintf(stderr, "controlPanel %s failed: sizeHint %d, rows %d, row size %d, "
+            "extrema \"%s\", footer \"%s\"\n", name, controlPanel.sizeHint().width(),
+            controlPanelRows == nullptr ? -1 : controlPanelRows->height(),
+            controlPanelRows == nullptr ? -1
+                : controlPanelRows->verticalHeader()->defaultSectionSize(),
+            controlPanelExtrema == nullptr ? "" : qUtf8Printable(controlPanelExtrema->text()),
+            controlPanelFooter == nullptr ? "" : qUtf8Printable(controlPanelFooter->text()));
         return NECWB_SMOKE_FAILURE("controlPanel workspace");
     }
     QSettings detachableSettings;
