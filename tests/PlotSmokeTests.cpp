@@ -2939,7 +2939,8 @@ auto main(int argc, char* argv[]) -> int
     const auto quickResultsFollowZ0 = controlPanelFrequency->currentIndex() == selectedQuickIndex
         && controlPanelExtrema->text().contains(QStringLiteral("(Z0 200 Ω)"))
         && std::ranges::any_of(controlPanelSwrLabels, [](const QLabel* swrLabel) {
-            return swrLabel->text() == QStringLiteral("SWR (200 Ω)");
+            return swrLabel->objectName() == QStringLiteral("controlPanelQuickResultsHeading")
+                && swrLabel->text().endsWith(QStringLiteral("Z0 200 Ω"));
         });
     if (!quickResultsFollowZ0) return NECWB_SMOKE_FAILURE("quick results follow a Z0 change");
     controlPanel.setResults(result, QStringLiteral("Model: test.nec · Run: controlPanel"), false);

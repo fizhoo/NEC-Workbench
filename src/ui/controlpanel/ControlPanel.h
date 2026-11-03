@@ -112,6 +112,7 @@ private:
     QLabel* resultExtrema_{};
     QToolButton* resistanceResult_{};
     QToolButton* reactanceResult_{};
+    QLabel* quickResultsHeading_{};
     QLabel* swrResultLabel_{};
     QToolButton* swrResult_{};
     QLabel* gainResultLabel_{};

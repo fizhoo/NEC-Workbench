@@ -215,8 +215,9 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     connect(modelRows_, &QTableWidget::cellClicked, this, [this](int row, int) {
         if (openEditor_) openEditor_(static_cast<Editor>(row));
     });
-    auto* latestHeading = new QLabel(tr("QUICK RESULTS"), panel);
-    latestHeading->setFont(resultsFont);
+    quickResultsHeading_ = new QLabel(tr("QUICK RESULTS"), panel);
+    quickResultsHeading_->setObjectName(QStringLiteral("controlPanelQuickResultsHeading"));
+    quickResultsHeading_->setFont(resultsFont);
     auto* frequencyRow = new QHBoxLayout;
     frequencyRow->addWidget(new QLabel(tr("At:"), panel));
     resultFrequency_ = new QComboBox(panel);
@@ -286,7 +287,7 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     modelArea->addWidget(modelHeading);
     modelArea->addWidget(modelRows_);
     modelArea->addSpacing(3);
-    modelArea->addWidget(latestHeading);
+    modelArea->addWidget(quickResultsHeading_);
     modelArea->addLayout(frequencyRow);
     modelArea->addWidget(quickResults_);
     modelArea->addWidget(resultExtrema_);
@@ -527,9 +528,11 @@ void ControlPanel::refreshQuickResults()
         set(swrResult_, std::nullopt);
     }
     const auto referenceImpedance = formatReferenceImpedance(referenceImpedanceOhms_);
-    swrResultLabel_->setText(tr("SWR (%1)").arg(referenceImpedance));
+    // Z0 goes in the heading: on the SWR label it would widen the grid and the panel.
+    quickResultsHeading_->setText(tr("QUICK RESULTS · Z0 %1").arg(referenceImpedance));
     const auto swrToolTip = tr("SWR against the Z0 %1 reference impedance set in Setup.")
         .arg(referenceImpedance);
+    quickResultsHeading_->setToolTip(swrToolTip);
     swrResultLabel_->setToolTip(swrToolTip);
     swrResult_->setToolTip(swrToolTip);
     set(gainResult_, summary.selectedGain
