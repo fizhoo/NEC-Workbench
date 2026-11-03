@@ -531,6 +531,20 @@ void GeometryView::drawAttachments(QPainter& painter) const
         painter.drawEllipse(end, selected ? 5.0 : 4.0, selected ? 5.0 : 4.0);
         painter.drawText((start + end) / 2.0 + QPointF{6.0, -6.0}, tr("TL"));
     }
+    // NT networks have no editor of their own, so they are drawn but not selectable.
+    for (const auto& network : networks_) {
+        const auto first = model::wireSegmentPosition(model_, network.wireTag1, network.segment1);
+        const auto second = model::wireSegmentPosition(model_, network.wireTag2, network.segment2);
+        if (!first || !second) continue;
+        const auto start = mapToScreen(geometry::project(*first, plane_));
+        const auto end = mapToScreen(geometry::project(*second, plane_));
+        painter.setPen(QPen(QColor(20, 140, 140), 2.0, Qt::DashDotLine));
+        painter.setBrush(palette().base());
+        painter.drawLine(start, end);
+        painter.drawEllipse(start, 4.0, 4.0);
+        painter.drawEllipse(end, 4.0, 4.0);
+        painter.drawText((start + end) / 2.0 + QPointF{6.0, 12.0}, tr("NT"));
+    }
     if (pendingTransmissionLineEndpoint_) {
         const auto position = model::wireSegmentPosition(model_,
             pendingTransmissionLineEndpoint_->first, pendingTransmissionLineEndpoint_->second);

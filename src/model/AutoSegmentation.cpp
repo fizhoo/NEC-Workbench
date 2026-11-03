@@ -23,7 +23,8 @@ auto remappedSegment(int oldSegment, int oldCount, int newCount) -> int
 auto proposeSegmentation(const AntennaModel& model, const std::vector<Excitation>& excitations,
     double maximumFrequencyMHz, const SegmentationSettings& settings,
     const std::vector<LoadDefinition>& loads,
-    const std::vector<TransmissionLineDefinition>& transmissionLines) -> SegmentationProposal
+    const std::vector<TransmissionLineDefinition>& transmissionLines,
+    const std::vector<NetworkDefinition>& networks) -> SegmentationProposal
 {
     SegmentationProposal proposal;
     if (maximumFrequencyMHz <= 0.0 || settings.segmentsPerWavelength <= 0) {
@@ -40,6 +41,9 @@ auto proposeSegmentation(const AntennaModel& model, const std::vector<Excitation
                 [tag = wire.tag](const auto& excitation) { return excitation.wireTag == tag; })
             || std::ranges::any_of(transmissionLines, [tag = wire.tag](const auto& line) {
                 return line.wireTag1 == tag || line.wireTag2 == tag;
+            })
+            || std::ranges::any_of(networks, [tag = wire.tag](const auto& network) {
+                return network.wireTag1 == tag || network.wireTag2 == tag;
             });
         if (settings.oddForExcitedWires && excited && newSegments % 2 == 0
             && newSegments < std::numeric_limits<int>::max()) {
@@ -79,6 +83,11 @@ auto proposeSegmentation(const AntennaModel& model, const std::vector<Excitation
     for (auto& line : proposal.remappedTransmissionLines) {
         line.segment1 = remap(line.wireTag1, line.segment1);
         line.segment2 = remap(line.wireTag2, line.segment2);
+    }
+    proposal.remappedNetworks = networks;
+    for (auto& network : proposal.remappedNetworks) {
+        network.segment1 = remap(network.wireTag1, network.segment1);
+        network.segment2 = remap(network.wireTag2, network.segment2);
     }
     return proposal;
 }

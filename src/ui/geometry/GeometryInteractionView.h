@@ -45,7 +45,8 @@ public:
     void selectWire(int tag);
     void setExcitations(const std::vector<model::Excitation>& excitations);
     void setAttachments(const std::vector<model::LoadDefinition>& loads,
-        const std::vector<model::TransmissionLineDefinition>& transmissionLines);
+        const std::vector<model::TransmissionLineDefinition>& transmissionLines,
+        const std::vector<model::NetworkDefinition>& networks = {});
     void setPendingTransmissionLineEndpoint(std::optional<std::pair<int, int>> endpoint);
     void selectExcitation(std::size_t sourceLine);
     void selectLoad(std::size_t sourceLine);
@@ -91,6 +92,7 @@ protected:
     std::vector<model::Excitation> excitations_;
     std::vector<model::LoadDefinition> loads_;
     std::vector<model::TransmissionLineDefinition> transmissionLines_;
+    std::vector<model::NetworkDefinition> networks_;
     std::optional<int> selectedWireTag_;
     std::optional<std::size_t> selectedExcitationLine_;
     std::optional<std::size_t> selectedLoadLine_;

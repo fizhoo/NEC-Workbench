@@ -120,4 +120,14 @@ auto NecWriter::writeTransmissionLineCard(const model::TransmissionLineDefinitio
     return output.str();
 }
 
+auto NecWriter::writeNetworkCard(const model::NetworkDefinition& network) const -> std::string
+{
+    std::ostringstream output;
+    output << std::setprecision(15) << "NT " << network.wireTag1 << ' ' << network.segment1 << ' '
+           << network.wireTag2 << ' ' << network.segment2 << ' ' << network.y11Real << ' '
+           << network.y11Imaginary << ' ' << network.y12Real << ' ' << network.y12Imaginary << ' '
+           << network.y22Real << ' ' << network.y22Imaginary;
+    return output.str();
+}
+
 }

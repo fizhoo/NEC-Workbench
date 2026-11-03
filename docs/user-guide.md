@@ -372,8 +372,8 @@ Several wires may share a tag number; tag 0 is common in imported decks. The tab
 **Segment** column counts within each wire, and **NEC segment** is the solver's own
 number, counted through all wires, which tells such wires apart. The Antenna tab, Along
 Wire, and the hover readout place every segment on its own wire. Model Check follows
-NEC's rule for `EX`, `LD`, and `TL` references: a segment number counts through every
-wire with that tag in deck order, and tag 0 means an absolute segment number.
+NEC's rule for `EX`, `LD`, `TL`, and `NT` references: a segment number counts through
+every wire with that tag in deck order, and tag 0 means an absolute segment number.
 
 ### Radiation
 

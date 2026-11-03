@@ -90,6 +90,8 @@ auto hasCrossWireSegmentReferences(const AntennaModel& model, const ModelSetup& 
                return value.wireTag == 0 && (value.firstSegment > 0 || value.lastSegment > 0);
            })
         || std::ranges::any_of(setup.transmissionLines,
+            [](const auto& value) { return value.wireTag1 == 0 || value.wireTag2 == 0; })
+        || std::ranges::any_of(setup.networks,
             [](const auto& value) { return value.wireTag1 == 0 || value.wireTag2 == 0; });
 }
 

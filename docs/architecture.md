@@ -97,7 +97,7 @@ Average Gain Test and segmentation convergence are solver-backed studies with
 their own archived artifacts; they are not inferred from static checks.
 
 Automatic Segmentation is an explicit preview-and-apply operation. It changes
-`GW` segment counts and remaps supported `EX`, `LD`, and `TL` attachments by
+`GW` segment counts and remaps supported `EX`, `LD`, `TL`, and `NT` attachments by
 relative wire position in one undoable edit. Unsupported attachment forms block
 the operation rather than being guessed.
 

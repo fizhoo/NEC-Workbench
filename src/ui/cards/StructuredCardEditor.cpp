@@ -52,7 +52,7 @@ struct CardFamily {
 
 const auto& families()
 {
-    static const std::array<CardFamily, 16> values{{
+    static const std::array<CardFamily, 17> values{{
         {QObject::tr("Geometry"), QObject::tr("GA — Wire Arcs"),
             QObject::tr("Circular wire arcs in the XZ plane. Angles are measured in degrees; lengths use authored NEC deck units."),
             {nec::NecCardKind::GeometryOther},
@@ -123,11 +123,20 @@ const auto& families()
             {nec::NecCardKind::TransmissionLine},
             {QObject::tr("Wire 1"), QObject::tr("Segment 1"), QObject::tr("Wire 2"),
                 QObject::tr("Segment 2"), QObject::tr("Z0"), QObject::tr("Length"),
-                QObject::tr("Shunt R1"), QObject::tr("Shunt X1"), QObject::tr("Shunt R2"),
-                QObject::tr("Shunt X2")}, QStringLiteral("TL"), false},
+                QObject::tr("Shunt G1 (S)"), QObject::tr("Shunt B1 (S)"),
+                QObject::tr("Shunt G2 (S)"), QObject::tr("Shunt B2 (S)")},
+            QStringLiteral("TL"), false},
+        {QObject::tr("Loads & Networks"), QObject::tr("NT — Two-Port Networks"),
+            QObject::tr("Two-port networks given by their short-circuit admittance matrix in "
+                        "siemens. Each port connects across its segment's gap; Y21 equals Y12."),
+            {nec::NecCardKind::Network},
+            {QObject::tr("Wire 1"), QObject::tr("Segment 1"), QObject::tr("Wire 2"),
+                QObject::tr("Segment 2"), QObject::tr("Y11 G"), QObject::tr("Y11 B"),
+                QObject::tr("Y12 G"), QObject::tr("Y12 B"), QObject::tr("Y22 G"),
+                QObject::tr("Y22 B")}, QStringLiteral("NT"), false},
         {QObject::tr("Analysis & Requests"), QObject::tr("Other NEC-2 Control Cards"),
-            QObject::tr("Recognized NEC-2 option, network, field-request, and output-control cards using NEC fixed fields."),
-            {nec::NecCardKind::ControlOther, nec::NecCardKind::Network},
+            QObject::tr("Recognized NEC-2 option, field-request, and output-control cards using NEC fixed fields."),
+            {nec::NecCardKind::ControlOther},
             {QObject::tr("I1"), QObject::tr("I2"), QObject::tr("I3"), QObject::tr("I4"),
                 QObject::tr("F1"), QObject::tr("F2"), QObject::tr("F3"),
                 QObject::tr("F4"), QObject::tr("F5"), QObject::tr("F6")}, {}, false},

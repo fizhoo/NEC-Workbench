@@ -301,6 +301,10 @@ void testInsertionSegments()
                "TL end on wire tag 2 segment 1 touches a junction",
                DiagnosticSeverity::Information) == 1,
         "a transmission-line end at a multi-wire junction is a note");
+    expect(count(check(deck(groundPlane, "EX 0 1 2 0 1 0\nNT 2 1 1 5 .01 0 0 0 1e10\n")),
+               "NT port on wire tag 2 segment 1 touches a junction",
+               DiagnosticSeverity::Information) == 1,
+        "a network port at a multi-wire junction is a note");
 
     const std::string stepped =
         "GW 1 5 -5 0 10 0 0 10 .001\n"
@@ -309,6 +313,13 @@ void testInsertionSegments()
         "a source beside a radius step is reported");
     expect(count(check(deck(stepped, "EX 0 1 4 0 1 0\n")), "radius step") == 0,
         "a source away from the radius step is not reported");
+    expect(count(check(deck(stepped, "EX 0 1 3 0 1 0\nNT 1 5 2 3 .01\n")),
+               "NT port on wire tag 1 segment 5 adjoins a radius step") == 1
+            && count(check(deck(stepped, "EX 0 1 3 0 1 0\nNT 1 5 2 3 .01\n")),
+                   "network ports there") == 1,
+        "a network port beside a radius step is reported like a TL end");
+    expect(count(check(deck(stepped, "EX 0 1 3 0 1 0\nNT 1 4 2 3 .01\n")), "radius step") == 0,
+        "a network port away from the radius step is not reported");
 
     const std::string dipole = "GW 1 11 -5 0 10 5 0 10 .001\n";
     expect(count(check(deck(dipole, "EX 0 1 6 0 1 0\nLD 0 1 1 1 50 0 0\n")),
@@ -329,6 +340,9 @@ void testInsertionSegments()
                    "EX 0 2 1 0 1 0\nTL 1 6 2 1 50 0\n")), "on wire tag 2",
                DiagnosticSeverity::Information) == 0,
         "a one-segment source stub for a transmission line is not reported");
+    expect(count(check(deck(dipole, "EX 0 1 6 0 1 0\nNT 1 1 1 11 .01\n")), "NT port",
+               DiagnosticSeverity::Information) == 0,
+        "network ports on free wire ends are not reported, like TL ends");
 }
 
 void testTransmissionLineLength()

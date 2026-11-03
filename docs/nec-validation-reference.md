@@ -82,8 +82,8 @@ Graphical rendering is documented separately in [NEC Card Support](nec-card-supp
 | `GN` | Structured | NEC-2 types `-1` through `2`; finite-ground material values |
 | `LD` | Structured | Type range, wire/segment references, numeric values, and `LD 6` profile handling; trailing values default to zero and tag `0` is accepted |
 | `EX` | Structured | Field types and voltage-source wire/segment references; omitted trailing imaginary voltage defaults to zero |
-| `NT` | Understood | Numeric field shape and execution-state participation |
-| `TL` | Structured | Endpoint references and nonzero impedance; omitted length/shunt values default to zero |
+| `NT` | Structured | Numeric field shape, port references (same rule as `TL` ends), segment `-1` only on the first card of an `NT`/`TL` group, and execution-state participation; omitted admittances default to zero |
+| `TL` | Structured | Endpoint references and nonzero impedance, segment `-1` only on the first card of an `NT`/`TL` group; omitted length/shunt values default to zero |
 | `CP` | Understood | Numeric field shape |
 | `EN` | Understood | Required once as the final nonblank card |
 | `GD` | Understood | Numeric field shape and requirement for a later `RP` |
@@ -131,9 +131,10 @@ and Segmentation Convergence for numerical validation.
 | Wire end at z = 0 that is not tied to ground | Warning | A free wire end at z = 0 on a wire that does not lie in the z = 0 plane, unless the deck has both `GN` and `GE 1`. The message covers the three cases: no ground, `GN` with `GE 0`/`-1`, and `GE 1` without `GN`. Reported once on `GE` |
 | `GN 0` with low horizontal wires | Warning | Segment centers below 0.1 λ at the lowest swept frequency and within 30° of horizontal; suggests `GN 2` |
 | Unaligned closely spaced parallel wires | Warning | Straight wires within 5° of parallel, overlapping by at least a segment, closer than both max(10 × the larger radius, 0.01 λ) and the shorter segment length, but not touching, with segment junctions offset by more than 10% of the shorter segment. Applies to NEC-2 family backends only |
-| `EX`, `LD`, or `TL` end beside a radius step | Warning | The segment touches a junction where radii differ by more than 10% |
-| `EX`, `LD`, or `TL` end at a multiwire junction | Information | The segment touches a junction of more than two segments. NEC-2 allows this (only `EX 5` needs a simple two-segment junction), so it is a note |
+| `EX`, `LD`, `TL` end, or `NT` port beside a radius step | Warning | The segment touches a junction where radii differ by more than 10% |
+| `EX`, `LD`, `TL` end, or `NT` port at a multiwire junction | Information | The segment touches a junction of more than two segments. NEC-2 allows this (only `EX 5` needs a simple two-segment junction), so it is a note |
 | `EX` or `LD` on a free wire end | Information | The segment touches an unconnected wire end that `GE 1` does not tie to ground. One-segment wires (`TL`/`NT` stubs), `LD 5`, and segment-range loads are skipped |
+| `NT` in a frequency sweep | Information | The deck has `NT` cards and solves more than one frequency (an `FR` step count above one, or `FR` cards at different frequencies). `NT` admittances do not scale with frequency |
 | Transmission line shorter than its gap | Warning | Explicit nonzero `TL` length more than 1% below the straight-line distance between the two segment centers. A zero or omitted length is not checked, since NEC then uses that distance |
 
 The 0.1 λ `GN 0` height, the 5° parallel angle, the close-spacing limits, the 10%

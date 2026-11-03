@@ -2024,7 +2024,12 @@ void MainWindow::showAutoSegmentation()
     }
     const auto& document = activeSource().document();
     const auto unsupportedAttachment = std::ranges::find_if(document.cards(), [this](const auto& card) {
-        if (card.kind == nec::NecCardKind::Network) return true;
+        if (std::ranges::find(currentSetup_.networkClearLines, card.lineNumber)
+            != currentSetup_.networkClearLines.end()) return false;
+        if (card.kind == nec::NecCardKind::Network) {
+            return std::ranges::none_of(currentSetup_.networks,
+                [line = card.lineNumber](const auto& network) { return network.sourceLine == line; });
+        }
         if (card.kind == nec::NecCardKind::Load) {
             return std::ranges::none_of(currentSetup_.loads,
                 [line = card.lineNumber](const auto& load) { return load.sourceLine == line; });
@@ -2047,7 +2052,7 @@ void MainWindow::showAutoSegmentation()
     if (unsupportedAttachment != document.cards().end()
         || unsupportedExcitation != document.cards().end()) {
         QMessageBox::warning(this, tr("Automatic Segmentation"),
-            tr("This deck contains an unsupported EX, LD, TL, or NT card. Supported EX 0, LD, and TL segment references are remapped automatically; NT networks remain unsupported."));
+            tr("This deck contains an EX, LD, TL, or NT card that could not be read. Supported EX 0, LD, TL, and NT segment references are remapped automatically; fix the card shown by Check Model first."));
         return;
     }
     if (model::hasCrossWireSegmentReferences(currentModel_, currentSetup_)) {
@@ -2060,7 +2065,8 @@ void MainWindow::showAutoSegmentation()
     const auto maximumFrequencyMHz = std::max(currentSetup_.frequency->startMHz,
         model::frequencyEndMHz(*currentSetup_.frequency));
     AutoSegmentationDialog dialog(currentModel_, currentSetup_.excitations,
-        currentSetup_.loads, currentSetup_.transmissionLines, maximumFrequencyMHz, this);
+        currentSetup_.loads, currentSetup_.transmissionLines, currentSetup_.networks,
+        maximumFrequencyMHz, this);
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
@@ -2115,6 +2121,16 @@ void MainWindow::showAutoSegmentation()
     for (std::size_t index = 0; index < currentSetup_.transmissionLines.size(); ++index) {
         const auto& original = currentSetup_.transmissionLines[index];
         const auto& updated = proposal.remappedTransmissionLines[index];
+        if (original.segment1 == updated.segment1
+            && original.segment2 == updated.segment2) continue;
+        const std::array replacements{
+            nec::NecFieldReplacement{1, std::to_string(updated.segment1)},
+            nec::NecFieldReplacement{3, std::to_string(updated.segment2)}};
+        replaceFields(updated.sourceLine, replacements);
+    }
+    for (std::size_t index = 0; index < currentSetup_.networks.size(); ++index) {
+        const auto& original = currentSetup_.networks[index];
+        const auto& updated = proposal.remappedNetworks[index];
         if (original.segment1 == updated.segment1
             && original.segment2 == updated.segment2) continue;
         const std::array replacements{
@@ -2878,10 +2894,14 @@ void MainWindow::checkModel(bool presentReport)
     xzView_->setExcitations(currentSetup_.excitations);
     yzView_->setExcitations(currentSetup_.excitations);
     geometry3DView_->setExcitations(currentSetup_.excitations);
-    xyView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines);
-    xzView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines);
-    yzView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines);
-    geometry3DView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines);
+    xyView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
+        currentSetup_.networks);
+    xzView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
+        currentSetup_.networks);
+    yzView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
+        currentSetup_.networks);
+    geometry3DView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
+        currentSetup_.networks);
     parameterEditor_->setResolution(resolution);
     setupEditor_->setData(currentModel_, currentSetup_);
     loadNetworkEditor_->setData(currentModel_, currentSetup_);

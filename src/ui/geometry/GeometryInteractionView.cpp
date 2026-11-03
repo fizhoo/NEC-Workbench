@@ -97,10 +97,12 @@ void GeometryInteractionView::setExcitations(const std::vector<model::Excitation
 }
 
 void GeometryInteractionView::setAttachments(const std::vector<model::LoadDefinition>& loads,
-    const std::vector<model::TransmissionLineDefinition>& transmissionLines)
+    const std::vector<model::TransmissionLineDefinition>& transmissionLines,
+    const std::vector<model::NetworkDefinition>& networks)
 {
     loads_ = loads;
     transmissionLines_ = transmissionLines;
+    networks_ = networks;
     if (selectedLoadLine_
         && std::ranges::find(loads_, *selectedLoadLine_, &model::LoadDefinition::sourceLine)
             == loads_.end()) selectedLoadLine_.reset();
