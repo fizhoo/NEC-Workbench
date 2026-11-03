@@ -21,6 +21,16 @@
 namespace necwb::ui {
 namespace {
 constexpr auto SourceLineRole = Qt::UserRole;
+// Cells under a dropdown keep its value here rather than as text, which would show around
+// the dropdown's edges. Setting it still emits itemChanged, which marks the row pending.
+constexpr auto ComboValueRole = Qt::UserRole + 1;
+
+// Rows tall enough for the dropdowns in them.
+void fitRowsToComboBoxes(QTableWidget* table)
+{
+    const QComboBox probe;
+    table->verticalHeader()->setDefaultSectionSize(probe.sizeHint().height() + 4);
+}
 enum LoadColumn {
     TypeColumn,
     WireColumn,
@@ -68,7 +78,8 @@ auto loadTypeAt(QTableWidget* table, int row) -> int
     if (const auto* combo = qobject_cast<QComboBox*>(table->cellWidget(row, 0))) {
         if (const auto data = combo->currentData(); data.isValid()) return data.toInt();
     }
-    return table->item(row, 0) == nullptr ? -1 : table->item(row, 0)->text().toInt();
+    return table->item(row, 0) == nullptr ? -1
+        : table->item(row, 0)->data(ComboValueRole).toInt();
 }
 
 auto entireWireAt(QTableWidget* table, int row) -> bool
@@ -171,6 +182,7 @@ LoadNetworkEditor::LoadNetworkEditor(QWidget* parent) : QWidget(parent)
     auto* deleteNetwork = new QPushButton(tr("Delete Selected Network"), this);
     deleteNetwork->setObjectName(QStringLiteral("deleteSelectedNetworkButton"));
     networkButtons->addWidget(addNetwork); networkButtons->addWidget(applyNetworkButton_); networkButtons->addWidget(deleteNetwork); networkButtons->addStretch();
+    for (auto* table : {loads_, lines_, networks_}) fitRowsToComboBoxes(table);
     validation_ = new QLabel(this); validation_->setStyleSheet(QStringLiteral("color: #9a3030;")); validation_->hide();
     validation_->setObjectName(QStringLiteral("loadNetworkValidation"));
     sharingNotes_ = new QLabel(this);
@@ -534,7 +546,7 @@ invalid_value: validation_->setText(tr("Wire conductivity must be greater than z
 
 void LoadNetworkEditor::setLoadRow(int row, const model::LoadDefinition& value)
 {
-    const QStringList cells{QString::number(value.type), QString::number(value.wireTag), {},
+    const QStringList cells{{}, QString::number(value.wireTag), {},
         QString::number(value.firstSegment), QString::number(value.lastSegment),
         formatDecimal(value.value1 * displayScaleFor(value.type, Value1Column)),
         formatDecimal(value.value2 * displayScaleFor(value.type, Value2Column)),
@@ -544,6 +556,7 @@ void LoadNetworkEditor::setLoadRow(int row, const model::LoadDefinition& value)
         item->setData(SourceLineRole, static_cast<qulonglong>(value.sourceLine));
         loads_->setItem(row, column, item);
     }
+    loads_->item(row, 0)->setData(ComboValueRole, value.type);
     auto* type = new QComboBox(loads_);
     type->setObjectName(QStringLiteral("loadTypeCombo"));
     for (const auto& [number, label] : loadTypeChoices()) {
@@ -552,7 +565,7 @@ void LoadNetworkEditor::setLoadRow(int row, const model::LoadDefinition& value)
     type->setCurrentIndex(type->findData(value.type));
     connect(type, &QComboBox::currentIndexChanged, this, [this, row, type] {
         const auto selectedType = type->currentData().toInt();
-        loads_->item(row, 0)->setText(QString::number(selectedType));
+        loads_->item(row, 0)->setData(ComboValueRole, selectedType);
         loads_->setCurrentCell(row, 0);
         updateLoadValueFields(row, selectedType);
         updateLoadColumns(row);
@@ -671,9 +684,7 @@ void LoadNetworkEditor::populateSegmentChoices(
 
 void LoadNetworkEditor::setLineRow(int row, const model::TransmissionLineDefinition& value)
 {
-    const QStringList cells{QString::number(value.wireTag1), QString::number(value.segment1),
-        QString::number(value.wireTag2), QString::number(value.segment2),
-        formatDecimal(value.characteristicImpedance),
+    const QStringList cells{{}, {}, {}, {}, formatDecimal(value.characteristicImpedance),
         formatDecimal(model::fromMeters(value.lengthMeters, lengthUnit_)),
         formatDecimal(value.shuntReal1), formatDecimal(value.shuntImaginary1),
         formatDecimal(value.shuntReal2), formatDecimal(value.shuntImaginary2)};
@@ -707,6 +718,8 @@ void LoadNetworkEditor::addPortControls(QTableWidget* table, int row, int port, 
         if (table == networks_) updateNetworkApplyState();
         else updateLineApplyState();
     };
+    table->item(row, wireColumn)->setData(ComboValueRole, wireTag);
+    table->item(row, segmentColumn)->setData(ComboValueRole, segment);
     auto* wireControl = new QComboBox(table);
     wireControl->setObjectName(QStringLiteral("%1Wire%2Combo").arg(namePrefix).arg(port));
     for (const auto& wire : model_.wires()) {
@@ -724,18 +737,18 @@ void LoadNetworkEditor::addPortControls(QTableWidget* table, int row, int port, 
         [this, table, row, wireColumn, segmentColumn, wireControl, segmentControl,
             updateApplyState] {
             const auto wireTag = wireControl->currentData().toInt();
-            table->item(row, wireColumn)->setText(QString::number(wireTag));
+            table->item(row, wireColumn)->setData(ComboValueRole, wireTag);
             populateSegmentChoices(segmentControl, wireTag,
                 segmentControl->currentData().toInt());
-            table->item(row, segmentColumn)->setText(
-                QString::number(segmentControl->currentData().toInt()));
+            table->item(row, segmentColumn)->setData(
+                ComboValueRole, segmentControl->currentData().toInt());
             table->setCurrentCell(row, wireColumn);
             updateApplyState();
         });
     connect(segmentControl, &QComboBox::currentIndexChanged, this,
         [table, row, segmentColumn, segmentControl, updateApplyState] {
-            table->item(row, segmentColumn)->setText(
-                QString::number(segmentControl->currentData().toInt()));
+            table->item(row, segmentColumn)->setData(
+                ComboValueRole, segmentControl->currentData().toInt());
             table->setCurrentCell(row, segmentColumn);
             updateApplyState();
         });
@@ -745,9 +758,7 @@ void LoadNetworkEditor::addPortControls(QTableWidget* table, int row, int port, 
 
 void LoadNetworkEditor::setNetworkRow(int row, const model::NetworkDefinition& value)
 {
-    const QStringList cells{QString::number(value.wireTag1), QString::number(value.segment1),
-        QString::number(value.wireTag2), QString::number(value.segment2),
-        formatDecimal(value.y11Real), formatDecimal(value.y11Imaginary),
+    const QStringList cells{{}, {}, {}, {}, formatDecimal(value.y11Real), formatDecimal(value.y11Imaginary),
         formatDecimal(value.y12Real), formatDecimal(value.y12Imaginary),
         formatDecimal(value.y22Real), formatDecimal(value.y22Imaginary)};
     for (auto column = 0; column < cells.size(); ++column) {
