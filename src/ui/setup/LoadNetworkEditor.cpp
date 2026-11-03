@@ -13,6 +13,7 @@
 #include <QLabel>
 #include <QPalette>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QSignalBlocker>
 #include <QStyle>
 #include <QTableWidget>
@@ -30,6 +31,41 @@ void fitRowsToComboBoxes(QTableWidget* table)
 {
     const QComboBox probe;
     table->verticalHeader()->setDefaultSectionSize(probe.sizeHint().height() + 4);
+}
+
+// Tables show between two and six rows, then scroll, so an empty table stays small and the
+// spare height collects below the last section instead of inside every table.
+constexpr auto kMinimumVisibleRows = 2;
+constexpr auto kMaximumVisibleRows = 6;
+
+void fitTableHeight(QTableWidget* table)
+{
+    const auto rows = std::clamp(table->rowCount(), kMinimumVisibleRows, kMaximumVisibleRows);
+    table->setFixedHeight(2 * table->frameWidth()
+        + table->horizontalHeader()->sizeHint().height()
+        + rows * table->verticalHeader()->defaultSectionSize()
+        + table->horizontalScrollBar()->sizeHint().height());
+}
+
+// Sizes the table to its rows and, while it has none, shows how to add the first one.
+void showRowsOrEmptyMessage(QTableWidget* table, const QString& message)
+{
+    auto* label = new QLabel(message, table->viewport());
+    label->setObjectName(table->objectName() + QStringLiteral("EmptyMessage"));
+    label->setAlignment(Qt::AlignCenter);
+    label->setWordWrap(true);
+    label->setForegroundRole(QPalette::PlaceholderText);
+    label->setAttribute(Qt::WA_TransparentForMouseEvents);
+    auto* layout = new QVBoxLayout(table->viewport());
+    layout->addWidget(label);
+    const auto refresh = [table, label] {
+        label->setVisible(table->rowCount() == 0);
+        fitTableHeight(table);
+    };
+    QObject::connect(table->model(), &QAbstractItemModel::rowsInserted, label, refresh);
+    QObject::connect(table->model(), &QAbstractItemModel::rowsRemoved, label, refresh);
+    QObject::connect(table->model(), &QAbstractItemModel::modelReset, label, refresh);
+    refresh();
 }
 enum LoadColumn {
     TypeColumn,
@@ -183,6 +219,11 @@ LoadNetworkEditor::LoadNetworkEditor(QWidget* parent) : QWidget(parent)
     deleteNetwork->setObjectName(QStringLiteral("deleteSelectedNetworkButton"));
     networkButtons->addWidget(addNetwork); networkButtons->addWidget(applyNetworkButton_); networkButtons->addWidget(deleteNetwork); networkButtons->addStretch();
     for (auto* table : {loads_, lines_, networks_}) fitRowsToComboBoxes(table);
+    showRowsOrEmptyMessage(loads_,
+        tr("No loads. Click Add Load, or right-click a wire in Geometry."));
+    showRowsOrEmptyMessage(lines_, tr("No transmission lines. Click Add Transmission Line, or "
+                                      "right-click a wire in Geometry to pick each end."));
+    showRowsOrEmptyMessage(networks_, tr("No two-port networks. Click Add Network."));
     validation_ = new QLabel(this); validation_->setStyleSheet(QStringLiteral("color: #9a3030;")); validation_->hide();
     validation_->setObjectName(QStringLiteral("loadNetworkValidation"));
     sharingNotes_ = new QLabel(this);
@@ -190,10 +231,11 @@ LoadNetworkEditor::LoadNetworkEditor(QWidget* parent) : QWidget(parent)
     sharingNotes_->setWordWrap(true);
     sharingNotes_->setTextFormat(Qt::RichText);
     sharingNotes_->hide();
-    layout->addWidget(description); layout->addWidget(loadTypes); layout->addWidget(new QLabel(tr("Loads (LD 0–5)"), this)); layout->addWidget(loads_, 1); layout->addLayout(loadButtons);
-    layout->addWidget(new QLabel(tr("Transmission Lines (TL)"), this)); layout->addWidget(lines_, 1); layout->addLayout(lineButtons);
-    layout->addWidget(new QLabel(tr("Two-Port Networks (NT)"), this)); layout->addWidget(networks_, 1); layout->addLayout(networkButtons);
+    layout->addWidget(description); layout->addWidget(loadTypes); layout->addWidget(new QLabel(tr("Loads (LD 0–5)"), this)); layout->addWidget(loads_); layout->addLayout(loadButtons);
+    layout->addWidget(new QLabel(tr("Transmission Lines (TL)"), this)); layout->addWidget(lines_); layout->addLayout(lineButtons);
+    layout->addWidget(new QLabel(tr("Two-Port Networks (NT)"), this)); layout->addWidget(networks_); layout->addLayout(networkButtons);
     layout->addWidget(sharingNotes_); layout->addWidget(validation_);
+    layout->addStretch(1);
 
     connect(addLoad, &QPushButton::clicked, this, [this] {
         if (model_.wires().empty()) return;
