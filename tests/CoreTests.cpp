@@ -3046,6 +3046,31 @@ void testNetworkDefinitions()
         }) == 2,
         "segment -1 inside a network group is an error for NT and TL");
 
+    const auto insertion = necwb::nec::NecParser{}.parse(geometry
+        + "TL 1 2 2 2 50\nNT 1 3 2 3 .01\nEX 0 1 5 0 1 0\nFR 0 1 0 0 14 0\nEN\n");
+    expect(necwb::nec::networkCardInsertionIndex(insertion) == std::optional<std::size_t>{5}
+            && !necwb::nec::networkCardInsertionIndex(necwb::nec::NecParser{}.parse(
+                geometry + "EX 0 1 5 0 1 0\nEN\n")),
+        "a new NT or TL card goes right after the last NT/TL card, or nowhere special");
+    const auto discarded = necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
+        geometry + "TL 1 2 2 2 50\nNT 1 3 2 3 .01\nEX 0 1 5 0 1 0\nTL 1 4 2 4 50\n"
+                   "FR 0 1 0 0 14 0\nXQ\nNT 0 -1\nNT 1 6 2 6 .01\nXQ\nEN\n"));
+    const auto discardedLines = [&discarded] {
+        std::vector<std::size_t> lines;
+        for (const auto& diagnostic : discarded.diagnostics) {
+            if (diagnostic.message.find("is discarded before NEC uses it") != std::string::npos)
+                lines.push_back(diagnostic.lineNumber);
+        }
+        return lines;
+    }();
+    expect(discardedLines == std::vector<std::size_t>{4, 5}
+            && std::ranges::any_of(discarded.diagnostics, [](const auto& diagnostic) {
+                   return diagnostic.message.starts_with("TL is discarded before NEC uses it: "
+                       "the TL card on line 7 starts a new NT/TL group");
+               }),
+        "NT and TL cards cut off from their group by another card are reported once each, "
+        "and a group used by an execution request is not");
+
     const auto noteCount = [&geometry](const std::string& control) {
         const auto result = necwb::nec::NecModelChecker{}.check(
             necwb::nec::NecParser{}.parse(geometry + control + "EN\n"));

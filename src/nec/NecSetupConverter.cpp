@@ -6,10 +6,9 @@
 #include <numbers>
 
 namespace necwb::nec {
-namespace {
 
-// Cards NEC-2 reads without ending a run of NT and TL cards. nec2c leaves its card-flow state
-// alone for PT and PL; Workbench-only cards never reach the solver.
+// nec2c leaves its card-flow state alone for PT and PL; Workbench-only cards never reach the
+// solver.
 auto continuesNetworkGroup(const NecCard& card) -> bool
 {
     switch (card.kind) {
@@ -28,6 +27,14 @@ auto continuesNetworkGroup(const NecCard& card) -> bool
     }
 }
 
+auto networkCardInsertionIndex(const NecDocument& document) -> std::optional<std::size_t>
+{
+    std::optional<std::size_t> index;
+    for (const auto& card : document.cards()) {
+        if (card.kind == NecCardKind::TransmissionLine || card.kind == NecCardKind::Network)
+            index = card.lineNumber;
+    }
+    return index;
 }
 
 auto NecSetupConverter::convert(const NecDocument& document) const -> model::ModelSetup

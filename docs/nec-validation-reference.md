@@ -108,6 +108,11 @@ tracks cards that change calculation state and the requests that execute it.
 - State-changing cards after the final execution request are errors because no later
   request uses them.
 - `GD` without a later `RP` is an error.
+- `NT` and `TL` cards form groups: the first `NT` or `TL` after any other card except `PT`
+  discards every earlier network and line. A group that no `XQ`, `RP`, `NE`, or `NH`
+  follows before the next group starts is never used, so each of its cards is a warning.
+  Workbench adds new `NT` and `TL` cards right after the deck's last `NT`/`TL` card for
+  this reason.
 
 ## Static Adequacy Checks
 

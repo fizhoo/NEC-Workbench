@@ -1614,6 +1614,42 @@ auto isNearFieldRequest(const NecCard& card) -> bool
         && (card.mnemonic == "NE" || card.mnemonic == "NH");
 }
 
+// A group of NT and TL cards that no execution request follows is discarded by the next group
+// before NEC uses it. This is the usual result of adding a TL after an EX that follows the
+// existing lines.
+void checkDiscardedNetworkGroups(const NecDocument& document, const model::ModelSetup& setup,
+    ModelCheckResult& result)
+{
+    std::vector<const NecCard*> group;
+    auto groupOpen = false;
+    auto groupUsed = false;
+    for (const auto& card : document.cards()) {
+        if (card.kind == NecCardKind::TransmissionLine || card.kind == NecCardKind::Network) {
+            if (!groupOpen) {
+                for (const auto* discarded : groupUsed ? std::vector<const NecCard*>{} : group) {
+                    if (std::ranges::find(setup.networkClearLines, discarded->lineNumber)
+                        != setup.networkClearLines.end()) continue;
+                    addSequenceDiagnostic(result, DiagnosticSeverity::Warning, *discarded,
+                        discarded->mnemonic + " is discarded before NEC uses it: the "
+                            + card.mnemonic + " card on line " + std::to_string(card.lineNumber)
+                            + " starts a new NT/TL group because other cards come between "
+                              "them, and NEC-2 clears every earlier network and line when a "
+                              "group starts. Keep NT and TL cards together, or add an "
+                              "execution request between the groups.");
+                }
+                group.clear();
+                groupUsed = false;
+            }
+            groupOpen = true;
+            group.push_back(&card);
+            continue;
+        }
+        if (!continuesNetworkGroup(card)) groupOpen = false;
+        if (card.kind == NecCardKind::Execute || card.kind == NecCardKind::RadiationPattern
+            || isNearFieldRequest(card)) groupUsed = true;
+    }
+}
+
 void checkControlSequence(const NecDocument& document, ModelCheckResult& result)
 {
     auto excitationDefined = false;
@@ -1755,6 +1791,7 @@ auto NecModelChecker::check(const NecDocument& document, ModelCheckOptions optio
     checkCardOrdering(document, result);
     checkControlSequence(document, result);
     const auto setup = NecSetupConverter{}.convert(document);
+    checkDiscardedNetworkGroups(document, setup, result);
 
     for (const auto& card : document.cards()) {
         switch (card.kind) {

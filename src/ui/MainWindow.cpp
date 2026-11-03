@@ -3582,8 +3582,8 @@ void MainWindow::changeLoad(const model::LoadDefinition& load)
 
 void MainWindow::changeTransmissionLine(const model::TransmissionLineDefinition& line)
 {
-    upsertSetupCard(line.sourceLine == 0 ? tr("Add transmission line") : tr("Edit transmission line"),
-        line.sourceLine, QString::fromStdString(nec::NecWriter{}.writeTransmissionLineCard(line)), false);
+    upsertNetworkCard(line.sourceLine == 0 ? tr("Add transmission line") : tr("Edit transmission line"),
+        line.sourceLine, QString::fromStdString(nec::NecWriter{}.writeTransmissionLineCard(line)));
 }
 
 void MainWindow::addExcitationAt(int wireTag, int segment)
@@ -3708,6 +3708,20 @@ void MainWindow::upsertSetupCard(const QString& description, std::size_t sourceL
         }
     }
     const auto updated = nec::insertSourceLine(source, insertionIndex, cardText.toStdString());
+    if (updated) pushGeometrySourceEdit(description, QString::fromStdString(*updated));
+}
+
+void MainWindow::upsertNetworkCard(const QString& description, std::size_t sourceLine,
+    const QString& cardText)
+{
+    const auto index = sourceLine == 0
+        ? nec::networkCardInsertionIndex(activeSource().document()) : std::nullopt;
+    if (!index) {
+        upsertSetupCard(description, sourceLine, cardText, false);
+        return;
+    }
+    const auto updated = nec::insertSourceLine(
+        editor_->toPlainText().toStdString(), *index, cardText.toStdString());
     if (updated) pushGeometrySourceEdit(description, QString::fromStdString(*updated));
 }
 
