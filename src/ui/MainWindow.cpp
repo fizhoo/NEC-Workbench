@@ -2902,6 +2902,11 @@ void MainWindow::checkModel(bool presentReport)
         currentSetup_.networks);
     geometry3DView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
         currentSetup_.networks);
+    const auto sharedSegments = model::describeSharedSegments(currentModel_, currentSetup_);
+    xyView_->setSharedSegments(sharedSegments);
+    xzView_->setSharedSegments(sharedSegments);
+    yzView_->setSharedSegments(sharedSegments);
+    geometry3DView_->setSharedSegments(sharedSegments);
     parameterEditor_->setResolution(resolution);
     setupEditor_->setData(currentModel_, currentSetup_);
     loadNetworkEditor_->setData(currentModel_, currentSetup_);

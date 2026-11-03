@@ -3884,6 +3884,47 @@ auto main(int argc, char* argv[]) -> int
     attachmentImage.fill(Qt::transparent); QPainter attachmentPainter(&attachmentImage);
     attachment2D.render(&attachmentPainter); attachment3D.render(&attachmentPainter);
     attachmentPainter.end();
+    {
+        auto sharedSetup = attachmentSetup;
+        sharedSetup.loads.push_back({4, 1, 3, 3, 300.0, 0.0, 0.0, 9});
+        sharedSetup.networks.push_back({1, 9, 2, 3, 0.01, 0.0, 0.0, 0.0, 1e10, 0.0, 10});
+        necwb::ui::GeometryView network2D(necwb::geometry::ProjectionPlane::XY);
+        network2D.resize(400, 300);
+        network2D.setModel(attachmentModel);
+        network2D.setAttachments(sharedSetup.loads, sharedSetup.transmissionLines,
+            sharedSetup.networks);
+        network2D.setSharedSegments(
+            necwb::model::describeSharedSegments(attachmentModel, sharedSetup));
+        QImage networkImage(400, 300, QImage::Format_ARGB32_Premultiplied);
+        networkImage.fill(Qt::transparent);
+        QPainter networkPainter(&networkImage);
+        network2D.render(&networkPainter);
+        networkPainter.end();
+        necwb::ui::LoadNetworkEditor sharedEditor;
+        sharedEditor.setData(attachmentModel, sharedSetup);
+        sharedEditor.show();
+        application.processEvents();
+        auto* sharedLoads = sharedEditor.findChild<QTableWidget*>(
+            QStringLiteral("loadNetworkLoadsTable"));
+        auto* sharedNotes = sharedEditor.findChild<QLabel*>(
+            QStringLiteral("loadNetworkSharingNotes"));
+        if (sharedLoads == nullptr || sharedNotes == nullptr || sharedNotes->isVisible()
+            || sharedLoads->verticalHeaderItem(1) == nullptr
+            || sharedLoads->verticalHeaderItem(1)->icon().isNull()
+            || !sharedLoads->verticalHeaderItem(1)->toolTip().contains(
+                QStringLiteral("LD 2 (300 Ω) is in series inside the segment"))
+            || !sharedLoads->verticalHeaderItem(0)->icon().isNull())
+            return NECWB_SMOKE_FAILURE("shared-segment markers in the loads table");
+        sharedEditor.selectLoad(9);
+        application.processEvents();
+        if (!sharedNotes->isVisible()
+            || !sharedNotes->text().contains(QStringLiteral("TL 1 end 1 connects across")))
+            return NECWB_SMOKE_FAILURE("shared-segment note for the selected load");
+        sharedEditor.selectLoad(7);
+        application.processEvents();
+        if (sharedNotes->isVisible())
+            return NECWB_SMOKE_FAILURE("shared-segment note hides for an unshared load");
+    }
     necwb::ui::LoadNetworkEditor loadNetwork;
     loadNetwork.setData(attachmentModel, attachmentSetup);
     loadNetwork.setLengthUnit(necwb::model::LengthUnit::Foot);

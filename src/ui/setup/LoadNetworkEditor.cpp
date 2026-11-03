@@ -3,6 +3,7 @@
 #include "ui/DisplayFormat.h"
 #include "ui/PendingEditIndicator.h"
 
+#include <algorithm>
 #include <array>
 #include <utility>
 
@@ -13,6 +14,7 @@
 #include <QPalette>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QStyle>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
@@ -137,8 +139,13 @@ LoadNetworkEditor::LoadNetworkEditor(QWidget* parent) : QWidget(parent)
     lineButtons->addWidget(addLine); lineButtons->addWidget(applyLineButton_); lineButtons->addWidget(deleteLine); lineButtons->addStretch();
     validation_ = new QLabel(this); validation_->setStyleSheet(QStringLiteral("color: #9a3030;")); validation_->hide();
     validation_->setObjectName(QStringLiteral("loadNetworkValidation"));
+    sharingNotes_ = new QLabel(this);
+    sharingNotes_->setObjectName(QStringLiteral("loadNetworkSharingNotes"));
+    sharingNotes_->setWordWrap(true);
+    sharingNotes_->setTextFormat(Qt::RichText);
+    sharingNotes_->hide();
     layout->addWidget(description); layout->addWidget(loadTypes); layout->addWidget(new QLabel(tr("Loads (LD 0–5)"), this)); layout->addWidget(loads_, 1); layout->addLayout(loadButtons);
-    layout->addWidget(new QLabel(tr("Transmission Lines (TL)"), this)); layout->addWidget(lines_, 1); layout->addLayout(lineButtons); layout->addWidget(validation_);
+    layout->addWidget(new QLabel(tr("Transmission Lines (TL)"), this)); layout->addWidget(lines_, 1); layout->addLayout(lineButtons); layout->addWidget(sharingNotes_); layout->addWidget(validation_);
 
     connect(addLoad, &QPushButton::clicked, this, [this] {
         if (model_.wires().empty()) return;
@@ -203,11 +210,13 @@ LoadNetworkEditor::LoadNetworkEditor(QWidget* parent) : QWidget(parent)
     connect(loads_, &QTableWidget::currentCellChanged, this,
         [this](int row) {
             updateLoadColumns(row);
+            showSharingNotes(model::InsertionKind::Load, row);
             if (const auto line = sourceLineAt(loads_, row)) emit loadSelected(line);
         });
     connect(lines_, &QTableWidget::currentCellChanged, this,
         [this](int row) {
             updateLineApplyState();
+            showSharingNotes(model::InsertionKind::LineEnd, row);
             if (const auto line = sourceLineAt(lines_, row)) emit transmissionLineSelected(line);
         });
     connect(loads_, &QTableWidget::itemChanged, this,
@@ -225,6 +234,7 @@ void LoadNetworkEditor::setData(const model::AntennaModel& model, const model::M
     updating_ = true;
     model_ = model;
     setup_ = setup;
+    sharedSegments_ = model::describeSharedSegments(model, setup);
     const QSignalBlocker loadBlocker(loads_);
     loads_->setRowCount(static_cast<int>(setup.loads.size()));
     for (auto row = 0; row < static_cast<int>(setup.loads.size()); ++row) {
@@ -235,6 +245,7 @@ void LoadNetworkEditor::setData(const model::AntennaModel& model, const model::M
     for (auto row = 0; row < static_cast<int>(setup.transmissionLines.size()); ++row) {
         setLineRow(row, setup.transmissionLines[row]);
     }
+    markSharedRows();
     selectLoad(selectedLoad);
     selectTransmissionLine(selectedLine);
     updating_ = false;
@@ -290,11 +301,13 @@ void LoadNetworkEditor::selectLoad(std::size_t sourceLine)
         if (sourceLineAt(loads_, row) == sourceLine) {
             loads_->selectRow(row);
             updateLoadColumns(row);
+            showSharingNotes(model::InsertionKind::Load, row);
             return;
         }
     }
     loads_->clearSelection();
     updateLoadColumns(-1);
+    showSharingNotes(model::InsertionKind::Load, -1);
 }
 
 void LoadNetworkEditor::selectTransmissionLine(std::size_t sourceLine)
@@ -304,11 +317,74 @@ void LoadNetworkEditor::selectTransmissionLine(std::size_t sourceLine)
         if (sourceLineAt(lines_, row) == sourceLine) {
             lines_->selectRow(row);
             updateLineApplyState();
+            showSharingNotes(model::InsertionKind::LineEnd, row);
             return;
         }
     }
     lines_->clearSelection();
     updateLineApplyState();
+}
+
+auto LoadNetworkEditor::sharingNotes(model::InsertionKind kind, int number) const -> QStringList
+{
+    QStringList notes;
+    for (const auto& shared : sharedSegments_) {
+        if (std::ranges::any_of(shared.objects, [kind, number](const auto& object) {
+                return object.kind == kind && object.number == number;
+            })) notes.append(QString::fromStdString(shared.description));
+    }
+    return notes;
+}
+
+// Rows are numbered as the descriptions name them (LD 1, TL 1), so the row header carries the
+// marker. A line end sharing only with its source is the usual feed and is left unmarked.
+void LoadNetworkEditor::markSharedRows()
+{
+    const auto mark = [this](QTableWidget* table, model::InsertionKind kind, int count) {
+        for (auto row = 0; row < table->rowCount(); ++row) {
+            auto* header = new QTableWidgetItem(QString::number(row + 1));
+            if (row < count) {
+                const auto number = row + 1;
+                auto withLoad = false;
+                auto withPort = false;
+                for (const auto& shared : sharedSegments_) {
+                    if (std::ranges::none_of(shared.objects, [kind, number](const auto& object) {
+                            return object.kind == kind && object.number == number;
+                        })) continue;
+                    for (const auto& object : shared.objects) {
+                        withLoad = withLoad || object.kind == model::InsertionKind::Load;
+                        withPort = withPort || object.kind == model::InsertionKind::LineEnd
+                            || object.kind == model::InsertionKind::NetworkPort;
+                    }
+                }
+                // A load row always counts itself, so withLoad means "shares with something".
+                if (withLoad) {
+                    header->setIcon(style()->standardIcon(withPort
+                            ? QStyle::SP_MessageBoxWarning : QStyle::SP_MessageBoxInformation));
+                    header->setToolTip(sharingNotes(kind, number).join(QStringLiteral("\n\n")));
+                }
+            }
+            table->setVerticalHeaderItem(row, header);
+        }
+    };
+    mark(loads_, model::InsertionKind::Load, static_cast<int>(setup_.loads.size()));
+    mark(lines_, model::InsertionKind::LineEnd, static_cast<int>(setup_.transmissionLines.size()));
+}
+
+void LoadNetworkEditor::showSharingNotes(model::InsertionKind kind, int row)
+{
+    const auto count = kind == model::InsertionKind::Load ? setup_.loads.size()
+                                                          : setup_.transmissionLines.size();
+    const auto notes = row >= 0 && static_cast<std::size_t>(row) < count
+        ? sharingNotes(kind, row + 1) : QStringList{};
+    if (notes.isEmpty()) {
+        sharingNotes_->hide();
+        return;
+    }
+    QString text = tr("<b>How NEC connects this segment</b>");
+    for (const auto& note : notes) text += QStringLiteral("<p>%1</p>").arg(note.toHtmlEscaped());
+    sharingNotes_->setText(text);
+    sharingNotes_->show();
 }
 
 void LoadNetworkEditor::applySelectedLoad()

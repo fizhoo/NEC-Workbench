@@ -363,6 +363,79 @@ void testTransmissionLineLength()
         "a TL longer than the gap is accepted");
 }
 
+
+void testSharedInsertionSegments()
+{
+    const auto shared = [](const ModelCheckResult& result, DiagnosticSeverity severity) {
+        return count(result, "shares its segment with", severity);
+    };
+    // A dipole fed through a 50 Ω line from a one-segment source stub.
+    const std::string fedDipole =
+        "GW 1 11 -5 0 10 5 0 10 .001\n"
+        "GW 2 1 0 0 1 0 0 1.1 .001\n";
+    const auto stubLoad = check(deck(fedDipole, "EX 0 2 1 0 1 0\nTL 1 6 2 1 50 0\n"
+                                               "LD 4 2 1 1 300 0\n"));
+    expect(shared(stubLoad, DiagnosticSeverity::Warning) == 1
+            && count(stubLoad, "LD 1 on wire tag 2 segment 1 shares its segment with TL 1 end 2, "
+                               "and wire tag 2 is only 0.00467 wavelength long at 14 MHz") == 1
+            && count(stubLoad, "will have little effect") == 1
+            && count(stubLoad, "TL card's shunt admittance (TL 1 end 2: G = 0.003333 S, B = 0 S), "
+                               "an NT network, or a short parallel wire carrying the load") == 1,
+        "a load on a short stub at a TL end warns that the stub swamps it");
+    const auto lineLoad = check(deck(fedDipole, "EX 0 2 1 0 1 0\nTL 1 6 2 1 50 0\n"
+                                                "LD 0 1 6 6 0 1e-6 0\n"));
+    expect(shared(lineLoad, DiagnosticSeverity::Warning) == 1
+            && count(lineLoad,
+                   "LD 1 on wire tag 1 segment 6 shares its segment with TL 1 end 1. NEC puts an "
+                   "LD load in series inside the segment, not across the port, so the port sees "
+                   "the load plus the wire's own impedance.") == 1
+            && count(lineLoad, "match an L or C at one frequency only") == 1
+            && count(lineLoad, "little effect") == 0,
+        "a load at a TL end on a long wire warns without the short-wire wording");
+    const auto networkLoad = check(deck(fedDipole, "EX 0 2 1 0 1 0\nTL 1 6 2 1 50 0\n"
+                                                   "NT 1 3 1 9 .01\nLD 4 1 3 3 50 0\n"));
+    expect(count(networkLoad, "LD 1 on wire tag 1 segment 3 shares its segment with NT 1 port 1")
+            == 1,
+        "a load on an NT port's segment warns like one on a TL end");
+
+    const std::string dipole = "GW 1 11 -5 0 10 5 0 10 .001\n";
+    const auto sourceLoad = check(deck(dipole, "EX 0 1 6 0 1 0\nLD 4 1 6 6 50 0\n"));
+    expect(shared(sourceLoad, DiagnosticSeverity::Information) == 1
+            && count(sourceLoad, "LD 1 on wire tag 1 segment 6 shares its segment with EX 1, so "
+                                 "NEC puts it in series with the source (Thevenin source)",
+                   DiagnosticSeverity::Information) == 1
+            && shared(sourceLoad, DiagnosticSeverity::Warning) == 0,
+        "a load on the source segment is a note about a Thevenin source");
+    const auto lone = check(deck(dipole, "EX 0 1 6 0 1 0\nLD 4 1 3 3 50 0\nLD 5 1 0 0 5.8e7\n"));
+    expect(shared(lone, DiagnosticSeverity::Warning) == 0
+            && shared(lone, DiagnosticSeverity::Information) == 0,
+        "a load alone on its segment, and wire conductivity, are not reported");
+    expect(shared(check(deck(dipole, "EX 0 1 6 0 1 0\nLD 4 1 0 0 0.1 0\n")),
+               DiagnosticSeverity::Information) == 0,
+        "a lumped load spread over the whole fed wire is not reported");
+
+    // EZNEC user-group case: a 558 Ω two-wire line at 5 MHz between one-segment stubs,
+    // terminated in 558 Ω. As an LD on the far stub, the load sits in series with the stub's
+    // capacitive reactance (nec2c: 0.0087 - j318 Ω at the source); as the TL end-two shunt
+    // admittance it sits across the line (nec2c: 556.3 - j0.95 Ω).
+    const std::string forum =
+        "CM 558 ohm line at 5 MHz\nCE\n"
+        "GW 1 1 0 0 10 0 0 10.1 .001\n"
+        "GW 2 1 10 0 10 10 0 10.1 .001\n"
+        "GE 0\n";
+    const auto seriesTermination = check(forum + "LD 4 2 1 1 558 0\nTL 1 1 2 1 558 0 0 0 0 0\n"
+                                                 "EX 0 1 1 0 1 0\nFR 0 1 0 0 5 0\nXQ\nEN\n");
+    expect(count(seriesTermination, "LD 1 on wire tag 2 segment 1 shares its segment with TL 1 "
+                                    "end 2, and wire tag 2 is only 0.001668 wavelength long") == 1
+            && count(seriesTermination, "G = 0.001792 S, B = 0 S") == 1,
+        "the forum deck with an LD termination gets the short-stub warning");
+    const auto shuntTermination = check(forum + "TL 1 1 2 1 558 0 0 0 .0017921 0\n"
+                                                "EX 0 1 1 0 1 0\nFR 0 1 0 0 5 0\nXQ\nEN\n");
+    expect(shared(shuntTermination, DiagnosticSeverity::Warning) == 0
+            && shuntTermination.errorCount() == 0,
+        "the forum deck with a TL shunt-admittance termination is not warned");
+}
+
 }
 
 auto main() -> int
@@ -374,6 +447,7 @@ auto main() -> int
     testParallelAlignment();
     testInsertionSegments();
     testTransmissionLineLength();
+    testSharedInsertionSegments();
 
     if (failures != 0) {
         std::cerr << failures << " test assertion(s) failed\n";

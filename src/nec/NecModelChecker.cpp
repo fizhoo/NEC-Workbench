@@ -4,11 +4,13 @@
 #include "nec/NecModelConverter.h"
 #include "nec/NecSetupConverter.h"
 #include "nec/ParseNumber.h"
+#include "model/SegmentSharing.h"
 #include "model/WireGeometry.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <cstdint>
 #include <iomanip>
 #include <limits>
@@ -1118,6 +1120,95 @@ void checkStaticAdequacy(const NecDocument& document, const model::ModelSetup& s
     if (usesNec2Kernel(profile)) checkParallelAlignment(graph, wavelengthMeters, result);
 }
 
+// How to put a load across a port instead of in series with it. For a fixed impedance on a TL
+// end the shunt admittance is spelled out; RLC values would only match at one frequency.
+auto acrossPortAdvice(const model::LoadDefinition& load, const model::SharedSegment& shared)
+    -> std::string
+{
+    std::string shunt = "the TL card's shunt admittance";
+    const auto lineEnd = std::ranges::find(shared.objects, model::InsertionKind::LineEnd,
+        &model::InsertionObject::kind);
+    if (load.type == 4 && lineEnd != shared.objects.end()
+        && (load.value1 != 0.0 || load.value2 != 0.0)) {
+        const auto admittance = 1.0 / std::complex<double>(load.value1, load.value2);
+        shunt += " (" + model::insertionObjectName(*lineEnd) + ": G = "
+            + concise(admittance.real()) + " S, B = " + concise(admittance.imag()) + " S)";
+    }
+    auto advice = "To put the load across the port, use " + shunt
+        + ", an NT network, or a short parallel wire carrying the load.";
+    if (load.type == 0 || load.type == 1) {
+        advice += " TL and NT admittances are fixed values, so they match an L or C at one "
+                  "frequency only.";
+    }
+    return advice;
+}
+
+// LD loads that share a segment with a TL end, NT port, or EX source end up in series with it,
+// which is rarely what a load on a line end means.
+void checkSharedSegments(const model::ModelSetup& setup, ModelCheckResult& result)
+{
+    std::set<std::pair<std::size_t, std::string>> reported;
+    const auto report = [&](DiagnosticSeverity severity, std::size_t line, std::string message) {
+        if (reported.emplace(line, message).second)
+            addAdequacyDiagnostic(result, severity, line, std::move(message));
+    };
+    const auto frequencyMHz = setup.frequency
+        ? std::max(setup.frequency->startMHz, model::frequencyEndMHz(*setup.frequency)) : 0.0;
+    for (const auto& shared : model::describeSharedSegments(result.model, setup)) {
+        std::vector<std::string> ports;
+        std::vector<std::string> sources;
+        for (const auto& object : shared.objects) {
+            if (object.kind == model::InsertionKind::LineEnd
+                || object.kind == model::InsertionKind::NetworkPort) {
+                ports.push_back(model::insertionObjectName(object));
+            } else if (object.kind == model::InsertionKind::Source) {
+                sources.push_back(model::insertionObjectName(object));
+            }
+        }
+        const auto joinedNames = [](const std::vector<std::string>& names) {
+            std::string text;
+            for (std::size_t index = 0; index < names.size(); ++index) {
+                if (index != 0) text += index + 1 == names.size() ? " and " : ", ";
+                text += names[index];
+            }
+            return text;
+        };
+        const auto place = " on wire tag " + std::to_string(shared.wireTag) + " segment "
+            + std::to_string(shared.necSegment);
+        for (const auto& object : shared.objects) {
+            if (object.kind != model::InsertionKind::Load) continue;
+            const auto& load = setup.loads[static_cast<std::size_t>(object.number - 1)];
+            // A load spread over a range is distributed loading, not a load meant for the port.
+            if (load.firstSegment < 1 || load.lastSegment != load.firstSegment) continue;
+            const auto subject = model::insertionObjectName(object) + place
+                + " shares its segment with " + joinedNames(!ports.empty() ? ports : sources);
+            if (!ports.empty()) {
+                const auto portWord = std::string(ports.size() == 1 ? "the port" : "the ports");
+                if (shared.electricallyShort) {
+                    report(DiagnosticSeverity::Warning, load.sourceLine, subject
+                        + ", and wire tag " + std::to_string(shared.wireTag) + " is only "
+                        + concise(shared.wireWavelengths) + " wavelength long at "
+                        + concise(frequencyMHz) + " MHz. NEC puts an LD load in series inside "
+                          "the segment, not across " + portWord + ", so it adds to this short "
+                          "wire's own reactance, which is far larger, and will have little "
+                          "effect. " + acrossPortAdvice(load, shared));
+                } else {
+                    report(DiagnosticSeverity::Warning, load.sourceLine, subject
+                        + ". NEC puts an LD load in series inside the segment, not across "
+                        + portWord + ", so " + portWord + (ports.size() == 1 ? " sees" : " see")
+                        + " the load plus the wire's own impedance. "
+                        + acrossPortAdvice(load, shared));
+                }
+            } else if (!sources.empty()) {
+                report(DiagnosticSeverity::Information, load.sourceLine, subject
+                    + ", so NEC puts it in series with the source (Thevenin source). That is "
+                      "sometimes intended, as a signal generator's source impedance; to load "
+                      "across the feed instead, use an NT network.");
+            }
+        }
+    }
+}
+
 void checkExcitation(const NecCard& card, ModelCheckResult& result)
 {
     if (card.fields.size() < 5) {
@@ -1749,6 +1840,7 @@ auto NecModelChecker::check(const NecDocument& document, ModelCheckOptions optio
             "is exact at only one frequency.");
     }
     checkStaticAdequacy(document, setup, options.compatibility, result);
+    checkSharedSegments(setup, result);
     std::ranges::sort(result.diagnostics, {}, &ModelDiagnostic::lineNumber);
     return result;
 }

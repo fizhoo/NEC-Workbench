@@ -134,12 +134,15 @@ and Segmentation Convergence for numerical validation.
 | `EX`, `LD`, `TL` end, or `NT` port beside a radius step | Warning | The segment touches a junction where radii differ by more than 10% |
 | `EX`, `LD`, `TL` end, or `NT` port at a multiwire junction | Information | The segment touches a junction of more than two segments. NEC-2 allows this (only `EX 5` needs a simple two-segment junction), so it is a note |
 | `EX` or `LD` on a free wire end | Information | The segment touches an unconnected wire end that `GE 1` does not tie to ground. One-segment wires (`TL`/`NT` stubs), `LD 5`, and segment-range loads are skipped |
+| `LD` on the segment of a `TL` end or `NT` port | Warning | A lumped load (`LD` 0, 1, 4) shares a segment with a line end or network port. NEC-2 puts `LD` in series inside the segment while ports connect across its gap, so the port sees the load plus the wire's own impedance. When the wire is shorter than 0.05 λ at the highest frequency, the message says the wire's reactance swamps the load. The message names the remedies: the `TL` shunt admittance (with G and B worked out for an `LD 4` on a line end), an `NT` network, or a short parallel wire carrying the load |
+| `LD` on the segment of an `EX` source | Information | The load is in series with the source (a Thevenin source impedance), which is sometimes intended |
 | `NT` in a frequency sweep | Information | The deck has `NT` cards and solves more than one frequency (an `FR` step count above one, or `FR` cards at different frequencies). `NT` admittances do not scale with frequency |
 | Transmission line shorter than its gap | Warning | Explicit nonzero `TL` length more than 1% below the straight-line distance between the two segment centers. A zero or omitted length is not checked, since NEC then uses that distance |
 
 The 0.1 λ `GN 0` height, the 5° parallel angle, the close-spacing limits, the 10%
 alignment and radius-step limits, and the 1% `TL` tolerance are named constants in
-`NecModelChecker.cpp`. They are guidance from the NEC-2 literature, not hard solver
+`NecModelChecker.cpp`; the 0.05 λ short-wire limit for loads at a port is
+`kElectricallyShortWavelengths` in `SegmentSharing.h`. They are guidance from the NEC-2 literature, not hard solver
 limits. The parallel-alignment spacing is capped at a segment length because the NEC-2
 user's guide asks for aligned segments only when parallel wires are "very close". The
 buried-wire, one-way connection, and parallel-alignment checks reflect NEC-2 kernel

@@ -1,8 +1,11 @@
 #include "ui/geometry/GeometryInteractionView.h"
 
 #include <QContextMenuEvent>
+#include <QHelpEvent>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QStringList>
+#include <QToolTip>
 
 #include <algorithm>
 
@@ -112,6 +115,35 @@ void GeometryInteractionView::setAttachments(const std::vector<model::LoadDefini
         selectedTransmissionLine_.reset();
     }
     update();
+}
+
+void GeometryInteractionView::setSharedSegments(
+    const std::vector<model::SharedSegment>& sharedSegments)
+{
+    sharedSegments_ = sharedSegments;
+}
+
+auto GeometryInteractionView::event(QEvent* event) -> bool
+{
+    if (event->type() == QEvent::ToolTip && !sharedSegments_.empty()) {
+        const auto* help = static_cast<QHelpEvent*>(event);
+        if (const auto tag = wireAt(help->pos())) {
+            const auto segment = segmentAt(*tag, help->pos());
+            QStringList notes;
+            for (const auto& shared : sharedSegments_) {
+                // Rich text so Qt wraps the long descriptions.
+                if (shared.wireTag == *tag && shared.wireSegment == segment) {
+                    notes.append(QStringLiteral("<p>%1</p>").arg(
+                        QString::fromStdString(shared.description).toHtmlEscaped()));
+                }
+            }
+            if (!notes.isEmpty()) {
+                QToolTip::showText(help->globalPos(), notes.join(QString()), this);
+                return true;
+            }
+        }
+    }
+    return QWidget::event(event);
 }
 
 void GeometryInteractionView::setPendingTransmissionLineEndpoint(

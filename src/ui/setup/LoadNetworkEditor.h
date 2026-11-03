@@ -3,7 +3,9 @@
 #include "model/AntennaModel.h"
 #include "model/LengthUnit.h"
 #include "model/ModelSetup.h"
+#include "model/SegmentSharing.h"
 
+#include <QStringList>
 #include <QWidget>
 
 class QLabel;
@@ -42,6 +44,9 @@ private:
     void updateLoadValueFields(int row, int type);
     void setLoadPending(bool pending);
     void setLinePending(bool pending);
+    [[nodiscard]] auto sharingNotes(model::InsertionKind kind, int number) const -> QStringList;
+    void markSharedRows();
+    void showSharingNotes(model::InsertionKind kind, int row);
     model::AntennaModel model_;
     model::ModelSetup setup_;
     QTableWidget* loads_{};
@@ -49,6 +54,8 @@ private:
     QPushButton* applyLoadButton_{};
     QPushButton* applyLineButton_{};
     QLabel* validation_{};
+    QLabel* sharingNotes_{};
+    std::vector<model::SharedSegment> sharedSegments_;
     model::LengthUnit lengthUnit_{model::LengthUnit::Meter};
     bool loadPending_{};
     bool linePending_{};

@@ -214,6 +214,17 @@ An emphasized Apply button indicates pending changes.
 References are validated against available wire tags and segments. Units shown in
 the interface are converted to the NEC values stored in source.
 
+When one segment carries more than one source, load, transmission-line end, or network
+port, Workbench explains how NEC connects them. NEC-2 puts `EX` sources, `TL` ends, and
+`NT` ports across the segment's gap, in parallel with one another, but an `LD` load sits
+in series inside the segment. A load on a line end therefore acts in series with the
+line, which is rarely what is meant; on a short stub wire it has almost no effect. In
+the Loads & Networks table, the row number of an affected load or line shows a marker
+and a tooltip, and selecting the row shows the explanation below the tables. Hovering
+the segment in a Geometry view shows the same text. Model Check warns about loads on a
+line end or network port, and suggests the `TL` shunt admittance, an `NT` network, or a
+short parallel wire to put the load across the port instead.
+
 ### Frequency
 
 Edit the model's supported `FR` definition here. A sweep is represented by start,

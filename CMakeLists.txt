@@ -64,6 +64,8 @@ add_library(necwb_core
     src/model/ModelSetup.cpp
     src/model/ModelSummary.cpp
     src/model/ModelSummary.h
+    src/model/SegmentSharing.cpp
+    src/model/SegmentSharing.h
     src/model/WireGauge.cpp
     src/nec/NecDocument.cpp
     src/nec/NecCardCatalog.cpp

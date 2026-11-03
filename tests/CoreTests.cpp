@@ -20,6 +20,7 @@
 #include "model/AutoSegmentation.h"
 #include "model/LengthUnit.h"
 #include "model/ModelSummary.h"
+#include "model/SegmentSharing.h"
 #include "model/WireGeometry.h"
 #include "model/WireGauge.h"
 #include "nec/DeckGeometryUnits.h"
@@ -3064,6 +3065,64 @@ void testNetworkDefinitions()
         "a sweep without NT cards has no fixed-admittance note");
 }
 
+void testSharedSegmentDescriptions()
+{
+    const auto describe = [](const std::string& control) {
+        const auto document = necwb::nec::NecParser{}.parse(
+            "GW 1 11 -5 0 10 5 0 10 .001\nGW 2 1 0 0 1 0 0 1.1 .001\nGE 0\n" + control
+            + "FR 0 1 0 0 14 0\nEN\n");
+        return necwb::model::describeSharedSegments(
+            necwb::nec::NecModelConverter{}.convert(document).model,
+            necwb::nec::NecSetupConverter{}.convert(document));
+    };
+    const auto stub = describe("EX 0 1 6 0 1 0\nTL 1 3 2 1 50 0\nLD 4 2 1 1 300 0\n");
+    expect(stub.size() == 1 && stub[0].wireTag == 2 && stub[0].wireSegment == 1
+            && stub[0].electricallyShort && stub[0].objects.size() == 2
+            && stub[0].description
+                == "Wire tag 2, segment 1: TL 1 end 2 connects across this gap. LD 1 (300 Ω) is "
+                   "in series inside the segment, so the line sees the load plus this wire's own "
+                   "impedance. This wire is only 0.00467 wavelength long at 14 MHz, so its own "
+                   "reactance swamps the load.",
+        "a load on a TL end's stub is described as in series with the line end");
+    const auto feed = describe("EX 0 1 6 0 1 0\nLD 1 1 6 6 50 1e-6\nNT 1 6 2 1 .01\n");
+    expect(feed.size() == 1 && !feed[0].electricallyShort
+            && feed[0].description
+                == "Wire tag 1, segment 6: NT 1 port 1 connects across this gap. EX 1 drives "
+                   "the same gap, in parallel with the network. LD 1 (parallel R 50 Ω, L 1 µH) "
+                   "is in series inside the segment, so the network sees the load plus this "
+                   "wire's own impedance. LD type 1 is a parallel RLC, but the RLC as a whole "
+                   "still sits in series in the wire.",
+        "a source, network port, and parallel RLC on one segment are described together");
+    const auto thevenin = describe("EX 0 1 6 0 1 0\nLD 4 1 6 6 50 -25\n");
+    expect(thevenin.size() == 1
+            && thevenin[0].description
+                == "Wire tag 1, segment 6: EX 1 drives this gap. LD 1 (50 − j25 Ω) is in series "
+                   "inside the segment, in series with the source (a Thevenin source impedance).",
+        "a load on the source segment is described as a Thevenin source impedance");
+    expect(describe("EX 0 1 6 0 1 0\nLD 4 1 3 3 50 0\nLD 5 1 0 0 5.8e7\n").empty(),
+        "loads alone on their segments and distributed loads share nothing");
+    const auto ranged = describe("EX 0 1 6 0 1 0\nLD 0 1 5 7 10 0 0\n");
+    expect(ranged.size() == 1 && ranged[0].wireSegment == 6,
+        "a ranged lumped load shares only the segments it covers");
+
+    // Networks from different NT/TL groups never act together.
+    const auto groups = describe(
+        "TL 1 3 2 1 50 0\nEX 0 2 1 0 1 0\nNT 1 3 1 9 .01\nLD 4 1 3 3 50 0\n");
+    expect(groups.size() == 3 && groups[0].networkGroup == 0 && groups[1].networkGroup == 1
+            && groups[0].description.find("TL 1 end 1 connects") != std::string::npos
+            && groups[0].description.find("NT") == std::string::npos
+            && groups[1].description.find("NT 1 port 1 connects") != std::string::npos
+            && groups[1].description.find("TL") == std::string::npos,
+        "TL and NT ports from different groups are described separately");
+    const auto sameGroup = describe("EX 0 2 1 0 1 0\nTL 1 3 2 1 50 0\nNT 1 3 1 9 .01\n");
+    expect(std::ranges::any_of(sameGroup, [](const auto& entry) {
+            return entry.description.starts_with(
+                "Wire tag 1, segment 3: TL 1 end 1 and NT 1 port 1 connect across this gap, in "
+                "parallel with each other.");
+        }),
+        "ports of one group on a segment are described in parallel");
+}
+
 void testAverageGainTestPreparation()
 {
     const std::string source =
@@ -3817,6 +3876,7 @@ auto main() -> int
     testAnalysisRequests();
     testLoadsAndTransmissionLines();
     testNetworkDefinitions();
+    testSharedSegmentDescriptions();
     testSolverCommand();
     testRadiationSweepSolverInput();
     testNecOutputParsing();
