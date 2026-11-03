@@ -45,6 +45,7 @@ public:
         Sources,
         Loads,
         TransmissionLines,
+        Networks,
         Ground,
         Variables,
         Requests,

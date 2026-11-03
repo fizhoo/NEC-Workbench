@@ -56,7 +56,7 @@ read-only outside Raw Source and Structured Cards.
 | `KH` | Interaction approximation range | Understood |
 | `LD` | Structure loading | Structured Editable |
 | `EX` | Excitation | Structured Editable for voltage sources |
-| `NT` | Two-port network | Structured Editable (labelled fields in Structured Cards; drawn in Geometry; ports validated, linted, and remapped like `TL` ends) |
+| `NT` | Two-port network | Structured Editable (Loads & Networks table and labelled Structured Cards fields; drawn and selectable in Geometry; ports validated, linted, and remapped like `TL` ends) |
 | `TL` | Transmission line | Structured Editable |
 | `CP` | Coupling calculation | Understood |
 | `EN` | End data | Understood |

@@ -216,6 +216,7 @@ if(NECWB_BUILD_GUI)
             resources/icons/import.svg
             resources/icons/loads.svg
             resources/icons/nec-deck.svg
+            resources/icons/networks.svg
             resources/icons/new.svg
             resources/icons/open.svg
             resources/icons/optimize.svg

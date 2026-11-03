@@ -207,8 +207,11 @@ stability between levels, not universal model correctness.
 
 ### Sources, Loads, Networks, and Environment
 
-These pages provide structured editing for supported `EX`, `LD`, `TL`, `GN`, and
-related model setup. Draft rows do not change the source until Apply is selected.
+These pages provide structured editing for supported `EX`, `LD`, `TL`, `NT`, `GN`, and
+related model setup. The dashboard's **Networks** row opens the `NT` table, where each
+two-port network is given by its ports and its short-circuit admittances Y11, Y12, and
+Y22 in siemens. New `TL` and `NT` cards are added next to the deck's existing ones, since
+NEC-2 discards earlier networks and lines when other cards separate them. Draft rows do not change the source until Apply is selected.
 An emphasized Apply button indicates pending changes.
 
 References are validated against available wire tags and segments. Units shown in
@@ -219,8 +222,8 @@ port, Workbench explains how NEC connects them. NEC-2 puts `EX` sources, `TL` en
 `NT` ports across the segment's gap, in parallel with one another, but an `LD` load sits
 in series inside the segment. A load on a line end therefore acts in series with the
 line, which is rarely what is meant; on a short stub wire it has almost no effect. In
-the Loads & Networks table, the row number of an affected load or line shows a marker
-and a tooltip, and selecting the row shows the explanation below the tables. Hovering
+the Loads & Networks tables, the row number of an affected load, line, or network shows a
+marker and a tooltip, and selecting the row shows the explanation below the tables. Hovering
 the segment in a Geometry view shows the same text. Model Check warns about loads on a
 line end or network port, and suggests the `TL` shunt admittance, an `NT` network, or a
 short parallel wire to put the load across the port instead.

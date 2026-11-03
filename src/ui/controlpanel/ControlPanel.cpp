@@ -179,7 +179,7 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     auto* modelHeading = new QLabel(tr("MODEL  (click a row to edit)"), panel);
     modelHeading->setObjectName(QStringLiteral("controlPanelModelHeading"));
     modelHeading->setFont(resultsFont);
-    modelRows_ = new QTableWidget(9, 3, panel);
+    modelRows_ = new QTableWidget(10, 3, panel);
     modelRows_->setObjectName(QStringLiteral("controlPanelModelRows"));
     modelRows_->horizontalHeader()->hide();
     modelRows_->verticalHeader()->hide();
@@ -198,9 +198,10 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     fitModelRowsHeight();
     const std::array labels{
         tr("Frequency"), tr("Wires"), tr("Sources"), tr("Loads"),
-        tr("Trans. lines"), tr("Ground"), tr("Variables"), tr("Requests"), tr("Deck")};
+        tr("Trans. lines"), tr("Networks"), tr("Ground"), tr("Variables"), tr("Requests"),
+        tr("Deck")};
     const std::array icons{
-        "frequency-sweep", "geometry", "sources", "loads", "transmission-lines",
+        "frequency-sweep", "geometry", "sources", "loads", "transmission-lines", "networks",
         "ground", "variables", "requests", "nec-deck"};
     for (auto row = 0; row < static_cast<int>(labels.size()); ++row) {
         auto* label = new QTableWidgetItem(labels[static_cast<std::size_t>(row)]);
@@ -442,6 +443,8 @@ void ControlPanel::setModel(const model::AntennaModel& model,
     setModelRow(Editor::Loads, countText(summary.loadCount, tr("load"), tr("loads")));
     setModelRow(Editor::TransmissionLines, countText(summary.transmissionLineCount,
         tr("line"), tr("lines")));
+    setModelRow(Editor::Networks, summary.networkCount == 0 ? tr("none (NT)")
+        : countText(summary.networkCount, tr("network (NT)"), tr("networks (NT)")));
     setModelRow(Editor::Ground, groundName(summary.groundType));
     setModelRow(Editor::Variables, summary.symbolCount == 0 ? tr("none (SY)")
         : countText(summary.symbolCount, tr("variable (SY)"), tr("variables (SY)")));

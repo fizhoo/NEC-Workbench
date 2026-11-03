@@ -2974,9 +2974,9 @@ auto main(int argc, char* argv[]) -> int
         && controlPanelConvergence->text() == QStringLiteral("not run")
         && staleInitiallyHidden && staleStateVisible;
     const auto controlPanelDenseLayout = controlPanelRows != nullptr
-        && controlPanelRows->rowCount() == 9
+        && controlPanelRows->rowCount() == 10
         && controlPanelRows->verticalHeader()->defaultSectionSize() <= 24
-        && controlPanelRows->height() <= 220
+        && controlPanelRows->height() <= 244
         && controlPanel.sizeHint().width() <= 700;
     const auto controlPanelActionsCorrect = controlPanelOpen != nullptr
         && controlPanelOpen->defaultAction() == &openAction
@@ -3891,8 +3891,7 @@ auto main(int argc, char* argv[]) -> int
         necwb::ui::GeometryView network2D(necwb::geometry::ProjectionPlane::XY);
         network2D.resize(400, 300);
         network2D.setModel(attachmentModel);
-        network2D.setAttachments(sharedSetup.loads, sharedSetup.transmissionLines,
-            sharedSetup.networks);
+        network2D.setAttachments(sharedSetup.loads, {}, sharedSetup.networks);
         network2D.setSharedSegments(
             necwb::model::describeSharedSegments(attachmentModel, sharedSetup));
         QImage networkImage(400, 300, QImage::Format_ARGB32_Premultiplied);
@@ -3924,6 +3923,59 @@ auto main(int argc, char* argv[]) -> int
         application.processEvents();
         if (sharedNotes->isVisible())
             return NECWB_SMOKE_FAILURE("shared-segment note hides for an unshared load");
+        auto* networkTable = sharedEditor.findChild<QTableWidget*>(
+            QStringLiteral("loadNetworkNetworksTable"));
+        auto* addNetwork = sharedEditor.findChild<QPushButton*>(
+            QStringLiteral("addNetworkButton"));
+        auto* applyNetwork = sharedEditor.findChild<QPushButton*>(
+            QStringLiteral("applySelectedNetworkButton"));
+        if (networkTable == nullptr || addNetwork == nullptr || applyNetwork == nullptr
+            || networkTable->rowCount() != 1
+            || networkTable->findChild<QComboBox*>(QStringLiteral("networkWire1Combo")) == nullptr)
+            return NECWB_SMOKE_FAILURE("network table controls");
+        std::optional<necwb::model::NetworkDefinition> emittedNetwork;
+        QObject::connect(&sharedEditor, &necwb::ui::LoadNetworkEditor::networkChanged,
+            [&emittedNetwork](necwb::model::NetworkDefinition network) {
+                emittedNetwork = network;
+            });
+        sharedEditor.selectNetwork(10);
+        networkTable->setCurrentCell(0, 4);
+        networkTable->item(0, 4)->setText(QStringLiteral("0.02"));
+        if (!sharedEditor.hasPendingEdits() || !applyNetwork->isEnabled())
+            return NECWB_SMOKE_FAILURE("network edit becomes pending");
+        applyNetwork->click();
+        if (!emittedNetwork || emittedNetwork->sourceLine != 10
+            || emittedNetwork->y11Real != 0.02 || emittedNetwork->wireTag1 != 1
+            || emittedNetwork->segment1 != 9 || emittedNetwork->segment2 != 3
+            || emittedNetwork->y22Real != 1e10)
+            return NECWB_SMOKE_FAILURE("network edit emits the NT definition");
+        networkTable->item(0, 5)->setText(QStringLiteral("abc"));
+        if (applyNetwork->isEnabled())
+            return NECWB_SMOKE_FAILURE("invalid network admittance blocks apply");
+        addNetwork->click();
+        applyNetwork->click();
+        if (networkTable->rowCount() != 2 || !emittedNetwork || emittedNetwork->sourceLine != 0)
+            return NECWB_SMOKE_FAILURE("draft network applies as a new NT card");
+
+        std::optional<std::size_t> clickedNetwork;
+        QObject::connect(&network2D, &necwb::ui::GeometryView::networkSelected,
+            [&clickedNetwork](std::size_t line) { clickedNetwork = line; });
+        network2D.show();
+        network2D.fitToView();
+        application.processEvents();
+        // The NT line runs from wire 1 segment 9 to wire 2 segment 3 and crosses the view's
+        // centre column between the wires; click down that column until it is hit.
+        for (auto y = 0; y < network2D.height() && !clickedNetwork; y += 3) {
+            const QPointF point(network2D.width() / 2.0, y);
+            QMouseEvent press(QEvent::MouseButtonPress, point, network2D.mapToGlobal(point),
+                Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QMouseEvent release(QEvent::MouseButtonRelease, point, network2D.mapToGlobal(point),
+                Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(&network2D, &press);
+            QApplication::sendEvent(&network2D, &release);
+        }
+        if (clickedNetwork != std::optional<std::size_t>{10})
+            return NECWB_SMOKE_FAILURE("clicking an NT line in Geometry selects it");
     }
     necwb::ui::LoadNetworkEditor loadNetwork;
     loadNetwork.setData(attachmentModel, attachmentSetup);

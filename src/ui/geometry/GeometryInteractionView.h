@@ -55,6 +55,7 @@ public:
     void selectExcitation(std::size_t sourceLine);
     void selectLoad(std::size_t sourceLine);
     void selectTransmissionLine(std::size_t sourceLine);
+    void selectNetwork(std::size_t sourceLine);
 
 signals:
     void wireSelected(int tag);
@@ -73,6 +74,9 @@ signals:
     void editTransmissionLineRequested(std::size_t sourceLine);
     void deleteLoadRequested(std::size_t sourceLine);
     void deleteTransmissionLineRequested(std::size_t sourceLine);
+    void networkSelected(std::size_t sourceLine);
+    void editNetworkRequested(std::size_t sourceLine);
+    void deleteNetworkRequested(std::size_t sourceLine);
 
 protected:
     auto event(QEvent* event) -> bool override;
@@ -83,6 +87,7 @@ protected:
     virtual auto loadAt(const QPointF& position) const -> std::optional<std::size_t> = 0;
     virtual auto transmissionLineAt(const QPointF& position) const
         -> std::optional<std::size_t> = 0;
+    virtual auto networkAt(const QPointF& position) const -> std::optional<std::size_t> = 0;
     virtual auto segmentAt(int wireTag, const QPointF& position) const -> int = 0;
     virtual auto wireMenuOptions(int tag, const QPointF& position) const
         -> GeometryWireMenuOptions = 0;
@@ -103,6 +108,7 @@ protected:
     std::optional<std::size_t> selectedExcitationLine_;
     std::optional<std::size_t> selectedLoadLine_;
     std::optional<std::size_t> selectedTransmissionLine_;
+    std::optional<std::size_t> selectedNetworkLine_;
     std::optional<std::pair<int, int>> pendingTransmissionLineEndpoint_;
 };
 

@@ -196,7 +196,7 @@ void GeometryView::mouseMoveEvent(QMouseEvent* event)
         return;
     }
     if (loadAt(event->position()) || transmissionLineAt(event->position())
-        || excitationAt(event->position())) {
+        || networkAt(event->position()) || excitationAt(event->position())) {
         setCursor(Qt::PointingHandCursor);
     } else if (endpointAt(event->position())) {
         setCursor(Qt::OpenHandCursor);
@@ -236,6 +236,12 @@ void GeometryView::mousePressEvent(QMouseEvent* event)
         if (const auto sourceLine = transmissionLineAt(event->position())) {
             selectTransmissionLine(*sourceLine);
             emit transmissionLineSelected(*sourceLine);
+            event->accept();
+            return;
+        }
+        if (const auto sourceLine = networkAt(event->position())) {
+            selectNetwork(*sourceLine);
+            emit networkSelected(*sourceLine);
             event->accept();
             return;
         }
@@ -531,18 +537,20 @@ void GeometryView::drawAttachments(QPainter& painter) const
         painter.drawEllipse(end, selected ? 5.0 : 4.0, selected ? 5.0 : 4.0);
         painter.drawText((start + end) / 2.0 + QPointF{6.0, -6.0}, tr("TL"));
     }
-    // NT networks have no editor of their own, so they are drawn but not selectable.
     for (const auto& network : networks_) {
         const auto first = model::wireSegmentPosition(model_, network.wireTag1, network.segment1);
         const auto second = model::wireSegmentPosition(model_, network.wireTag2, network.segment2);
         if (!first || !second) continue;
         const auto start = mapToScreen(geometry::project(*first, plane_));
         const auto end = mapToScreen(geometry::project(*second, plane_));
-        painter.setPen(QPen(QColor(20, 140, 140), 2.0, Qt::DashDotLine));
+        const auto selected = selectedNetworkLine_ == network.sourceLine;
+        const auto color = selected ? QColor(225, 105, 25) : QColor(20, 140, 140);
+        const auto radius = selected ? 5.0 : 4.0;
+        painter.setPen(QPen(color, selected ? 3.0 : 2.0, Qt::DashDotLine));
         painter.setBrush(palette().base());
         painter.drawLine(start, end);
-        painter.drawEllipse(start, 4.0, 4.0);
-        painter.drawEllipse(end, 4.0, 4.0);
+        painter.drawEllipse(start, radius, radius);
+        painter.drawEllipse(end, radius, radius);
         painter.drawText((start + end) / 2.0 + QPointF{6.0, 12.0}, tr("NT"));
     }
     if (pendingTransmissionLineEndpoint_) {
@@ -600,6 +608,20 @@ auto GeometryView::transmissionLineAt(const QPointF& position) const
     -> std::optional<std::size_t>
 {
     for (auto iterator = transmissionLines_.rbegin(); iterator != transmissionLines_.rend(); ++iterator) {
+        const auto first = model::wireSegmentPosition(model_, iterator->wireTag1, iterator->segment1);
+        const auto second = model::wireSegmentPosition(model_, iterator->wireTag2, iterator->segment2);
+        if (!first || !second) continue;
+        const auto start = mapToScreen(geometry::project(*first, plane_));
+        const auto end = mapToScreen(geometry::project(*second, plane_));
+        if (geometry::distanceToSegment({position.x(), position.y()}, {start.x(), start.y()},
+                {end.x(), end.y()}) <= 8.0) return iterator->sourceLine;
+    }
+    return std::nullopt;
+}
+
+auto GeometryView::networkAt(const QPointF& position) const -> std::optional<std::size_t>
+{
+    for (auto iterator = networks_.rbegin(); iterator != networks_.rend(); ++iterator) {
         const auto first = model::wireSegmentPosition(model_, iterator->wireTag1, iterator->segment1);
         const auto second = model::wireSegmentPosition(model_, iterator->wireTag2, iterator->segment2);
         if (!first || !second) continue;

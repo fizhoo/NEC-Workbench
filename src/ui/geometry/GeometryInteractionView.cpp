@@ -114,6 +114,11 @@ void GeometryInteractionView::setAttachments(const std::vector<model::LoadDefini
             &model::TransmissionLineDefinition::sourceLine) == transmissionLines_.end()) {
         selectedTransmissionLine_.reset();
     }
+    if (selectedNetworkLine_
+        && std::ranges::find(networks_, *selectedNetworkLine_,
+            &model::NetworkDefinition::sourceLine) == networks_.end()) {
+        selectedNetworkLine_.reset();
+    }
     update();
 }
 
@@ -180,12 +185,22 @@ void GeometryInteractionView::selectTransmissionLine(std::size_t sourceLine)
     update();
 }
 
+void GeometryInteractionView::selectNetwork(std::size_t sourceLine)
+{
+    clearSelection();
+    const auto found = std::ranges::find(networks_, sourceLine,
+        &model::NetworkDefinition::sourceLine);
+    selectedNetworkLine_ = found == networks_.end() ? std::nullopt : std::optional{sourceLine};
+    update();
+}
+
 void GeometryInteractionView::clearSelection()
 {
     selectedWireTag_.reset();
     selectedExcitationLine_.reset();
     selectedLoadLine_.reset();
     selectedTransmissionLine_.reset();
+    selectedNetworkLine_.reset();
 }
 
 void GeometryInteractionView::setInteractionModel(
@@ -215,6 +230,13 @@ void GeometryInteractionView::contextMenuEvent(QContextMenuEvent* event)
         } else if (action == GeometryContextAction::Delete) {
             emit deleteTransmissionLineRequested(*sourceLine);
         }
+    } else if (const auto sourceLine = networkAt(event->pos())) {
+        selectNetwork(*sourceLine);
+        emit networkSelected(*sourceLine);
+        const auto action = showAttachmentContextMenu(
+            this, event->globalPos(), tr("Delete Network"));
+        if (action == GeometryContextAction::EditInSetup) emit editNetworkRequested(*sourceLine);
+        else if (action == GeometryContextAction::Delete) emit deleteNetworkRequested(*sourceLine);
     } else if (const auto sourceLine = excitationAt(event->pos())) {
         selectExcitation(*sourceLine);
         emit excitationSelected(*sourceLine);
