@@ -7,8 +7,10 @@
 
 namespace necwb::nec {
 
-// nec2c leaves its card-flow state alone for PT and PL; Workbench-only cards never reach the
-// solver.
+// The one rule for whether a card keeps an NT/TL group open. The print/plot controls PT, PQ and
+// PL never touch the input-flow state that starts a new group: nec2c's main.c leaves iflow
+// alone in those cases, as NEC-2D does IFLOW at labels 31, 319 and 330. Every other solver
+// card ends the group. Workbench-only cards never reach the solver.
 auto continuesNetworkGroup(const NecCard& card) -> bool
 {
     switch (card.kind) {
@@ -21,7 +23,7 @@ auto continuesNetworkGroup(const NecCard& card) -> bool
         return true;
     case NecCardKind::ControlOther:
     case NecCardKind::Unknown:
-        return card.mnemonic == "PT" || card.mnemonic == "PL";
+        return card.mnemonic == "PT" || card.mnemonic == "PQ" || card.mnemonic == "PL";
     default:
         return false;
     }

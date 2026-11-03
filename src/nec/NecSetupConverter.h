@@ -8,7 +8,7 @@
 
 namespace necwb::nec {
 
-// True for cards NEC-2 reads without ending a run of NT and TL cards: NT, TL, PT, PL, and
+// True for cards NEC-2 reads without ending a run of NT and TL cards: NT, TL, PT, PQ, PL, and
 // cards that never reach the solver. Any other card ends the run, and the next NT or TL card
 // discards every earlier network and line.
 [[nodiscard]] auto continuesNetworkGroup(const NecCard& card) -> bool;

@@ -3071,6 +3071,31 @@ void testNetworkDefinitions()
         "NT and TL cards cut off from their group by another card are reported once each, "
         "and a group used by an execution request is not");
 
+    // Forum 558 Ω deck: nec2c keeps both lines across a print/plot control.
+    const auto printControlDeck = [](const std::string& between) {
+        return "CM 558 ohm line at 5 MHz\nCE\nGW 1 1 0 0 10 0 0 10.1 .001\n"
+               "GW 2 1 10 0 10 10 0 10.1 .001\nGE 0\nTL 1 1 2 1 558 0 0 0 .0017921 0\n"
+            + between + "\nTL 1 1 2 1 558 0 0 0 0 0\nEX 0 1 1 0 1 0\nFR 0 1 0 0 5 0\nXQ\nEN\n";
+    };
+    const auto discardWarnings = [](const necwb::nec::ModelCheckResult& result) {
+        return std::ranges::count_if(result.diagnostics, [](const auto& diagnostic) {
+            return diagnostic.message.find("is discarded before NEC uses it")
+                != std::string::npos;
+        });
+    };
+    for (const auto* control : {"PQ 0", "PT 0", "PL 0"}) {
+        const auto document = necwb::nec::NecParser{}.parse(printControlDeck(control));
+        const auto lines = necwb::nec::NecSetupConverter{}.convert(document).transmissionLines;
+        expect(lines.size() == 2 && lines[0].group == lines[1].group
+                && discardWarnings(necwb::nec::NecModelChecker{}.check(document)) == 0,
+            (std::string(control) + " between TL cards keeps them in one NT/TL group").c_str());
+    }
+    const auto splitDocument = necwb::nec::NecParser{}.parse(printControlDeck("EX 0 1 1 0 1 0"));
+    const auto splitLines = necwb::nec::NecSetupConverter{}.convert(splitDocument).transmissionLines;
+    expect(splitLines.size() == 2 && splitLines[0].group != splitLines[1].group
+            && discardWarnings(necwb::nec::NecModelChecker{}.check(splitDocument)) == 1,
+        "EX between TL cards still starts a new NT/TL group and discards the first line");
+
     const auto noteCount = [&geometry](const std::string& control) {
         const auto result = necwb::nec::NecModelChecker{}.check(
             necwb::nec::NecParser{}.parse(geometry + control + "EN\n"));
