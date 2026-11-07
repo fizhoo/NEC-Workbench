@@ -436,6 +436,55 @@ void testSharedInsertionSegments()
         "the forum deck with a TL shunt-admittance termination is not warned");
 }
 
+
+// An NT port with an all-zero admittance row forces zero current through its segment unless an
+// EX voltage source or a TL end shares it. nec2c 1.3.1 on the first deck: the parasitic's
+// centre current falls from 14.3 mA to 3.8e-17 A, and Zin goes from 25.18 − j45.58 Ω to
+// 67.20 − j37.20 Ω, close to a lone dipole's 67.28 − j35.96 Ω.
+void testNetworkPortCurrent()
+{
+    const std::string twoDipoles = "CM dipole\nCE\nGW 1 11 0 -5 0 0 5 0 .001\n"
+                                   "GW 2 11 3 -5 0 3 5 0 .001\nGE 0\n";
+    const auto withNetwork = [&twoDipoles](const std::string& networks) {
+        return check(twoDipoles + networks + "EX 0 1 6 0 1 0\nFR 0 1 0 0 14.2 0\nXQ\nEN\n");
+    };
+    const auto zeroPort = std::string_view{"zero admittance"};
+    const auto sameSegment = std::string_view{"connects both ports to"};
+
+    const auto cut = withNetwork("NT 1 6 2 6 0 0 0 0 0 0\n");
+    expect(count(cut, zeroPort) == 1
+            && message(cut, zeroPort) == "NT 1 port 2 has zero admittance, so NEC carries no "
+                "current through wire tag 2 segment 6; the wire is effectively open there. "
+                "Enter the network's admittances, or remove the NT.",
+        "a zero NT port opens its wire, but the port on the source segment does not");
+    expect(count(withNetwork("NT 1 6 2 6 0 0 0 0 .02 0\n"), zeroPort) == 0,
+        "a nonzero Y22 keeps port 2 carrying current");
+    expect(count(withNetwork("NT 1 3 2 3 0 0 .01 0 0 0\n"), zeroPort) == 0,
+        "a nonzero Y12 gives both ports current");
+    const auto valid = withNetwork("NT 1 3 2 3 .01 0 0 0 1e10 0\n");
+    expect(count(valid, zeroPort) == 0 && count(valid, sameSegment) == 0,
+        "a valid NT is not warned");
+    expect(count(withNetwork("NT 1 3 2 6 0 0 0 0 0 0\n"), zeroPort) == 2,
+        "both zero ports away from the source are warned");
+    expect(count(withNetwork("NT 1 3 2 6 0 0 0 0 0 0\nTL 1 3 2 9 50\n"), zeroPort) == 1,
+        "a TL end on the segment keeps it carrying current");
+    expect(count(withNetwork("NT 1 3 2 6 0 0 0 0 0 0\nNT 1 3 2 9 .01 0 0 0 .01 0\n"),
+               zeroPort) == 1,
+        "another NT port on the segment keeps it carrying current");
+    expect(count(withNetwork("NT 0 3 2 6 0 0 0 0 0 0\n"), "absolute segment 3") == 1,
+        "tag 0 ports are named by absolute segment");
+
+    const auto fedSame = withNetwork("NT 1 6 1 6 0 0 0 0 0 0\n");
+    expect(count(fedSame, sameSegment) == 1 && count(fedSame, zeroPort) == 0,
+        "both ports on the fed segment: the source carries the current, but the ports collapse");
+    const auto unfedSame = withNetwork("NT 1 3 0 3 0 0 0 0 0 0\n");
+    expect(count(unfedSame, "NT 1 ports 1 and 2 have zero combined admittance") == 1
+            && count(unfedSame, sameSegment) == 1,
+        "both zero ports on one unfed segment open it once");
+    expect(count(withNetwork("NT 1 3 1 3 .01 0 .005 0 .01 0\n"),
+               "Y11 + 2·Y12 + Y22 = 0.03 + j0 S") == 1,
+        "same-segment ports report the combined admittance");
+}
 }
 
 auto main() -> int
@@ -448,6 +497,7 @@ auto main() -> int
     testInsertionSegments();
     testTransmissionLineLength();
     testSharedInsertionSegments();
+    testNetworkPortCurrent();
 
     if (failures != 0) {
         std::cerr << failures << " test assertion(s) failed\n";

@@ -1209,6 +1209,52 @@ void checkSharedSegments(const model::ModelSetup& setup, ModelCheckResult& resul
     }
 }
 
+// The segment as an NT card names it: tag and m-th segment, or an absolute number for tag 0.
+auto networkPortPlace(int wireTag, int segment) -> std::string
+{
+    return wireTag == 0 ? "absolute segment " + std::to_string(segment)
+                        : "wire tag " + std::to_string(wireTag) + " segment "
+                            + std::to_string(segment);
+}
+
+// NT ports NEC solves to carry no current open their wire (see model::openNetworkPorts), and
+// both ports on one segment collapse the network to a single admittance: NEC-2 connects
+// ports that share a segment in parallel (NEC-2 User's Guide, NT card notes; nec2c
+// network.c gives the segment one equation).
+void checkNetworkPorts(const model::ModelSetup& setup, ModelCheckResult& result)
+{
+    for (const auto& open : model::openNetworkPorts(result.model, setup)) {
+        const auto subject = "NT " + std::to_string(open.number)
+            + (open.port == 0 ? " ports 1 and 2 have zero combined admittance"
+                              : " port " + std::to_string(open.port) + " has zero admittance");
+        addAdequacyDiagnostic(result, DiagnosticSeverity::Warning, open.sourceLine, subject
+            + ", so NEC carries no current through "
+            + networkPortPlace(open.wireTag, open.segment)
+            + "; the wire is effectively open there. Enter the network's admittances, or "
+              "remove the NT.");
+    }
+    for (std::size_t index = 0; index < setup.networks.size(); ++index) {
+        const auto& network = setup.networks[index];
+        const auto first = model::referencedSegment(result.model, network.wireTag1,
+            network.segment1);
+        const auto second = model::referencedSegment(result.model, network.wireTag2,
+            network.segment2);
+        if (!first || !second || first->wire != second->wire
+            || first->segment != second->segment) continue;
+        const auto combined = std::complex{network.y11Real, network.y11Imaginary}
+            + 2.0 * std::complex{network.y12Real, network.y12Imaginary}
+            + std::complex{network.y22Real, network.y22Imaginary};
+        addAdequacyDiagnostic(result, DiagnosticSeverity::Warning, network.sourceLine,
+            "NT " + std::to_string(index + 1) + " connects both ports to "
+            + networkPortPlace(network.wireTag1, network.segment1)
+            + ". NEC connects ports on one segment in parallel, so the network acts as a "
+              "single admittance Y11 + 2·Y12 + Y22 = " + concise(combined.real())
+            + (combined.imag() < 0.0 ? " − j" : " + j") + concise(std::abs(combined.imag()))
+            + " S there. Move port 2 to another segment; for one impedance on this segment, "
+              "an LD card is simpler.");
+    }
+}
+
 void checkExcitation(const NecCard& card, ModelCheckResult& result)
 {
     if (card.fields.size() < 5) {
@@ -1878,6 +1924,7 @@ auto NecModelChecker::check(const NecDocument& document, ModelCheckOptions optio
     }
     checkStaticAdequacy(document, setup, options.compatibility, result);
     checkSharedSegments(setup, result);
+    checkNetworkPorts(setup, result);
     std::ranges::sort(result.diagnostics, {}, &ModelDiagnostic::lineNumber);
     return result;
 }

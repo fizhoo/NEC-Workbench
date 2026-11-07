@@ -32,6 +32,8 @@ signals:
     void cardSelected(std::size_t sourceLine);
     void cardEdited(std::size_t sourceLine, QString cardText);
     void cardAddRequested(QString cardText);
+    // A new NT is started in Loads & Networks, which writes it only once it has admittances.
+    void networkDraftRequested();
     void cardDeleteRequested(std::size_t sourceLine);
     void fieldParameterizationRequested(std::size_t sourceLine,
         std::size_t fieldIndex, QString fieldLabel);

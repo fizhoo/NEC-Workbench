@@ -117,7 +117,7 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     header->addWidget(modelState_);
     header->addWidget(resultState_);
     connect(backendState_, &QToolButton::clicked, this, [this] {
-        if (openWorkspace_) openWorkspace_(Workspace::Setup);
+        if (openWorkspace_) openWorkspace_(Workspace::Solver);
     });
 
     auto* body = new QHBoxLayout;

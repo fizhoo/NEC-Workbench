@@ -431,25 +431,7 @@ LoadNetworkEditor::LoadNetworkEditor(QWidget* parent) : QWidget(parent)
         else emit transmissionLineDeleteRequested(sourceLine);
         updateLineApplyState();
     });
-    connect(addNetwork, &QPushButton::clicked, this, [this] {
-        if (model_.wires().empty()) return;
-        for (auto row = 0; row < networks_->rowCount(); ++row) {
-            if (sourceLineAt(networks_, row) != 0) continue;
-            networks_->setCurrentCell(row, 0);
-            networks_->selectRow(row);
-            updateNetworkApplyState();
-            return;
-        }
-        const auto& first = model_.wires().front();
-        const auto& second = model_.wires().back();
-        const auto row = networks_->rowCount();
-        networks_->insertRow(row);
-        setNetworkRow(row, {first.tag, 1, second.tag, 1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0});
-        networks_->setCurrentCell(row, 0);
-        networks_->selectRow(row);
-        updateNetworkApplyState();
-        setNetworkPending(true);
-    });
+    connect(addNetwork, &QPushButton::clicked, this, &LoadNetworkEditor::addNetworkDraft);
     connect(applyNetworkButton_, &QPushButton::clicked, this, [this] { applySelectedNetwork(); });
     connect(deleteNetwork, &QPushButton::clicked, this, [this] {
         const auto row = networks_->currentRow();
@@ -629,6 +611,42 @@ void LoadNetworkEditor::selectNetwork(std::size_t sourceLine)
     }
     networks_->clearSelection();
     updateNetworkApplyState();
+}
+
+void LoadNetworkEditor::addNetworkDraft()
+{
+    if (model_.wires().empty()) return;
+    for (auto row = 0; row < networks_->rowCount(); ++row) {
+        if (sourceLineAt(networks_, row) != 0) continue;
+        networks_->setCurrentCell(row, 0);
+        networks_->selectRow(row);
+        updateNetworkApplyState();
+        return;
+    }
+    // Port 1 at the middle of the first wire, port 2 at the middle of the next tag, or else on
+    // another segment of the same tag: NEC puts ports on one segment in parallel.
+    const auto& first = model_.wires().front();
+    auto tag2 = first.tag;
+    auto segment2 = (first.segments + 1) / 2 == 1
+        ? std::min(2, model::referencedSegmentCount(model_, first.tag)) : 1;
+    for (const auto& wire : model_.wires()) {
+        if (wire.tag == first.tag) continue;
+        tag2 = wire.tag;
+        segment2 = (wire.segments + 1) / 2;
+        break;
+    }
+    const auto row = networks_->rowCount();
+    networks_->insertRow(row);
+    setNetworkRow(row, {first.tag, (first.segments + 1) / 2, tag2, segment2,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0});
+    // Blank until the user enters the network: zeros would open the wire at each port.
+    for (auto column = static_cast<int>(Y11RealColumn); column <= Y22ImaginaryColumn; ++column)
+        networks_->item(row, column)->setText({});
+    networks_->setCurrentCell(row, Y11RealColumn);
+    networks_->selectRow(row);
+    updateNetworkApplyState();
+    setNetworkPending(true);
+    focusNetworks();
 }
 
 void LoadNetworkEditor::focusNetworks()
@@ -903,12 +921,20 @@ void LoadNetworkEditor::updateNetworkApplyState()
         valid = valid && validWire && validSegment
             && model::referencedSegment(model_, wireTag, segment).has_value();
     }
+    // Blank admittances read as zero, as on the card; at least one must be nonzero.
+    auto anyAdmittance = false;
     for (auto column = static_cast<int>(Y11RealColumn); column <= Y22ImaginaryColumn; ++column) {
-        bool number = false;
-        networks_->item(row, column)->text().toDouble(&number);
+        const auto text = networks_->item(row, column)->text().trimmed();
+        bool number = text.isEmpty();
+        const auto value = number ? 0.0 : text.toDouble(&number);
         valid = valid && number;
+        anyAdmittance = anyAdmittance || value != 0.0;
     }
-    applyNetworkButton_->setEnabled(valid);
+    applyNetworkButton_->setEnabled(valid && anyAdmittance);
+    applyNetworkButton_->setToolTip(valid && !anyAdmittance
+        ? tr("Enter the network's admittances first. A port whose admittances are all zero "
+             "carries no current, which opens the wire at that segment.")
+        : QString());
 }
 
 void LoadNetworkEditor::updateLineApplyState()
@@ -975,8 +1001,9 @@ void LoadNetworkEditor::applySelectedNetwork()
         return result;
     };
     const auto number = [this, row, &valid](int column) {
-        bool ok = false;
-        const auto result = networks_->item(row, column)->text().toDouble(&ok);
+        const auto text = networks_->item(row, column)->text().trimmed();
+        bool ok = text.isEmpty();
+        const auto result = ok ? 0.0 : text.toDouble(&ok);
         valid = valid && ok;
         return result;
     };
@@ -992,6 +1019,13 @@ void LoadNetworkEditor::applySelectedNetwork()
     value.y22Imaginary = number(Y22ImaginaryColumn);
     if (!valid) {
         validation_->setText(tr("The selected NT row contains an invalid number."));
+        validation_->show();
+        return;
+    }
+    if (value.y11Real == 0.0 && value.y11Imaginary == 0.0 && value.y12Real == 0.0
+        && value.y12Imaginary == 0.0 && value.y22Real == 0.0 && value.y22Imaginary == 0.0) {
+        validation_->setText(tr("Enter the network's admittances: with all of them zero, no "
+                                "current flows through either port's segment."));
         validation_->show();
         return;
     }
