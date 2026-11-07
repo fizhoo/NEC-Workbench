@@ -99,7 +99,30 @@ struct TransmissionLineDefinition {
     double shuntReal2{};
     double shuntImaginary2{};
     std::size_t sourceLine{};
+    // NT/TL group this line belongs to; see NetworkDefinition::group.
+    int group{};
     auto operator==(const TransmissionLineDefinition&) const -> bool = default;
+};
+
+// NT two-port network, given by its short-circuit admittance matrix in siemens. Each port
+// connects across the gap of its segment, like a TL end.
+struct NetworkDefinition {
+    int wireTag1{};
+    int segment1{};
+    int wireTag2{};
+    int segment2{};
+    double y11Real{};
+    double y11Imaginary{};
+    double y12Real{};
+    double y12Imaginary{};
+    double y22Real{};
+    double y22Imaginary{};
+    std::size_t sourceLine{};
+    // NEC-2 keeps NT and TL cards in groups: the first NT or TL card after any other card
+    // (PT excepted) discards every earlier network and line. Cards in different groups never
+    // act together. Groups count from 0 in deck order.
+    int group{};
+    auto operator==(const NetworkDefinition&) const -> bool = default;
 };
 
 struct ModelSetup {
@@ -111,6 +134,10 @@ struct ModelSetup {
     std::vector<Excitation> excitations;
     std::vector<LoadDefinition> loads;
     std::vector<TransmissionLineDefinition> transmissionLines;
+    std::vector<NetworkDefinition> networks;
+    // NT or TL cards with segment -1 that start a group: NEC-2 clears earlier networks and
+    // lines and adds nothing for them.
+    std::vector<std::size_t> networkClearLines;
 };
 
 [[nodiscard]] auto referenceImpedanceOhms(const ModelSetup& setup) -> double;
@@ -136,8 +163,8 @@ struct SegmentReference {
 [[nodiscard]] auto referencedSegmentCount(const AntennaModel& model, int wireTag) -> int;
 // True when more than one wire, drawn or not, carries the same tag, including tag 0.
 [[nodiscard]] auto hasSharedWireTags(const AntennaModel& model) -> bool;
-// True when segment numbering is not per wire: wires share a tag, or EX, TL, or a ranged LD
-// uses tag 0 (an absolute segment number). Tools that remap segments wire by wire cannot
+// True when segment numbering is not per wire: wires share a tag, or EX, TL, NT, or a ranged
+// LD uses tag 0 (an absolute segment number). Tools that remap segments wire by wire cannot
 // handle these references yet.
 [[nodiscard]] auto hasCrossWireSegmentReferences(const AntennaModel& model,
     const ModelSetup& setup) -> bool;

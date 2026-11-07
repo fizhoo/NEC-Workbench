@@ -20,6 +20,7 @@ public:
         const std::vector<model::Excitation>& excitations,
         const std::vector<model::LoadDefinition>& loads,
         const std::vector<model::TransmissionLineDefinition>& transmissionLines,
+        const std::vector<model::NetworkDefinition>& networks,
         double maximumFrequencyMHz, QWidget* parent = nullptr);
 
     [[nodiscard]] auto proposal() const -> model::SegmentationProposal;
@@ -31,6 +32,7 @@ private:
     std::vector<model::Excitation> excitations_;
     std::vector<model::LoadDefinition> loads_;
     std::vector<model::TransmissionLineDefinition> transmissionLines_;
+    std::vector<model::NetworkDefinition> networks_;
     double maximumFrequencyMHz_{};
     model::SegmentationProposal proposal_;
     QSpinBox* segmentsPerWavelengthControl_{};

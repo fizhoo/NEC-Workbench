@@ -7,6 +7,38 @@
 
 namespace necwb::nec {
 
+// The one rule for whether a card keeps an NT/TL group open. The print/plot controls PT, PQ and
+// PL never touch the input-flow state that starts a new group: nec2c's main.c leaves iflow
+// alone in those cases, as NEC-2D does IFLOW at labels 31, 319 and 330. Every other solver
+// card ends the group. Workbench-only cards never reach the solver.
+auto continuesNetworkGroup(const NecCard& card) -> bool
+{
+    switch (card.kind) {
+    case NecCardKind::Blank:
+    case NecCardKind::Comment:
+    case NecCardKind::Symbol:
+    case NecCardKind::ReferenceImpedance:
+    case NecCardKind::TransmissionLine:
+    case NecCardKind::Network:
+        return true;
+    case NecCardKind::ControlOther:
+    case NecCardKind::Unknown:
+        return card.mnemonic == "PT" || card.mnemonic == "PQ" || card.mnemonic == "PL";
+    default:
+        return false;
+    }
+}
+
+auto networkCardInsertionIndex(const NecDocument& document) -> std::optional<std::size_t>
+{
+    std::optional<std::size_t> index;
+    for (const auto& card : document.cards()) {
+        if (card.kind == NecCardKind::TransmissionLine || card.kind == NecCardKind::Network)
+            index = card.lineNumber;
+    }
+    return index;
+}
+
 auto NecSetupConverter::convert(const NecDocument& document) const -> model::ModelSetup
 {
     model::ModelSetup setup;
@@ -21,7 +53,23 @@ auto NecSetupConverter::convert(const NecDocument& document) const -> model::Mod
             break;
         }
     }
+    auto networkGroup = -1;
+    auto networkGroupOpen = false;
     for (const auto& card : document.cards()) {
+        if (card.kind == NecCardKind::TransmissionLine || card.kind == NecCardKind::Network) {
+            const auto startsGroup = !networkGroupOpen;
+            if (startsGroup) ++networkGroup;
+            networkGroupOpen = true;
+            // NEC-2 reads segment -1 on the first card of a group as "clear only".
+            int segment{};
+            if (startsGroup && card.fields.size() >= 2 && parseNumber(card.fields[1], segment)
+                && segment == -1) {
+                setup.networkClearLines.push_back(card.lineNumber);
+                continue;
+            }
+        } else if (!continuesNetworkGroup(card)) {
+            networkGroupOpen = false;
+        }
         if (card.kind == NecCardKind::Frequency && !setup.frequency && card.fields.size() >= 5) {
             model::FrequencyDefinition frequency;
             int unused1{};
@@ -125,6 +173,7 @@ auto NecSetupConverter::convert(const NecDocument& document) const -> model::Mod
         if (card.kind == NecCardKind::TransmissionLine && card.fields.size() >= 5) {
             model::TransmissionLineDefinition line;
             line.sourceLine = card.lineNumber;
+            line.group = networkGroup;
             if (parseNumber(card.fields[0], line.wireTag1)
                 && parseNumber(card.fields[1], line.segment1)
                 && parseNumber(card.fields[2], line.wireTag2)
@@ -136,6 +185,23 @@ auto NecSetupConverter::convert(const NecDocument& document) const -> model::Mod
                 && (card.fields.size() < 9 || parseNumber(card.fields[8], line.shuntReal2))
                 && (card.fields.size() < 10 || parseNumber(card.fields[9], line.shuntImaginary2))) {
                 setup.transmissionLines.push_back(line);
+            }
+        }
+        if (card.kind == NecCardKind::Network && card.fields.size() >= 4) {
+            model::NetworkDefinition network;
+            network.sourceLine = card.lineNumber;
+            network.group = networkGroup;
+            const auto optional = [&card](std::size_t index, double& value) {
+                return card.fields.size() <= index || parseNumber(card.fields[index], value);
+            };
+            if (parseNumber(card.fields[0], network.wireTag1)
+                && parseNumber(card.fields[1], network.segment1)
+                && parseNumber(card.fields[2], network.wireTag2)
+                && parseNumber(card.fields[3], network.segment2)
+                && optional(4, network.y11Real) && optional(5, network.y11Imaginary)
+                && optional(6, network.y12Real) && optional(7, network.y12Imaginary)
+                && optional(8, network.y22Real) && optional(9, network.y22Imaginary)) {
+                setup.networks.push_back(network);
             }
         }
     }

@@ -33,6 +33,7 @@ struct ModelSummary {
     std::size_t surfacePatchCount{};
     std::size_t loadCount{};
     std::size_t transmissionLineCount{};
+    std::size_t networkCount{};
     std::size_t symbolCount{};
     std::size_t executionRequestCount{};
     std::size_t cardCount{};

@@ -871,6 +871,10 @@ void MainWindow::createWorkspace()
         case ControlPanel::Editor::TransmissionLines:
             showEditor(EditorDestination::Loads);
             break;
+        case ControlPanel::Editor::Networks:
+            showEditor(EditorDestination::Loads);
+            loadNetworkEditor_->focusNetworks();
+            break;
         case ControlPanel::Editor::Ground: showEditor(EditorDestination::Environment); break;
         case ControlPanel::Editor::Variables: showEditor(EditorDestination::Parameters); break;
         case ControlPanel::Editor::Requests: showEditor(EditorDestination::Requests); break;
@@ -1051,6 +1055,12 @@ void MainWindow::createWorkspace()
             [this](std::size_t line) { deleteSetupCard(tr("Delete load"), line); });
         connect(view, &View::deleteTransmissionLineRequested, this,
             [this](std::size_t line) { deleteSetupCard(tr("Delete transmission line"), line); });
+        connect(view, &View::networkSelected, this,
+            [this](std::size_t line) { selectNetwork(line); });
+        connect(view, &View::editNetworkRequested, this,
+            [this](std::size_t line) { showNetworkInEditor(line); });
+        connect(view, &View::deleteNetworkRequested, this,
+            [this](std::size_t line) { deleteSetupCard(tr("Delete network"), line); });
     };
     const auto connectEndpointEditing = [this](GeometryView* view) {
         connect(view, &GeometryView::endpointPreviewed, this,
@@ -1189,6 +1199,24 @@ void MainWindow::createWorkspace()
         [this](std::size_t sourceLine) { selectLoad(sourceLine); });
     connect(loadNetworkEditor_, &LoadNetworkEditor::transmissionLineSelected, this,
         [this](std::size_t sourceLine) { selectTransmissionLine(sourceLine); });
+    connect(loadNetworkEditor_, &LoadNetworkEditor::networkChanged, this,
+        [this](model::NetworkDefinition network) {
+            const auto isNew = network.sourceLine == 0;
+            changeNetwork(network);
+            if (!isNew) return;
+            const auto found = std::ranges::find_if(currentSetup_.networks.rbegin(),
+                currentSetup_.networks.rend(), [&network](const auto& candidate) {
+                    return candidate.wireTag1 == network.wireTag1
+                        && candidate.segment1 == network.segment1
+                        && candidate.wireTag2 == network.wireTag2
+                        && candidate.segment2 == network.segment2;
+                });
+            if (found != currentSetup_.networks.rend()) selectNetwork(found->sourceLine);
+        });
+    connect(loadNetworkEditor_, &LoadNetworkEditor::networkDeleteRequested, this,
+        [this](std::size_t sourceLine) { deleteSetupCard(tr("Delete network"), sourceLine); });
+    connect(loadNetworkEditor_, &LoadNetworkEditor::networkSelected, this,
+        [this](std::size_t sourceLine) { selectNetwork(sourceLine); });
     modelDeckWorkspaceIndex_ = modelWorkspace_->addTab(sourceWorkspace_, tr("NEC Deck"));
     modelParametersWorkspaceIndex_ = modelWorkspace_->addTab(parameterEditor_, tr("Parameters"));
     modelWorkspace_->setTabIcon(modelParametersWorkspaceIndex_, workbenchIcon("structured-cards"));
@@ -2024,7 +2052,12 @@ void MainWindow::showAutoSegmentation()
     }
     const auto& document = activeSource().document();
     const auto unsupportedAttachment = std::ranges::find_if(document.cards(), [this](const auto& card) {
-        if (card.kind == nec::NecCardKind::Network) return true;
+        if (std::ranges::find(currentSetup_.networkClearLines, card.lineNumber)
+            != currentSetup_.networkClearLines.end()) return false;
+        if (card.kind == nec::NecCardKind::Network) {
+            return std::ranges::none_of(currentSetup_.networks,
+                [line = card.lineNumber](const auto& network) { return network.sourceLine == line; });
+        }
         if (card.kind == nec::NecCardKind::Load) {
             return std::ranges::none_of(currentSetup_.loads,
                 [line = card.lineNumber](const auto& load) { return load.sourceLine == line; });
@@ -2047,7 +2080,7 @@ void MainWindow::showAutoSegmentation()
     if (unsupportedAttachment != document.cards().end()
         || unsupportedExcitation != document.cards().end()) {
         QMessageBox::warning(this, tr("Automatic Segmentation"),
-            tr("This deck contains an unsupported EX, LD, TL, or NT card. Supported EX 0, LD, and TL segment references are remapped automatically; NT networks remain unsupported."));
+            tr("This deck contains an EX, LD, TL, or NT card that could not be read. Supported EX 0, LD, TL, and NT segment references are remapped automatically; fix the card shown by Check Model first."));
         return;
     }
     if (model::hasCrossWireSegmentReferences(currentModel_, currentSetup_)) {
@@ -2060,7 +2093,8 @@ void MainWindow::showAutoSegmentation()
     const auto maximumFrequencyMHz = std::max(currentSetup_.frequency->startMHz,
         model::frequencyEndMHz(*currentSetup_.frequency));
     AutoSegmentationDialog dialog(currentModel_, currentSetup_.excitations,
-        currentSetup_.loads, currentSetup_.transmissionLines, maximumFrequencyMHz, this);
+        currentSetup_.loads, currentSetup_.transmissionLines, currentSetup_.networks,
+        maximumFrequencyMHz, this);
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
@@ -2115,6 +2149,16 @@ void MainWindow::showAutoSegmentation()
     for (std::size_t index = 0; index < currentSetup_.transmissionLines.size(); ++index) {
         const auto& original = currentSetup_.transmissionLines[index];
         const auto& updated = proposal.remappedTransmissionLines[index];
+        if (original.segment1 == updated.segment1
+            && original.segment2 == updated.segment2) continue;
+        const std::array replacements{
+            nec::NecFieldReplacement{1, std::to_string(updated.segment1)},
+            nec::NecFieldReplacement{3, std::to_string(updated.segment2)}};
+        replaceFields(updated.sourceLine, replacements);
+    }
+    for (std::size_t index = 0; index < currentSetup_.networks.size(); ++index) {
+        const auto& original = currentSetup_.networks[index];
+        const auto& updated = proposal.remappedNetworks[index];
         if (original.segment1 == updated.segment1
             && original.segment2 == updated.segment2) continue;
         const std::array replacements{
@@ -2878,10 +2922,19 @@ void MainWindow::checkModel(bool presentReport)
     xzView_->setExcitations(currentSetup_.excitations);
     yzView_->setExcitations(currentSetup_.excitations);
     geometry3DView_->setExcitations(currentSetup_.excitations);
-    xyView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines);
-    xzView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines);
-    yzView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines);
-    geometry3DView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines);
+    xyView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
+        currentSetup_.networks);
+    xzView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
+        currentSetup_.networks);
+    yzView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
+        currentSetup_.networks);
+    geometry3DView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
+        currentSetup_.networks);
+    const auto sharedSegments = model::describeSharedSegments(currentModel_, currentSetup_);
+    xyView_->setSharedSegments(sharedSegments);
+    xzView_->setSharedSegments(sharedSegments);
+    yzView_->setSharedSegments(sharedSegments);
+    geometry3DView_->setSharedSegments(sharedSegments);
     parameterEditor_->setResolution(resolution);
     setupEditor_->setData(currentModel_, currentSetup_);
     loadNetworkEditor_->setData(currentModel_, currentSetup_);
@@ -3018,6 +3071,10 @@ void MainWindow::activateProjectItem(QTreeWidgetItem* item)
         showTransmissionLineInEditor(item->data(0, SourceLineRole).toULongLong());
         return;
     }
+    if (kind == QStringLiteral("network")) {
+        showNetworkInEditor(item->data(0, SourceLineRole).toULongLong());
+        return;
+    }
     if (kind == QStringLiteral("source") || kind == QStringLiteral("wire")) {
         if (kind == QStringLiteral("wire")) {
             showEditor(EditorDestination::RawSource);
@@ -3141,6 +3198,20 @@ void MainWindow::selectTransmissionLine(std::size_t sourceLine)
     setupEditor_->selectExcitation(0);
     loadNetworkEditor_->selectTransmissionLine(sourceLine);
     if (auto* item = findProjectItem(projectTree_, QStringLiteral("transmissionLine"),
+            SourceLineRole, QVariant::fromValue(static_cast<qulonglong>(sourceLine))))
+        projectTree_->setCurrentItem(item);
+}
+
+void MainWindow::selectNetwork(std::size_t sourceLine)
+{
+    xyView_->selectNetwork(sourceLine);
+    xzView_->selectNetwork(sourceLine);
+    yzView_->selectNetwork(sourceLine);
+    geometry3DView_->selectNetwork(sourceLine);
+    wireCardEditor_->selectWire(-1);
+    setupEditor_->selectExcitation(0);
+    loadNetworkEditor_->selectNetwork(sourceLine);
+    if (auto* item = findProjectItem(projectTree_, QStringLiteral("network"),
             SourceLineRole, QVariant::fromValue(static_cast<qulonglong>(sourceLine))))
         projectTree_->setCurrentItem(item);
 }
@@ -3557,8 +3628,14 @@ void MainWindow::changeLoad(const model::LoadDefinition& load)
 
 void MainWindow::changeTransmissionLine(const model::TransmissionLineDefinition& line)
 {
-    upsertSetupCard(line.sourceLine == 0 ? tr("Add transmission line") : tr("Edit transmission line"),
-        line.sourceLine, QString::fromStdString(nec::NecWriter{}.writeTransmissionLineCard(line)), false);
+    upsertNetworkCard(line.sourceLine == 0 ? tr("Add transmission line") : tr("Edit transmission line"),
+        line.sourceLine, QString::fromStdString(nec::NecWriter{}.writeTransmissionLineCard(line)));
+}
+
+void MainWindow::changeNetwork(const model::NetworkDefinition& network)
+{
+    upsertNetworkCard(network.sourceLine == 0 ? tr("Add network") : tr("Edit network"),
+        network.sourceLine, QString::fromStdString(nec::NecWriter{}.writeNetworkCard(network)));
 }
 
 void MainWindow::addExcitationAt(int wireTag, int segment)
@@ -3662,6 +3739,12 @@ void MainWindow::showTransmissionLineInEditor(std::size_t sourceLine)
     selectTransmissionLine(sourceLine);
 }
 
+void MainWindow::showNetworkInEditor(std::size_t sourceLine)
+{
+    showEditor(EditorDestination::Loads);
+    selectNetwork(sourceLine);
+}
+
 void MainWindow::upsertSetupCard(const QString& description, std::size_t sourceLine,
     const QString& cardText, bool frequencyCard)
 {
@@ -3683,6 +3766,20 @@ void MainWindow::upsertSetupCard(const QString& description, std::size_t sourceL
         }
     }
     const auto updated = nec::insertSourceLine(source, insertionIndex, cardText.toStdString());
+    if (updated) pushGeometrySourceEdit(description, QString::fromStdString(*updated));
+}
+
+void MainWindow::upsertNetworkCard(const QString& description, std::size_t sourceLine,
+    const QString& cardText)
+{
+    const auto index = sourceLine == 0
+        ? nec::networkCardInsertionIndex(activeSource().document()) : std::nullopt;
+    if (!index) {
+        upsertSetupCard(description, sourceLine, cardText, false);
+        return;
+    }
+    const auto updated = nec::insertSourceLine(
+        editor_->toPlainText().toStdString(), *index, cardText.toStdString());
     if (updated) pushGeometrySourceEdit(description, QString::fromStdString(*updated));
 }
 
@@ -5380,6 +5477,7 @@ void MainWindow::addStructuredCard(const QString& cardText)
     const auto& document = activeSource().document();
     auto lastGeometryIndex = -1;
     auto hasGeometryEnd = false;
+    auto insertedGeometryEnd = false;
     for (const auto& card : document.cards()) {
         if (nec::isGeometryCard(card.kind))
             lastGeometryIndex = static_cast<int>(card.lineNumber)-1;
@@ -5391,12 +5489,23 @@ void MainWindow::addStructuredCard(const QString& cardText)
         lines.insert(lastGeometryIndex+1,
             QString::fromStdString(nec::NecWriter{}.writeGeometryEndCard(grounded ? 1 : 0)));
         hasGeometryEnd = true;
+        insertedGeometryEnd = true;
     }
     const auto mnemonic = cardText.section(QLatin1Char(' '), 0, 0).toUpper();
     const auto mnemonicText = mnemonic.toStdString();
     const auto* cardSpec = nec::findNecCardSpec(mnemonicText);
     const auto addingGeometry = cardSpec != nullptr && nec::isGeometryCard(cardSpec->kind);
     auto insertion = lines.size();
+    // A new TL or NT joins the last NT/TL group; placed before XQ it would start a new group
+    // and discard the existing lines.
+    auto joinsNetworkGroup = false;
+    if (mnemonic == QStringLiteral("TL") || mnemonic == QStringLiteral("NT")) {
+        if (const auto index = nec::networkCardInsertionIndex(document)) {
+            joinsNetworkGroup = true;
+            insertion = static_cast<qsizetype>(*index)
+                + (insertedGeometryEnd && lastGeometryIndex < static_cast<int>(*index) ? 1 : 0);
+        }
+    }
     if (addingGeometry) {
         for (auto index = 0; index < lines.size(); ++index) {
             if (lines[index].trimmed().section(QLatin1Char(' '), 0, 0).compare(
@@ -5407,7 +5516,7 @@ void MainWindow::addStructuredCard(const QString& cardText)
         }
     }
     for (auto index = 0; index < lines.size(); ++index) {
-        if (addingGeometry && insertion != lines.size()) break;
+        if (joinsNetworkGroup || (addingGeometry && insertion != lines.size())) break;
         const auto lineMnemonic = lines[index].trimmed().section(QLatin1Char(' '), 0, 0).toUpper();
         if (lineMnemonic == QStringLiteral("EN")
             || (mnemonic != QStringLiteral("XQ") && lineMnemonic == QStringLiteral("XQ"))) {
@@ -5695,6 +5804,15 @@ void MainWindow::updateProjectTree(const model::AntennaModel& antennaModel, cons
                     .arg(value->segment2).arg(card.lineNumber);
                 kind = QStringLiteral("transmissionLine");
             }
+        } else if (!generic && card.kind == nec::NecCardKind::Network) {
+            const auto value = std::ranges::find(currentSetup_.networks, card.lineNumber,
+                &model::NetworkDefinition::sourceLine);
+            if (value != currentSetup_.networks.end()) {
+                label = tr("NT · W%1/S%2 ↔ W%3/S%4 · line %5")
+                    .arg(value->wireTag1).arg(value->segment1).arg(value->wireTag2)
+                    .arg(value->segment2).arg(card.lineNumber);
+                kind = QStringLiteral("network");
+            }
         }
         auto* item = new QTreeWidgetItem(parent, {label});
         item->setData(0, ItemKindRole, kind);
@@ -5769,6 +5887,15 @@ void MainWindow::synchronizeProjectItemSelection(QTreeWidgetItem* item)
             xyView_->selectTransmissionLine(sourceLine); xzView_->selectTransmissionLine(sourceLine);
             yzView_->selectTransmissionLine(sourceLine); geometry3DView_->selectTransmissionLine(sourceLine);
             loadNetworkEditor_->selectTransmissionLine(sourceLine);
+        }
+    } else if (kind == QStringLiteral("network")) {
+        const auto sourceLine = item->data(0, SourceLineRole).toULongLong();
+        const auto found = std::ranges::find(currentSetup_.networks, sourceLine,
+            &model::NetworkDefinition::sourceLine);
+        if (found != currentSetup_.networks.end()) {
+            xyView_->selectNetwork(sourceLine); xzView_->selectNetwork(sourceLine);
+            yzView_->selectNetwork(sourceLine); geometry3DView_->selectNetwork(sourceLine);
+            loadNetworkEditor_->selectNetwork(sourceLine);
         }
     }
 }

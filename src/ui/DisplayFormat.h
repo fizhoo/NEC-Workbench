@@ -20,6 +20,13 @@ inline auto formatDecimal(double value) -> QString
     return QString::number(value, 'f', DisplayDecimalPlaces);
 }
 
+// A value in a cell the user can edit and apply: the digits the NEC writer keeps, so applying
+// an untouched value writes it back unchanged.
+inline auto formatEditableDecimal(double value) -> QString
+{
+    return QString::number(value, 'g', 15);
+}
+
 // SWR reference impedance, e.g. "50 Ω" or "12.5 Ω".
 inline auto formatReferenceImpedance(double ohms) -> QString
 {

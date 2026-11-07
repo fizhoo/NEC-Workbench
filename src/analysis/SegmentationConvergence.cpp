@@ -49,12 +49,6 @@ auto prepareSegmentationConvergenceInput(std::string_view source, double frequen
         result.error = "The model contains no supported wire geometry.";
         return result;
     }
-    if (std::ranges::any_of(document.cards(), [](const auto& card) {
-            return card.kind == nec::NecCardKind::Network;
-        })) {
-        result.error = "NT network cards cannot yet be remapped safely for convergence testing.";
-        return result;
-    }
     for (const auto& card : document.cards()) {
         if (card.kind == nec::NecCardKind::Excitation
             && std::ranges::none_of(setup.excitations, [line = card.lineNumber](const auto& value) {
@@ -149,6 +143,9 @@ auto prepareSegmentationConvergenceInput(std::string_view source, double frequen
             updated.firstSegment = remap(updated.wireTag, updated.firstSegment);
             updated.lastSegment = remap(updated.wireTag, updated.lastSegment);
             append(writer.writeLoadCard(updated));
+        } else if (std::ranges::find(setup.networkClearLines, card.lineNumber)
+            != setup.networkClearLines.end()) {
+            append(card.sourceText);
         } else if (card.kind == nec::NecCardKind::TransmissionLine) {
             const auto line = std::ranges::find(setup.transmissionLines, card.lineNumber,
                 &model::TransmissionLineDefinition::sourceLine);
@@ -160,6 +157,17 @@ auto prepareSegmentationConvergenceInput(std::string_view source, double frequen
             updated.segment1 = remap(updated.wireTag1, updated.segment1);
             updated.segment2 = remap(updated.wireTag2, updated.segment2);
             append(writer.writeTransmissionLineCard(updated));
+        } else if (card.kind == nec::NecCardKind::Network) {
+            const auto network = std::ranges::find(setup.networks, card.lineNumber,
+                &model::NetworkDefinition::sourceLine);
+            if (network == setup.networks.end()) {
+                result.error = "An NT card could not be converted for convergence testing.";
+                return result;
+            }
+            auto updated = *network;
+            updated.segment1 = remap(updated.wireTag1, updated.segment1);
+            updated.segment2 = remap(updated.wireTag2, updated.segment2);
+            append(writer.writeNetworkCard(updated));
         } else if (card.kind == nec::NecCardKind::Frequency) {
             if (!wroteFrequency) {
                 append(writer.writeFrequencyCard({.steppingMode = 0, .count = 1,

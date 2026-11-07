@@ -82,8 +82,8 @@ Graphical rendering is documented separately in [NEC Card Support](nec-card-supp
 | `GN` | Structured | NEC-2 types `-1` through `2`; finite-ground material values |
 | `LD` | Structured | Type range, wire/segment references, numeric values, and `LD 6` profile handling; trailing values default to zero and tag `0` is accepted |
 | `EX` | Structured | Field types and voltage-source wire/segment references; omitted trailing imaginary voltage defaults to zero |
-| `NT` | Understood | Numeric field shape and execution-state participation |
-| `TL` | Structured | Endpoint references and nonzero impedance; omitted length/shunt values default to zero |
+| `NT` | Structured | Numeric field shape, port references (same rule as `TL` ends), segment `-1` only on the first card of an `NT`/`TL` group, and execution-state participation; omitted admittances default to zero |
+| `TL` | Structured | Endpoint references and nonzero impedance, segment `-1` only on the first card of an `NT`/`TL` group; omitted length/shunt values default to zero |
 | `CP` | Understood | Numeric field shape |
 | `EN` | Understood | Required once as the final nonblank card |
 | `GD` | Understood | Numeric field shape and requirement for a later `RP` |
@@ -108,6 +108,11 @@ tracks cards that change calculation state and the requests that execute it.
 - State-changing cards after the final execution request are errors because no later
   request uses them.
 - `GD` without a later `RP` is an error.
+- `NT` and `TL` cards form groups: the first `NT` or `TL` after any other card except `PT`
+  discards every earlier network and line. A group that no `XQ`, `RP`, `NE`, or `NH`
+  follows before the next group starts is never used, so each of its cards is a warning.
+  Workbench adds new `NT` and `TL` cards right after the deck's last `NT`/`TL` card for
+  this reason.
 
 ## Static Adequacy Checks
 
@@ -131,14 +136,18 @@ and Segmentation Convergence for numerical validation.
 | Wire end at z = 0 that is not tied to ground | Warning | A free wire end at z = 0 on a wire that does not lie in the z = 0 plane, unless the deck has both `GN` and `GE 1`. The message covers the three cases: no ground, `GN` with `GE 0`/`-1`, and `GE 1` without `GN`. Reported once on `GE` |
 | `GN 0` with low horizontal wires | Warning | Segment centers below 0.1 λ at the lowest swept frequency and within 30° of horizontal; suggests `GN 2` |
 | Unaligned closely spaced parallel wires | Warning | Straight wires within 5° of parallel, overlapping by at least a segment, closer than both max(10 × the larger radius, 0.01 λ) and the shorter segment length, but not touching, with segment junctions offset by more than 10% of the shorter segment. Applies to NEC-2 family backends only |
-| `EX`, `LD`, or `TL` end beside a radius step | Warning | The segment touches a junction where radii differ by more than 10% |
-| `EX`, `LD`, or `TL` end at a multiwire junction | Information | The segment touches a junction of more than two segments. NEC-2 allows this (only `EX 5` needs a simple two-segment junction), so it is a note |
+| `EX`, `LD`, `TL` end, or `NT` port beside a radius step | Warning | The segment touches a junction where radii differ by more than 10% |
+| `EX`, `LD`, `TL` end, or `NT` port at a multiwire junction | Information | The segment touches a junction of more than two segments. NEC-2 allows this (only `EX 5` needs a simple two-segment junction), so it is a note |
 | `EX` or `LD` on a free wire end | Information | The segment touches an unconnected wire end that `GE 1` does not tie to ground. One-segment wires (`TL`/`NT` stubs), `LD 5`, and segment-range loads are skipped |
+| `LD` on the segment of a `TL` end or `NT` port | Warning | A lumped load (`LD` 0, 1, 4) shares a segment with a line end or network port. NEC-2 puts `LD` in series inside the segment while ports connect across its gap, so the port sees the load plus the wire's own impedance. When the wire is shorter than 0.05 λ at the highest frequency, the message says the wire's reactance swamps the load. The message names the remedies: the `TL` shunt admittance (with G and B worked out for an `LD 4` on a line end), an `NT` network, or a short parallel wire carrying the load |
+| `LD` on the segment of an `EX` source | Information | The load is in series with the source (a Thevenin source impedance), which is sometimes intended |
+| `NT` in a frequency sweep | Information | The deck has `NT` cards and solves more than one frequency (an `FR` step count above one, or `FR` cards at different frequencies). `NT` admittances do not scale with frequency |
 | Transmission line shorter than its gap | Warning | Explicit nonzero `TL` length more than 1% below the straight-line distance between the two segment centers. A zero or omitted length is not checked, since NEC then uses that distance |
 
 The 0.1 λ `GN 0` height, the 5° parallel angle, the close-spacing limits, the 10%
 alignment and radius-step limits, and the 1% `TL` tolerance are named constants in
-`NecModelChecker.cpp`. They are guidance from the NEC-2 literature, not hard solver
+`NecModelChecker.cpp`; the 0.05 λ short-wire limit for loads at a port is
+`kElectricallyShortWavelengths` in `SegmentSharing.h`. They are guidance from the NEC-2 literature, not hard solver
 limits. The parallel-alignment spacing is capped at a segment length because the NEC-2
 user's guide asks for aligned segments only when parallel wires are "very close". The
 buried-wire, one-way connection, and parallel-alignment checks reflect NEC-2 kernel

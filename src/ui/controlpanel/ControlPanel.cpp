@@ -17,6 +17,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
+#include <QPainter>
 #include <QSignalBlocker>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -31,6 +32,22 @@
 
 namespace necwb::ui {
 namespace {
+
+// A one-line label that ends in "…" when its text does not fit. A study's status can be a
+// whole sentence; as a plain label it would set the panel's minimum width and widen the
+// dashboard for good.
+class ElidedLabel final : public QLabel {
+public:
+    using QLabel::QLabel;
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.drawText(contentsRect(), alignment() | Qt::TextSingleLine,
+            fontMetrics().elidedText(text(), Qt::ElideRight, contentsRect().width()));
+    }
+};
 
 auto groundName(model::GroundType ground) -> QString
 {
@@ -179,7 +196,7 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     auto* modelHeading = new QLabel(tr("MODEL  (click a row to edit)"), panel);
     modelHeading->setObjectName(QStringLiteral("controlPanelModelHeading"));
     modelHeading->setFont(resultsFont);
-    modelRows_ = new QTableWidget(9, 3, panel);
+    modelRows_ = new QTableWidget(10, 3, panel);
     modelRows_->setObjectName(QStringLiteral("controlPanelModelRows"));
     modelRows_->horizontalHeader()->hide();
     modelRows_->verticalHeader()->hide();
@@ -198,9 +215,10 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     fitModelRowsHeight();
     const std::array labels{
         tr("Frequency"), tr("Wires"), tr("Sources"), tr("Loads"),
-        tr("Trans. lines"), tr("Ground"), tr("Variables"), tr("Requests"), tr("Deck")};
+        tr("Trans. lines"), tr("Networks"), tr("Ground"), tr("Variables"), tr("Requests"),
+        tr("Deck")};
     const std::array icons{
-        "frequency-sweep", "geometry", "sources", "loads", "transmission-lines",
+        "frequency-sweep", "geometry", "sources", "loads", "transmission-lines", "networks",
         "ground", "variables", "requests", "nec-deck"};
     for (auto row = 0; row < static_cast<int>(labels.size()); ++row) {
         auto* label = new QTableWidgetItem(labels[static_cast<std::size_t>(row)]);
@@ -276,14 +294,16 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
         QStringLiteral("controlPanelConvergenceRun")};
     for (auto row = 0; row < 2; ++row) {
         qualityGrid->addWidget(new QLabel(qualityNames[row], panel), row, 0);
-        studyStateLabels_[row] = new QLabel(tr("not run"), panel);
+        studyStateLabels_[row] = new ElidedLabel(tr("not run"), panel);
         studyStateLabels_[row]->setObjectName(stateNames[row]);
+        studyStateLabels_[row]->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         studyButtons_[row] = compactButton(tr("Run"), panel);
         studyButtons_[row]->setObjectName(buttonNames[row]);
         studyButtons_[row]->setAutoRaise(true);
         qualityGrid->addWidget(studyStateLabels_[row], row, 1);
         qualityGrid->addWidget(studyButtons_[row], row, 2);
     }
+    qualityGrid->setColumnStretch(1, 1);
     modelArea->addWidget(modelHeading);
     modelArea->addWidget(modelRows_);
     modelArea->addSpacing(3);
@@ -442,6 +462,8 @@ void ControlPanel::setModel(const model::AntennaModel& model,
     setModelRow(Editor::Loads, countText(summary.loadCount, tr("load"), tr("loads")));
     setModelRow(Editor::TransmissionLines, countText(summary.transmissionLineCount,
         tr("line"), tr("lines")));
+    setModelRow(Editor::Networks, summary.networkCount == 0 ? tr("none (NT)")
+        : countText(summary.networkCount, tr("network (NT)"), tr("networks (NT)")));
     setModelRow(Editor::Ground, groundName(summary.groundType));
     setModelRow(Editor::Variables, summary.symbolCount == 0 ? tr("none (SY)")
         : countText(summary.symbolCount, tr("variable (SY)"), tr("variables (SY)")));

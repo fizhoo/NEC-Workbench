@@ -56,7 +56,7 @@ read-only outside Raw Source and Structured Cards.
 | `KH` | Interaction approximation range | Understood |
 | `LD` | Structure loading | Structured Editable |
 | `EX` | Excitation | Structured Editable for voltage sources |
-| `NT` | Two-port network | Understood |
+| `NT` | Two-port network | Structured Editable (Loads & Networks table and labelled Structured Cards fields; drawn and selectable in Geometry; ports validated, linted, and remapped like `TL` ends) |
 | `TL` | Transmission line | Structured Editable |
 | `CP` | Coupling calculation | Understood |
 | `EN` | End data | Understood |
@@ -78,6 +78,12 @@ read-only outside Raw Source and Structured Cards.
 | `Z0` | Workbench/xnec2c reference impedance | Structured Editable |
 | `ZO` | Legacy spelling of reference impedance | Structured Editable |
 | `CM`, `CE` | Comments and comment boundary | Understood; Raw Source editing |
+
+`NT` and `TL` cards follow NEC-2's group rule (NEC-2 User's Guide, Part III, NT and TL
+card notes; nec2c `main.c`): the first `NT` or `TL` card after any other card except `PT`
+discards every earlier network and transmission line. A segment of `-1` (field I2) on that
+first card only clears; anywhere else in a group NEC-2 stops with a data error, which Model
+Check reports. Workbench records which group each line and network belongs to.
 
 `SY`, `Z0`, and `ZO` are normalized or removed as appropriate when Workbench creates a
 numeric deck for a strict NEC-2 backend. The authored source and archived source snapshot

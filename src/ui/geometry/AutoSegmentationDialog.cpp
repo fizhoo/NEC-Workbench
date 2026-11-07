@@ -19,7 +19,7 @@ namespace necwb::ui {
 AutoSegmentationDialog::AutoSegmentationDialog(const model::AntennaModel& model,
     const std::vector<model::Excitation>& excitations, double maximumFrequencyMHz,
     QWidget* parent)
-    : AutoSegmentationDialog(model, excitations, {}, {}, maximumFrequencyMHz, parent)
+    : AutoSegmentationDialog(model, excitations, {}, {}, {}, maximumFrequencyMHz, parent)
 {
 }
 
@@ -27,12 +27,14 @@ AutoSegmentationDialog::AutoSegmentationDialog(const model::AntennaModel& model,
     const std::vector<model::Excitation>& excitations,
     const std::vector<model::LoadDefinition>& loads,
     const std::vector<model::TransmissionLineDefinition>& transmissionLines,
+    const std::vector<model::NetworkDefinition>& networks,
     double maximumFrequencyMHz, QWidget* parent)
     : QDialog(parent)
     , model_(model)
     , excitations_(excitations)
     , loads_(loads)
     , transmissionLines_(transmissionLines)
+    , networks_(networks)
     , maximumFrequencyMHz_(maximumFrequencyMHz)
 {
     setWindowTitle(tr("Automatic Segmentation"));
@@ -89,7 +91,7 @@ void AutoSegmentationDialog::refreshProposal()
 {
     proposal_ = model::proposeSegmentation(model_, excitations_, maximumFrequencyMHz_,
         {segmentsPerWavelengthControl_->value(), oddExcitedWiresControl_->isChecked()},
-        loads_, transmissionLines_);
+        loads_, transmissionLines_, networks_);
     table_->setRowCount(static_cast<int>(proposal_.wires.size()));
     auto changedCount = 0;
     for (auto row = 0; row < static_cast<int>(proposal_.wires.size()); ++row) {
@@ -121,6 +123,14 @@ void AutoSegmentationDialog::refreshProposal()
             if (before.wireTag2 == wire.wireTag && before.segment2 != after.segment2)
                 remaps.append(tr("TL %1 → %2").arg(before.segment2).arg(after.segment2));
         }
+        for (std::size_t index = 0; index < networks_.size(); ++index) {
+            const auto& before = networks_[index];
+            const auto& after = proposal_.remappedNetworks[index];
+            if (before.wireTag1 == wire.wireTag && before.segment1 != after.segment1)
+                remaps.append(tr("NT %1 → %2").arg(before.segment1).arg(after.segment1));
+            if (before.wireTag2 == wire.wireTag && before.segment2 != after.segment2)
+                remaps.append(tr("NT %1 → %2").arg(before.segment2).arg(after.segment2));
+        }
         const QStringList values{
             QString::number(wire.wireTag),
             formatDecimal(wire.wireLengthMeters),
@@ -133,7 +143,7 @@ void AutoSegmentationDialog::refreshProposal()
             table_->setItem(row, column, new QTableWidgetItem(values[column]));
         }
     }
-    summary_->setText(tr("%1 of %2 wire(s) will change. Sources, loads, and transmission-line endpoints are remapped by their relative wire position.")
+    summary_->setText(tr("%1 of %2 wire(s) will change. Sources, loads, transmission-line endpoints, and network ports are remapped by their relative wire position.")
         .arg(changedCount).arg(proposal_.wires.size()));
     table_->resizeColumnsToContents();
 }

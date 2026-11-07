@@ -1,8 +1,11 @@
 #include "ui/geometry/GeometryInteractionView.h"
 
 #include <QContextMenuEvent>
+#include <QHelpEvent>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QStringList>
+#include <QToolTip>
 
 #include <algorithm>
 
@@ -97,10 +100,12 @@ void GeometryInteractionView::setExcitations(const std::vector<model::Excitation
 }
 
 void GeometryInteractionView::setAttachments(const std::vector<model::LoadDefinition>& loads,
-    const std::vector<model::TransmissionLineDefinition>& transmissionLines)
+    const std::vector<model::TransmissionLineDefinition>& transmissionLines,
+    const std::vector<model::NetworkDefinition>& networks)
 {
     loads_ = loads;
     transmissionLines_ = transmissionLines;
+    networks_ = networks;
     if (selectedLoadLine_
         && std::ranges::find(loads_, *selectedLoadLine_, &model::LoadDefinition::sourceLine)
             == loads_.end()) selectedLoadLine_.reset();
@@ -109,7 +114,41 @@ void GeometryInteractionView::setAttachments(const std::vector<model::LoadDefini
             &model::TransmissionLineDefinition::sourceLine) == transmissionLines_.end()) {
         selectedTransmissionLine_.reset();
     }
+    if (selectedNetworkLine_
+        && std::ranges::find(networks_, *selectedNetworkLine_,
+            &model::NetworkDefinition::sourceLine) == networks_.end()) {
+        selectedNetworkLine_.reset();
+    }
     update();
+}
+
+void GeometryInteractionView::setSharedSegments(
+    const std::vector<model::SharedSegment>& sharedSegments)
+{
+    sharedSegments_ = sharedSegments;
+}
+
+auto GeometryInteractionView::event(QEvent* event) -> bool
+{
+    if (event->type() == QEvent::ToolTip && !sharedSegments_.empty()) {
+        const auto* help = static_cast<QHelpEvent*>(event);
+        if (const auto tag = wireAt(help->pos())) {
+            const auto segment = segmentAt(*tag, help->pos());
+            QStringList notes;
+            for (const auto& shared : sharedSegments_) {
+                // Rich text so Qt wraps the long descriptions.
+                if (shared.wireTag == *tag && shared.wireSegment == segment) {
+                    notes.append(QStringLiteral("<p>%1</p>").arg(
+                        QString::fromStdString(shared.description).toHtmlEscaped()));
+                }
+            }
+            if (!notes.isEmpty()) {
+                QToolTip::showText(help->globalPos(), notes.join(QString()), this);
+                return true;
+            }
+        }
+    }
+    return QWidget::event(event);
 }
 
 void GeometryInteractionView::setPendingTransmissionLineEndpoint(
@@ -146,12 +185,22 @@ void GeometryInteractionView::selectTransmissionLine(std::size_t sourceLine)
     update();
 }
 
+void GeometryInteractionView::selectNetwork(std::size_t sourceLine)
+{
+    clearSelection();
+    const auto found = std::ranges::find(networks_, sourceLine,
+        &model::NetworkDefinition::sourceLine);
+    selectedNetworkLine_ = found == networks_.end() ? std::nullopt : std::optional{sourceLine};
+    update();
+}
+
 void GeometryInteractionView::clearSelection()
 {
     selectedWireTag_.reset();
     selectedExcitationLine_.reset();
     selectedLoadLine_.reset();
     selectedTransmissionLine_.reset();
+    selectedNetworkLine_.reset();
 }
 
 void GeometryInteractionView::setInteractionModel(
@@ -181,6 +230,13 @@ void GeometryInteractionView::contextMenuEvent(QContextMenuEvent* event)
         } else if (action == GeometryContextAction::Delete) {
             emit deleteTransmissionLineRequested(*sourceLine);
         }
+    } else if (const auto sourceLine = networkAt(event->pos())) {
+        selectNetwork(*sourceLine);
+        emit networkSelected(*sourceLine);
+        const auto action = showAttachmentContextMenu(
+            this, event->globalPos(), tr("Delete Network"));
+        if (action == GeometryContextAction::EditInSetup) emit editNetworkRequested(*sourceLine);
+        else if (action == GeometryContextAction::Delete) emit deleteNetworkRequested(*sourceLine);
     } else if (const auto sourceLine = excitationAt(event->pos())) {
         selectExcitation(*sourceLine);
         emit excitationSelected(*sourceLine);

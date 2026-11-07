@@ -4,11 +4,13 @@
 #include "nec/NecModelConverter.h"
 #include "nec/NecSetupConverter.h"
 #include "nec/ParseNumber.h"
+#include "model/SegmentSharing.h"
 #include "model/WireGeometry.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <cstdint>
 #include <iomanip>
 #include <limits>
@@ -947,10 +949,11 @@ void reportInsertionRisk(ModelCheckResult& result, const SegmentGraph& graph,
     const auto reference = model::referencedSegment(result.model, wireTag, segment);
     if (!reference) return;
     const auto finding = insertionRisk(graph, result.model, *reference, groundsEnds);
-    const auto isLine = card == "TL";
-    const auto subject = std::string(isLine ? "TL end" : card) + " on wire tag "
-        + std::to_string(wireTag) + " segment " + std::to_string(segment);
-    const auto objects = card == "EX" ? "sources" : card == "LD" ? "loads" : "line connections";
+    const auto isPort = card == "TL" || card == "NT";
+    const auto subject = std::string(card == "TL" ? "TL end" : card == "NT" ? "NT port" : card)
+        + " on wire tag " + std::to_string(wireTag) + " segment " + std::to_string(segment);
+    const auto objects = card == "EX" ? "sources" : card == "LD" ? "loads"
+        : card == "NT" ? "network ports" : "line connections";
     switch (finding.risk) {
     case InsertionRisk::Junction:
         // NEC-2 allows this (only EX 5 needs a two-segment junction), so it is a note.
@@ -966,7 +969,7 @@ void reportInsertionRisk(ModelCheckResult& result, const SegmentGraph& graph,
                 + "for " + objects + " there. Move it at least one segment from the step.");
         break;
     case InsertionRisk::FreeEnd:
-        if (isLine) break;
+        if (isPort) break;
         addAdequacyDiagnostic(result, DiagnosticSeverity::Information, lineNumber,
             subject + " is on the end segment of a free wire end, where NEC forces the current "
                       "toward zero; move it inward unless that is intended.");
@@ -1102,6 +1105,12 @@ void checkStaticAdequacy(const NecDocument& document, const model::ModelSetup& s
                 + " m apart; a real line cannot be shorter than the gap it spans. Check the "
                   "length, which NEC reads in meters even when GS scales the geometry.");
     }
+    for (const auto& network : setup.networks) {
+        reportInsertionRisk(result, graph, groundsEnds, "NT", network.wireTag1, network.segment1,
+            network.sourceLine);
+        reportInsertionRisk(result, graph, groundsEnds, "NT", network.wireTag2, network.segment2,
+            network.sourceLine);
+    }
 
     auto reportedWires = WirePairs{};
     if (usesNec2Kernel(profile)) reportedWires = checkNecJunctions(graph, groundsEnds, result);
@@ -1109,6 +1118,95 @@ void checkStaticAdequacy(const NecDocument& document, const model::ModelSetup& s
     checkGroundFit(setup, executedGrounds(document), graph, longestWavelengthMeters, profile,
         result);
     if (usesNec2Kernel(profile)) checkParallelAlignment(graph, wavelengthMeters, result);
+}
+
+// How to put a load across a port instead of in series with it. For a fixed impedance on a TL
+// end the shunt admittance is spelled out; RLC values would only match at one frequency.
+auto acrossPortAdvice(const model::LoadDefinition& load, const model::SharedSegment& shared)
+    -> std::string
+{
+    std::string shunt = "the TL card's shunt admittance";
+    const auto lineEnd = std::ranges::find(shared.objects, model::InsertionKind::LineEnd,
+        &model::InsertionObject::kind);
+    if (load.type == 4 && lineEnd != shared.objects.end()
+        && (load.value1 != 0.0 || load.value2 != 0.0)) {
+        const auto admittance = 1.0 / std::complex<double>(load.value1, load.value2);
+        shunt += " (" + model::insertionObjectName(*lineEnd) + ": G = "
+            + concise(admittance.real()) + " S, B = " + concise(admittance.imag()) + " S)";
+    }
+    auto advice = "To put the load across the port, use " + shunt
+        + ", an NT network, or a short parallel wire carrying the load.";
+    if (load.type == 0 || load.type == 1) {
+        advice += " TL and NT admittances are fixed values, so they match an L or C at one "
+                  "frequency only.";
+    }
+    return advice;
+}
+
+// LD loads that share a segment with a TL end, NT port, or EX source end up in series with it,
+// which is rarely what a load on a line end means.
+void checkSharedSegments(const model::ModelSetup& setup, ModelCheckResult& result)
+{
+    std::set<std::pair<std::size_t, std::string>> reported;
+    const auto report = [&](DiagnosticSeverity severity, std::size_t line, std::string message) {
+        if (reported.emplace(line, message).second)
+            addAdequacyDiagnostic(result, severity, line, std::move(message));
+    };
+    const auto frequencyMHz = setup.frequency
+        ? std::max(setup.frequency->startMHz, model::frequencyEndMHz(*setup.frequency)) : 0.0;
+    for (const auto& shared : model::describeSharedSegments(result.model, setup)) {
+        std::vector<std::string> ports;
+        std::vector<std::string> sources;
+        for (const auto& object : shared.objects) {
+            if (object.kind == model::InsertionKind::LineEnd
+                || object.kind == model::InsertionKind::NetworkPort) {
+                ports.push_back(model::insertionObjectName(object));
+            } else if (object.kind == model::InsertionKind::Source) {
+                sources.push_back(model::insertionObjectName(object));
+            }
+        }
+        const auto joinedNames = [](const std::vector<std::string>& names) {
+            std::string text;
+            for (std::size_t index = 0; index < names.size(); ++index) {
+                if (index != 0) text += index + 1 == names.size() ? " and " : ", ";
+                text += names[index];
+            }
+            return text;
+        };
+        const auto place = " on wire tag " + std::to_string(shared.wireTag) + " segment "
+            + std::to_string(shared.necSegment);
+        for (const auto& object : shared.objects) {
+            if (object.kind != model::InsertionKind::Load) continue;
+            const auto& load = setup.loads[static_cast<std::size_t>(object.number - 1)];
+            // A load spread over a range is distributed loading, not a load meant for the port.
+            if (load.firstSegment < 1 || load.lastSegment != load.firstSegment) continue;
+            const auto subject = model::insertionObjectName(object) + place
+                + " shares its segment with " + joinedNames(!ports.empty() ? ports : sources);
+            if (!ports.empty()) {
+                const auto portWord = std::string(ports.size() == 1 ? "the port" : "the ports");
+                if (shared.electricallyShort) {
+                    report(DiagnosticSeverity::Warning, load.sourceLine, subject
+                        + ", and wire tag " + std::to_string(shared.wireTag) + " is only "
+                        + concise(shared.wireWavelengths) + " wavelength long at "
+                        + concise(frequencyMHz) + " MHz. NEC puts an LD load in series inside "
+                          "the segment, not across " + portWord + ", so it adds to this short "
+                          "wire's own reactance, which is far larger, and will have little "
+                          "effect. " + acrossPortAdvice(load, shared));
+                } else {
+                    report(DiagnosticSeverity::Warning, load.sourceLine, subject
+                        + ". NEC puts an LD load in series inside the segment, not across "
+                        + portWord + ", so " + portWord + (ports.size() == 1 ? " sees" : " see")
+                        + " the load plus the wire's own impedance. "
+                        + acrossPortAdvice(load, shared));
+                }
+            } else if (!sources.empty()) {
+                report(DiagnosticSeverity::Information, load.sourceLine, subject
+                    + ", so NEC puts it in series with the source (Thevenin source). That is "
+                      "sometimes intended, as a signal generator's source impedance; to load "
+                      "across the feed instead, use an NT network.");
+            }
+        }
+    }
 }
 
 void checkExcitation(const NecCard& card, ModelCheckResult& result)
@@ -1307,8 +1405,53 @@ void checkLoad(const NecCard& card, CompatibilityProfile profile, ModelCheckResu
         addError(result, card, "LD values must be numeric");
 }
 
-void checkTransmissionLine(const NecCard& card, ModelCheckResult& result)
+void checkGenericKnownCard(const NecCard& card, ModelCheckResult& result)
 {
+    const auto* spec = findNecCardSpec(card.mnemonic);
+    if (spec == nullptr) return;
+    const auto maximumFields = spec->integerFieldCount + spec->numericFieldCount;
+    if (maximumFields > 0 && card.fields.size() > maximumFields) {
+        addError(result, card, card.mnemonic + " has more fields than the NEC-2 card format allows");
+        return;
+    }
+    for (std::size_t index = 0; index < card.fields.size(); ++index) {
+        const auto valid = index < spec->integerFieldCount
+            ? isNumber<int>(card.fields[index]) : isNumber<double>(card.fields[index]);
+        if (!valid) {
+            addError(result, card, card.mnemonic + " field " + std::to_string(index + 1)
+                + " has the wrong numeric type");
+            return;
+        }
+    }
+}
+
+auto clearsNetworks(const model::ModelSetup& setup, const NecCard& card) -> bool
+{
+    return std::ranges::find(setup.networkClearLines, card.lineNumber)
+        != setup.networkClearLines.end();
+}
+
+// Segment -1 only means "clear" on the first NT or TL card of a group; elsewhere NEC-2 reads
+// it as a segment number and stops.
+auto misplacedClear(const NecCard& card, ModelCheckResult& result) -> bool
+{
+    int segment{};
+    if (card.fields.size() < 2 || !parseNumber(card.fields[1], segment) || segment != -1)
+        return false;
+    addError(result, card, card.mnemonic + " segment -1 clears earlier networks and lines only "
+        "on the first NT or TL card of a group; here NEC-2 stops with a data error. Move it "
+        "ahead of the other NT and TL cards in its group.");
+    return true;
+}
+
+void checkTransmissionLine(const NecCard& card, const model::ModelSetup& setup,
+    ModelCheckResult& result)
+{
+    if (clearsNetworks(setup, card)) {
+        checkGenericKnownCard(card, result);
+        return;
+    }
+    if (misplacedClear(card, result)) return;
     if (card.fields.size() < 5) { addError(result, card, "TL requires four integer fields and an impedance"); return; }
     int tag1{}, segment1{}, tag2{}, segment2{};
     int* integers[]{&tag1, &segment1, &tag2, &segment2};
@@ -1331,24 +1474,37 @@ void checkTransmissionLine(const NecCard& card, ModelCheckResult& result)
     if (impedance == 0.0) addError(result, card, "TL characteristic impedance must be nonzero");
 }
 
-void checkGenericKnownCard(const NecCard& card, ModelCheckResult& result)
+void checkNetwork(const NecCard& card, const model::ModelSetup& setup, ModelCheckResult& result)
 {
-    const auto* spec = findNecCardSpec(card.mnemonic);
-    if (spec == nullptr) return;
-    const auto maximumFields = spec->integerFieldCount + spec->numericFieldCount;
-    if (maximumFields > 0 && card.fields.size() > maximumFields) {
-        addError(result, card, card.mnemonic + " has more fields than the NEC-2 card format allows");
-        return;
+    const auto errors = result.errorCount();
+    checkGenericKnownCard(card, result);
+    if (result.errorCount() != errors || clearsNetworks(setup, card)
+        || misplacedClear(card, result)) return;
+    // Blank integer fields read as zero, which no port can use.
+    std::array<int, 4> integers{};
+    for (std::size_t index = 0; index < integers.size() && index < card.fields.size(); ++index)
+        parseNumber(card.fields[index], integers[index]);
+    const auto validPort = [&result](int tag, int segment) {
+        return model::referencedSegment(result.model, tag, segment).has_value();
+    };
+    if (!validPort(integers[0], integers[1]) || !validPort(integers[2], integers[3]))
+        addError(result, card, "NT port references an invalid wire or segment");
+}
+
+// NEC solves more than one frequency: an FR card steps, or FR cards name different frequencies.
+auto evaluatesSeveralFrequencies(const NecDocument& document) -> bool
+{
+    std::optional<double> first;
+    for (const auto& card : document.cards()) {
+        if (card.kind != NecCardKind::Frequency) continue;
+        int count{};
+        double start{};
+        if (card.fields.size() > 1 && parseNumber(card.fields[1], count) && count > 1) return true;
+        if (card.fields.size() <= 4 || !parseNumber(card.fields[4], start)) continue;
+        if (first && *first != start) return true;
+        first = start;
     }
-    for (std::size_t index = 0; index < card.fields.size(); ++index) {
-        const auto valid = index < spec->integerFieldCount
-            ? isNumber<int>(card.fields[index]) : isNumber<double>(card.fields[index]);
-        if (!valid) {
-            addError(result, card, card.mnemonic + " field " + std::to_string(index + 1)
-                + " has the wrong numeric type");
-            return;
-        }
-    }
+    return false;
 }
 
 void checkCardOrdering(const NecDocument& document, ModelCheckResult& result)
@@ -1456,6 +1612,42 @@ auto isNearFieldRequest(const NecCard& card) -> bool
 {
     return card.kind == NecCardKind::ControlOther
         && (card.mnemonic == "NE" || card.mnemonic == "NH");
+}
+
+// A group of NT and TL cards that no execution request follows is discarded by the next group
+// before NEC uses it. This is the usual result of adding a TL after an EX that follows the
+// existing lines.
+void checkDiscardedNetworkGroups(const NecDocument& document, const model::ModelSetup& setup,
+    ModelCheckResult& result)
+{
+    std::vector<const NecCard*> group;
+    auto groupOpen = false;
+    auto groupUsed = false;
+    for (const auto& card : document.cards()) {
+        if (card.kind == NecCardKind::TransmissionLine || card.kind == NecCardKind::Network) {
+            if (!groupOpen) {
+                for (const auto* discarded : groupUsed ? std::vector<const NecCard*>{} : group) {
+                    if (std::ranges::find(setup.networkClearLines, discarded->lineNumber)
+                        != setup.networkClearLines.end()) continue;
+                    addSequenceDiagnostic(result, DiagnosticSeverity::Warning, *discarded,
+                        discarded->mnemonic + " is discarded before NEC uses it: the "
+                            + card.mnemonic + " card on line " + std::to_string(card.lineNumber)
+                            + " starts a new NT/TL group because other cards come between "
+                              "them, and NEC-2 clears every earlier network and line when a "
+                              "group starts. Keep NT and TL cards together, or add an "
+                              "execution request between the groups.");
+                }
+                group.clear();
+                groupUsed = false;
+            }
+            groupOpen = true;
+            group.push_back(&card);
+            continue;
+        }
+        if (!continuesNetworkGroup(card)) groupOpen = false;
+        if (card.kind == NecCardKind::Execute || card.kind == NecCardKind::RadiationPattern
+            || isNearFieldRequest(card)) groupUsed = true;
+    }
 }
 
 void checkControlSequence(const NecDocument& document, ModelCheckResult& result)
@@ -1598,6 +1790,8 @@ auto NecModelChecker::check(const NecDocument& document, ModelCheckOptions optio
     checkDeckStructure(document, result);
     checkCardOrdering(document, result);
     checkControlSequence(document, result);
+    const auto setup = NecSetupConverter{}.convert(document);
+    checkDiscardedNetworkGroups(document, setup, result);
 
     for (const auto& card : document.cards()) {
         switch (card.kind) {
@@ -1620,14 +1814,16 @@ auto NecModelChecker::check(const NecDocument& document, ModelCheckOptions optio
             checkLoad(card, options.compatibility, result);
             break;
         case NecCardKind::TransmissionLine:
-            checkTransmissionLine(card, result);
+            checkTransmissionLine(card, setup, result);
+            break;
+        case NecCardKind::Network:
+            checkNetwork(card, setup, result);
             break;
         case NecCardKind::ReferenceImpedance:
             checkReferenceImpedance(card, result);
             break;
         case NecCardKind::GeometryOther:
         case NecCardKind::ControlOther:
-        case NecCardKind::Network:
             if (std::ranges::none_of(result.diagnostics, [&card](const auto& diagnostic) {
                     return diagnostic.severity == DiagnosticSeverity::Error
                         && diagnostic.lineNumber == card.lineNumber;
@@ -1654,7 +1850,6 @@ auto NecModelChecker::check(const NecDocument& document, ModelCheckOptions optio
                 "Compatibility"});
         }
     }
-    const auto setup = NecSetupConverter{}.convert(document);
     if (result.model.empty()) {
         result.diagnostics.push_back({DiagnosticSeverity::Warning, 0,
             "Incomplete model: no valid geometry", "Readiness"});
@@ -1675,7 +1870,14 @@ auto NecModelChecker::check(const NecDocument& document, ModelCheckOptions optio
                         : " SY symbols were resolved and expanded in the generated solver deck"),
             "Compatibility"});
     }
+    if (!setup.networks.empty() && evaluatesSeveralFrequencies(document)) {
+        addAdequacyDiagnostic(result, DiagnosticSeverity::Information,
+            setup.networks.front().sourceLine,
+            "NT admittances are fixed values; a network meant to model an inductor or capacitor "
+            "is exact at only one frequency.");
+    }
     checkStaticAdequacy(document, setup, options.compatibility, result);
+    checkSharedSegments(setup, result);
     std::ranges::sort(result.diagnostics, {}, &ModelDiagnostic::lineNumber);
     return result;
 }

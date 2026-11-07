@@ -2,6 +2,7 @@
 
 #include "model/AntennaModel.h"
 #include "model/ModelSetup.h"
+#include "model/SegmentSharing.h"
 
 #include <QWidget>
 
@@ -45,11 +46,16 @@ public:
     void selectWire(int tag);
     void setExcitations(const std::vector<model::Excitation>& excitations);
     void setAttachments(const std::vector<model::LoadDefinition>& loads,
-        const std::vector<model::TransmissionLineDefinition>& transmissionLines);
+        const std::vector<model::TransmissionLineDefinition>& transmissionLines,
+        const std::vector<model::NetworkDefinition>& networks = {});
+    // Segments with more than one source, load, line end, or network port; hovering one
+    // explains how NEC connects them.
+    void setSharedSegments(const std::vector<model::SharedSegment>& sharedSegments);
     void setPendingTransmissionLineEndpoint(std::optional<std::pair<int, int>> endpoint);
     void selectExcitation(std::size_t sourceLine);
     void selectLoad(std::size_t sourceLine);
     void selectTransmissionLine(std::size_t sourceLine);
+    void selectNetwork(std::size_t sourceLine);
 
 signals:
     void wireSelected(int tag);
@@ -68,8 +74,12 @@ signals:
     void editTransmissionLineRequested(std::size_t sourceLine);
     void deleteLoadRequested(std::size_t sourceLine);
     void deleteTransmissionLineRequested(std::size_t sourceLine);
+    void networkSelected(std::size_t sourceLine);
+    void editNetworkRequested(std::size_t sourceLine);
+    void deleteNetworkRequested(std::size_t sourceLine);
 
 protected:
+    auto event(QEvent* event) -> bool override;
     void contextMenuEvent(QContextMenuEvent* event) final;
     void mouseDoubleClickEvent(QMouseEvent* event) final;
     virtual auto wireAt(const QPointF& position) const -> std::optional<int> = 0;
@@ -77,6 +87,7 @@ protected:
     virtual auto loadAt(const QPointF& position) const -> std::optional<std::size_t> = 0;
     virtual auto transmissionLineAt(const QPointF& position) const
         -> std::optional<std::size_t> = 0;
+    virtual auto networkAt(const QPointF& position) const -> std::optional<std::size_t> = 0;
     virtual auto segmentAt(int wireTag, const QPointF& position) const -> int = 0;
     virtual auto wireMenuOptions(int tag, const QPointF& position) const
         -> GeometryWireMenuOptions = 0;
@@ -91,10 +102,13 @@ protected:
     std::vector<model::Excitation> excitations_;
     std::vector<model::LoadDefinition> loads_;
     std::vector<model::TransmissionLineDefinition> transmissionLines_;
+    std::vector<model::NetworkDefinition> networks_;
+    std::vector<model::SharedSegment> sharedSegments_;
     std::optional<int> selectedWireTag_;
     std::optional<std::size_t> selectedExcitationLine_;
     std::optional<std::size_t> selectedLoadLine_;
     std::optional<std::size_t> selectedTransmissionLine_;
+    std::optional<std::size_t> selectedNetworkLine_;
     std::optional<std::pair<int, int>> pendingTransmissionLineEndpoint_;
 };
 

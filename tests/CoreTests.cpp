@@ -20,6 +20,7 @@
 #include "model/AutoSegmentation.h"
 #include "model/LengthUnit.h"
 #include "model/ModelSummary.h"
+#include "model/SegmentSharing.h"
 #include "model/WireGeometry.h"
 #include "model/WireGauge.h"
 #include "nec/DeckGeometryUnits.h"
@@ -623,7 +624,7 @@ void testCompleteNec2CardCatalog()
 
     constexpr std::array structuredCards{
         "GW", "GA", "GH", "SP", "SM", "SC", "GS", "GE", "FR", "GN", "LD", "EX",
-        "TL", "RP", "XQ", "SY", "Z0", "ZO"};
+        "TL", "NT", "RP", "XQ", "SY", "Z0", "ZO"};
     for (const auto mnemonic : structuredCards) {
         const auto* spec = necwb::nec::findNecCardSpec(mnemonic);
         expect(spec != nullptr
@@ -632,7 +633,7 @@ void testCompleteNec2CardCatalog()
     }
 
     constexpr std::array understoodCards{
-        "CM", "CE", "GC", "GM", "GX", "GR", "GF", "EK", "KH", "NT", "CP", "EN",
+        "CM", "CE", "GC", "GM", "GX", "GR", "GF", "EK", "KH", "CP", "EN",
         "GD", "NE", "NH", "NX", "PQ", "PT", "WG"};
     for (const auto mnemonic : understoodCards) {
         const auto* spec = necwb::nec::findNecCardSpec(mnemonic);
@@ -1677,6 +1678,16 @@ void testAutoSegmentation()
     expect(attachmentProposal.remappedTransmissionLines[0].segment1 == 6
             && attachmentProposal.remappedTransmissionLines[0].segment2 == 1,
         "automatic segmentation remaps both transmission-line endpoints");
+    const std::vector<necwb::model::NetworkDefinition> networks{
+        {1, 21, 2, 1, 0.01, 0.0, 0.0, 0.0, 1e10, 0.0, 12}};
+    const auto networkProposal = necwb::model::proposeSegmentation(transmissionLineModel, {},
+        14.25, {20, true}, {}, {}, networks);
+    expect(networkProposal.wires[0].newSegments == 11
+            && networkProposal.remappedNetworks.size() == 1
+            && networkProposal.remappedNetworks[0].segment1 == 11
+            && networkProposal.remappedNetworks[0].segment2 == 1
+            && networkProposal.remappedNetworks[0].y22Real == 1e10,
+        "automatic segmentation remaps both NT ports and keeps NT-fed wires odd");
     expect(attachmentProposal.remappedLoads[0].firstSegment == 3
             && attachmentProposal.remappedLoads[0].lastSegment == 9,
         "automatic segmentation remaps supported load ranges");
@@ -2979,6 +2990,189 @@ void testFrequencyPlans()
         "amateur-band presets provide an editable 40-meter evaluation range");
 }
 
+void testNetworkDefinitions()
+{
+    const std::string geometry =
+        "GW 1 9 0 0 0 0 0 1 .001\nGW 2 9 1 0 0 1 0 1 .001\nGE 0\n";
+    const auto document = necwb::nec::NecParser{}.parse(geometry
+        + "NT 1 5 2 5 .01 -.02 0 .003 1e10\nTL 1 2 2 2 50\n"
+          "EX 0 1 5 0 1 0\nFR 0 1 0 0 14 0\nEN\n");
+    const auto setup = necwb::nec::NecSetupConverter{}.convert(document);
+    expect(setup.networks.size() == 1 && setup.networks[0].wireTag1 == 1
+            && setup.networks[0].segment1 == 5 && setup.networks[0].wireTag2 == 2
+            && setup.networks[0].segment2 == 5 && setup.networks[0].y11Real == 0.01
+            && setup.networks[0].y11Imaginary == -0.02 && setup.networks[0].y12Imaginary == 0.003
+            && setup.networks[0].y22Real == 1e10 && setup.networks[0].y22Imaginary == 0.0
+            && setup.networks[0].sourceLine == 4,
+        "structured setup reads NT ports and admittances, with omitted fields as zero");
+    expect(setup.networks[0].group == 0 && setup.transmissionLines.size() == 1
+            && setup.transmissionLines[0].group == 0 && setup.networkClearLines.empty(),
+        "adjacent NT and TL cards form one network group");
+    expect(necwb::nec::NecWriter{}.writeNetworkCard(setup.networks[0])
+            == "NT 1 5 2 5 0.01 -0.02 0 0.003 10000000000 0",
+        "network definitions write canonical NT cards");
+    expect(necwb::nec::NecModelChecker{}.check(document).errorCount() == 0,
+        "valid NT cards pass model checking");
+
+    // NEC-2 user guide, NT card I2 and notes; nec2c main.c "nt" & "tl" case.
+    const auto groups = necwb::nec::NecSetupConverter{}.convert(necwb::nec::NecParser{}.parse(
+        geometry + "TL 1 2 2 2 50\nEX 0 1 5 0 1 0\nNT 0 -1\nPT -1\nNT 1 3 2 3 .01\n"
+                   "TL 1 4 2 4 50\nXQ\nTL 0 -1\nFR 0 1 0 0 14 0\nNT 1 6 2 6 .01\n"
+                   "NT 0 -1\nEN\n"));
+    expect(groups.networkClearLines == std::vector<std::size_t>{6, 11},
+        "segment -1 on the first NT or TL card of a group only clears earlier networks");
+    expect(groups.transmissionLines.size() == 2 && groups.transmissionLines[0].group == 0
+            && groups.transmissionLines[1].group == 1 && groups.networks.size() == 2
+            && groups.networks[0].group == 1 && groups.networks[1].group == 3,
+        "network groups start after any card but PT, and a clear card opens its group");
+
+    const auto badReference = necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
+        geometry + "NT 1 10 2 5 .01\nNT 3 1 2 5 .01\nNT 0 19 2 5 .01\nNT 1 0 2 5 .01\n"
+                   "EX 0 1 5 0 1 0\nFR 0 1 0 0 14 0\nEN\n"));
+    expect(std::ranges::count_if(badReference.diagnostics, [](const auto& diagnostic) {
+            return diagnostic.message == "NT port references an invalid wire or segment";
+        }) == 4,
+        "NT ports beyond a wire, on a missing tag, past the absolute count, or at 0 are errors");
+    const auto clears = necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
+        geometry + "EX 0 1 5 0 1 0\nNT 0 -1\nNT 1 3 2 3 .01\nXQ\nTL 0 -1\n"
+                   "FR 0 1 0 0 14 0\nXQ\nEN\n"));
+    expect(clears.errorCount() == 0, "NT and TL clear cards pass model checking");
+    const auto misplaced = necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
+        geometry + "EX 0 1 5 0 1 0\nNT 1 3 2 3 .01\nNT 0 -1\nTL 0 -1\n"
+                   "FR 0 1 0 0 14 0\nEN\n"));
+    expect(std::ranges::count_if(misplaced.diagnostics, [](const auto& diagnostic) {
+            return diagnostic.message.find("segment -1 clears earlier networks and lines only "
+                       "on the first") != std::string::npos;
+        }) == 2,
+        "segment -1 inside a network group is an error for NT and TL");
+
+    const auto insertion = necwb::nec::NecParser{}.parse(geometry
+        + "TL 1 2 2 2 50\nNT 1 3 2 3 .01\nEX 0 1 5 0 1 0\nFR 0 1 0 0 14 0\nEN\n");
+    expect(necwb::nec::networkCardInsertionIndex(insertion) == std::optional<std::size_t>{5}
+            && !necwb::nec::networkCardInsertionIndex(necwb::nec::NecParser{}.parse(
+                geometry + "EX 0 1 5 0 1 0\nEN\n")),
+        "a new NT or TL card goes right after the last NT/TL card, or nowhere special");
+    const auto discarded = necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
+        geometry + "TL 1 2 2 2 50\nNT 1 3 2 3 .01\nEX 0 1 5 0 1 0\nTL 1 4 2 4 50\n"
+                   "FR 0 1 0 0 14 0\nXQ\nNT 0 -1\nNT 1 6 2 6 .01\nXQ\nEN\n"));
+    const auto discardedLines = [&discarded] {
+        std::vector<std::size_t> lines;
+        for (const auto& diagnostic : discarded.diagnostics) {
+            if (diagnostic.message.find("is discarded before NEC uses it") != std::string::npos)
+                lines.push_back(diagnostic.lineNumber);
+        }
+        return lines;
+    }();
+    expect(discardedLines == std::vector<std::size_t>{4, 5}
+            && std::ranges::any_of(discarded.diagnostics, [](const auto& diagnostic) {
+                   return diagnostic.message.starts_with("TL is discarded before NEC uses it: "
+                       "the TL card on line 7 starts a new NT/TL group");
+               }),
+        "NT and TL cards cut off from their group by another card are reported once each, "
+        "and a group used by an execution request is not");
+
+    // Forum 558 Ω deck: nec2c keeps both lines across a print/plot control.
+    const auto printControlDeck = [](const std::string& between) {
+        return "CM 558 ohm line at 5 MHz\nCE\nGW 1 1 0 0 10 0 0 10.1 .001\n"
+               "GW 2 1 10 0 10 10 0 10.1 .001\nGE 0\nTL 1 1 2 1 558 0 0 0 .0017921 0\n"
+            + between + "\nTL 1 1 2 1 558 0 0 0 0 0\nEX 0 1 1 0 1 0\nFR 0 1 0 0 5 0\nXQ\nEN\n";
+    };
+    const auto discardWarnings = [](const necwb::nec::ModelCheckResult& result) {
+        return std::ranges::count_if(result.diagnostics, [](const auto& diagnostic) {
+            return diagnostic.message.find("is discarded before NEC uses it")
+                != std::string::npos;
+        });
+    };
+    for (const auto* control : {"PQ 0", "PT 0", "PL 0"}) {
+        const auto document = necwb::nec::NecParser{}.parse(printControlDeck(control));
+        const auto lines = necwb::nec::NecSetupConverter{}.convert(document).transmissionLines;
+        expect(lines.size() == 2 && lines[0].group == lines[1].group
+                && discardWarnings(necwb::nec::NecModelChecker{}.check(document)) == 0,
+            (std::string(control) + " between TL cards keeps them in one NT/TL group").c_str());
+    }
+    const auto splitDocument = necwb::nec::NecParser{}.parse(printControlDeck("EX 0 1 1 0 1 0"));
+    const auto splitLines = necwb::nec::NecSetupConverter{}.convert(splitDocument).transmissionLines;
+    expect(splitLines.size() == 2 && splitLines[0].group != splitLines[1].group
+            && discardWarnings(necwb::nec::NecModelChecker{}.check(splitDocument)) == 1,
+        "EX between TL cards still starts a new NT/TL group and discards the first line");
+
+    const auto noteCount = [&geometry](const std::string& control) {
+        const auto result = necwb::nec::NecModelChecker{}.check(
+            necwb::nec::NecParser{}.parse(geometry + control + "EN\n"));
+        return std::ranges::count_if(result.diagnostics, [](const auto& diagnostic) {
+            return diagnostic.severity == necwb::nec::DiagnosticSeverity::Information
+                && diagnostic.message.starts_with("NT admittances are fixed values");
+        });
+    };
+    expect(noteCount("NT 1 5 2 5 0 -.02\nEX 0 1 5 0 1 0\nFR 0 11 0 0 14 .05\n") == 1,
+        "an NT deck that sweeps frequency notes fixed admittances");
+    expect(noteCount("NT 1 5 2 5 0 -.02\nEX 0 1 5 0 1 0\nFR 0 1 0 0 14 0\nXQ\n"
+                     "FR 0 1 0 0 21 0\nXQ\n") == 1,
+        "separate FR cards at different frequencies count as a sweep");
+    expect(noteCount("NT 1 5 2 5 0 -.02\nEX 0 1 5 0 1 0\nFR 0 1 0 0 14 0\n") == 0,
+        "a single-frequency NT deck has no fixed-admittance note");
+    expect(noteCount("TL 1 5 2 5 50\nEX 0 1 5 0 1 0\nFR 0 11 0 0 14 .05\n") == 0,
+        "a sweep without NT cards has no fixed-admittance note");
+}
+
+void testSharedSegmentDescriptions()
+{
+    const auto describe = [](const std::string& control) {
+        const auto document = necwb::nec::NecParser{}.parse(
+            "GW 1 11 -5 0 10 5 0 10 .001\nGW 2 1 0 0 1 0 0 1.1 .001\nGE 0\n" + control
+            + "FR 0 1 0 0 14 0\nEN\n");
+        return necwb::model::describeSharedSegments(
+            necwb::nec::NecModelConverter{}.convert(document).model,
+            necwb::nec::NecSetupConverter{}.convert(document));
+    };
+    const auto stub = describe("EX 0 1 6 0 1 0\nTL 1 3 2 1 50 0\nLD 4 2 1 1 300 0\n");
+    expect(stub.size() == 1 && stub[0].wireTag == 2 && stub[0].wireSegment == 1
+            && stub[0].electricallyShort && stub[0].objects.size() == 2
+            && stub[0].description
+                == "Wire tag 2, segment 1: TL 1 end 2 connects across this gap. LD 1 (300 Ω) is "
+                   "in series inside the segment, so the line sees the load plus this wire's own "
+                   "impedance. This wire is only 0.00467 wavelength long at 14 MHz, so its own "
+                   "reactance swamps the load.",
+        "a load on a TL end's stub is described as in series with the line end");
+    const auto feed = describe("EX 0 1 6 0 1 0\nLD 1 1 6 6 50 1e-6\nNT 1 6 2 1 .01\n");
+    expect(feed.size() == 1 && !feed[0].electricallyShort
+            && feed[0].description
+                == "Wire tag 1, segment 6: NT 1 port 1 connects across this gap. EX 1 drives "
+                   "the same gap, in parallel with the network. LD 1 (parallel R 50 Ω, L 1 µH) "
+                   "is in series inside the segment, so the network sees the load plus this "
+                   "wire's own impedance. LD type 1 is a parallel RLC, but the RLC as a whole "
+                   "still sits in series in the wire.",
+        "a source, network port, and parallel RLC on one segment are described together");
+    const auto thevenin = describe("EX 0 1 6 0 1 0\nLD 4 1 6 6 50 -25\n");
+    expect(thevenin.size() == 1
+            && thevenin[0].description
+                == "Wire tag 1, segment 6: EX 1 drives this gap. LD 1 (50 − j25 Ω) is in series "
+                   "inside the segment, in series with the source (a Thevenin source impedance).",
+        "a load on the source segment is described as a Thevenin source impedance");
+    expect(describe("EX 0 1 6 0 1 0\nLD 4 1 3 3 50 0\nLD 5 1 0 0 5.8e7\n").empty(),
+        "loads alone on their segments and distributed loads share nothing");
+    const auto ranged = describe("EX 0 1 6 0 1 0\nLD 0 1 5 7 10 0 0\n");
+    expect(ranged.size() == 1 && ranged[0].wireSegment == 6,
+        "a ranged lumped load shares only the segments it covers");
+
+    // Networks from different NT/TL groups never act together.
+    const auto groups = describe(
+        "TL 1 3 2 1 50 0\nEX 0 2 1 0 1 0\nNT 1 3 1 9 .01\nLD 4 1 3 3 50 0\n");
+    expect(groups.size() == 3 && groups[0].networkGroup == 0 && groups[1].networkGroup == 1
+            && groups[0].description.find("TL 1 end 1 connects") != std::string::npos
+            && groups[0].description.find("NT") == std::string::npos
+            && groups[1].description.find("NT 1 port 1 connects") != std::string::npos
+            && groups[1].description.find("TL") == std::string::npos,
+        "TL and NT ports from different groups are described separately");
+    const auto sameGroup = describe("EX 0 2 1 0 1 0\nTL 1 3 2 1 50 0\nNT 1 3 1 9 .01\n");
+    expect(std::ranges::any_of(sameGroup, [](const auto& entry) {
+            return entry.description.starts_with(
+                "Wire tag 1, segment 3: TL 1 end 1 and NT 1 port 1 connect across this gap, in "
+                "parallel with each other.");
+        }),
+        "ports of one group on a segment are described in parallel");
+}
+
 void testAverageGainTestPreparation()
 {
     const std::string source =
@@ -3008,6 +3202,16 @@ void testAverageGainTestPreparation()
         "AGT preparation removes conductor loss and zeroes resistive loads");
     expect(deck.find("TL 1 3 1 9 50 0 0 .5 0 .7") != std::string::npos,
         "AGT preparation zeroes transmission-line shunt losses");
+    const auto shortCards = necwb::analysis::prepareAverageGainTestInput(
+        "GW 1 11 -5 0 6 5 0 6 .001\nGE 0\nLD 4 1 3 3 50\nLD 1 1 4 4 300\n"
+        "LD 1 1 5 5 300 1e-6\nTL 1 3 1 9 50 0 .02\nNT 1 2 1 10 .01 -.02 .03\n"
+        "EX 0 1 6 0 1 0\nEN\n", 7.1, necwb::analysis::AverageGainEnvironment::FreeSpace);
+    expect(shortCards.find("LD 4 1 3 3 0\n") != std::string::npos
+            && shortCards.find("LD 1 1 4 4") == std::string::npos
+            && shortCards.find("LD 1 1 5 5 0 1e-6") != std::string::npos
+            && shortCards.find("TL 1 3 1 9 50 0 0\n") != std::string::npos
+            && shortCards.find("NT 1 2 1 10 0 -.02 0\n") != std::string::npos,
+        "AGT preparation removes losses from cards that omit trailing fields");
     expect(deck.find("FR 0 1 0 0 7.1 0") != std::string::npos
             && deck.find("RP 0 91 361 1002 0 0 1 1") != std::string::npos
             && deck.find("XQ 0") == std::string::npos,
@@ -3089,9 +3293,21 @@ void testSegmentationConvergencePreparation()
             && std::abs(setup.frequency->startMHz - 7.1) < 1.0e-12,
         "convergence preparation runs one selected frequency");
 
-    const auto unsupported = necwb::analysis::prepareSegmentationConvergenceInput(
-        source.substr(0, source.find("EN\n")) + "NT 1 1 2 2 1 0 0 0 0 0\nEN\n", 7.1, 1.5);
-    expect(!unsupported.ok(), "convergence preparation rejects unsupported network remapping");
+    auto networkSource = source;
+    networkSource.replace(networkSource.find("TL 1 3"), 0, "NT 0 -1\nNT 1 3 2 8 .01 0 0 0 1e10\n");
+    const auto networked = necwb::analysis::prepareSegmentationConvergenceInput(
+        networkSource, 7.1, 1.5);
+    const auto networkedSetup = necwb::nec::NecSetupConverter{}.convert(
+        necwb::nec::NecParser{}.parse(networked.deck));
+    expect(networked.ok() && networked.deck.find("NT 0 -1\n") != std::string::npos
+            && networkedSetup.networkClearLines.size() == 1
+            && networkedSetup.networks.size() == 1
+            && networkedSetup.networks[0].segment1 == 4
+            && networkedSetup.networks[0].segment2 == 12
+            && networkedSetup.networks[0].y22Real == 1e10
+            && networkedSetup.transmissionLines.size() == 1
+            && networkedSetup.transmissionLines[0].segment1 == 4,
+        "convergence preparation remaps NT ports like TL ends and keeps clear cards");
 
     const auto globalSubset = necwb::analysis::prepareSegmentationConvergenceInput(
         "GW 1 11 0 0 0 1 0 0 .001\nGE 0\nLD 0 0 3 5 5 0 0\n"
@@ -3709,6 +3925,8 @@ auto main() -> int
     testGroundSetup();
     testAnalysisRequests();
     testLoadsAndTransmissionLines();
+    testNetworkDefinitions();
+    testSharedSegmentDescriptions();
     testSolverCommand();
     testRadiationSweepSolverInput();
     testNecOutputParsing();

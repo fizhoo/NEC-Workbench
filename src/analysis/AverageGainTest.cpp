@@ -3,10 +3,12 @@
 #include "analysis/SolverInput.h"
 
 #include "nec/NecParser.h"
+#include "nec/ParseNumber.h"
 
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <initializer_list>
 #include <iomanip>
 #include <iterator>
 #include <map>
@@ -28,21 +30,30 @@ auto cardText(const std::string& mnemonic, const std::vector<std::string>& field
 auto losslessCard(const nec::NecCard& card) -> std::string
 {
     auto fields = card.fields;
-    if (card.kind == nec::NecCardKind::Load && fields.size() >= 7) {
+    // Trailing fields may be omitted; an omitted resistive part is already zero.
+    const auto zero = [&fields](std::initializer_list<std::size_t> indices) {
+        for (const auto index : indices)
+            if (index < fields.size()) fields[index] = "0";
+    };
+    if (card.kind == nec::NecCardKind::Load && !fields.empty()) {
         int type{};
         const auto [end, error] = std::from_chars(
             fields[0].data(), fields[0].data() + fields[0].size(), type);
         if (error == std::errc{} && end == fields[0].data() + fields[0].size()) {
             if (type == 5) return {};
-            fields[4] = "0";
+            // A parallel load reduced to no L or C is an open circuit, which NEC computes as 1/0.
+            const auto present = [&fields](std::size_t index) {
+                double value{};
+                return index < fields.size() && nec::parseNumber(fields[index], value)
+                    && value != 0.0;
+            };
+            if ((type == 1 || type == 3) && !present(5) && !present(6)) return {};
+            zero({4});
         }
-    } else if (card.kind == nec::NecCardKind::TransmissionLine && fields.size() >= 10) {
-        fields[6] = "0";
-        fields[8] = "0";
-    } else if (card.kind == nec::NecCardKind::Network && fields.size() >= 10) {
-        fields[4] = "0";
-        fields[6] = "0";
-        fields[8] = "0";
+    } else if (card.kind == nec::NecCardKind::TransmissionLine) {
+        zero({6, 8});
+    } else if (card.kind == nec::NecCardKind::Network) {
+        zero({4, 6, 8});
     }
     return cardText(card.mnemonic, fields);
 }

@@ -168,6 +168,7 @@ private:
     void selectExcitation(std::size_t sourceLine);
     void selectLoad(std::size_t sourceLine);
     void selectTransmissionLine(std::size_t sourceLine);
+    void selectNetwork(std::size_t sourceLine);
     void synchronizeGeometrySelection(int tag);
     void fitAllGeometryViews();
     void previewEndpointMove(int tag, model::WireEndpoint endpoint, const model::Point3D& position);
@@ -209,6 +210,11 @@ private:
     void setPendingTransmissionLineEndpoint(std::optional<std::pair<int, int>> endpoint);
     void showLoadInEditor(std::size_t sourceLine);
     void showTransmissionLineInEditor(std::size_t sourceLine);
+    void showNetworkInEditor(std::size_t sourceLine);
+    // Adds new NT and TL cards to the existing NT/TL group; NEC-2 would discard the earlier
+    // networks if other cards came between them.
+    void upsertNetworkCard(const QString& description, std::size_t sourceLine,
+        const QString& cardText);
     void upsertSetupCard(const QString& description, std::size_t sourceLine,
         const QString& cardText, bool frequencyCard);
     void deleteSetupCard(const QString& description, std::size_t sourceLine);
@@ -216,6 +222,7 @@ private:
     void changeRadiationPattern(const model::RadiationPatternRequest& pattern);
     void changeLoad(const model::LoadDefinition& load);
     void changeTransmissionLine(const model::TransmissionLineDefinition& line);
+    void changeNetwork(const model::NetworkDefinition& network);
     void updateAnalysisReadiness();
     void startAnalysis();
     void startQuickFrequencySweep();

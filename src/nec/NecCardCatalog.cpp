@@ -32,7 +32,7 @@ constexpr std::array catalog{
     NecCardSpec{"KH", "Interaction approximation range", ControlOther, Environment, Understood, 4, 6},
     NecCardSpec{"LD", "Structure loading", Load, LoadsNetworks, StructuredEditable, 4, 6},
     NecCardSpec{"EX", "Excitation", Excitation, FrequencySources, StructuredEditable, 4, 6},
-    NecCardSpec{"NT", "Two-port network", Network, LoadsNetworks, Understood, 4, 6},
+    NecCardSpec{"NT", "Two-port network", Network, LoadsNetworks, StructuredEditable, 4, 6},
     NecCardSpec{"TL", "Transmission line", TransmissionLine, LoadsNetworks, StructuredEditable, 4, 6},
     NecCardSpec{"CP", "Coupling calculation", ControlOther, RequestsExecution, Understood, 4, 6},
     NecCardSpec{"EN", "End data", End, RequestsExecution, Understood, 4, 6},

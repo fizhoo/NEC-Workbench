@@ -22,6 +22,7 @@ public:
     [[nodiscard]] auto writeRadiationPatternCard(const model::RadiationPatternRequest& request) const -> std::string;
     [[nodiscard]] auto writeLoadCard(const model::LoadDefinition& load) const -> std::string;
     [[nodiscard]] auto writeTransmissionLineCard(const model::TransmissionLineDefinition& line) const -> std::string;
+    [[nodiscard]] auto writeNetworkCard(const model::NetworkDefinition& network) const -> std::string;
 };
 
 }

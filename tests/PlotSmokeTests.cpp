@@ -56,7 +56,9 @@
 #include <QListWidget>
 #include <QListView>
 #include <QMenu>
+#include <QAbstractItemDelegate>
 #include <QMouseEvent>
+#include <QSpinBox>
 #include <QPainter>
 #include <QPalette>
 #include <QPlainTextEdit>
@@ -85,6 +87,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <numbers>
 #include <vector>
 
@@ -2881,6 +2884,16 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("solver failed"));
     controlPanel.setResultWindowVisible(Workspace::Impedance, true);
     controlPanel.show(); application.processEvents();
+    // A finished convergence study reports a whole sentence; it must not widen the panel.
+    const auto widthBeforeLongStudy = controlPanel.minimumSizeHint().width();
+    const auto longStudy = QStringLiteral(
+        "Not yet stable across two consecutive refinements. Review the trend or add levels.");
+    controlPanel.setStudyStatus(Study::Convergence, StudyState::Complete, longStudy);
+    application.processEvents();
+    const auto longStudyKeepsWidth = controlPanel.minimumSizeHint().width() == widthBeforeLongStudy
+        && controlPanel.findChild<QLabel*>(QStringLiteral("controlPanelConvergenceState"))
+               ->toolTip() == longStudy;
+    controlPanel.clearStudy(Study::Convergence);
     QImage controlPanelImage(600, 520, QImage::Format_ARGB32_Premultiplied);
     controlPanelImage.fill(Qt::transparent); QPainter controlPanelPainter(&controlPanelImage);
     controlPanel.render(&controlPanelPainter); controlPanelPainter.end();
@@ -2974,9 +2987,9 @@ auto main(int argc, char* argv[]) -> int
         && controlPanelConvergence->text() == QStringLiteral("not run")
         && staleInitiallyHidden && staleStateVisible;
     const auto controlPanelDenseLayout = controlPanelRows != nullptr
-        && controlPanelRows->rowCount() == 9
+        && controlPanelRows->rowCount() == 10
         && controlPanelRows->verticalHeader()->defaultSectionSize() <= 24
-        && controlPanelRows->height() <= 220
+        && controlPanelRows->height() <= 244
         && controlPanel.sizeHint().width() <= 700;
     const auto controlPanelActionsCorrect = controlPanelOpen != nullptr
         && controlPanelOpen->defaultAction() == &openAction
@@ -3001,6 +3014,7 @@ auto main(int argc, char* argv[]) -> int
         std::pair{"actions", controlPanelActionsCorrect},
         std::pair{"state", controlPanelStateVisible},
         std::pair{"dense layout", controlPanelDenseLayout},
+        std::pair{"long study status keeps width", longStudyKeepsWidth},
         std::pair{"window state", controlPanelWindowStateVisible},
         std::pair{"run history", runHistoryOpened},
         std::pair{"workspace", controlPanelWorkspaceOpened},
@@ -3295,6 +3309,12 @@ auto main(int argc, char* argv[]) -> int
     structuredCards.show(); application.processEvents();
     structuredTable->item(0, 8)->setText(QStringLiteral("2.5"));
     application.processEvents();
+    selectStructuredFamily(structuredFamilies, QStringLiteral("NT"));
+    application.processEvents();
+    structuredAdd->click();
+    application.processEvents();
+    if (!structuredAdd->isEnabled() || addedCard != QStringLiteral("NT 1 6 1 6 0 0 0 0 0 0"))
+        return NECWB_SMOKE_FAILURE("Add NT Card supplies a default network");
     selectStructuredFamily(structuredFamilies, QStringLiteral("LD"));
     application.processEvents();
     structuredAdd->click();
@@ -3884,6 +3904,186 @@ auto main(int argc, char* argv[]) -> int
     attachmentImage.fill(Qt::transparent); QPainter attachmentPainter(&attachmentImage);
     attachment2D.render(&attachmentPainter); attachment3D.render(&attachmentPainter);
     attachmentPainter.end();
+    // Edits a Loads & Networks cell the way a double-click does, through its column's editor.
+    const auto editCell = [](QTableWidget* table, int row, int column, const QVariant& value) {
+        auto* delegate = table->itemDelegateForColumn(column);
+        const auto index = table->model()->index(row, column);
+        if (delegate == nullptr) return false;
+        std::unique_ptr<QWidget> editor(
+            delegate->createEditor(table->viewport(), QStyleOptionViewItem{}, index));
+        if (editor == nullptr) return false;
+        delegate->setEditorData(editor.get(), index);
+        if (auto* combo = qobject_cast<QComboBox*>(editor.get())) {
+            const auto found = combo->findData(value);
+            if (found < 0) return false;
+            combo->setCurrentIndex(found);
+        } else if (auto* spin = qobject_cast<QSpinBox*>(editor.get())) {
+            spin->setValue(value.toInt());
+            if (spin->value() != value.toInt()) return false;
+        } else {
+            return false;
+        }
+        delegate->setModelData(editor.get(), table->model(), index);
+        return true;
+    };
+    {
+        auto sharedSetup = attachmentSetup;
+        sharedSetup.loads.push_back({4, 1, 3, 3, 300.0, 0.0, 0.0, 9});
+        sharedSetup.networks.push_back({1, 9, 2, 3, 0.01, 0.0, 0.0, 0.0, 1e10, 0.0, 10});
+        necwb::ui::GeometryView network2D(necwb::geometry::ProjectionPlane::XY);
+        network2D.resize(400, 300);
+        network2D.setModel(attachmentModel);
+        network2D.setAttachments(sharedSetup.loads, {}, sharedSetup.networks);
+        network2D.setSharedSegments(
+            necwb::model::describeSharedSegments(attachmentModel, sharedSetup));
+        QImage networkImage(400, 300, QImage::Format_ARGB32_Premultiplied);
+        networkImage.fill(Qt::transparent);
+        QPainter networkPainter(&networkImage);
+        network2D.render(&networkPainter);
+        networkPainter.end();
+        necwb::ui::LoadNetworkEditor sharedEditor;
+        sharedEditor.setData(attachmentModel, sharedSetup);
+        sharedEditor.show();
+        application.processEvents();
+        auto* sharedLoads = sharedEditor.findChild<QTableWidget*>(
+            QStringLiteral("loadNetworkLoadsTable"));
+        auto* sharedNotes = sharedEditor.findChild<QLabel*>(
+            QStringLiteral("loadNetworkSharingNotes"));
+        if (sharedLoads == nullptr || sharedNotes == nullptr || sharedNotes->isVisible()
+            || sharedLoads->verticalHeaderItem(1) == nullptr
+            || sharedLoads->verticalHeaderItem(1)->icon().isNull()
+            || !sharedLoads->verticalHeaderItem(1)->toolTip().contains(
+                QStringLiteral("LD 2 (300 Ω) is in series inside the segment"))
+            || !sharedLoads->verticalHeaderItem(0)->icon().isNull())
+            return NECWB_SMOKE_FAILURE("shared-segment markers in the loads table");
+        sharedEditor.selectLoad(9);
+        application.processEvents();
+        if (!sharedNotes->isVisible()
+            || !sharedNotes->text().contains(QStringLiteral("TL 1 end 1 connects across")))
+            return NECWB_SMOKE_FAILURE("shared-segment note for the selected load");
+        sharedEditor.selectLoad(7);
+        application.processEvents();
+        if (sharedNotes->isVisible())
+            return NECWB_SMOKE_FAILURE("shared-segment note hides for an unshared load");
+        auto* networkTable = sharedEditor.findChild<QTableWidget*>(
+            QStringLiteral("loadNetworkNetworksTable"));
+        auto* addNetwork = sharedEditor.findChild<QPushButton*>(
+            QStringLiteral("addNetworkButton"));
+        auto* applyNetwork = sharedEditor.findChild<QPushButton*>(
+            QStringLiteral("applySelectedNetworkButton"));
+        if (networkTable == nullptr || addNetwork == nullptr || applyNetwork == nullptr
+            || networkTable->rowCount() != 1
+            || networkTable->item(0, 0)->text() != QStringLiteral("1")
+            || networkTable->item(0, 1)->text() != QStringLiteral("9")
+            || networkTable->cellWidget(0, 0) != nullptr)
+            return NECWB_SMOKE_FAILURE("network table controls");
+        std::optional<necwb::model::NetworkDefinition> emittedNetwork;
+        QObject::connect(&sharedEditor, &necwb::ui::LoadNetworkEditor::networkChanged,
+            [&emittedNetwork](necwb::model::NetworkDefinition network) {
+                emittedNetwork = network;
+            });
+        sharedEditor.selectNetwork(10);
+        networkTable->setCurrentCell(0, 4);
+        networkTable->item(0, 4)->setText(QStringLiteral("0.02"));
+        if (!sharedEditor.hasPendingEdits() || !applyNetwork->isEnabled())
+            return NECWB_SMOKE_FAILURE("network edit becomes pending");
+        applyNetwork->click();
+        if (!emittedNetwork || emittedNetwork->sourceLine != 10
+            || emittedNetwork->y11Real != 0.02 || emittedNetwork->wireTag1 != 1
+            || emittedNetwork->segment1 != 9 || emittedNetwork->segment2 != 3
+            || emittedNetwork->y22Real != 1e10)
+            return NECWB_SMOKE_FAILURE("network edit emits the NT definition");
+        networkTable->item(0, 5)->setText(QStringLiteral("abc"));
+        if (applyNetwork->isEnabled())
+            return NECWB_SMOKE_FAILURE("invalid network admittance blocks apply");
+        addNetwork->click();
+        applyNetwork->click();
+        if (networkTable->rowCount() != 2 || !emittedNetwork || emittedNetwork->sourceLine != 0)
+            return NECWB_SMOKE_FAILURE("draft network applies as a new NT card");
+
+        std::optional<std::size_t> clickedNetwork;
+        QObject::connect(&network2D, &necwb::ui::GeometryView::networkSelected,
+            [&clickedNetwork](std::size_t line) { clickedNetwork = line; });
+        network2D.show();
+        network2D.fitToView();
+        application.processEvents();
+        // The NT line runs from wire 1 segment 9 to wire 2 segment 3 and crosses the view's
+        // centre column between the wires; click down that column until it is hit.
+        for (auto y = 0; y < network2D.height() && !clickedNetwork; y += 3) {
+            const QPointF point(network2D.width() / 2.0, y);
+            QMouseEvent press(QEvent::MouseButtonPress, point, network2D.mapToGlobal(point),
+                Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QMouseEvent release(QEvent::MouseButtonRelease, point, network2D.mapToGlobal(point),
+                Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(&network2D, &press);
+            QApplication::sendEvent(&network2D, &release);
+        }
+        if (clickedNetwork != std::optional<std::size_t>{10})
+            return NECWB_SMOKE_FAILURE("clicking an NT line in Geometry selects it");
+    }
+    {
+        // Imported cards may number segments across wires as NEC does: tag 3 on two 5-segment
+        // wires reaches 10 segments, and tag 0 counts all 32. Applying an untouched row must
+        // keep every digit the card had.
+        auto crossModel = attachmentModel;
+        crossModel.addWire({3, {-1.0, 2.0, 0.0}, {1.0, 2.0, 0.0}, 5, 0.001, 3});
+        crossModel.addWire({3, {-1.0, 3.0, 0.0}, {1.0, 3.0, 0.0}, 5, 0.001, 4});
+        necwb::model::ModelSetup crossSetup;
+        crossSetup.loads.push_back({4, 3, 8, 8, 50.0, 0.0017921, 0.0, 5});
+        crossSetup.transmissionLines.push_back(
+            {3, 8, 0, 30, 558.0, 0.0, 0.0, 0.0, 0.0017921, 0.0, 6});
+        crossSetup.networks.push_back(
+            {0, 30, 3, 8, 0.0017921, -0.0012345678, 0.0, 0.0, 0.0, 0.0, 7});
+        necwb::ui::LoadNetworkEditor crossEditor;
+        crossEditor.setData(crossModel, crossSetup);
+        crossEditor.show();
+        application.processEvents();
+        auto* crossLoads = crossEditor.findChild<QTableWidget*>(
+            QStringLiteral("loadNetworkLoadsTable"));
+        auto* crossLines = crossEditor.findChild<QTableWidget*>(
+            QStringLiteral("loadNetworkLinesTable"));
+        auto* crossNetworks = crossEditor.findChild<QTableWidget*>(
+            QStringLiteral("loadNetworkNetworksTable"));
+        auto* crossApplyLoad = crossEditor.findChild<QPushButton*>(
+            QStringLiteral("applySelectedLoadButton"));
+        auto* crossApplyLine = crossEditor.findChild<QPushButton*>(
+            QStringLiteral("applySelectedLineButton"));
+        auto* crossApplyNetwork = crossEditor.findChild<QPushButton*>(
+            QStringLiteral("applySelectedNetworkButton"));
+        std::optional<necwb::model::LoadDefinition> crossLoad;
+        std::optional<necwb::model::TransmissionLineDefinition> crossLine;
+        std::optional<necwb::model::NetworkDefinition> crossNetwork;
+        QObject::connect(&crossEditor, &necwb::ui::LoadNetworkEditor::loadChanged,
+            [&crossLoad](necwb::model::LoadDefinition load) { crossLoad = load; });
+        QObject::connect(&crossEditor, &necwb::ui::LoadNetworkEditor::transmissionLineChanged,
+            [&crossLine](necwb::model::TransmissionLineDefinition line) { crossLine = line; });
+        QObject::connect(&crossEditor, &necwb::ui::LoadNetworkEditor::networkChanged,
+            [&crossNetwork](necwb::model::NetworkDefinition network) { crossNetwork = network; });
+        crossLoads->setCurrentCell(0, 1);
+        crossApplyLoad->click();
+        crossLines->setCurrentCell(0, 0);
+        if (!crossApplyLine->isEnabled())
+            return NECWB_SMOKE_FAILURE("TL ends on a shared tag and tag 0 can be applied");
+        crossApplyLine->click();
+        crossNetworks->setCurrentCell(0, 0);
+        if (!crossApplyNetwork->isEnabled())
+            return NECWB_SMOKE_FAILURE("NT ports on tag 0 and a shared tag can be applied");
+        crossApplyNetwork->click();
+        if (!crossLoad || crossLoad->wireTag != 3 || crossLoad->firstSegment != 8
+            || crossLoad->value2 != 0.0017921)
+            return NECWB_SMOKE_FAILURE("load on a shared tag applies with full precision");
+        if (!crossLine || crossLine->wireTag2 != 0 || crossLine->segment2 != 30
+            || crossLine->shuntReal2 != 0.0017921)
+            return NECWB_SMOKE_FAILURE("transmission line applies with full precision");
+        if (!crossNetwork || crossNetwork->wireTag1 != 0 || crossNetwork->segment1 != 30
+            || crossNetwork->y11Real != 0.0017921 || crossNetwork->y11Imaginary != -0.0012345678)
+            return NECWB_SMOKE_FAILURE("network applies with full precision");
+        // Segment editors reach every segment the tag numbers; tag 0 stays offered where used.
+        if (!editCell(crossLines, 0, 1, 10) || editCell(crossLines, 0, 1, 11)
+            || !editCell(crossLines, 0, 3, 32) || editCell(crossLines, 0, 3, 33)
+            || !editCell(crossNetworks, 0, 0, 0) || editCell(crossLoads, 0, 1, 0))
+            return NECWB_SMOKE_FAILURE("segment editors follow NEC segment numbering");
+    }
     necwb::ui::LoadNetworkEditor loadNetwork;
     loadNetwork.setData(attachmentModel, attachmentSetup);
     loadNetwork.setLengthUnit(necwb::model::LengthUnit::Foot);
@@ -3895,27 +4095,27 @@ auto main(int argc, char* argv[]) -> int
     auto* applyLoad = loadNetwork.findChild<QPushButton*>(QStringLiteral("applySelectedLoadButton"));
     auto* applyLine = loadNetwork.findChild<QPushButton*>(QStringLiteral("applySelectedLineButton"));
     auto* loadValidation = loadNetwork.findChild<QLabel*>(QStringLiteral("loadNetworkValidation"));
-    auto* loadType = loadNetwork.findChild<QComboBox*>(QStringLiteral("loadTypeCombo"));
     if (loadTable == nullptr || lineTable == nullptr || addLoad == nullptr || addLine == nullptr
-        || applyLoad == nullptr || applyLine == nullptr
-        || loadValidation == nullptr || loadType == nullptr)
+        || applyLoad == nullptr || applyLine == nullptr || loadValidation == nullptr)
         return NECWB_SMOKE_FAILURE("loads and lines controls");
-    if (loadTable->item(0, 5)->text() != QStringLiteral("50.000")
-        || lineTable->item(0, 4)->text() != QStringLiteral("50.000")
-        || lineTable->item(0, 5)->text() != QStringLiteral("10.000")
+    if (loadTable->item(0, 5)->text() != QStringLiteral("50")
+        || lineTable->item(0, 4)->text() != QStringLiteral("50")
+        || lineTable->item(0, 5)->text() != QStringLiteral("10")
         || lineTable->horizontalHeaderItem(5)->text() != QStringLiteral("Length (ft)"))
         return NECWB_SMOKE_FAILURE("transmission-line columns");
     loadTable->selectRow(0);
-    if (loadType->count() != 6 || loadType->currentData().toInt() != 4
+    if (loadTable->item(0, 0)->text() != QStringLiteral("4 — Fixed complex impedance")
+        || loadTable->cellWidget(0, 0) != nullptr
         || loadTable->horizontalHeaderItem(5)->text() != QStringLiteral("Resistance (Ω)")
         || loadTable->horizontalHeaderItem(6)->text() != QStringLiteral("Reactance (Ω)")
         || loadTable->item(0, 7)->flags().testFlag(Qt::ItemIsEditable))
         return NECWB_SMOKE_FAILURE("load type 4 columns");
-    loadType->setCurrentIndex(loadType->findData(5));
-    if (loadTable->horizontalHeaderItem(5)->text() != QStringLiteral("Conductivity (MS/m)")
+    if (!editCell(loadTable, 0, 0, 5)
+        || loadTable->item(0, 0)->text() != QStringLiteral("5 — Wire conductivity")
+        || loadTable->horizontalHeaderItem(5)->text() != QStringLiteral("Conductivity (MS/m)")
         || loadTable->item(0, 6)->flags().testFlag(Qt::ItemIsEditable))
         return NECWB_SMOKE_FAILURE("load type 2 columns");
-    loadType->setCurrentIndex(loadType->findData(4));
+    if (!editCell(loadTable, 0, 0, 4)) return NECWB_SMOKE_FAILURE("load type editor");
     auto validLoadEmitted = false;
     auto emittedLoadType = -1;
     auto emittedLoadSourceLine = std::size_t{1};
@@ -3951,12 +4151,10 @@ auto main(int argc, char* argv[]) -> int
     loadTable->item(0, 1)->setText(QStringLiteral("1")); applyLoad->click();
     addLoad->click();
     const auto draftDidNotEmit = emittedLoadType == 4 && loadTable->rowCount() == 2;
-    auto* draftType = qobject_cast<QComboBox*>(loadTable->cellWidget(1, 0));
-    auto* draftScope = qobject_cast<QComboBox*>(loadTable->cellWidget(1, 2));
-    if (draftType == nullptr || draftScope == nullptr)
-        return NECWB_SMOKE_FAILURE("draft load controls");
-    draftType->setCurrentIndex(draftType->findData(2));
-    draftScope->setCurrentIndex(draftScope->findData(true));
+    if (!editCell(loadTable, 1, 0, 2) || !editCell(loadTable, 1, 2, true)
+        || loadTable->item(1, 2)->text() != QStringLiteral("Entire wire")
+        || loadTable->item(1, 3)->flags().testFlag(Qt::ItemIsEditable))
+        return NECWB_SMOKE_FAILURE("draft load editors");
     loadTable->item(1, 6)->setText(QStringLiteral("4.700"));
     loadTable->item(1, 7)->setText(QStringLiteral("22.000"));
     applyLoad->click();
@@ -3972,19 +4170,16 @@ auto main(int argc, char* argv[]) -> int
     const auto lineUnitConverted = std::abs(emittedLineLength - 3.048) < 1.0e-12;
     addLine->click();
     const auto lineDraftDidNotEmit = emittedLineSourceLine == 8 && lineTable->rowCount() == 2;
-    auto* draftWire1 = qobject_cast<QComboBox*>(lineTable->cellWidget(1, 0));
-    auto* draftSegment1 = qobject_cast<QComboBox*>(lineTable->cellWidget(1, 1));
-    auto* draftWire2 = qobject_cast<QComboBox*>(lineTable->cellWidget(1, 2));
-    auto* draftSegment2 = qobject_cast<QComboBox*>(lineTable->cellWidget(1, 3));
-    if (draftWire1 == nullptr || draftSegment1 == nullptr
-        || draftWire2 == nullptr || draftSegment2 == nullptr)
-        return NECWB_SMOKE_FAILURE("draft transmission-line controls");
+    // Segment editors stop at the row's wire; both test wires have 11 segments.
+    if (editCell(lineTable, 1, 1, 12) || !editCell(lineTable, 1, 1, 11)
+        || !editCell(lineTable, 1, 2, 1) || editCell(lineTable, 1, 0, 99))
+        return NECWB_SMOKE_FAILURE("draft transmission-line editors");
     applyLine->click();
     const auto lineDraftApplied = emittedLineSourceLine == 0
-        && draftWire1->currentData().toInt() == 1
-        && draftSegment1->currentData().toInt() == 1
-        && draftWire2->currentData().toInt() == 2
-        && draftSegment2->currentData().toInt() == 1;
+        && lineTable->item(1, 0)->text() == QStringLiteral("1")
+        && lineTable->item(1, 1)->text() == QStringLiteral("11")
+        && lineTable->item(1, 2)->text() == QStringLiteral("1")
+        && lineTable->item(1, 3)->text() == QStringLiteral("1");
     QTemporaryDir directory;
     necwb::ui::AnalysisRunStore store(directory.path());
     auto run = store.create(QStringLiteral("nec2"), QStringLiteral("/tmp/test-dipole.nec"));

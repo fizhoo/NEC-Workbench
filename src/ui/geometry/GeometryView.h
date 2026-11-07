@@ -73,6 +73,8 @@ private:
         -> std::optional<std::size_t> override;
     [[nodiscard]] auto transmissionLineAt(const QPointF& position) const
         -> std::optional<std::size_t> override;
+    [[nodiscard]] auto networkAt(const QPointF& position) const
+        -> std::optional<std::size_t> override;
     [[nodiscard]] auto segmentAt(int wireTag, const QPointF& position) const -> int override;
     [[nodiscard]] auto wireMenuOptions(int tag, const QPointF& position) const
         -> GeometryWireMenuOptions override;

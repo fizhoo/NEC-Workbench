@@ -17,6 +17,7 @@ auto summarizeModel(const AntennaModel& model, const ModelSetup& setup,
         summary.segmentCount += static_cast<std::size_t>(std::max(0, wire.segments));
     summary.loadCount = setup.loads.size();
     summary.transmissionLineCount = setup.transmissionLines.size();
+    summary.networkCount = setup.networks.size();
     summary.executionRequestCount = setup.executionRequest ? 1U : 0U;
     for (const auto& excitation : setup.excitations)
         summary.sources.push_back({excitation.wireTag, excitation.segment});
