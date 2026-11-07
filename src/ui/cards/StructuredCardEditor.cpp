@@ -535,6 +535,11 @@ StructuredCardEditor::StructuredCardEditor(QWidget* parent) : QWidget(parent)
     connect(addButton_, &QPushButton::clicked, this, [this] {
         const auto familyIndex = currentFamilyIndex();
         if (familyIndex < 0) return;
+        // No NT default: an NT port with zero admittance carries no current and opens its wire.
+        if (families()[static_cast<std::size_t>(familyIndex)].mnemonic == QStringLiteral("NT")) {
+            QTimer::singleShot(0, this, [this] { emit networkDraftRequested(); });
+            return;
+        }
         const auto cardText = defaultCard(familyIndex);
         if (cardText.isEmpty()) return;
         QTimer::singleShot(0, this, [this, cardText] { emit cardAddRequested(cardText); });
@@ -742,8 +747,14 @@ void StructuredCardEditor::updateActions()
             addEnabled = false;
             disabledReason = tr("Use the NEC deck geometry-units selector to add GS while preserving physical dimensions.");
         }
+        if (family.mnemonic == QStringLiteral("NT")) {
+            addButton_->setText(tr("Add NT in Loads && Networks…"));
+            disabledReason = tr("Opens a new network in Loads & Networks. It is added to the "
+                                "deck once you enter its admittances.");
+        }
         if ((family.mnemonic == QStringLiteral("EX") || family.mnemonic == QStringLiteral("LD")
-                || family.mnemonic == QStringLiteral("TL")) && wireDefaults().empty()) {
+                || family.mnemonic == QStringLiteral("TL") || family.mnemonic == QStringLiteral("NT"))
+            && wireDefaults().empty()) {
             addEnabled = false;
             disabledReason = tr("Add a GW wire before adding this card.");
         }
@@ -866,13 +877,6 @@ auto StructuredCardEditor::defaultCard(int familyIndex) const -> QString
     if (family.mnemonic == QStringLiteral("TL") && !wires.empty()) {
         const auto& second = wires.size() > 1 ? wires[1] : wires.front();
         return QStringLiteral("TL %1 %2 %3 %4 50 0 0 0 0 0")
-            .arg(wires.front().first).arg((wires.front().second+1)/2)
-            .arg(second.first).arg((second.second+1)/2);
-    }
-    // A zero admittance matrix connects nothing until the user fills it in.
-    if (family.mnemonic == QStringLiteral("NT") && !wires.empty()) {
-        const auto& second = wires.size() > 1 ? wires[1] : wires.front();
-        return QStringLiteral("NT %1 %2 %3 %4 0 0 0 0 0 0")
             .arg(wires.front().first).arg((wires.front().second+1)/2)
             .arg(second.first).arg((second.second+1)/2);
     }

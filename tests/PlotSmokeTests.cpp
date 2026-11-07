@@ -3309,12 +3309,18 @@ auto main(int argc, char* argv[]) -> int
     structuredCards.show(); application.processEvents();
     structuredTable->item(0, 8)->setText(QStringLiteral("2.5"));
     application.processEvents();
+    // An NT with zero admittances would open the wire at its ports, so Add NT writes no card
+    // and starts a draft in Loads & Networks instead.
+    auto networkDraftRequested = false;
+    QObject::connect(&structuredCards, &necwb::ui::StructuredCardEditor::networkDraftRequested,
+        [&networkDraftRequested] { networkDraftRequested = true; });
     selectStructuredFamily(structuredFamilies, QStringLiteral("NT"));
     application.processEvents();
+    const auto cardBeforeNetwork = addedCard;
     structuredAdd->click();
     application.processEvents();
-    if (!structuredAdd->isEnabled() || addedCard != QStringLiteral("NT 1 6 1 6 0 0 0 0 0 0"))
-        return NECWB_SMOKE_FAILURE("Add NT Card supplies a default network");
+    if (!structuredAdd->isEnabled() || !networkDraftRequested || addedCard != cardBeforeNetwork)
+        return NECWB_SMOKE_FAILURE("Add NT starts a Loads & Networks draft without a card");
     selectStructuredFamily(structuredFamilies, QStringLiteral("LD"));
     application.processEvents();
     structuredAdd->click();
@@ -3996,10 +4002,40 @@ auto main(int argc, char* argv[]) -> int
         networkTable->item(0, 5)->setText(QStringLiteral("abc"));
         if (applyNetwork->isEnabled())
             return NECWB_SMOKE_FAILURE("invalid network admittance blocks apply");
+        // A draft NT has its ports on two segments and blank admittances, and is not written
+        // until one admittance is nonzero.
         addNetwork->click();
+        const auto draftCell = [networkTable](int column) {
+            return networkTable->item(1, column)->text();
+        };
+        if (networkTable->rowCount() != 2 || draftCell(0) != QStringLiteral("1")
+            || draftCell(1) != QStringLiteral("6") || draftCell(2) != QStringLiteral("2")
+            || draftCell(3) != QStringLiteral("6") || !draftCell(4).isEmpty()
+            || !draftCell(9).isEmpty() || applyNetwork->isEnabled()
+            || applyNetwork->toolTip().isEmpty())
+            return NECWB_SMOKE_FAILURE("draft network starts with ports and no admittances");
         applyNetwork->click();
-        if (networkTable->rowCount() != 2 || !emittedNetwork || emittedNetwork->sourceLine != 0)
+        networkTable->item(1, 4)->setText(QStringLiteral("0"));
+        if (applyNetwork->isEnabled() || emittedNetwork->sourceLine != 10)
+            return NECWB_SMOKE_FAILURE("an all-zero draft network is not written");
+        networkTable->item(1, 8)->setText(QStringLiteral("0.02"));
+        if (!applyNetwork->isEnabled())
+            return NECWB_SMOKE_FAILURE("a draft network with an admittance can be applied");
+        applyNetwork->click();
+        if (!emittedNetwork || emittedNetwork->sourceLine != 0 || emittedNetwork->y22Real != 0.02
+            || emittedNetwork->y11Real != 0.0 || emittedNetwork->segment2 != 6)
             return NECWB_SMOKE_FAILURE("draft network applies as a new NT card");
+        necwb::model::AntennaModel oneWire;
+        oneWire.addWire({1, {-1.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, 11, 0.001, 1});
+        necwb::ui::LoadNetworkEditor oneWireEditor;
+        oneWireEditor.setData(oneWire, {});
+        oneWireEditor.addNetworkDraft();
+        auto* oneWireNetworks = oneWireEditor.findChild<QTableWidget*>(
+            QStringLiteral("loadNetworkNetworksTable"));
+        if (oneWireNetworks->rowCount() != 1
+            || oneWireNetworks->item(0, 1)->text() != QStringLiteral("6")
+            || oneWireNetworks->item(0, 3)->text() != QStringLiteral("1"))
+            return NECWB_SMOKE_FAILURE("a one-wire draft network puts its ports on two segments");
 
         std::optional<std::size_t> clickedNetwork;
         QObject::connect(&network2D, &necwb::ui::GeometryView::networkSelected,

@@ -108,8 +108,8 @@ tracks cards that change calculation state and the requests that execute it.
 - State-changing cards after the final execution request are errors because no later
   request uses them.
 - `GD` without a later `RP` is an error.
-- `NT` and `TL` cards form groups: the first `NT` or `TL` after any other card except `PT`
-  discards every earlier network and line. A group that no `XQ`, `RP`, `NE`, or `NH`
+- `NT` and `TL` cards form groups: the first `NT` or `TL` after any other card except `PT`,
+  `PQ`, or `PL` discards every earlier network and line. A group that no `XQ`, `RP`, `NE`, or `NH`
   follows before the next group starts is never used, so each of its cards is a warning.
   Workbench adds new `NT` and `TL` cards right after the deck's last `NT`/`TL` card for
   this reason.
@@ -141,6 +141,8 @@ and Segmentation Convergence for numerical validation.
 | `EX` or `LD` on a free wire end | Information | The segment touches an unconnected wire end that `GE 1` does not tie to ground. One-segment wires (`TL`/`NT` stubs), `LD 5`, and segment-range loads are skipped |
 | `LD` on the segment of a `TL` end or `NT` port | Warning | A lumped load (`LD` 0, 1, 4) shares a segment with a line end or network port. NEC-2 puts `LD` in series inside the segment while ports connect across its gap, so the port sees the load plus the wire's own impedance. When the wire is shorter than 0.05 λ at the highest frequency, the message says the wire's reactance swamps the load. The message names the remedies: the `TL` shunt admittance (with G and B worked out for an `LD 4` on a line end), an `NT` network, or a short parallel wire carrying the load |
 | `LD` on the segment of an `EX` source | Information | The load is in series with the source (a Thevenin source impedance), which is sometimes intended |
+| `NT` port with zero admittance | Warning | Every `NT` port on the segment, within one `NT`/`TL` group, has an all-zero admittance row (port 1: Y11 and Y12; port 2: Y22 and Y12; both ports on one segment: their sum). nec2c gives each port segment one network equation (`network.c`, `netwk`), so the segment's current is forced to zero and the wire is open there. A `TL` end or an `EX` type 0 source on the segment exempts it: NEC-2 connects a source on a port segment in parallel with the port (User's Guide Part III, `NT` notes), and nec2c then drops that segment's equation |
+| `NT` with both ports on one segment | Warning | NEC-2 connects ports on one segment in parallel (User's Guide Part III, `NT` notes), so the network collapses to the single admittance Y11 + 2·Y12 + Y22, which the message gives |
 | `NT` in a frequency sweep | Information | The deck has `NT` cards and solves more than one frequency (an `FR` step count above one, or `FR` cards at different frequencies). `NT` admittances do not scale with frequency |
 | Transmission line shorter than its gap | Warning | Explicit nonzero `TL` length more than 1% below the straight-line distance between the two segment centers. A zero or omitted length is not checked, since NEC then uses that distance |
 

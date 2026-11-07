@@ -25,6 +25,8 @@ public:
     void selectNetwork(std::size_t sourceLine);
     // Brings the NT table into view, as the dashboard's Networks row does.
     void focusNetworks();
+    // Selects the unapplied NT row, adding one with ports filled in and blank admittances.
+    void addNetworkDraft();
     [[nodiscard]] auto hasPendingEdits() const noexcept -> bool;
     void discardPendingEdits();
 signals:

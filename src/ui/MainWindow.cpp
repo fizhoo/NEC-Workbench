@@ -953,6 +953,10 @@ void MainWindow::createWorkspace()
         });
     connect(structuredCardEditor_, &StructuredCardEditor::cardAddRequested, this,
         [this](const QString& cardText) { addStructuredCard(cardText); });
+    connect(structuredCardEditor_, &StructuredCardEditor::networkDraftRequested, this, [this] {
+        showEditor(EditorDestination::Loads);
+        loadNetworkEditor_->addNetworkDraft();
+    });
     connect(structuredCardEditor_, &StructuredCardEditor::cardDeleteRequested, this,
         [this](std::size_t sourceLine) { deleteStructuredCard(sourceLine); });
     connect(structuredCardEditor_, &StructuredCardEditor::fieldParameterizationRequested, this,

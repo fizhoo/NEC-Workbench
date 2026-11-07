@@ -61,6 +61,27 @@ struct SharedSegment {
 [[nodiscard]] auto describeSharedSegments(const AntennaModel& model, const ModelSetup& setup)
     -> std::vector<SharedSegment>;
 
+// An NT port that NEC solves to carry no current, which opens its wire at that segment.
+// nec2c (network.c, netwk) writes one equation per segment carrying network ports: the
+// segment's current equals the sum of its ports' admittance rows times the port voltages, so
+// when every NT port on the segment, within one NT/TL group, has an all-zero row, the current
+// is forced to zero. A TL end on the segment always draws current, and an EX voltage source
+// (type 0) replaces the segment's equation altogether: NEC-2 puts the source in parallel with
+// the ports (NEC-2 User's Guide, NT card notes), so neither segment is open.
+struct OpenNetworkPort {
+    // Position among the setup's networks, counted from 1.
+    int number{};
+    // 1 or 2; 0 when both ports are on this segment.
+    int port{};
+    // Wire tag and segment as the NT card names them.
+    int wireTag{};
+    int segment{};
+    std::size_t sourceLine{};
+};
+
+[[nodiscard]] auto openNetworkPorts(const AntennaModel& model, const ModelSetup& setup)
+    -> std::vector<OpenNetworkPort>;
+
 // "EX 1", "LD 2", "TL 1 end 2", "NT 3 port 1".
 [[nodiscard]] auto insertionObjectName(const InsertionObject& object) -> std::string;
 // Short value text for a lumped load, such as "300 Ω" or "series R 5 Ω, L 2 µH".

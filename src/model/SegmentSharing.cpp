@@ -4,8 +4,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <iomanip>
 #include <map>
+#include <set>
 #include <sstream>
 #include <utility>
 
@@ -257,6 +259,73 @@ auto describeSharedSegments(const AntennaModel& model, const ModelSetup& setup)
         for (const auto& [group, ports] : found.portsByGroup) emit(group, ports);
     }
     return shared;
+}
+
+
+auto openNetworkPorts(const AntennaModel& model, const ModelSetup& setup)
+    -> std::vector<OpenNetworkPort>
+{
+    using Segment = std::pair<const Wire*, int>;
+    const auto segmentOf = [&model](int wireTag, int segment) -> std::optional<Segment> {
+        const auto reference = referencedSegment(model, wireTag, segment);
+        if (!reference || reference->wire == nullptr) return std::nullopt;
+        return Segment{reference->wire, reference->segment};
+    };
+    std::set<Segment> sourced;
+    for (const auto& excitation : setup.excitations) {
+        if (excitation.type != 0) continue;
+        if (const auto segment = segmentOf(excitation.wireTag, excitation.segment))
+            sourced.insert(*segment);
+    }
+    std::set<std::pair<int, Segment>> lineEnds;
+    for (const auto& line : setup.transmissionLines) {
+        if (const auto end = segmentOf(line.wireTag1, line.segment1))
+            lineEnds.emplace(line.group, *end);
+        if (const auto end = segmentOf(line.wireTag2, line.segment2))
+            lineEnds.emplace(line.group, *end);
+    }
+    // One network equation per segment and group: admittance on each port voltage.
+    struct Equation {
+        std::map<Segment, std::complex<double>> coefficients;
+        std::vector<OpenNetworkPort> ports;
+    };
+    std::map<std::pair<int, Segment>, Equation> equations;
+    for (std::size_t index = 0; index < setup.networks.size(); ++index) {
+        const auto& network = setup.networks[index];
+        const auto first = segmentOf(network.wireTag1, network.segment1);
+        const auto second = segmentOf(network.wireTag2, network.segment2);
+        if (!first || !second) continue;
+        const std::complex y11{network.y11Real, network.y11Imaginary};
+        const std::complex y12{network.y12Real, network.y12Imaginary};
+        const std::complex y22{network.y22Real, network.y22Imaginary};
+        auto& port1 = equations[{network.group, *first}];
+        port1.coefficients[*first] += y11;
+        port1.coefficients[*second] += y12;
+        auto& port2 = equations[{network.group, *second}];
+        port2.coefficients[*second] += y22;
+        port2.coefficients[*first] += y12;
+        const auto number = static_cast<int>(index + 1);
+        if (*first == *second) {
+            port1.ports.push_back(
+                {number, 0, network.wireTag1, network.segment1, network.sourceLine});
+        } else {
+            port1.ports.push_back(
+                {number, 1, network.wireTag1, network.segment1, network.sourceLine});
+            port2.ports.push_back(
+                {number, 2, network.wireTag2, network.segment2, network.sourceLine});
+        }
+    }
+    std::vector<OpenNetworkPort> open;
+    for (const auto& [key, equation] : equations) {
+        if (sourced.contains(key.second) || lineEnds.contains(key)) continue;
+        if (std::ranges::all_of(equation.coefficients,
+                [](const auto& entry) { return entry.second == 0.0; }))
+            open.insert(open.end(), equation.ports.begin(), equation.ports.end());
+    }
+    std::ranges::sort(open, {}, [](const auto& port) {
+        return std::pair{port.sourceLine, port.port};
+    });
+    return open;
 }
 
 }

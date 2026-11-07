@@ -210,7 +210,10 @@ stability between levels, not universal model correctness.
 These pages provide structured editing for supported `EX`, `LD`, `TL`, `NT`, `GN`, and
 related model setup. The dashboard's **Networks** row opens the `NT` table, where each
 two-port network is given by its ports and its short-circuit admittances Y11, Y12, and
-Y22 in siemens. New `TL` and `NT` cards are added next to the deck's existing ones, since
+Y22 in siemens. **Add Network**, and **Add NT** in the card editor, start a draft row with
+its ports on two different segments and the admittances blank. It is written to the deck
+only once at least one admittance is nonzero: an `NT` port whose admittances are all zero
+carries no current, which opens the wire at that segment. New `TL` and `NT` cards are added next to the deck's existing ones, since
 NEC-2 discards earlier networks and lines when other cards separate them. Draft rows do not change the source until Apply is selected.
 An emphasized Apply button indicates pending changes.
 
