@@ -30,7 +30,7 @@ public:
     enum class Study { AverageGain, Convergence };
     enum class StudyState { NotRun, Running, Complete, Failed, Stale };
     enum class Workspace {
-        Setup,
+        Solver,
         GeometryEditor,
         Impedance,
         Currents,

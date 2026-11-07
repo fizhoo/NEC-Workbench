@@ -2852,13 +2852,15 @@ auto main(int argc, char* argv[]) -> int
     QObject::connect(&convergenceAction, &QAction::triggered,
         [&] { controlPanelConvergenceTriggered = true; });
     auto runHistoryOpened = false, controlPanelWorkspaceOpened = false,
-        controlPanelGeometryOpened = false, controlPanelEditorOpened = false;
+        controlPanelGeometryOpened = false, controlPanelEditorOpened = false,
+        controlPanelSolverOpened = false;
     controlPanel.setOpenWorkspaceCallback(
         [&runHistoryOpened, &controlPanelWorkspaceOpened,
-            &controlPanelGeometryOpened](auto destination) {
+            &controlPanelGeometryOpened, &controlPanelSolverOpened](auto destination) {
         if (destination == Workspace::Runs) runHistoryOpened = true;
         if (destination == Workspace::Impedance) controlPanelWorkspaceOpened = true;
         if (destination == Workspace::GeometryEditor) controlPanelGeometryOpened = true;
+        if (destination == Workspace::Solver) controlPanelSolverOpened = true;
         });
     controlPanel.setOpenEditorCallback([&controlPanelEditorOpened](auto destination) {
         controlPanelEditorOpened = destination == necwb::ui::ControlPanel::Editor::Requests;
@@ -2904,7 +2906,7 @@ auto main(int argc, char* argv[]) -> int
         return controlPanel.findChild<QToolButton*>(QString::fromLatin1(name));
     };
     const auto* controlPanelName = label("controlPanelModelName");
-    const auto* controlPanelBackend = button("controlPanelBackend");
+    auto* controlPanelBackend = button("controlPanelBackend");
     const auto* controlPanelExtrema = label("controlPanelResultExtrema");
     const auto* controlPanelStale = label("controlPanelResultStale");
     const auto* controlPanelFooter = label("controlPanelFooter");
@@ -2962,6 +2964,7 @@ auto main(int argc, char* argv[]) -> int
     if (controlPanelRuns != nullptr) controlPanelRuns->click();
     if (controlPanelImpedance != nullptr) controlPanelImpedance->click();
     if (controlPanelGeometry != nullptr) controlPanelGeometry->click();
+    if (controlPanelBackend != nullptr) controlPanelBackend->click();
     if (controlPanelRows != nullptr) {
         QMetaObject::invokeMethod(controlPanelRows, "cellClicked", Qt::DirectConnection,
             Q_ARG(int, static_cast<int>(necwb::ui::ControlPanel::Editor::Requests)),
@@ -3019,6 +3022,7 @@ auto main(int argc, char* argv[]) -> int
         std::pair{"run history", runHistoryOpened},
         std::pair{"workspace", controlPanelWorkspaceOpened},
         std::pair{"geometry", controlPanelGeometryOpened},
+        std::pair{"engine opens solver", controlPanelSolverOpened},
         std::pair{"editor", controlPanelEditorOpened},
     };
     for (const auto& [name, passed] : controlPanelChecks) {

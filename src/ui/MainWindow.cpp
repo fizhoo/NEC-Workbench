@@ -839,8 +839,8 @@ void MainWindow::createWorkspace()
     controlPanel_->setConvergenceAction(convergenceAction_);
     controlPanel_->setOpenWorkspaceCallback([this](ControlPanel::Workspace destination) {
         switch (destination) {
-        case ControlPanel::Workspace::Setup:
-            showModule(analysisModuleIndex_);
+        case ControlPanel::Workspace::Solver:
+            showEditor(EditorDestination::Solver);
             break;
         case ControlPanel::Workspace::GeometryEditor:
             showModule(geometryModuleIndex_);
@@ -1467,10 +1467,8 @@ void MainWindow::createResultWindows()
     connect(checkFromValidationButton, &QPushButton::clicked,
         this, [this] { checkModel(true); });
     connect(openModelCheckButton, &QPushButton::clicked, modelCheckWindowAction_, &QAction::trigger);
-    connect(changeValidationSolverButton, &QPushButton::clicked, this, [this] {
-        if (!showModule(analysisModuleIndex_)) return;
-        analysisWorkspace_->setCurrentIndex(analysisSolverTabIndex_);
-    });
+    connect(changeValidationSolverButton, &QPushButton::clicked,
+        this, [this] { showEditor(EditorDestination::Solver); });
     validationOverviewTabIndex_ = validationWorkspace_->addTab(
         validationOverview, tr("Static Check"));
     averageGainResultsView_ = new AverageGainResultsView(validationWorkspace_);
@@ -1839,6 +1837,9 @@ void MainWindow::showEditor(EditorDestination destination, int geometryTab)
     } else if (destination == EditorDestination::Requests) {
         if (!showModule(analysisModuleIndex_)) return;
         analysisWorkspace_->setCurrentIndex(analysisRequestsTabIndex_);
+    } else if (destination == EditorDestination::Solver) {
+        if (!showModule(analysisModuleIndex_)) return;
+        analysisWorkspace_->setCurrentIndex(analysisSolverTabIndex_);
     } else if (destination == EditorDestination::Parameters) {
         if (!showModule(modelModuleIndex_)) return;
         modelWorkspace_->setCurrentIndex(modelParametersWorkspaceIndex_);
@@ -2244,8 +2245,7 @@ void MainWindow::createDocks()
         this, [this] { showGeneratedSolverDeck(); });
     connect(changeSolverButton, &QPushButton::clicked, this, [this] {
         modelCheckWindow_->hide();
-        if (!showModule(analysisModuleIndex_)) return;
-        analysisWorkspace_->setCurrentIndex(analysisSolverTabIndex_);
+        showEditor(EditorDestination::Solver);
     });
     connect(closeValidationButton, &QPushButton::clicked,
         modelCheckWindow_, &QDialog::hide);

@@ -106,7 +106,8 @@ private:
         Sources,
         Loads,
         Environment,
-        Requests
+        Requests,
+        Solver
     };
 
     struct SourceHistoryEntry {
