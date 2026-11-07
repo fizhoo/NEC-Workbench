@@ -4015,6 +4015,69 @@ auto main(int argc, char* argv[]) -> int
         if (clickedNetwork != std::optional<std::size_t>{10})
             return NECWB_SMOKE_FAILURE("clicking an NT line in Geometry selects it");
     }
+    {
+        // Imported cards may number segments across wires as NEC does: tag 3 on two 5-segment
+        // wires reaches 10 segments, and tag 0 counts all 32. Applying an untouched row must
+        // keep every digit the card had.
+        auto crossModel = attachmentModel;
+        crossModel.addWire({3, {-1.0, 2.0, 0.0}, {1.0, 2.0, 0.0}, 5, 0.001, 3});
+        crossModel.addWire({3, {-1.0, 3.0, 0.0}, {1.0, 3.0, 0.0}, 5, 0.001, 4});
+        necwb::model::ModelSetup crossSetup;
+        crossSetup.loads.push_back({4, 3, 8, 8, 50.0, 0.0017921, 0.0, 5});
+        crossSetup.transmissionLines.push_back(
+            {3, 8, 0, 30, 558.0, 0.0, 0.0, 0.0, 0.0017921, 0.0, 6});
+        crossSetup.networks.push_back(
+            {0, 30, 3, 8, 0.0017921, -0.0012345678, 0.0, 0.0, 0.0, 0.0, 7});
+        necwb::ui::LoadNetworkEditor crossEditor;
+        crossEditor.setData(crossModel, crossSetup);
+        crossEditor.show();
+        application.processEvents();
+        auto* crossLoads = crossEditor.findChild<QTableWidget*>(
+            QStringLiteral("loadNetworkLoadsTable"));
+        auto* crossLines = crossEditor.findChild<QTableWidget*>(
+            QStringLiteral("loadNetworkLinesTable"));
+        auto* crossNetworks = crossEditor.findChild<QTableWidget*>(
+            QStringLiteral("loadNetworkNetworksTable"));
+        auto* crossApplyLoad = crossEditor.findChild<QPushButton*>(
+            QStringLiteral("applySelectedLoadButton"));
+        auto* crossApplyLine = crossEditor.findChild<QPushButton*>(
+            QStringLiteral("applySelectedLineButton"));
+        auto* crossApplyNetwork = crossEditor.findChild<QPushButton*>(
+            QStringLiteral("applySelectedNetworkButton"));
+        std::optional<necwb::model::LoadDefinition> crossLoad;
+        std::optional<necwb::model::TransmissionLineDefinition> crossLine;
+        std::optional<necwb::model::NetworkDefinition> crossNetwork;
+        QObject::connect(&crossEditor, &necwb::ui::LoadNetworkEditor::loadChanged,
+            [&crossLoad](necwb::model::LoadDefinition load) { crossLoad = load; });
+        QObject::connect(&crossEditor, &necwb::ui::LoadNetworkEditor::transmissionLineChanged,
+            [&crossLine](necwb::model::TransmissionLineDefinition line) { crossLine = line; });
+        QObject::connect(&crossEditor, &necwb::ui::LoadNetworkEditor::networkChanged,
+            [&crossNetwork](necwb::model::NetworkDefinition network) { crossNetwork = network; });
+        crossLoads->setCurrentCell(0, 1);
+        crossApplyLoad->click();
+        crossLines->setCurrentCell(0, 0);
+        if (!crossApplyLine->isEnabled())
+            return NECWB_SMOKE_FAILURE("TL ends on a shared tag and tag 0 can be applied");
+        crossApplyLine->click();
+        crossNetworks->setCurrentCell(0, 0);
+        if (!crossApplyNetwork->isEnabled())
+            return NECWB_SMOKE_FAILURE("NT ports on tag 0 and a shared tag can be applied");
+        crossApplyNetwork->click();
+        if (!crossLoad || crossLoad->wireTag != 3 || crossLoad->firstSegment != 8
+            || crossLoad->value2 != 0.0017921)
+            return NECWB_SMOKE_FAILURE("load on a shared tag applies with full precision");
+        if (!crossLine || crossLine->wireTag2 != 0 || crossLine->segment2 != 30
+            || crossLine->shuntReal2 != 0.0017921)
+            return NECWB_SMOKE_FAILURE("transmission line applies with full precision");
+        if (!crossNetwork || crossNetwork->wireTag1 != 0 || crossNetwork->segment1 != 30
+            || crossNetwork->y11Real != 0.0017921 || crossNetwork->y11Imaginary != -0.0012345678)
+            return NECWB_SMOKE_FAILURE("network applies with full precision");
+        // Segment editors reach every segment the tag numbers; tag 0 stays offered where used.
+        if (!editCell(crossLines, 0, 1, 10) || editCell(crossLines, 0, 1, 11)
+            || !editCell(crossLines, 0, 3, 32) || editCell(crossLines, 0, 3, 33)
+            || !editCell(crossNetworks, 0, 0, 0) || editCell(crossLoads, 0, 1, 0))
+            return NECWB_SMOKE_FAILURE("segment editors follow NEC segment numbering");
+    }
     necwb::ui::LoadNetworkEditor loadNetwork;
     loadNetwork.setData(attachmentModel, attachmentSetup);
     loadNetwork.setLengthUnit(necwb::model::LengthUnit::Foot);
@@ -4029,9 +4092,9 @@ auto main(int argc, char* argv[]) -> int
     if (loadTable == nullptr || lineTable == nullptr || addLoad == nullptr || addLine == nullptr
         || applyLoad == nullptr || applyLine == nullptr || loadValidation == nullptr)
         return NECWB_SMOKE_FAILURE("loads and lines controls");
-    if (loadTable->item(0, 5)->text() != QStringLiteral("50.000")
-        || lineTable->item(0, 4)->text() != QStringLiteral("50.000")
-        || lineTable->item(0, 5)->text() != QStringLiteral("10.000")
+    if (loadTable->item(0, 5)->text() != QStringLiteral("50")
+        || lineTable->item(0, 4)->text() != QStringLiteral("50")
+        || lineTable->item(0, 5)->text() != QStringLiteral("10")
         || lineTable->horizontalHeaderItem(5)->text() != QStringLiteral("Length (ft)"))
         return NECWB_SMOKE_FAILURE("transmission-line columns");
     loadTable->selectRow(0);

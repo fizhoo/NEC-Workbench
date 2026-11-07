@@ -40,7 +40,7 @@ public:
     // Choice cells: labels and the values stored in ChoiceValueRole.
     std::vector<std::pair<QString, QVariant>> choices;
     std::function<std::vector<int>()> wireTags;
-    // Segments on the wire with this tag; zero when there is no such wire.
+    // Segments the tag reaches as NEC counts them; zero when no wire has the tag.
     std::function<int(int wireTag)> segmentCount;
     // Segment cells: the column holding the row's wire tag.
     int wireColumn{-1};
@@ -60,7 +60,12 @@ public:
         if (kind_ == Kind::Choice) {
             for (const auto& [label, value] : choices) combo->addItem(label, value);
         } else {
-            for (const auto tag : wireTags()) combo->addItem(QString::number(tag), tag);
+            auto tags = wireTags();
+            // Tag 0 (absolute segment numbers) is offered only where a card already uses it.
+            const auto current = index.data().toString().toInt();
+            if (std::ranges::find(tags, current) == tags.end() && segmentCount(current) > 0)
+                tags.insert(tags.begin(), current);
+            for (const auto tag : tags) combo->addItem(QString::number(tag), tag);
         }
         // A choice takes effect as soon as it is picked, without leaving the cell.
         connect(combo, &QComboBox::activated, this, [self = const_cast<CellEditorDelegate*>(this),
@@ -316,8 +321,7 @@ LoadNetworkEditor::LoadNetworkEditor(QWidget* parent) : QWidget(parent)
         return tags;
     };
     const auto segmentCount = [this](int wireTag) {
-        const auto* wire = model_.wireByTag(wireTag);
-        return wire == nullptr ? 0 : wire->segments;
+        return model::referencedSegmentCount(model_, wireTag);
     };
     const auto wireEditor = [&](QTableWidget* table, int column, std::vector<int> segments) {
         auto* delegate = new CellEditorDelegate(CellEditorDelegate::Kind::Wire, table);
@@ -560,7 +564,7 @@ void LoadNetworkEditor::setLengthUnit(model::LengthUnit unit)
             if (item == nullptr) continue;
             bool valid = false;
             const auto displayed = item->text().toDouble(&valid);
-            if (valid) item->setText(formatDecimal(model::fromMeters(
+            if (valid) item->setText(formatEditableDecimal(model::fromMeters(
                 model::toMeters(displayed, lengthUnit_), unit)));
         }
         lengthUnit_ = unit;
@@ -721,9 +725,9 @@ void LoadNetworkEditor::applySelectedLoad()
         : loads_->item(row, Value3Column)->text().toDouble(&valid)
             / displayScaleFor(value.type, Value3Column); if (!valid) goto invalid;
     if (value.type < 0 || value.type > 5) goto invalid_reference;
-    if (const auto* wire = model_.wireByTag(value.wireTag); wire == nullptr
+    if (const auto count = model::referencedSegmentCount(model_, value.wireTag); count == 0
         || value.firstSegment < 0 || value.lastSegment < 0
-        || value.firstSegment > wire->segments || value.lastSegment > wire->segments
+        || value.firstSegment > count || value.lastSegment > count
         || (value.firstSegment != 0 && value.lastSegment != 0
             && value.firstSegment > value.lastSegment)) goto invalid_reference;
     if (value.type == 5 && value.value1 <= 0.0) goto invalid_value;
@@ -747,9 +751,9 @@ void LoadNetworkEditor::setLoadRow(int row, const model::LoadDefinition& value)
             : QCoreApplication::translate("LoadNetworkEditor", type->second),
         QString::number(value.wireTag), scopeLabel(entireWire),
         QString::number(value.firstSegment), QString::number(value.lastSegment),
-        formatDecimal(value.value1 * displayScaleFor(value.type, Value1Column)),
-        formatDecimal(value.value2 * displayScaleFor(value.type, Value2Column)),
-        formatDecimal(value.value3 * displayScaleFor(value.type, Value3Column))};
+        formatEditableDecimal(value.value1 * displayScaleFor(value.type, Value1Column)),
+        formatEditableDecimal(value.value2 * displayScaleFor(value.type, Value2Column)),
+        formatEditableDecimal(value.value3 * displayScaleFor(value.type, Value3Column))};
     for (auto column = 0; column < cells.size(); ++column) {
         auto* item = new QTableWidgetItem(cells[column]);
         item->setData(SourceLineRole, static_cast<qulonglong>(value.sourceLine));
@@ -842,10 +846,10 @@ void LoadNetworkEditor::setLineRow(int row, const model::TransmissionLineDefinit
 {
     const QStringList cells{QString::number(value.wireTag1), QString::number(value.segment1),
         QString::number(value.wireTag2), QString::number(value.segment2),
-        formatDecimal(value.characteristicImpedance),
-        formatDecimal(model::fromMeters(value.lengthMeters, lengthUnit_)),
-        formatDecimal(value.shuntReal1), formatDecimal(value.shuntImaginary1),
-        formatDecimal(value.shuntReal2), formatDecimal(value.shuntImaginary2)};
+        formatEditableDecimal(value.characteristicImpedance),
+        formatEditableDecimal(model::fromMeters(value.lengthMeters, lengthUnit_)),
+        formatEditableDecimal(value.shuntReal1), formatEditableDecimal(value.shuntImaginary1),
+        formatEditableDecimal(value.shuntReal2), formatEditableDecimal(value.shuntImaginary2)};
     for (auto column = 0; column < cells.size(); ++column) {
         auto* item = new QTableWidgetItem(cells[column]);
         item->setData(SourceLineRole, static_cast<qulonglong>(value.sourceLine));
@@ -869,9 +873,9 @@ void LoadNetworkEditor::setNetworkRow(int row, const model::NetworkDefinition& v
 {
     const QStringList cells{QString::number(value.wireTag1), QString::number(value.segment1),
         QString::number(value.wireTag2), QString::number(value.segment2),
-        formatDecimal(value.y11Real), formatDecimal(value.y11Imaginary),
-        formatDecimal(value.y12Real), formatDecimal(value.y12Imaginary),
-        formatDecimal(value.y22Real), formatDecimal(value.y22Imaginary)};
+        formatEditableDecimal(value.y11Real), formatEditableDecimal(value.y11Imaginary),
+        formatEditableDecimal(value.y12Real), formatEditableDecimal(value.y12Imaginary),
+        formatEditableDecimal(value.y22Real), formatEditableDecimal(value.y22Imaginary)};
     for (auto column = 0; column < cells.size(); ++column) {
         auto* item = new QTableWidgetItem(cells[column]);
         item->setData(SourceLineRole, static_cast<qulonglong>(value.sourceLine));
@@ -894,10 +898,10 @@ void LoadNetworkEditor::updateNetworkApplyState()
         {std::pair{Wire1Column, Segment1Column}, std::pair{Wire2Column, Segment2Column}}) {
         bool validWire = false;
         bool validSegment = false;
-        const auto* wire = model_.wireByTag(cellIntAt(networks_, row, wireColumn, &validWire));
+        const auto wireTag = cellIntAt(networks_, row, wireColumn, &validWire);
         const auto segment = cellIntAt(networks_, row, segmentColumn, &validSegment);
-        valid = valid && validWire && validSegment && wire != nullptr
-            && segment >= 1 && segment <= wire->segments;
+        valid = valid && validWire && validSegment
+            && model::referencedSegment(model_, wireTag, segment).has_value();
     }
     for (auto column = static_cast<int>(Y11RealColumn); column <= Y22ImaginaryColumn; ++column) {
         bool number = false;
@@ -926,8 +930,6 @@ void LoadNetworkEditor::updateLineApplyState()
     bool validLength = false;
     const auto impedance = lines_->item(row, ImpedanceColumn)->text().toDouble(&validImpedance);
     const auto length = lines_->item(row, LengthColumn)->text().toDouble(&validLength);
-    const auto* first = model_.wireByTag(wire1);
-    const auto* second = model_.wireByTag(wire2);
     auto validValues = true;
     for (auto column = static_cast<int>(ShuntReal1Column);
          column <= ShuntImaginary2Column; ++column) {
@@ -936,9 +938,8 @@ void LoadNetworkEditor::updateLineApplyState()
         validValues = validValues && valid;
     }
     applyLineButton_->setEnabled(validWire1 && validSegment1 && validWire2
-        && validSegment2 && first != nullptr && second != nullptr
-        && segment1 >= 1 && segment1 <= first->segments
-        && segment2 >= 1 && segment2 <= second->segments
+        && validSegment2 && model::referencedSegment(model_, wire1, segment1).has_value()
+        && model::referencedSegment(model_, wire2, segment2).has_value()
         && validImpedance && impedance != 0.0 && validLength && length >= 0.0
         && validValues);
 }
@@ -995,8 +996,7 @@ void LoadNetworkEditor::applySelectedNetwork()
         return;
     }
     const auto validPort = [this](int wireTag, int segment) {
-        const auto* wire = model_.wireByTag(wireTag);
-        return wire != nullptr && segment >= 1 && segment <= wire->segments;
+        return model::referencedSegment(model_, wireTag, segment).has_value();
     };
     if (!validPort(value.wireTag1, value.segment1) || !validPort(value.wireTag2, value.segment2)) {
         validation_->setText(tr("NT ports must reference valid segments."));
@@ -1022,10 +1022,8 @@ void LoadNetworkEditor::applySelectedLine()
     value.shuntImaginary1=lines_->item(row,ShuntImaginary1Column)->text().toDouble(&valid); if(!valid) goto invalid;
     value.shuntReal2=lines_->item(row,ShuntReal2Column)->text().toDouble(&valid); if(!valid) goto invalid;
     value.shuntImaginary2=lines_->item(row,ShuntImaginary2Column)->text().toDouble(&valid); if(!valid) goto invalid;
-    if (const auto* first = model_.wireByTag(value.wireTag1); first == nullptr
-        || value.segment1 < 1 || value.segment1 > first->segments) goto invalid_reference;
-    if (const auto* second = model_.wireByTag(value.wireTag2); second == nullptr
-        || value.segment2 < 1 || value.segment2 > second->segments) goto invalid_reference;
+    if (!model::referencedSegment(model_, value.wireTag1, value.segment1)
+        || !model::referencedSegment(model_, value.wireTag2, value.segment2)) goto invalid_reference;
     if (value.characteristicImpedance == 0.0 || value.lengthMeters < 0.0) goto invalid_reference;
     value.sourceLine=lines_->item(row,0)->data(SourceLineRole).toULongLong(); validation_->hide(); setLinePending(false); emit transmissionLineChanged(value); return;
 invalid: validation_->setText(tr("The selected TL row contains an invalid number.")); validation_->show();
