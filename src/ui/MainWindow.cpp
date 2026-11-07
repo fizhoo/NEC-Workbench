@@ -3508,11 +3508,33 @@ void MainWindow::changeParameter(std::size_t sourceLine, const QString& original
 
 void MainWindow::deleteParameter(std::size_t sourceLine, const QString& name)
 {
-    const auto updated = nec::removeSymbolDefinition(editor_->toPlainText().toStdString(),
-        sourceLine, name.toStdString());
+    const auto source = editor_->toPlainText().toStdString();
+    auto updated = nec::removeSymbolDefinition(source, sourceLine, name.toStdString());
     if (!updated) {
         statusBar()->showMessage(tr("The selected SY definition could not be deleted."), 5000);
         return;
+    }
+    // Fields linked to the parameter (for example by the optimizer) would otherwise be
+    // left naming an unknown symbol, so offer to write its current value back into them.
+    const auto uses = nec::symbolReferenceCount(*updated, name.toStdString());
+    if (uses > 0) {
+        const auto current = nec::NecSymbolResolver{}.resolve(source);
+        const auto found = std::ranges::find_if(current.definitions, [&](const auto& definition) {
+            return definition.lineNumber == sourceLine
+                && QString::fromStdString(definition.name).compare(name, Qt::CaseInsensitive) == 0;
+        });
+        if (found == current.definitions.end()) {
+            parameterEditor_->showEditError(tr("Delete not applied: %1 is still used and its "
+                "value cannot be resolved.").arg(name));
+            return;
+        }
+        const auto value = QString::number(found->value, 'g', 15);
+        const auto answer = QMessageBox::question(this, tr("Delete Parameter"),
+            tr("%1 is still used in %n place(s). Delete it and replace those uses with its "
+               "current value, %2?", nullptr, static_cast<int>(uses)).arg(name, value),
+            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Yes);
+        if (answer != QMessageBox::Yes) return;
+        updated = nec::inlineSymbolReferences(*updated, name.toStdString(), found->value);
     }
     const auto resolution = nec::NecSymbolResolver{}.resolve(*updated);
     if (!resolution.ok()) {

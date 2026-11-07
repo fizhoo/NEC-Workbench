@@ -61,6 +61,7 @@
 #include <QSpinBox>
 #include <QPainter>
 #include <QPalette>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -273,6 +274,7 @@ auto main(int argc, char* argv[]) -> int
         return names;
     };
     auto consolidatedSetupNavigation = false;
+    auto linkedParameterDeleted = false;
     auto resultWindowNavigation = false;
     auto runHistoryWindowNavigation = false;
     auto validationWindowNavigation = false;
@@ -507,6 +509,39 @@ auto main(int argc, char* argv[]) -> int
                 && runHistoryTable != nullptr && runHistoryTable->window() == runHistoryWindow
                 && runHistoryHostStatus != nullptr && !runHistoryHostStatus->isVisible();
         }
+        // A parameter linked into a card field (as the optimizer does) can still be
+        // deleted: confirming writes its current value back into the field.
+        QPlainTextEdit* deckEditor = nullptr;
+        QTableWidget* parameterTable = nullptr;
+        QPushButton* deleteParameter = nullptr;
+        for (auto* window : QApplication::topLevelWidgets()) {
+            if (deckEditor == nullptr)
+                deckEditor = window->findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor"));
+            if (parameterTable == nullptr)
+                parameterTable = window->findChild<QTableWidget*>(QStringLiteral("parameterTable"));
+            if (deleteParameter == nullptr)
+                deleteParameter = window->findChild<QPushButton*>(
+                    QStringLiteral("deleteParameterButton"));
+        }
+        QAction* checkModelAction = nullptr;
+        for (auto* action : mainWindow.findChildren<QAction*>())
+            if (action->text() == QStringLiteral("&Check Model")) checkModelAction = action;
+        if (deckEditor != nullptr && parameterTable != nullptr && deleteParameter != nullptr
+            && checkModelAction != nullptr) {
+            deckEditor->setPlainText(QStringLiteral(
+                "SY wire_x1=5\nGW 1 11 -wire_x1 0 6 wire_x1 0 6 0.001\nGE 0\nEN\n"));
+            checkModelAction->trigger();
+            application.processEvents();
+            parameterTable->selectRow(0);
+                QTimer::singleShot(0, [] {
+                if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))
+                    box->button(QMessageBox::Yes)->click();
+            });
+            deleteParameter->click();
+            application.processEvents();
+                linkedParameterDeleted = deckEditor->toPlainText()
+                == QStringLiteral("GW 1 11 -5 0 6 5 0 6 0.001\nGE 0\nEN\n");
+        }
     }
     resultWindowSettings.remove(QStringLiteral("resultWindows/impedance"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/currents"));
@@ -523,6 +558,8 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.sync();
     if (!consolidatedSetupNavigation)
         return NECWB_SMOKE_FAILURE("consolidated setup navigation");
+    if (!linkedParameterDeleted)
+        return NECWB_SMOKE_FAILURE("delete linked parameter");
     if (!resultWindowNavigation)
         return NECWB_SMOKE_FAILURE("result window navigation");
     if (!runHistoryWindowNavigation)

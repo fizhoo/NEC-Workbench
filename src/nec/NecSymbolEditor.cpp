@@ -7,6 +7,8 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <iomanip>
+#include <sstream>
 #include <vector>
 
 namespace necwb::nec {
@@ -73,6 +75,70 @@ auto joinSource(const std::vector<std::string>& lines, const NecDocument& docume
 auto symbolLine(std::string_view name, std::string_view expression) -> std::string
 {
     return "SY " + std::string(trim(name)) + '=' + std::string(trim(expression));
+}
+
+auto identifierCharacter(char character) -> bool
+{
+    return std::isalnum(static_cast<unsigned char>(character)) || character == '_';
+}
+
+auto isOperator(char character) -> bool
+{
+    return character == '+' || character == '-' || character == '*'
+        || character == '/' || character == '^';
+}
+
+// Rewrites whole-word uses of target (lower case) after the card mnemonic. Runs that
+// start with a digit or '.' are numbers, so exponents such as 1e5 are never matched.
+auto substituteSymbol(std::string_view line, std::string_view target,
+    std::string_view replacement, std::size_t& count) -> std::string
+{
+    std::string result;
+    auto position = line.find_first_not_of(" \t");
+    position = position == std::string_view::npos ? line.size() : line.find_first_of(" \t", position);
+    if (position == std::string_view::npos) return std::string(line);
+    result.append(line.substr(0, position));
+    while (position < line.size()) {
+        if (!identifierCharacter(line[position]) && line[position] != '.') {
+            result.push_back(line[position++]);
+            continue;
+        }
+        const auto start = position;
+        while (position < line.size()
+            && (identifierCharacter(line[position]) || line[position] == '.')) ++position;
+        const auto run = line.substr(start, position - start);
+        const auto first = static_cast<unsigned char>(run.front());
+        if ((!std::isalpha(first) && run.front() != '_') || lower(run) != target) {
+            result.append(run);
+            continue;
+        }
+        ++count;
+        if (!replacement.starts_with('-')) {
+            result.append(replacement);
+            continue;
+        }
+        const auto before = result.find_last_not_of(" \t");
+        const auto after = line.find_first_not_of(" \t", position);
+        const auto bracket = (before != std::string::npos && isOperator(result[before]))
+            || (after != std::string_view::npos && line[after] == '^');
+        if (bracket) result += '(';
+        result.append(replacement);
+        if (bracket) result += ')';
+    }
+    return result;
+}
+
+auto substituteSymbolInSource(std::string_view source, std::string_view name,
+    std::string_view replacement, std::size_t& count) -> std::string
+{
+    const auto document = NecParser{}.parse(source);
+    auto lines = sourceLines(document);
+    const auto target = lower(trim(name));
+    for (const auto& card : document.cards()) {
+        if (card.kind == NecCardKind::Comment || card.kind == NecCardKind::Blank) continue;
+        lines[card.lineNumber - 1] = substituteSymbol(card.sourceText, target, replacement, count);
+    }
+    return joinSource(lines, document);
 }
 
 }
@@ -205,6 +271,23 @@ auto symbolReferencePreservingValue(std::string_view name,
     if (!close(fieldValue, symbolValue) && close(fieldValue, -symbolValue))
         reference.insert(reference.begin(), '-');
     return reference;
+}
+
+auto symbolReferenceCount(std::string_view source, std::string_view name) -> std::size_t
+{
+    std::size_t count{};
+    static_cast<void>(substituteSymbolInSource(source, name, std::string(trim(name)), count));
+    return count;
+}
+
+auto inlineSymbolReferences(std::string_view source, std::string_view name,
+    double value) -> std::string
+{
+    if (value == 0.0) value = 0.0;
+    std::ostringstream number;
+    number << std::setprecision(15) << value;
+    std::size_t count{};
+    return substituteSymbolInSource(source, name, number.str(), count);
 }
 
 }
