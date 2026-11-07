@@ -3309,6 +3309,12 @@ auto main(int argc, char* argv[]) -> int
     structuredCards.show(); application.processEvents();
     structuredTable->item(0, 8)->setText(QStringLiteral("2.5"));
     application.processEvents();
+    selectStructuredFamily(structuredFamilies, QStringLiteral("NT"));
+    application.processEvents();
+    structuredAdd->click();
+    application.processEvents();
+    if (!structuredAdd->isEnabled() || addedCard != QStringLiteral("NT 1 6 1 6 0 0 0 0 0 0"))
+        return NECWB_SMOKE_FAILURE("Add NT Card supplies a default network");
     selectStructuredFamily(structuredFamilies, QStringLiteral("LD"));
     application.processEvents();
     structuredAdd->click();

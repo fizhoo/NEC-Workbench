@@ -869,6 +869,13 @@ auto StructuredCardEditor::defaultCard(int familyIndex) const -> QString
             .arg(wires.front().first).arg((wires.front().second+1)/2)
             .arg(second.first).arg((second.second+1)/2);
     }
+    // A zero admittance matrix connects nothing until the user fills it in.
+    if (family.mnemonic == QStringLiteral("NT") && !wires.empty()) {
+        const auto& second = wires.size() > 1 ? wires[1] : wires.front();
+        return QStringLiteral("NT %1 %2 %3 %4 0 0 0 0 0 0")
+            .arg(wires.front().first).arg((wires.front().second+1)/2)
+            .arg(second.first).arg((second.second+1)/2);
+    }
     // An elevation cut through Az 0°, front and back.
     if (family.mnemonic == QStringLiteral("RP")) return QStringLiteral("RP 0 37 2 1000 0 0 5 180 0 0");
     if (family.mnemonic == QStringLiteral("XQ")) return QStringLiteral("XQ 0");

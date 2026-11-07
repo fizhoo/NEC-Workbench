@@ -5477,6 +5477,7 @@ void MainWindow::addStructuredCard(const QString& cardText)
     const auto& document = activeSource().document();
     auto lastGeometryIndex = -1;
     auto hasGeometryEnd = false;
+    auto insertedGeometryEnd = false;
     for (const auto& card : document.cards()) {
         if (nec::isGeometryCard(card.kind))
             lastGeometryIndex = static_cast<int>(card.lineNumber)-1;
@@ -5488,12 +5489,23 @@ void MainWindow::addStructuredCard(const QString& cardText)
         lines.insert(lastGeometryIndex+1,
             QString::fromStdString(nec::NecWriter{}.writeGeometryEndCard(grounded ? 1 : 0)));
         hasGeometryEnd = true;
+        insertedGeometryEnd = true;
     }
     const auto mnemonic = cardText.section(QLatin1Char(' '), 0, 0).toUpper();
     const auto mnemonicText = mnemonic.toStdString();
     const auto* cardSpec = nec::findNecCardSpec(mnemonicText);
     const auto addingGeometry = cardSpec != nullptr && nec::isGeometryCard(cardSpec->kind);
     auto insertion = lines.size();
+    // A new TL or NT joins the last NT/TL group; placed before XQ it would start a new group
+    // and discard the existing lines.
+    auto joinsNetworkGroup = false;
+    if (mnemonic == QStringLiteral("TL") || mnemonic == QStringLiteral("NT")) {
+        if (const auto index = nec::networkCardInsertionIndex(document)) {
+            joinsNetworkGroup = true;
+            insertion = static_cast<qsizetype>(*index)
+                + (insertedGeometryEnd && lastGeometryIndex < static_cast<int>(*index) ? 1 : 0);
+        }
+    }
     if (addingGeometry) {
         for (auto index = 0; index < lines.size(); ++index) {
             if (lines[index].trimmed().section(QLatin1Char(' '), 0, 0).compare(
@@ -5504,7 +5516,7 @@ void MainWindow::addStructuredCard(const QString& cardText)
         }
     }
     for (auto index = 0; index < lines.size(); ++index) {
-        if (addingGeometry && insertion != lines.size()) break;
+        if (joinsNetworkGroup || (addingGeometry && insertion != lines.size())) break;
         const auto lineMnemonic = lines[index].trimmed().section(QLatin1Char(' '), 0, 0).toUpper();
         if (lineMnemonic == QStringLiteral("EN")
             || (mnemonic != QStringLiteral("XQ") && lineMnemonic == QStringLiteral("XQ"))) {
