@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
 #include <vector>
 
@@ -110,6 +111,17 @@ auto summarizeResults(const AnalysisResult& result, double selectedFrequencyMHz,
             && datasetKindFor(result, *sample) != RadiationDatasetKind::Point) {
             summary.selectedGain = makeGainSummary(result, *sample);
             summary.selectedFrontToBackDb = metrics.frontToBackDb;
+            std::vector<RadiationSample> atFrequency;
+            std::ranges::copy_if(result.radiation, std::back_inserter(atFrequency),
+                [&](const auto& value) {
+                    return nearlyEqual(value.frequencyMHz, selectedPeak->frequencyMHz);
+                });
+            const auto directional = radiationFrequencyMetrics(atFrequency,
+                RadiationComponent::Total, metrics.peakThetaDegrees, metrics.peakPhiDegrees);
+            if (!directional.empty()) {
+                summary.selectedFrontToRearDb = directional.front().frontToRearDb;
+                summary.selectedFrontToRearAvailability = directional.front().rearAvailability;
+            }
         }
     }
 

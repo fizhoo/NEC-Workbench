@@ -51,6 +51,11 @@ struct ResultSummary {
     std::optional<MinimumSwrSummary> minimumSwr;
     std::optional<PeakGainSummary> selectedGain;
     std::optional<double> selectedFrontToBackDb;
+    // Rear is the forward azimuth cut more than 90 degrees from the selected peak.
+    std::optional<double> selectedFrontToRearDb;
+    // Why F/R is missing when there is a selected peak: no rear samples, or only nulls.
+    RadiationMetricAvailability selectedFrontToRearAvailability{
+        RadiationMetricAvailability::Missing};
     std::optional<PeakGainSummary> peakGain;
 };
 

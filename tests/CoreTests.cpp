@@ -3631,6 +3631,29 @@ void testPatternSampleStep()
     expect(summary.selectedGain && summary.selectedGain->sampleStep
             && std::abs(summary.selectedGain->sampleStep->rpStepDegrees - 10.0) < 1.0e-9,
         "result summaries carry the RP step around the peak");
+
+    // F/R counts only samples strictly behind the peak: the 6 dB side lobe at Az 90 is out.
+    necwb::analysis::AnalysisResult azimuthCut;
+    for (const auto& [phi, gain] : std::array<std::pair<double, double>, 8>{{{0.0, 8.0},
+             {45.0, 4.0}, {90.0, 6.0}, {135.0, -5.0}, {180.0, -10.0}, {225.0, -3.0},
+             {270.0, 6.0}, {315.0, 4.0}}}) {
+        azimuthCut.radiation.push_back({.frequencyMHz = 146.0, .thetaDegrees = 90.0,
+            .phiDegrees = phi, .totalGainDb = gain});
+    }
+    const auto azimuthSummary = necwb::analysis::summarizeResults(azimuthCut, 146.0);
+    expect(azimuthSummary.selectedFrontToRearDb
+            && std::abs(*azimuthSummary.selectedFrontToRearDb - 11.0) < 1.0e-9
+            && azimuthSummary.selectedFrontToRearAvailability
+                == necwb::analysis::RadiationMetricAvailability::Available,
+        "result summaries read F/R from the rear of the peak's azimuth cut");
+    std::erase_if(azimuthCut.radiation, [](const auto& sample) {
+        return sample.phiDegrees > 90.0 && sample.phiDegrees < 270.0;
+    });
+    const auto frontOnlySummary = necwb::analysis::summarizeResults(azimuthCut, 146.0);
+    expect(frontOnlySummary.selectedGain && !frontOnlySummary.selectedFrontToRearDb
+            && frontOnlySummary.selectedFrontToRearAvailability
+                == necwb::analysis::RadiationMetricAvailability::Missing,
+        "result summaries report F/R as missing without samples behind the peak");
 }
 
 void testFrontToRearDefinitions()
