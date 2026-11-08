@@ -560,6 +560,7 @@ void MainWindow::createActions()
 
     runAction_ = new QAction(tr("&Run Analysis"), this);
     runAction_->setIcon(workbenchIcon("run"));
+    runAction_->setShortcut(QKeySequence(Qt::Key_F5));
     runAction_->setEnabled(false);
     runAction_->setStatusTip(tr("Run the checked model with the selected NEC engine"));
     connect(runAction_, &QAction::triggered, this, [this] { startAnalysis(); });

@@ -3,6 +3,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QPainter>
 #include <QStyle>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -14,6 +15,21 @@ namespace necwb::ui {
 namespace {
 
 constexpr auto SourceLineRole = Qt::UserRole + 1;
+
+// One-line label that elides with "…" instead of cutting text mid-word.
+class ElidedLabel final : public QLabel {
+public:
+    using QLabel::QLabel;
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        const auto area = contentsRect();
+        painter.drawText(area, Qt::AlignLeft | Qt::AlignVCenter,
+            fontMetrics().elidedText(text(), Qt::ElideRight, area.width()));
+    }
+};
 
 auto toolButton(const QString& text, QWidget* parent) -> QToolButton*
 {
@@ -35,7 +51,7 @@ ProblemsView::ProblemsView(QWidget* parent)
     auto* header = new QHBoxLayout;
     header->setContentsMargins(4, 0, 0, 0);
     header->setSpacing(0);
-    summary_ = new QLabel(tr("Run Check Model to evaluate the current source."), this);
+    summary_ = new ElidedLabel(tr("Run Check Model to evaluate the current source."), this);
     summary_->setObjectName(QStringLiteral("problemsSummary"));
     summary_->setMinimumWidth(0);
     summary_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -50,15 +66,19 @@ ProblemsView::ProblemsView(QWidget* parent)
     header->addWidget(changeSolver);
     findings_ = new QTreeWidget(this);
     findings_->setObjectName(QStringLiteral("problemsList"));
-    findings_->setHeaderLabels({tr("Severity"), tr("Where"), tr("Message")});
+    findings_->setHeaderLabels({QString{}, tr("Where"), tr("Message")});
+    findings_->headerItem()->setToolTip(0, tr("Severity"));
     findings_->setRootIsDecorated(false);
     findings_->setUniformRowHeights(true);
     findings_->setAlternatingRowColors(true);
     findings_->setFrameShape(QFrame::NoFrame);
     findings_->header()->setStretchLastSection(true);
-    findings_->header()->setSectionResizeMode(QHeaderView::Interactive);
-    findings_->setColumnWidth(0, 72);
-    findings_->setColumnWidth(1, 72);
+    findings_->header()->setMinimumSectionSize(0);
+    findings_->header()->setSectionResizeMode(0, QHeaderView::Fixed);
+    findings_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    findings_->header()->setSectionResizeMode(2, QHeaderView::Stretch);
+    findings_->setColumnWidth(0, findings_->iconSize().isValid()
+        ? findings_->iconSize().width() + 8 : 24);
     findings_->setToolTip(tr("Double-click a finding to select its wire or card"));
     layout->addLayout(header);
     layout->addWidget(findings_, 1);
@@ -88,13 +108,16 @@ void ProblemsView::setFindings(std::span<const nec::ModelDiagnostic> diagnostics
             const auto wire = std::ranges::find(wires, diagnostic.lineNumber, &model::Wire::sourceLine);
             if (wire != wires.end()) where = tr("W%1 · %2").arg(wire->tag).arg(where);
         }
-        auto* item = new QTreeWidgetItem(findings_, {
-            isError ? tr("Error") : isWarning ? tr("Warning") : tr("Converted"),
-            where, QString::fromStdString(diagnostic.message)});
+        const auto severity = isError ? tr("Error") : isWarning ? tr("Warning") : tr("Converted");
+        const auto message = QString::fromStdString(diagnostic.message);
+        auto* item = new QTreeWidgetItem(findings_, {QString{}, where, message});
         item->setData(0, SourceLineRole, static_cast<qulonglong>(diagnostic.lineNumber));
         item->setIcon(0, style()->standardIcon(isError ? QStyle::SP_MessageBoxCritical
             : isWarning ? QStyle::SP_MessageBoxWarning : QStyle::SP_MessageBoxInformation));
-        item->setToolTip(2, QString::fromStdString(diagnostic.category));
+        const auto detail = tr("%1 · %2").arg(severity,
+            QString::fromStdString(diagnostic.category));
+        item->setToolTip(0, detail);
+        item->setToolTip(2, tr("%1\n%2").arg(message, detail));
     }
 }
 
