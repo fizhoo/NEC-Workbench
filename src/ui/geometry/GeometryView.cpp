@@ -42,6 +42,14 @@ auto verticalAxis(geometry::ProjectionPlane plane) -> QString
     return plane == geometry::ProjectionPlane::XY ? QStringLiteral("Y") : QStringLiteral("Z");
 }
 
+// Stepping across the grid accumulates rounding, so the tick at zero can arrive as
+// -2.776e-16; anything that close to zero is zero.
+auto tickLabel(double meters, double spacing, model::LengthUnit unit) -> QString
+{
+    if (std::abs(meters) < 1.0e-6 * spacing) meters = 0.0;
+    return formatDecimal(model::fromMeters(meters, unit));
+}
+
 auto wireLabel(const model::Wire& wire) -> QString
 {
     const auto mnemonic = wire.geometryKind == model::WireGeometryKind::Arc ? "GA"
@@ -411,7 +419,7 @@ void GeometryView::drawGrid(QPainter& painter) const
             if (settings_.showLabels && x >= 4.0 && x <= width() - 40.0) {
                 painter.setPen(palette().placeholderText().color());
                 painter.drawText(QPointF{x + 3.0, height() - 7.0},
-                    formatDecimal(model::fromMeters(horizontal, settings_.lengthUnit)));
+                    tickLabel(horizontal, spacing, settings_.lengthUnit));
                 painter.setPen(QPen(palette().midlight().color(), 1.0));
             }
         }
@@ -421,7 +429,7 @@ void GeometryView::drawGrid(QPainter& painter) const
             if (settings_.showLabels && y >= 15.0 && y <= height() - 8.0) {
                 painter.setPen(palette().placeholderText().color());
                 painter.drawText(QPointF{5.0, y - 3.0},
-                    formatDecimal(model::fromMeters(vertical, settings_.lengthUnit)));
+                    tickLabel(vertical, spacing, settings_.lengthUnit));
                 painter.setPen(QPen(palette().midlight().color(), 1.0));
             }
         }

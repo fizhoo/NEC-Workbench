@@ -153,8 +153,9 @@ public:
         updateSpacing();
     }
     void setEnvelopeScale(double scale) { envelopeScale_ = scale; update(); }
-    // A thumbnail cannot be zoomed or panned, so it leaves out the hint.
-    void setNavigationHintVisible(bool visible) { navigationHint_ = visible; update(); }
+    // A thumbnail fills its frame with the antenna: no header, no navigation hint (it cannot
+    // be zoomed or panned), and only a small margin.
+    void setCompact(bool compact) { compact_ = compact; update(); }
     void setCycleDegrees(double degrees) { cycleDegrees_ = degrees; update(); }
     [[nodiscard]] auto plane() const -> geometry::ProjectionPlane
     {
@@ -217,8 +218,9 @@ protected:
 
         // Leave room around the antenna for the envelopes and the header and readout text.
         const auto reserve = envelopeScale_ * 0.11 * std::min(width(), height());
-        const auto inner = QRectF(rect()).adjusted(16 + reserve, 26 + reserve,
-            -16 - reserve, -34 - reserve);
+        const auto inner = compact_
+            ? QRectF(rect()).adjusted(4 + reserve, 4 + reserve, -4 - reserve, -4 - reserve)
+            : QRectF(rect()).adjusted(16 + reserve, 26 + reserve, -16 - reserve, -34 - reserve);
         const auto horizontalScale = bounds->width() > 1.0e-12
             ? inner.width() / bounds->width() : std::numeric_limits<double>::infinity();
         const auto verticalScale = bounds->height() > 1.0e-12
@@ -248,7 +250,7 @@ protected:
         }
 
         drawSegments(painter, toScreen);
-        drawHeader(painter, plane);
+        if (!compact_) drawHeader(painter, plane);
         if (mode_ == DisplayMode::Phase) drawPhaseLegend(painter);
         drawHoverReadout(painter, toScreen);
     }
@@ -397,7 +399,7 @@ private:
         painter.fillRect(QRectF(0, 0, width(), 24), backing);
         painter.setPen(palette().color(QPalette::Text));
         painter.drawText(QRectF(8, 4, width() - 16, 20), Qt::AlignLeft | Qt::AlignVCenter, header);
-        if (!tracking_ && navigationHint_) {
+        if (!tracking_) {
             painter.setPen(palette().color(QPalette::PlaceholderText));
             painter.drawText(QRectF(8, height() - 26, width() - 16, 20),
                 Qt::AlignLeft | Qt::AlignVCenter,
@@ -475,7 +477,7 @@ private:
     double zoom_{1.0};
     bool dragging_{};
     bool tracking_{};
-    bool navigationHint_{true};
+    bool compact_{};
 };
 
 CurrentAntennaView::CurrentAntennaView(QWidget* parent) : QWidget(parent)
@@ -571,7 +573,7 @@ void CurrentAntennaView::setCompact(bool compact)
 {
     controls_->setVisible(!compact);
     canvas_->setMinimumSize(compact ? QSize(80, 80) : QSize(320, 240));
-    canvas_->setNavigationHintVisible(!compact);
+    canvas_->setCompact(compact);
     if (compact) {
         mode_->setCurrentIndex(mode_->findData(static_cast<int>(DisplayMode::Magnitude)));
         play_->setChecked(false);
