@@ -20,6 +20,7 @@ public:
     void showWelcome();
     void showModel();
     void resetLayout();
+    [[nodiscard]] auto minimumSizeHint() const -> QSize override;
 
 protected:
     auto eventFilter(QObject* watched, QEvent* event) -> bool override;
@@ -30,6 +31,7 @@ private:
 
     QStackedWidget* pages_{};
     QSplitter* split_{};
+    BottomPanel* bottomPanel_{};
     // The saved width is applied once the split first has a real width.
     bool leftColumnWidthApplied_{};
 };

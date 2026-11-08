@@ -590,6 +590,87 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
     resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
     resultWindowSettings.sync();
+    // Opening an existing model shows it in the main window without raising the NEC Deck
+    // window, the left column never grows wider than the control panel, and at its minimum
+    // size the window still has room to open the bottom panel.
+    auto openModelKeepsDeckClosed = false;
+    auto leftColumnCappedAtContent = false;
+    auto bottomPanelOpensAtMinimumSize = false;
+    {
+        const auto savedRecentModels = resultWindowSettings.value(
+            QStringLiteral("files/recentModels"));
+        QTemporaryDir modelDirectory;
+        const auto modelPath = modelDirectory.filePath(QStringLiteral("open-smoke.nec"));
+        QFile modelFile(modelPath);
+        if (modelDirectory.isValid() && modelFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            modelFile.write("GW 1 11 -5 0 6 5 0 6 0.001\nGE 0\nEN\n");
+            modelFile.close();
+            resultWindowSettings.setValue(QStringLiteral("files/recentModels"),
+                QStringList{modelPath});
+            resultWindowSettings.sync();
+            necwb::ui::MainWindow mainWindow;
+            mainWindow.resize(1400, 900);
+            mainWindow.show();
+            application.processEvents();
+            auto* recentModelsMenu = mainWindow.findChild<QMenu*>(
+                QStringLiteral("recentModelsMenu"));
+            QAction* openRecent = nullptr;
+            for (auto* action : recentModelsMenu != nullptr ? recentModelsMenu->actions()
+                                                            : QList<QAction*>{}) {
+                if (action->data().toString() == modelPath) openRecent = action;
+            }
+            auto* split = mainWindow.findChild<QSplitter*>(QStringLiteral("workbenchSplit"));
+            auto* leftColumn = mainWindow.findChild<QWidget*>(
+                QStringLiteral("workbenchLeftColumn"));
+            if (openRecent != nullptr && split != nullptr && leftColumn != nullptr) {
+                openRecent->trigger();
+                application.processEvents();
+                const auto* modelEditorWindow = topLevelDialog(
+                    QStringLiteral("modelEditorWindow"));
+                openModelKeepsDeckClosed = split->isVisible()
+                    && (modelEditorWindow == nullptr || !modelEditorWindow->isVisible());
+                // Drag the split handle far to the right.
+                auto* handle = split->handle(1);
+                const QPointF grab(handle->width() / 2.0, handle->height() / 2.0);
+                const QPointF dragTo(grab.x() + 800, grab.y());
+                QMouseEvent press(QEvent::MouseButtonPress, grab, handle->mapToGlobal(grab),
+                    Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+                QMouseEvent move(QEvent::MouseMove, dragTo, handle->mapToGlobal(dragTo),
+                    Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+                QMouseEvent release(QEvent::MouseButtonRelease, dragTo,
+                    handle->mapToGlobal(dragTo), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+                QApplication::sendEvent(handle, &press);
+                QApplication::sendEvent(handle, &move);
+                QApplication::sendEvent(handle, &release);
+                application.processEvents();
+                leftColumnCappedAtContent = leftColumn->maximumWidth() < QWIDGETSIZE_MAX
+                    && split->sizes().value(0) == leftColumn->maximumWidth()
+                    && leftColumn->width() == leftColumn->maximumWidth();
+                auto* toggleBottomPanel = mainWindow.findChild<QAction*>(
+                    QStringLiteral("toggleBottomPanelAction"));
+                if (toggleBottomPanel != nullptr && !toggleBottomPanel->isChecked()) {
+                    mainWindow.resize(mainWindow.minimumSizeHint());
+                    application.processEvents();
+                    const auto minimumSize = mainWindow.size();
+                    toggleBottomPanel->trigger();
+                    application.processEvents();
+                    bottomPanelOpensAtMinimumSize = toggleBottomPanel->isChecked()
+                        && mainWindow.size() == minimumSize;
+                }
+            }
+            mainWindow.close();
+        }
+        resultWindowSettings.setValue(QStringLiteral("files/recentModels"), savedRecentModels);
+        resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
+        resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
+        resultWindowSettings.sync();
+    }
+    if (!openModelKeepsDeckClosed)
+        return NECWB_SMOKE_FAILURE("open model keeps NEC Deck closed");
+    if (!leftColumnCappedAtContent)
+        return NECWB_SMOKE_FAILURE("left column capped at control panel width");
+    if (!bottomPanelOpensAtMinimumSize)
+        return NECWB_SMOKE_FAILURE("bottom panel opens at minimum window size");
     if (!consolidatedSetupNavigation)
         return NECWB_SMOKE_FAILURE("consolidated setup navigation");
     if (!linkedParameterDeleted)

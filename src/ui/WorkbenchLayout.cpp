@@ -33,6 +33,15 @@ public:
     {
         return {minimumSizeHint().width(), QScrollArea::sizeHint().height()};
     }
+
+protected:
+    // Never wider than its content either, so widening the split adds no empty strip.
+    auto eventFilter(QObject* watched, QEvent* event) -> bool override
+    {
+        if (watched == widget() && event->type() == QEvent::LayoutRequest)
+            setMaximumWidth(widget()->sizeHint().width() + verticalScrollBar()->sizeHint().width());
+        return QScrollArea::eventFilter(watched, event);
+    }
 };
 
 }
@@ -40,6 +49,7 @@ public:
 WorkbenchLayout::WorkbenchLayout(QWidget* welcome, QWidget* leftColumn, QWidget* center,
     BottomPanel* bottomPanel, QWidget* parent)
     : QWidget(parent)
+    , bottomPanel_(bottomPanel)
 {
     setObjectName(QStringLiteral("workbenchLayout"));
     auto* layout = new QVBoxLayout(this);
@@ -99,6 +109,16 @@ void WorkbenchLayout::resetLayout()
     applyLeftColumnWidth(split_->widget(0)->sizeHint().width());
 }
 
+auto WorkbenchLayout::minimumSizeHint() const -> QSize
+{
+    // Leave room for the open bottom panel even while it is collapsed, so opening it never
+    // has to grow the window.
+    auto hint = QWidget::minimumSizeHint();
+    hint.setHeight(std::max(hint.height(),
+        pages_->minimumSizeHint().height() + bottomPanel_->openMinimumHeight()));
+    return hint;
+}
+
 auto WorkbenchLayout::eventFilter(QObject* watched, QEvent* event) -> bool
 {
     if (watched == split_ && event->type() == QEvent::Resize && !leftColumnWidthApplied_
@@ -112,6 +132,8 @@ auto WorkbenchLayout::eventFilter(QObject* watched, QEvent* event) -> bool
 
 void WorkbenchLayout::applyLeftColumnWidth(int width)
 {
+    const auto* leftColumn = split_->widget(0);
+    width = std::clamp(width, leftColumn->minimumSizeHint().width(), leftColumn->maximumWidth());
     split_->setSizes({width, std::max(0, split_->width() - split_->handleWidth() - width)});
 }
 
