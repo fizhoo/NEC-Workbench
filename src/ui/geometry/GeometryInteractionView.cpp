@@ -31,7 +31,7 @@ auto showAttachmentContextMenu(QWidget* parent, const QPoint& position, const QS
     -> GeometryContextAction
 {
     QMenu menu(parent);
-    addResultAction(menu, QWidget::tr("Edit in Model Setup"), GeometryContextAction::EditInSetup);
+    addResultAction(menu, QWidget::tr("Properties…"), GeometryContextAction::Properties);
     menu.addSeparator();
     addResultAction(menu, deleteText, GeometryContextAction::Delete);
     return execute(menu, position);
@@ -41,7 +41,6 @@ auto showExcitationContextMenu(QWidget* parent, const QPoint& position) -> Geome
 {
     QMenu menu(parent);
     addResultAction(menu, QWidget::tr("Properties…"), GeometryContextAction::Properties);
-    addResultAction(menu, QWidget::tr("Edit in Setup"), GeometryContextAction::EditInSetup);
     menu.addSeparator();
     addResultAction(menu, QWidget::tr("Delete Voltage Source"), GeometryContextAction::Delete);
     return execute(menu, position);
@@ -218,14 +217,14 @@ void GeometryInteractionView::contextMenuEvent(QContextMenuEvent* event)
         selectLoad(*sourceLine);
         emit loadSelected(*sourceLine);
         const auto action = showAttachmentContextMenu(this, event->globalPos(), tr("Delete Load"));
-        if (action == GeometryContextAction::EditInSetup) emit editLoadRequested(*sourceLine);
+        if (action == GeometryContextAction::Properties) emit editLoadRequested(*sourceLine);
         else if (action == GeometryContextAction::Delete) emit deleteLoadRequested(*sourceLine);
     } else if (const auto sourceLine = transmissionLineAt(event->pos())) {
         selectTransmissionLine(*sourceLine);
         emit transmissionLineSelected(*sourceLine);
         const auto action = showAttachmentContextMenu(
             this, event->globalPos(), tr("Delete Transmission Line"));
-        if (action == GeometryContextAction::EditInSetup) {
+        if (action == GeometryContextAction::Properties) {
             emit editTransmissionLineRequested(*sourceLine);
         } else if (action == GeometryContextAction::Delete) {
             emit deleteTransmissionLineRequested(*sourceLine);
@@ -235,7 +234,7 @@ void GeometryInteractionView::contextMenuEvent(QContextMenuEvent* event)
         emit networkSelected(*sourceLine);
         const auto action = showAttachmentContextMenu(
             this, event->globalPos(), tr("Delete Network"));
-        if (action == GeometryContextAction::EditInSetup) emit editNetworkRequested(*sourceLine);
+        if (action == GeometryContextAction::Properties) emit editNetworkRequested(*sourceLine);
         else if (action == GeometryContextAction::Delete) emit deleteNetworkRequested(*sourceLine);
     } else if (const auto sourceLine = excitationAt(event->pos())) {
         selectExcitation(*sourceLine);
@@ -243,8 +242,6 @@ void GeometryInteractionView::contextMenuEvent(QContextMenuEvent* event)
         const auto action = showExcitationContextMenu(this, event->globalPos());
         if (action == GeometryContextAction::Properties) {
             emit editExcitationRequested(*sourceLine);
-        } else if (action == GeometryContextAction::EditInSetup) {
-            emit openExcitationSetupRequested(*sourceLine);
         } else if (action == GeometryContextAction::Delete) {
             emit deleteExcitationRequested(*sourceLine);
         }
