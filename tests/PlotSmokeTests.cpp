@@ -5,6 +5,7 @@
 #include "ui/MainWindow.h"
 #include "ui/WorkspaceNavigator.h"
 #include "ui/analysis/SweepPlotsView.h"
+#include "ui/WorkbenchToolBar.h"
 #include "ui/results/ResultFullView.h"
 #include "ui/results/ResultsColumn.h"
 #include "ui/results/ResultsController.h"
@@ -17,12 +18,14 @@
 #include "ui/analysis/ConvergenceWorkspace.h"
 #include "ui/analysis/FieldResultsViews.h"
 #include "ui/analysis/HistoricalOverlayControl.h"
-#include "ui/controlpanel/ControlPanel.h"
 #include "ui/cards/StructuredCardEditor.h"
 #include "ui/cards/CompactNumberDelegate.h"
 #include "ui/cards/WireCardEditor.h"
 #include "ui/editor/NecEditor.h"
-#include "ui/geometry/WirePropertiesDialog.h"
+#include "ui/modeltree/ModelColumn.h"
+#include "ui/modeltree/ModelTree.h"
+#include "ui/modeltree/PropertiesPane.h"
+#include "ui/geometry/WirePropertiesEditor.h"
 #include "ui/geometry/AutoSegmentationDialog.h"
 #include "ui/geometry/GeometryView.h"
 #include "ui/geometry/Geometry3DView.h"
@@ -296,10 +299,7 @@ auto main(int argc, char* argv[]) -> int
     {
         necwb::ui::MainWindow mainWindow;
         mainWindow.setProperty("workspaceDensityId", QStringLiteral("density-smoke-sentinel"));
-        auto* setupWorkspace = mainWindow.findChild<QTabWidget*>(QStringLiteral("setupWorkspace"));
         auto* modelWorkspace = mainWindow.findChild<QTabWidget*>(QStringLiteral("modelWorkspace"));
-        auto* setupModuleAction = mainWindow.findChild<QAction*>(
-            QStringLiteral("setupModuleAction"));
         auto* modelModuleAction = mainWindow.findChild<QAction*>(
             QStringLiteral("modelModuleAction"));
         auto* optimizeModuleAction = mainWindow.findChild<QAction*>(
@@ -319,12 +319,14 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("toggleBottomPanelAction"));
         auto* validationSummary = mainWindow.findChild<QLabel*>(
             QStringLiteral("validationOverviewSummary"));
-        const auto* optionalProjectDock = mainWindow.findChild<QWidget*>(
-            QStringLiteral("projectDock"));
+        // One toolbar row and the model tree; the Project Tree dock and its toggle are gone.
+        auto* toolBar = mainWindow.findChild<QToolBar*>(QStringLiteral("workbenchToolBar"));
         const auto compactPrimaryNavigation = mainWindow.findChild<QWidget*>(
             QStringLiteral("moduleNavigationToolbar")) == nullptr
-            && mainWindow.findChild<QWidget*>(QStringLiteral("mainToolbar")) == nullptr
-            && optionalProjectDock != nullptr && !optionalProjectDock->isVisible();
+            && mainWindow.findChild<QWidget*>(QStringLiteral("projectDock")) == nullptr
+            && mainWindow.findChild<QWidget*>(QStringLiteral("modelTree")) != nullptr
+            && toolBar != nullptr && !toolBar->isMovable()
+            && toolBar->findChild<QComboBox*>(QStringLiteral("toolBarBackend")) != nullptr;
         auto* openValidation = mainWindow.findChild<QAction*>(
             QStringLiteral("openValidationResultsAction"));
         auto* openConvergence = mainWindow.findChild<QAction*>(
@@ -337,13 +339,12 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("showRawOutputAction"));
         const auto overlays = mainWindow.findChildren<QCheckBox*>(
             QStringLiteral("showHistoricalOverlay"));
-        consolidatedSetupNavigation = setupModuleAction != nullptr
-            && setupModuleAction->text() == QStringLiteral("&Setup")
+        // Setup pages live in the properties pane; only the NEC Deck keeps its window.
+        consolidatedSetupNavigation = mainWindow.findChild<QAction*>(
+                QStringLiteral("setupModuleAction")) == nullptr
+            && mainWindow.findChild<QTabWidget*>(QStringLiteral("setupWorkspace")) == nullptr
             && tabNames(modelWorkspace) == QStringList{QStringLiteral("NEC Deck"),
                 QStringLiteral("Parameters")}
-            && tabNames(setupWorkspace) == QStringList{QStringLiteral("Frequency"),
-                QStringLiteral("Sources"), QStringLiteral("Loads && Transmission Lines"),
-                QStringLiteral("Environment"), QStringLiteral("Requests"), QStringLiteral("Solver")}
             && tabNames(validationWorkspace) == QStringList{QStringLiteral("Static Check"),
                 QStringLiteral("Average Gain Test"), QStringLiteral("Segmentation Convergence")}
             && compactPrimaryNavigation
@@ -412,18 +413,40 @@ auto main(int argc, char* argv[]) -> int
                 && mainWindow.property("workspaceDensityId").toString()
                     == QStringLiteral("density-smoke-sentinel");
         }
-        if (setupWorkspace != nullptr && setupModuleAction != nullptr) {
-            setupModuleAction->setEnabled(true);
-            setupModuleAction->trigger();
+        // Selecting Frequency in the tree shows its page in the pane, inside the main window.
+        if (auto* tree = mainWindow.findChild<QTreeWidget*>(QStringLiteral("modelTree"))) {
+            mainWindow.show();
             application.processEvents();
-            const auto* analysisSetupWindow = topLevelDialog(
-                QStringLiteral("analysisSetupWindow"));
-            resultWindowSettings.sync();
-            setupWindowNavigation = analysisSetupWindow != nullptr
-                && analysisSetupWindow->isVisible()
-                && setupWorkspace->window() == analysisSetupWindow
-                && resultWindowSettings.value(
-                    QStringLiteral("workspaceWindows/analysis-setup/detached"), false).toBool();
+            tree->setCurrentItem(tree->topLevelItem(0));
+            application.processEvents();
+            const auto* frequencyPage = mainWindow.findChild<QWidget*>(
+                QStringLiteral("frequencyEditorPage"));
+            const auto* pane = mainWindow.findChild<QWidget*>(QStringLiteral("propertiesPane"));
+            // F5 and F7 stay window shortcuts that no field in the column keeps for itself.
+            const auto leavesKey = [](QWidget* widget, Qt::Key key) {
+                if (widget == nullptr) return false;
+                QKeyEvent override(QEvent::ShortcutOverride, key, Qt::NoModifier);
+                override.ignore();
+                QApplication::sendEvent(widget, &override);
+                return !override.isAccepted();
+            };
+            auto* paneField = frequencyPage == nullptr ? nullptr
+                : frequencyPage->findChild<QDoubleSpinBox*>();
+            QAction* runShortcut = nullptr;
+            QAction* checkShortcut = nullptr;
+            for (auto* action : mainWindow.findChildren<QAction*>()) {
+                if (action->shortcut() == QKeySequence(Qt::Key_F5)) runShortcut = action;
+                if (action->shortcut() == QKeySequence(Qt::Key_F7)) checkShortcut = action;
+            }
+            const auto functionKeysReachWindow = runShortcut != nullptr && checkShortcut != nullptr
+                && runShortcut->shortcutContext() == Qt::WindowShortcut
+                && checkShortcut->shortcutContext() == Qt::WindowShortcut
+                && leavesKey(tree, Qt::Key_F5) && leavesKey(tree, Qt::Key_F7)
+                && leavesKey(paneField, Qt::Key_F5) && leavesKey(paneField, Qt::Key_F7);
+            setupWindowNavigation = frequencyPage != nullptr && pane != nullptr
+                && frequencyPage->window() == &mainWindow && pane->isAncestorOf(frequencyPage)
+                && frequencyPage->isVisible() && functionKeysReachWindow
+                && topLevelDialog(QStringLiteral("analysisSetupWindow")) == nullptr;
         }
         if (optimizationWorkspace != nullptr && optimizeModuleAction != nullptr) {
             optimizeModuleAction->setEnabled(true);
@@ -609,8 +632,7 @@ auto main(int argc, char* argv[]) -> int
                 if (action->data().toString() == modelPath) openRecent = action;
             }
             auto* split = mainWindow.findChild<QSplitter*>(QStringLiteral("workbenchSplit"));
-            auto* leftColumn = mainWindow.findChild<QWidget*>(
-                QStringLiteral("workbenchLeftColumn"));
+            auto* leftColumn = mainWindow.findChild<QWidget*>(QStringLiteral("modelColumn"));
             if (openRecent != nullptr && split != nullptr && leftColumn != nullptr) {
                 openRecent->trigger();
                 application.processEvents();
@@ -2958,205 +2980,217 @@ auto main(int argc, char* argv[]) -> int
     QImage currentImage(800, 600, QImage::Format_ARGB32_Premultiplied);
     currentImage.fill(Qt::transparent); QPainter currentPainter(&currentImage);
     radiation3D.render(&currentPainter); currentPainter.end();
-    necwb::ui::ControlPanel controlPanel;
-    using Study = necwb::ui::ControlPanel::Study;
-    using StudyState = necwb::ui::ControlPanel::StudyState;
-    using Workspace = necwb::ui::ControlPanel::Workspace;
-    const auto controlPanelCompact = hasCompactMargins(controlPanel, 8);
-    controlPanel.resize(600, 520);
+    // The model tree: group summaries, a row per item, the studies with Run buttons, and
+    // selection that the window can hold back while an edit is unfinished.
+    necwb::ui::ModelColumn modelColumn;
+    auto* modelTree = modelColumn.tree();
+    auto* propertiesPane = modelColumn.pane();
+    using Study = necwb::ui::ModelTree::Study;
+    using StudyState = necwb::ui::ModelTree::StudyState;
+    using necwb::ui::ModelNode;
+    using necwb::ui::ModelSelection;
+    const auto modelTreeCompact = hasCompactMargins(modelColumn, 0);
+    modelColumn.resize(460, 700);
     necwb::model::ModelSetup setup;
     setup.frequency = {0, 3, 14.0, 0.1, 1};
-    setup.excitations = {{0, 2, 1, 1.0, 0.0, 2}};
-    setup.radiationPatterns = {{19, 37, 0.0, 0.0, 5.0, 10.0, 3}};
-    const auto controlPanelDocument = necwb::nec::NecParser{}.parse(
-        "GW 1 11 0 0 0 1 0 0 .001\nGE 0\nEX 0 1 6 0 1 0\n"
+    setup.excitations = {{0, 1, 6, 1.0, 0.0, 3}};
+    setup.radiationPatterns = {{19, 37, 0.0, 0.0, 5.0, 10.0, 5}};
+    const auto modelTreeDocument = necwb::nec::NecParser{}.parse(
+        "GW 1 11 0 0 -.5 0 0 .5 .001\nGE 0\nEX 0 1 6 0 1 0\n"
         "FR 0 3 0 0 14 .1\nRP 0 19 37 1000 0 0 5 10\nEN\n");
-    controlPanel.setModel(antenna, setup, controlPanelDocument,
-        QStringLiteral("nec2"), true, 0, 0);
-    QAction openAction(QStringLiteral("Open…"), &controlPanel),
-        saveAction(QStringLiteral("Save"), &controlPanel);
-    QAction checkAction(QStringLiteral("Check Model"), &controlPanel),
-        runAction(QStringLiteral("Run Analysis"), &controlPanel);
-    QAction sweepAction(QStringLiteral("Frequency Sweep…"), &controlPanel),
-        stopAction(QStringLiteral("Stop"), &controlPanel);
-    QAction averageGainAction(QStringLiteral("Run Average Gain Test…"), &controlPanel),
-        convergenceAction(QStringLiteral("Segmentation Convergence…"), &controlPanel);
-    controlPanel.setFileActions(&openAction, &saveAction);
-    QString recentModelOpened;
-    auto recentModelsCleared = false;
-    controlPanel.setRecentModels(
-        {QStringLiteral("/tmp/first.nec"), QStringLiteral("/tmp/second.nec")},
-        [&recentModelOpened](const QString& path) { recentModelOpened = path; },
-        [&recentModelsCleared] { recentModelsCleared = true; });
-    controlPanel.setQuickActions(&checkAction, &runAction, &sweepAction, &stopAction);
-    controlPanel.setAverageGainAction(&averageGainAction);
-    controlPanel.setConvergenceAction(&convergenceAction);
-    auto controlPanelAverageGainTriggered = false, controlPanelConvergenceTriggered = false;
-    QObject::connect(&averageGainAction, &QAction::triggered,
-        [&] { controlPanelAverageGainTriggered = true; });
-    QObject::connect(&convergenceAction, &QAction::triggered,
-        [&] { controlPanelConvergenceTriggered = true; });
-    auto runHistoryOpened = false, controlPanelWorkspaceOpened = false,
-        controlPanelEditorOpened = false,
-        controlPanelSolverOpened = false;
-    controlPanel.setOpenWorkspaceCallback(
-        [&runHistoryOpened, &controlPanelWorkspaceOpened,
-            &controlPanelSolverOpened](auto destination) {
-        if (destination == Workspace::Runs) runHistoryOpened = true;
-        if (destination == Workspace::Optimize) controlPanelWorkspaceOpened = true;
-        if (destination == Workspace::Solver) controlPanelSolverOpened = true;
-        });
-    controlPanel.setOpenEditorCallback([&controlPanelEditorOpened](auto destination) {
-        controlPanelEditorOpened = destination == necwb::ui::ControlPanel::Editor::Requests;
-    });
-    necwb::ui::AnalysisRunRecord recentRun;
-    recentRun.id = QStringLiteral("recent-0"); recentRun.started = QDateTime::currentDateTime();
-    recentRun.status = QStringLiteral("Completed"); recentRun.durationSeconds = 1.25;
-    controlPanel.setRecentRuns({recentRun});
-    controlPanel.setDocumentState(QStringLiteral("test.nec"), true);
-    controlPanel.setResults(result, QStringLiteral("Model: test.nec · Run: controlPanel"), false);
-    controlPanel.setStudyStatus(Study::AverageGain, StudyState::Complete,
+    modelTree->setModel(antenna, setup, modelTreeDocument);
+    modelTree->setSolver(QStringLiteral("NEC-2 / nec2c"));
+    QAction averageGainAction(QStringLiteral("Run Average Gain Test…"), &modelColumn),
+        convergenceAction(QStringLiteral("Segmentation Convergence…"), &modelColumn);
+    modelTree->setStudyAction(Study::AverageGain, &averageGainAction);
+    modelTree->setStudyAction(Study::Convergence, &convergenceAction);
+    auto treeAverageGainTriggered = false, treeConvergenceTriggered = false;
+    QObject::connect(&averageGainAction, &QAction::triggered, [&] { treeAverageGainTriggered = true; });
+    QObject::connect(&convergenceAction, &QAction::triggered, [&] { treeConvergenceTriggered = true; });
+    std::vector<ModelSelection> reportedSelections;
+    std::optional<ModelSelection> activatedSelection;
+    auto allowSelectionChange = true;
+    modelTree->setSelectionChangingCallback([&](const ModelSelection&) { return allowSelectionChange; });
+    modelTree->setSelectionChangedCallback(
+        [&](const ModelSelection& selection) { reportedSelections.push_back(selection); });
+    modelTree->setActivatedCallback(
+        [&](const ModelSelection& selection) { activatedSelection = selection; });
+    modelColumn.show();
+    application.processEvents();
+    const auto group = [modelTree](const QString& name) -> QTreeWidgetItem* {
+        for (auto index = 0; index < modelTree->topLevelItemCount(); ++index)
+            if (modelTree->topLevelItem(index)->text(0) == name) return modelTree->topLevelItem(index);
+        return nullptr;
+    };
+    const auto summary = [&group](const QString& name) {
+        const auto* item = group(name);
+        return item == nullptr ? QString{} : item->text(1);
+    };
+    QStringList groupNames;
+    for (auto index = 0; index < modelTree->topLevelItemCount(); ++index)
+        groupNames.append(modelTree->topLevelItem(index)->text(0));
+    const auto modelTreeGroups = groupNames == QStringList{QStringLiteral("Frequency"),
+        QStringLiteral("Wires"), QStringLiteral("Sources"), QStringLiteral("Loads"),
+        QStringLiteral("Trans. lines"), QStringLiteral("Networks"), QStringLiteral("Ground"),
+        QStringLiteral("Variables"), QStringLiteral("Requests"), QStringLiteral("Solver"),
+        QStringLiteral("Deck"), QStringLiteral("Validation")};
+    const auto modelTreeSummaries = summary(QStringLiteral("Frequency"))
+            == QStringLiteral("14.000–14.200 MHz · 3 pts")
+        && summary(QStringLiteral("Wires")) == QStringLiteral("1 wire · 11 segments")
+        && summary(QStringLiteral("Sources")) == QStringLiteral("1 source · wire 1, seg 6")
+        && summary(QStringLiteral("Requests")) == QStringLiteral("pattern 19×37")
+        && summary(QStringLiteral("Solver")) == QStringLiteral("NEC-2 / nec2c")
+        && group(QStringLiteral("Wires"))->childCount() == 1
+        && group(QStringLiteral("Wires"))->child(0)->text(0) == QStringLiteral("Wire 1")
+        && group(QStringLiteral("Sources"))->childCount() == 1
+        && group(QStringLiteral("Validation"))->childCount() == 2;
+    modelTree->setStudyStatus(Study::AverageGain, StudyState::Complete,
         QStringLiteral("1.000 @ 14.100 MHz"));
-    controlPanel.setStudyStatus(Study::Convergence, StudyState::Complete, QStringLiteral("passed"));
-    controlPanel.clearStudy(Study::AverageGain);
-    controlPanel.clearStudy(Study::Convergence);
-    const auto studiesCleared = controlPanel.findChild<QLabel*>(
-            QStringLiteral("controlPanelAverageGainState"))->text() == QStringLiteral("not run")
-        && controlPanel.findChild<QLabel*>(
-            QStringLiteral("controlPanelConvergenceState"))->text() == QStringLiteral("not run");
-    controlPanel.setStudyStatus(Study::AverageGain, StudyState::Running,
-        QStringLiteral("running @ 14.100 MHz"));
-    controlPanel.setStudyStatus(Study::AverageGain, StudyState::Failed, {},
-        QStringLiteral("solver failed"));
-    controlPanel.show(); application.processEvents();
-    // A finished convergence study reports a whole sentence; it must not widen the panel.
-    const auto widthBeforeLongStudy = controlPanel.minimumSizeHint().width();
+    modelTree->setStudyStatus(Study::Convergence, StudyState::Stale);
+    const auto* averageGainState = modelTree->findChild<QLabel*>(
+        QStringLiteral("modelTreeAverageGainState"));
+    const auto* convergenceState = modelTree->findChild<QLabel*>(
+        QStringLiteral("modelTreeConvergenceState"));
+    // Only a finished study can go stale.
+    const auto studiesShown = averageGainState->text() == QStringLiteral("1.000 @ 14.100 MHz")
+        && convergenceState->text() == QStringLiteral("not run");
+    const auto widthBeforeLongStudy = modelTree->minimumSizeHint().width();
     const auto longStudy = QStringLiteral(
         "Not yet stable across two consecutive refinements. Review the trend or add levels.");
-    controlPanel.setStudyStatus(Study::Convergence, StudyState::Complete, longStudy);
+    modelTree->setStudyStatus(Study::Convergence, StudyState::Complete, longStudy);
     application.processEvents();
-    const auto longStudyKeepsWidth = controlPanel.minimumSizeHint().width() == widthBeforeLongStudy
-        && controlPanel.findChild<QLabel*>(QStringLiteral("controlPanelConvergenceState"))
-               ->toolTip() == longStudy;
-    controlPanel.clearStudy(Study::Convergence);
-    QImage controlPanelImage(600, 520, QImage::Format_ARGB32_Premultiplied);
-    controlPanelImage.fill(Qt::transparent); QPainter controlPanelPainter(&controlPanelImage);
-    controlPanel.render(&controlPanelPainter); controlPanelPainter.end();
-    const auto label = [&controlPanel](const char* name) {
-        return controlPanel.findChild<QLabel*>(QString::fromLatin1(name));
-    };
-    const auto button = [&controlPanel](const char* name) {
-        return controlPanel.findChild<QToolButton*>(QString::fromLatin1(name));
-    };
-    const auto* controlPanelName = label("controlPanelModelName");
-    auto* controlPanelBackend = button("controlPanelBackend");
-    const auto* controlPanelResultState = label("controlPanelResultState");
-    const auto* controlPanelFooter = label("controlPanelFooter");
-    const auto* controlPanelAverageGain = label("controlPanelAverageGainState");
-    const auto* controlPanelConvergence = label("controlPanelConvergenceState");
-    auto* controlPanelRows = controlPanel.findChild<QTableWidget*>(
-        QStringLiteral("controlPanelModelRows"));
-    auto* controlPanelOpen = button("controlPanelOpen");
-    auto* controlPanelSave = button("controlPanelSave");
-    auto* controlPanelCheck = button("controlPanelCheck");
-    auto* controlPanelRun = button("controlPanelRun");
-    auto* controlPanelSweep = button("controlPanelFrequencySweep");
-    auto* controlPanelStop = button("controlPanelStop");
-    auto* controlPanelRuns = button("controlPanelRuns");
-    auto* controlPanelAverageGainRun = button("controlPanelAverageGainRun");
-    auto* controlPanelConvergenceRun = button("controlPanelConvergenceRun");
-    auto* controlPanelOptimize = button("controlPanelOptimize");
-    // Geometry sits beside the control panel and results in the column to its right, so
-    // the panel has no launchers or quick results for them.
-    const auto noViewLaunchers = button("controlPanelGeometryEditor") == nullptr
-        && button("controlPanelImpedance") == nullptr && button("controlPanelCurrents") == nullptr
-        && button("controlPanelRadiation") == nullptr
-        && controlPanel.findChild<QWidget*>(QStringLiteral("controlPanelQuickResults")) == nullptr;
-    auto* controlPanelOpenMenu = controlPanel.findChild<QMenu*>(
-        QStringLiteral("controlPanelOpenMenu"));
-    if (controlPanelOpenMenu != nullptr) {
-        for (auto* action : controlPanelOpenMenu->actions()) {
-            if (action->data().toString() == QStringLiteral("/tmp/second.nec"))
-                action->trigger();
-            if (action->objectName() == QStringLiteral("controlPanelClearRecentModels"))
-                action->trigger();
-        }
+    const auto longStudyKeepsWidth = modelTree->minimumSizeHint().width() == widthBeforeLongStudy
+        && convergenceState->toolTip() == longStudy;
+    modelTree->clearStudy(Study::AverageGain);
+    const auto studyCleared = averageGainState->text() == QStringLiteral("not run");
+    for (const auto* name : {"modelTreeAverageGainRun", "modelTreeConvergenceRun"}) {
+        if (auto* run = modelTree->findChild<QToolButton*>(QString::fromLatin1(name))) run->click();
     }
-    const auto staleInitiallyHidden = controlPanelResultState != nullptr
-        && controlPanelResultState->text() == QStringLiteral("Results current");
-    controlPanel.markResultsStale();
+    const auto studyRunButtons = treeAverageGainTriggered && treeConvergenceTriggered;
+    // A row picked by the user is reported; one picked by the window is not.
+    const auto collapsedHeight = modelTree->sizeHint().height();
+    group(QStringLiteral("Wires"))->setExpanded(true);
+    const auto treeGrowsWithRows = modelTree->sizeHint().height() > collapsedHeight;
+    modelTree->setCurrentItem(group(QStringLiteral("Wires"))->child(0));
+    const auto wireReported = !reportedSelections.empty()
+        && reportedSelections.back() == ModelSelection{ModelNode::Wire, 1};
+    allowSelectionChange = false;
+    modelTree->setCurrentItem(group(QStringLiteral("Frequency")));
+    const auto selectionHeld = modelTree->currentSelection()
+        && *modelTree->currentSelection() == ModelSelection{ModelNode::Wire, 1};
+    allowSelectionChange = true;
+    const auto reportedBefore = reportedSelections.size();
+    modelTree->select({ModelNode::Source, -1, 3});
+    const auto windowSelectionQuiet = reportedSelections.size() == reportedBefore
+        && modelTree->currentSelection()
+        && *modelTree->currentSelection() == ModelSelection{ModelNode::Source, -1, 3};
+    modelTree->setModel(antenna, setup, modelTreeDocument);
+    const auto selectionSurvivesRebuild = modelTree->currentSelection()
+        && *modelTree->currentSelection() == ModelSelection{ModelNode::Source, -1, 3};
+    modelTree->setCurrentItem(group(QStringLiteral("Deck")));
+    emit modelTree->itemClicked(group(QStringLiteral("Deck")), 0);
+    const auto deckActivated = activatedSelection
+        && activatedSelection->node == ModelNode::Deck;
+    QImage modelTreeImage(460, 700, QImage::Format_ARGB32_Premultiplied);
+    modelTreeImage.fill(Qt::transparent); QPainter modelTreePainter(&modelTreeImage);
+    modelColumn.render(&modelTreePainter); modelTreePainter.end();
+    const auto modelTreeStateVisible = modelTreeGroups && modelTreeSummaries && studiesShown
+        && studyCleared && studyRunButtons;
+    // The properties pane: leaving applies a valid edit, an invalid one asks first, Enter
+    // applies and Esc reverts.
+    auto* wirePage = new necwb::ui::WirePropertiesEditor;
+    const auto& paneWire = antenna.wires().front();
+    wirePage->setWire(paneWire, antenna, necwb::model::LengthUnit::Meter);
+    auto wireApplications = 0;
+    std::optional<necwb::model::Wire> appliedWire;
+    wirePage->setAppliedCallback([&](const auto&, const necwb::model::Wire& updated) {
+        ++wireApplications;
+        appliedWire = updated;
+    });
+    propertiesPane->setDiscardCallback([wirePage](QWidget* page) {
+        if (page == wirePage) wirePage->discardPendingEdits();
+    });
+    modelColumn.showPage(wirePage, QStringLiteral("Wire 1"));
     application.processEvents();
-    const auto staleStateVisible = controlPanelResultState != nullptr
-        && controlPanelResultState->text() == QStringLiteral("Results stale")
-        && controlPanelFooter != nullptr
-        && controlPanelFooter->text().contains(QStringLiteral("results stale"));
-    controlPanel.setResults(result, QStringLiteral("Model: test.nec · Run: controlPanel"), false);
-    if (controlPanelAverageGainRun != nullptr) controlPanelAverageGainRun->click();
-    if (controlPanelConvergenceRun != nullptr) controlPanelConvergenceRun->click();
-    if (controlPanelRuns != nullptr) controlPanelRuns->click();
-    if (controlPanelOptimize != nullptr) controlPanelOptimize->click();
-    if (controlPanelBackend != nullptr) controlPanelBackend->click();
-    if (controlPanelRows != nullptr) {
-        QMetaObject::invokeMethod(controlPanelRows, "cellClicked", Qt::DirectConnection,
-            Q_ARG(int, static_cast<int>(necwb::ui::ControlPanel::Editor::Requests)),
-            Q_ARG(int, 0));
-    }
-    const auto controlPanelStateVisible = controlPanelName != nullptr
-        && controlPanelName->text().contains(QStringLiteral("test.nec"))
-        && controlPanelName->text().contains(QLatin1Char('*'))
-        && controlPanelBackend != nullptr
-        && controlPanelBackend->text() == QStringLiteral("Engine: nec2")
-        && !controlPanelBackend->autoRaise()
-        && controlPanelFooter != nullptr
-        && controlPanelFooter->text().contains(QStringLiteral("Last run"))
-        && studiesCleared
-        && controlPanelAverageGain != nullptr
-        && controlPanelAverageGain->text() == QStringLiteral("failed")
-        && controlPanelConvergence != nullptr
-        && controlPanelConvergence->text() == QStringLiteral("not run")
-        && staleInitiallyHidden && staleStateVisible;
-    const auto controlPanelDenseLayout = controlPanelRows != nullptr
-        && controlPanelRows->rowCount() == 10
-        && controlPanelRows->verticalHeader()->defaultSectionSize() <= 24
-        && controlPanelRows->height() <= 244
-        && controlPanel.sizeHint().width() <= 700;
-    const auto controlPanelActionsCorrect = controlPanelOpen != nullptr
-        && controlPanelOpen->defaultAction() == &openAction
-        && controlPanelOpen->popupMode() == QToolButton::MenuButtonPopup
-        && controlPanelOpenMenu != nullptr
-        && recentModelOpened == QStringLiteral("/tmp/second.nec")
-        && recentModelsCleared
-        && controlPanelSave != nullptr && controlPanelSave->defaultAction() == &saveAction
-        && controlPanelCheck != nullptr && controlPanelCheck->defaultAction() == &checkAction
-        && controlPanelRun != nullptr && controlPanelRun->defaultAction() == &runAction
-        && controlPanelSweep != nullptr && controlPanelSweep->defaultAction() == &sweepAction
-        && controlPanelStop != nullptr && controlPanelStop->defaultAction() == &stopAction
-        && controlPanelAverageGainRun != nullptr
-        && controlPanelAverageGainRun->text() == QStringLiteral("Run")
-        && controlPanelConvergenceRun != nullptr
-        && controlPanelConvergenceRun->text() == QStringLiteral("Run")
-        && controlPanelAverageGainTriggered && controlPanelConvergenceTriggered;
-    // Named separately so a platform-only failure says which check broke.
-    const std::array controlPanelChecks{
-        std::pair{"actions", controlPanelActionsCorrect},
-        std::pair{"state", controlPanelStateVisible},
-        std::pair{"dense layout", controlPanelDenseLayout},
-        std::pair{"long study status keeps width", longStudyKeepsWidth},
-        std::pair{"run history", runHistoryOpened},
-        std::pair{"workspace", controlPanelWorkspaceOpened},
-        std::pair{"no view launchers", noViewLaunchers},
-        std::pair{"engine opens solver", controlPanelSolverOpened},
-        std::pair{"editor", controlPanelEditorOpened},
+    auto* endZ = wirePage->findChild<QDoubleSpinBox*>(QStringLiteral("wireCoordinateEditor5"));
+    auto* startZ = wirePage->findChild<QDoubleSpinBox*>(QStringLiteral("wireCoordinateEditor2"));
+    if (endZ == nullptr || startZ == nullptr) return NECWB_SMOKE_FAILURE("wire editor controls");
+    endZ->setValue(0.75);
+    const auto validEditApplied = wirePage->hasPendingEdits() && propertiesPane->commitPendingEdits()
+        && !wirePage->hasPendingEdits() && wireApplications == 1 && appliedWire
+        && std::abs(appliedWire->end.z - 0.75) < 1.0e-9;
+    const auto answerInvalidEdit = [](QMessageBox::StandardButton answer) {
+        QTimer::singleShot(0, [answer] {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))
+                box->button(answer)->click();
+        });
     };
-    for (const auto& [name, passed] : controlPanelChecks) {
+    // An end on the start point is not a wire.
+    endZ->setValue(startZ->value());
+    answerInvalidEdit(QMessageBox::Cancel);
+    const auto invalidEditHeld = !propertiesPane->commitPendingEdits()
+        && wirePage->hasPendingEdits() && wireApplications == 1;
+    answerInvalidEdit(QMessageBox::Discard);
+    const auto invalidEditDiscarded = propertiesPane->commitPendingEdits()
+        && !wirePage->hasPendingEdits() && wireApplications == 1;
+    endZ->setValue(0.6);
+    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(propertiesPane, &enter);
+    const auto enterApplies = !wirePage->hasPendingEdits() && wireApplications == 2;
+    endZ->setValue(0.9);
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(propertiesPane, &escape);
+    const auto escapeReverts = !wirePage->hasPendingEdits() && wireApplications == 2
+        && std::abs(endZ->value() - paneWire.end.z) < 1.0e-9;
+    modelColumn.showPage(nullptr, {});
+    application.processEvents();
+    const auto paneHides = propertiesPane->isHidden() && propertiesPane->currentPage() == nullptr;
+    // The toolbar: one row with the engine; Configure… is a command, not an engine.
+    QMenu recentModels;
+    QAction toolOpen(QStringLiteral("&Open…")), toolSave(QStringLiteral("&Save")),
+        toolRun(QStringLiteral("&Run Analysis")), toolStop(QStringLiteral("S&top")),
+        toolSweep(QStringLiteral("Quick Frequency &Sweep…")), toolCheck(QStringLiteral("&Check Model")),
+        toolOptimize(QStringLiteral("&Optimize"));
+    necwb::ui::WorkbenchToolBar toolBar({.open = &toolOpen, .recentModels = &recentModels,
+        .save = &toolSave, .run = &toolRun, .stop = &toolStop, .sweep = &toolSweep,
+        .check = &toolCheck, .optimize = &toolOptimize});
+    QString selectedBackend;
+    auto configureRequested = false;
+    toolBar.setBackendSelectedCallback([&](const QString& id) { selectedBackend = id; });
+    toolBar.setConfigureCallback([&] { configureRequested = true; });
+    toolBar.setBackend(QStringLiteral("opennec"));
+    auto* backend = toolBar.findChild<QComboBox*>(QStringLiteral("toolBarBackend"));
+    auto* toolOpenButton = toolBar.findChild<QToolButton*>(QStringLiteral("toolBarOpen"));
+    const auto backendShownQuietly = backend != nullptr
+        && backend->currentData().toString() == QStringLiteral("opennec") && selectedBackend.isEmpty();
+    if (backend != nullptr) {
+        emit backend->activated(backend->findData(QStringLiteral("nec2dxs")));
+        emit backend->activated(backend->count() - 1);
+    }
+    const auto toolBarValid = backendShownQuietly && selectedBackend == QStringLiteral("nec2dxs")
+        && configureRequested && backend->currentData().toString() == QStringLiteral("nec2dxs")
+        && toolOpenButton != nullptr && toolOpenButton->menu() == &recentModels
+        && toolRun.iconText() == QStringLiteral("Run") && toolRun.text() == QStringLiteral("&Run Analysis");
+    const std::array modelTreeChecks{std::pair{"groups", modelTreeGroups},
+        std::pair{"summaries", modelTreeSummaries}, std::pair{"studies", studiesShown},
+        std::pair{"long study keeps width", longStudyKeepsWidth},
+        std::pair{"study cleared", studyCleared}, std::pair{"study run buttons", studyRunButtons},
+        std::pair{"tree grows with rows", treeGrowsWithRows}, std::pair{"wire reported", wireReported},
+        std::pair{"selection held", selectionHeld},
+        std::pair{"window selection quiet", windowSelectionQuiet},
+        std::pair{"selection survives rebuild", selectionSurvivesRebuild},
+        std::pair{"deck activated", deckActivated},
+        std::pair{"valid edit applied", validEditApplied},
+        std::pair{"invalid edit held", invalidEditHeld},
+        std::pair{"invalid edit discarded", invalidEditDiscarded},
+        std::pair{"enter applies", enterApplies}, std::pair{"escape reverts", escapeReverts},
+        std::pair{"pane hides", paneHides}, std::pair{"toolbar", toolBarValid}};
+    for (const auto& [name, passed] : modelTreeChecks) {
         if (passed) continue;
-        std::fprintf(stderr, "controlPanel %s failed: sizeHint %d, rows %d, row size %d, "
-            "footer \"%s\"\n", name, controlPanel.sizeHint().width(),
-            controlPanelRows == nullptr ? -1 : controlPanelRows->height(),
-            controlPanelRows == nullptr ? -1
-                : controlPanelRows->verticalHeader()->defaultSectionSize(),
-            controlPanelFooter == nullptr ? "" : qUtf8Printable(controlPanelFooter->text()));
-        return NECWB_SMOKE_FAILURE("controlPanel workspace");
+        std::fprintf(stderr, "model tree %s failed: groups \"%s\", wires \"%s\"\n", name,
+            qUtf8Printable(groupNames.join(QStringLiteral(", "))),
+            qUtf8Printable(summary(QStringLiteral("Wires"))));
+        return NECWB_SMOKE_FAILURE("model tree");
     }
     // The results column: one selected frequency drives the key numbers, the thumbnails
     // and the full view, and survives a new run that has it.
@@ -3681,9 +3715,9 @@ auto main(int argc, char* argv[]) -> int
     const necwb::model::Wire gaugeWire{2, {-1.0, 0.0, 0.0}, {1.0, 0.0, 0.0},
         11, gaugeRadius, 1};
     gaugeModel.addWire(gaugeWire);
-    necwb::ui::WirePropertiesDialog wireProperties(gaugeWire, gaugeModel,
-        necwb::model::LengthUnit::Meter);
-    auto* gaugeEditor = wireProperties.findChild<QComboBox*>(QStringLiteral("wireGaugeDialogEditor"));
+    necwb::ui::WirePropertiesEditor wireProperties;
+    wireProperties.setWire(gaugeWire, gaugeModel, necwb::model::LengthUnit::Meter);
+    auto* gaugeEditor = wireProperties.findChild<QComboBox*>(QStringLiteral("wireGaugeEditor"));
     const auto gaugeDropdownValid = gaugeEditor != nullptr
         && gaugeEditor->currentData().toInt() == 12;
     QTabWidget setupHost;
@@ -4540,14 +4574,14 @@ auto main(int argc, char* argv[]) -> int
     const auto passed = !image.isNull() && engineeringAxes && candidatePlotValid
         && !summaryImage.isNull()
         && !fieldImage.isNull() && !currentImage.isNull()
-        && !controlPanelImage.isNull() && controlPanelStateVisible
+        && !modelTreeImage.isNull() && modelTreeStateVisible
         && resultPanelDetached && resultPanelHiddenButLive
         && resultPanelRaisedWithUpdate && resultPanelRestoredHidden
         && resultPanelOpenStateSaved && resultPanelRestoredVisible
         && !welcomeImage.isNull() && welcomeStateValid && !examplesOpened && storeValid
         && runReviewValid
         && runReviewSwitchesCleanly
-        && solverSetupCompact && controlPanelCompact && structuredCardsCompact
+        && solverSetupCompact && modelTreeCompact && structuredCardsCompact
         && parameterEditorCompact && requestEditorCompact && runReviewCompact
         && runDeletionSafe
         && !structuredImage.isNull() && invalidEditBlocked && duplicateFrequencyBlocked

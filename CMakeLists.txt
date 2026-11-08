@@ -111,6 +111,14 @@ if(NECWB_BUILD_GUI)
         src/ui/WorkbenchLayout.h
         src/ui/WorkbenchStatusBar.cpp
         src/ui/WorkbenchStatusBar.h
+        src/ui/WorkbenchToolBar.cpp
+        src/ui/WorkbenchToolBar.h
+        src/ui/modeltree/ModelColumn.cpp
+        src/ui/modeltree/ModelColumn.h
+        src/ui/modeltree/ModelTree.cpp
+        src/ui/modeltree/ModelTree.h
+        src/ui/modeltree/PropertiesPane.cpp
+        src/ui/modeltree/PropertiesPane.h
         src/ui/results/KeyNumberStrip.cpp
         src/ui/results/KeyNumberStrip.h
         src/ui/results/ResultFullView.cpp
@@ -174,8 +182,6 @@ if(NECWB_BUILD_GUI)
         src/ui/cards/WireCardEditor.h
         src/ui/cards/StructuredCardEditor.cpp
         src/ui/cards/StructuredCardEditor.h
-        src/ui/controlpanel/ControlPanel.cpp
-        src/ui/controlpanel/ControlPanel.h
         src/ui/editor/NecEditor.cpp
         src/ui/editor/NecEditor.h
         src/ui/editor/NecHighlighter.cpp
@@ -193,8 +199,8 @@ if(NECWB_BUILD_GUI)
         src/ui/geometry/Geometry3DView.h
         src/ui/geometry/GeometrySettingsDialog.cpp
         src/ui/geometry/GeometrySettingsDialog.h
-        src/ui/geometry/WirePropertiesDialog.cpp
-        src/ui/geometry/WirePropertiesDialog.h
+        src/ui/geometry/WirePropertiesEditor.cpp
+        src/ui/geometry/WirePropertiesEditor.h
         src/ui/optimization/OptimizationWorkspace.cpp
         src/ui/optimization/OptimizationWorkspace.h
         src/ui/optimization/OptimizationWorkspaceCandidates.cpp
@@ -216,8 +222,6 @@ if(NECWB_BUILD_GUI)
         src/ui/setup/SetupEditor.h
         src/ui/setup/LoadNetworkEditor.cpp
         src/ui/setup/LoadNetworkEditor.h
-        src/ui/setup/ExcitationPropertiesDialog.cpp
-        src/ui/setup/ExcitationPropertiesDialog.h
         src/ui/welcome/WelcomePage.cpp
         src/ui/welcome/WelcomePage.h
     )
