@@ -19,7 +19,7 @@ authoritative for numerical execution.
 | Unknown extension card | Preserved with warning | Preserved with warning | Preserved with warning |
 
 The profile follows **Setup → Solver**. Backend-specific diagnostics identify the
-selected target by name and the Model Check report links back to Solver settings.
+selected target by name and the Problems tab links back to Solver settings.
 
 Direct **4nec2 NEC2dXS** execution also has a backend-specific output boundary:
 recognized numeric cards in the generated `model.nec` use canonical single-space

@@ -103,13 +103,25 @@ if(NECWB_BUILD_GUI)
     qt_add_library(necwb_ui STATIC
         src/ui/MainWindow.cpp
         src/ui/MainWindow.h
+        src/ui/BottomPanel.cpp
+        src/ui/BottomPanel.h
         src/ui/DetachablePanel.cpp
         src/ui/DetachablePanel.h
+        src/ui/WorkbenchStatusBar.cpp
+        src/ui/WorkbenchStatusBar.h
         src/ui/FileIo.h
         src/ui/ParameterFieldStyle.cpp
         src/ui/ParameterFieldStyle.h
         src/ui/WorkspaceNavigator.cpp
         src/ui/WorkspaceNavigator.h
+        src/ui/bottom/ProblemsView.cpp
+        src/ui/bottom/ProblemsView.h
+        src/ui/bottom/RawOutputView.cpp
+        src/ui/bottom/RawOutputView.h
+        src/ui/bottom/RunHistoryView.cpp
+        src/ui/bottom/RunHistoryView.h
+        src/ui/bottom/RunLogView.cpp
+        src/ui/bottom/RunLogView.h
         src/ui/analysis/AnalysisSetupEditor.cpp
         src/ui/analysis/AnalysisSetupEditor.h
         src/ui/analysis/AnalysisRequestEditor.cpp

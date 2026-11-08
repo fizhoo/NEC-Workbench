@@ -276,7 +276,7 @@ auto main(int argc, char* argv[]) -> int
     auto consolidatedSetupNavigation = false;
     auto linkedParameterDeleted = false;
     auto resultWindowNavigation = false;
-    auto runHistoryWindowNavigation = false;
+    auto bottomPanelNavigation = false;
     auto validationWindowNavigation = false;
     auto modelWindowNavigation = false;
     auto separateGeometryWindow = false;
@@ -287,7 +287,6 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("resultWindows/impedance"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/currents"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/radiation"));
-    resultWindowSettings.remove(QStringLiteral("resultWindows/raw-output"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/validation"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/impedance/overlayVisible"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/radiation/overlayVisible"));
@@ -295,7 +294,7 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/geometry-editor"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/analysis-setup"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
-    resultWindowSettings.remove(QStringLiteral("workspaceWindows/run-history"));
+    resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
     resultWindowSettings.sync();
     {
         necwb::ui::MainWindow mainWindow;
@@ -318,8 +317,9 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("validationWorkspace"));
         auto* resultsWorkspace = mainWindow.findChild<QTabWidget*>(
             QStringLiteral("resultsWorkspace"));
-        auto* runHistoryHostStatus = mainWindow.findChild<QLabel*>(
-            QStringLiteral("run-historyStatusLabel"));
+        auto* bottomPanel = mainWindow.findChild<QWidget*>(QStringLiteral("bottomPanel"));
+        auto* toggleBottomPanel = mainWindow.findChild<QAction*>(
+            QStringLiteral("toggleBottomPanelAction"));
         auto* validationSummary = mainWindow.findChild<QLabel*>(
             QStringLiteral("validationOverviewSummary"));
         const auto* optionalProjectDock = mainWindow.findChild<QWidget*>(
@@ -342,10 +342,8 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("showCurrentsWindowAction"));
         auto* showRadiationWindow = mainWindow.findChild<QAction*>(
             QStringLiteral("showRadiationWindowAction"));
-        auto* showRawOutputWindow = mainWindow.findChild<QAction*>(
-            QStringLiteral("showRawOutputWindowAction"));
-        auto* showRunHistory = mainWindow.findChild<QAction*>(
-            QStringLiteral("showRunHistoryAction"));
+        auto* showRawOutput = mainWindow.findChild<QAction*>(
+            QStringLiteral("showRawOutputAction"));
         auto* impedanceOverlay = mainWindow.findChild<QCheckBox*>(
             QStringLiteral("impedanceShowHistoricalOverlay"));
         auto* impedanceOverlayChooser = mainWindow.findChild<QPushButton*>(
@@ -372,7 +370,7 @@ auto main(int argc, char* argv[]) -> int
             && runMenu->actions().contains(mainWindow.findChild<QAction*>(
                 QStringLiteral("openRunFolderAction")))
             // The dashboard window is fixed to its content, and run progress lives in
-            // the Run Monitor window rather than the status bar.
+            // the bottom panel's Run log rather than a status bar widget.
             && mainWindow.layout()->sizeConstraint() == QLayout::SetFixedSize
             && !mainWindow.statusBar()->isSizeGripEnabled()
             && mainWindow.findChild<QWidget*>(QStringLiteral("solverActivityWidget")) == nullptr;
@@ -468,13 +466,10 @@ auto main(int argc, char* argv[]) -> int
                     QStringLiteral("workspaceWindows/optimization/detached"), false).toBool();
         }
         if (resultWindowsMenu != nullptr && showImpedanceWindow != nullptr
-            && showCurrentsWindow != nullptr && showRadiationWindow != nullptr
-            && showRawOutputWindow != nullptr && showRunHistory != nullptr) {
+            && showCurrentsWindow != nullptr && showRadiationWindow != nullptr) {
             showImpedanceWindow->trigger();
             showCurrentsWindow->trigger();
             showRadiationWindow->trigger();
-            showRawOutputWindow->trigger();
-            showRunHistory->trigger();
             application.processEvents();
             const auto* impedanceWindow = topLevelDialog(
                 QStringLiteral("impedanceResultWindow"));
@@ -482,32 +477,45 @@ auto main(int argc, char* argv[]) -> int
                 QStringLiteral("currentsResultWindow"));
             const auto* radiationWindow = topLevelDialog(
                 QStringLiteral("radiationResultWindow"));
-            const auto* rawOutputWindow = topLevelDialog(
-                QStringLiteral("rawOutputWindow"));
-            const auto* runHistoryWindow = topLevelDialog(
-                QStringLiteral("runHistoryWindow"));
-            const auto* runHistoryTable = runHistoryWindow != nullptr
-                ? runHistoryWindow->findChild<QTableWidget*>(
-                    QStringLiteral("analysisRunsTable")) : nullptr;
-            resultWindowNavigation = resultWindowsMenu->actions().contains(showImpedanceWindow)
+            resultWindowNavigation = resultWindowsMenu->actions().size() == 3
+                && resultWindowsMenu->actions().contains(showImpedanceWindow)
                 && resultWindowsMenu->actions().contains(showCurrentsWindow)
                 && resultWindowsMenu->actions().contains(showRadiationWindow)
-                && resultWindowsMenu->actions().contains(showRawOutputWindow)
-                && resultWindowsMenu->actions().contains(showRunHistory)
                 && impedanceWindow != nullptr && impedanceWindow->isVisible()
                 && currentsWindow != nullptr && currentsWindow->isVisible()
                 && radiationWindow != nullptr && radiationWindow->isVisible()
-                && rawOutputWindow != nullptr && rawOutputWindow->isVisible()
-                && rawOutputWindow->findChild<QPlainTextEdit*>(
-                    QStringLiteral("analysisRawOutput")) != nullptr
                 && impedanceOverlay != nullptr && impedanceOverlayChooser != nullptr
                 && radiationOverlay != nullptr && radiationOverlayChooser != nullptr
                 && !impedanceOverlay->isChecked() && !radiationOverlay->isChecked()
                 && resultsWorkspace == nullptr;
-            runHistoryWindowNavigation = runHistoryWindow != nullptr
-                && runHistoryWindow->isVisible()
-                && runHistoryTable != nullptr && runHistoryTable->window() == runHistoryWindow
-                && runHistoryHostStatus != nullptr && !runHistoryHostStatus->isVisible();
+        }
+        // Run history and raw output open as tabs of the bottom panel inside the main
+        // window; the panel starts collapsed, and its View toggle collapses it again.
+        if (bottomPanel != nullptr && toggleBottomPanel != nullptr && reviewRuns != nullptr
+            && showRawOutput != nullptr) {
+            const auto startedCollapsed = !toggleBottomPanel->isChecked();
+            // The window is fixed to its central widget, so its size is the window's size.
+            const auto collapsedSize = mainWindow.centralWidget()->minimumSize();
+            reviewRuns->trigger();
+            application.processEvents();
+            const auto* runsTable = bottomPanel->findChild<QTableWidget*>(
+                QStringLiteral("analysisRunsTable"));
+            const auto runsShown = runsTable != nullptr && runsTable->isVisibleTo(&mainWindow)
+                && runsTable->window() == &mainWindow && toggleBottomPanel->isChecked()
+                && mainWindow.centralWidget()->minimumHeight() > collapsedSize.height();
+            showRawOutput->trigger();
+            application.processEvents();
+            const auto* rawOutput = bottomPanel->findChild<QPlainTextEdit*>(
+                QStringLiteral("analysisRawOutput"));
+            const auto rawOutputShown = rawOutput != nullptr && rawOutput->isVisibleTo(&mainWindow)
+                && runsTable != nullptr && !runsTable->isVisibleTo(&mainWindow);
+            toggleBottomPanel->trigger();
+            application.processEvents();
+            bottomPanelNavigation = startedCollapsed && runsShown && rawOutputShown
+                && rawOutput != nullptr && !rawOutput->isVisibleTo(&mainWindow)
+                && mainWindow.centralWidget()->minimumSize() == collapsedSize
+                && topLevelDialog(QStringLiteral("runHistoryWindow")) == nullptr
+                && topLevelDialog(QStringLiteral("rawOutputWindow")) == nullptr;
         }
         // A parameter linked into a card field (as the optimizer does) can still be
         // deleted: confirming writes its current value back into the field.
@@ -546,7 +554,6 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("resultWindows/impedance"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/currents"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/radiation"));
-    resultWindowSettings.remove(QStringLiteral("resultWindows/raw-output"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/validation"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/impedance/overlayVisible"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/radiation/overlayVisible"));
@@ -554,7 +561,7 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/geometry-editor"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/analysis-setup"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
-    resultWindowSettings.remove(QStringLiteral("workspaceWindows/run-history"));
+    resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
     resultWindowSettings.sync();
     if (!consolidatedSetupNavigation)
         return NECWB_SMOKE_FAILURE("consolidated setup navigation");
@@ -562,8 +569,8 @@ auto main(int argc, char* argv[]) -> int
         return NECWB_SMOKE_FAILURE("delete linked parameter");
     if (!resultWindowNavigation)
         return NECWB_SMOKE_FAILURE("result window navigation");
-    if (!runHistoryWindowNavigation)
-        return NECWB_SMOKE_FAILURE("run history window navigation");
+    if (!bottomPanelNavigation)
+        return NECWB_SMOKE_FAILURE("bottom panel navigation");
     if (!validationWindowNavigation)
         return NECWB_SMOKE_FAILURE("validation window navigation");
     if (!modelWindowNavigation)

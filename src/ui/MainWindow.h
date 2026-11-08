@@ -28,17 +28,11 @@
 class QAction;
 class QCloseEvent;
 class QDockWidget;
-class QDialog;
 class QComboBox;
 class QDoubleSpinBox;
 class QEvent;
 class QLabel;
-class QLineEdit;
 class QMenu;
-class QPlainTextEdit;
-class QProgressBar;
-class QPushButton;
-class QTableWidget;
 class QTabWidget;
 class QStackedWidget;
 class QTreeWidget;
@@ -74,6 +68,8 @@ class ParameterEditor;
 class DetachablePanel;
 class ResultWindowCoordinator;
 class HistoricalOverlayControl;
+class WorkbenchStatusBar;
+class BottomPanel;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -136,8 +132,6 @@ private:
     [[nodiscard]] auto confirmPendingEdits(QWidget* page) -> bool;
     void showPrimaryResultsWindow();
     void setLiveResultStatus(const QString& status);
-    void jumpRawOutputToSelectedFrequency();
-    void findInRawOutput();
     void showEditor(EditorDestination destination, int geometryTab = 0);
     void fitWindowToDashboard();
     void setDisplayLengthUnit(model::LengthUnit unit);
@@ -163,7 +157,7 @@ private:
     void checkModel(bool presentReport = false);
     void showGeneratedSolverDeck();
     void clearCheckResults();
-    void goToDiagnostic(QTreeWidgetItem* item);
+    void goToDiagnostic(std::size_t sourceLine);
     void activateProjectItem(QTreeWidgetItem* item);
     void selectWireInProject(int tag);
     void selectExcitation(std::size_t sourceLine);
@@ -237,15 +231,12 @@ private:
     void startSolverProcess(const analysis::SolverCommand& command, const QString& activity);
     void cancelAnalysis();
     void appendSolverOutput(const QString& text);
-    void showRunMonitor(bool manuallyRequested);
     void updateSolverActivity();
     void completeSolverActivity(const QString& status);
     void finishAnalysis(SolverProcessResult result);
     void setCurrentRunStatus(const QString& status);
-    void loadRunHistory();
     void showRunHistory();
     void refreshDashboardRuns();
-    void addRunRecord(const AnalysisRunRecord& record, bool prepend);
     void loadSelectedRun();
     void inspectSelectedRunInput();
     void openSelectedRunSnapshot();
@@ -312,8 +303,8 @@ private:
     QAction* resultsModuleAction_{};
     QAction* optimizeModuleAction_{};
     QAction* resetLayoutAction_{};
-    QAction* modelCheckWindowAction_{};
-    QAction* runMonitorWindowAction_{};
+    QAction* problemsAction_{};
+    QAction* runLogAction_{};
     QAction* compactDensityAction_{};
     QAction* standardDensityAction_{};
     QAction* spaciousDensityAction_{};
@@ -334,15 +325,11 @@ private:
     DetachablePanel* impedancePanel_{};
     DetachablePanel* currentsPanel_{};
     DetachablePanel* radiationPanel_{};
-    DetachablePanel* rawOutputPanel_{};
     DetachablePanel* validationPanel_{};
-    DetachablePanel* runHistoryPanel_{};
     DetachablePanel* modelPanel_{};
     DetachablePanel* geometryPanel_{};
     DetachablePanel* setupPanel_{};
     DetachablePanel* optimizationPanel_{};
-    QComboBox* rawOutputFrequencyControl_{};
-    QLineEdit* rawOutputFindControl_{};
     ControlPanel* controlPanel_{};
     WelcomePage* welcomePage_{};
     WireCardEditor* wireCardEditor_{};
@@ -375,32 +362,12 @@ private:
     int previousAnalysisWorkspaceIndex_{-1};
     bool restoringWorkspaceTab_{};
     QTabWidget* validationWorkspace_{};
-    QTableWidget* analysisRuns_{};
-    QPlainTextEdit* analysisOutput_{};
-    QPushButton* cancelRunButton_{};
-    QPushButton* openRunFolderButton_{};
-    QPushButton* openRunResultsButton_{};
-    QPushButton* inspectRunInputButton_{};
-    QPushButton* openRunSnapshotButton_{};
-    QPushButton* pinRunReferenceButton_{};
-    QPushButton* editRunNoteButton_{};
-    QPushButton* deleteRunButton_{};
     QTreeWidget* projectTree_{};
-    QTreeWidget* diagnostics_{};
-    QPlainTextEdit* solverOutput_{};
     QDockWidget* projectDock_{};
-    QDialog* modelCheckWindow_{};
-    QDialog* runMonitorWindow_{};
-    QLabel* validationSummary_{};
-    QLabel* validationScope_{};
     QLabel* validationOverviewSummary_{};
     QLabel* validationOverviewScope_{};
-    QLabel* runMonitorContextLabel_{};
-    QLabel* runMonitorStatusLabel_{};
-    QProgressBar* runMonitorProgress_{};
-    QPushButton* runMonitorStopButton_{};
-    QLabel* checkStatus_{};
-    QLabel* modelFileStatus_{};
+    WorkbenchStatusBar* statusBar_{};
+    BottomPanel* bottomPanel_{};
     analysis::AnalysisResult displayedResults_;
     mutable nec::NecSourceCache activeSourceCache_;
     model::AntennaModel currentModel_;
@@ -416,7 +383,6 @@ private:
     int solverTimeoutSeconds_{120};
     SolverProcessRunner* solverRunner_{};
     QTimer* solverActivityTimer_{};
-    QTimer* runMonitorAutoHideTimer_{};
     QElapsedTimer solverElapsed_;
     QString solverActivityName_;
     QString solverActivityPhase_;
@@ -441,7 +407,6 @@ private:
     double currentPeakSearchFrequencyMHz_{};
     // SWR reference requested by the optimization study whose baseline is running.
     double currentBaselineReferenceImpedanceOhms_{50.0};
-    int currentRunRow_{-1};
     int geometryTabIndex_{};
     int geometry3DTabIndex_{};
     int structuredSourceTabIndex_{1};
@@ -467,8 +432,6 @@ private:
     bool hasNecModel_{};
     bool resultsAvailable_{};
     bool liveResultsStale_{};
-    bool runHistoryLoaded_{};
-    bool runMonitorPinnedOpen_{};
     bool suppressSourceHistoryRecording_{};
     std::optional<SourceHistoryEntry> pendingSourceHistoryEntry_;
     std::vector<SourceHistoryEntry> sourceUndoHistory_;
