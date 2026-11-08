@@ -135,7 +135,9 @@ auto substituteSymbolInSource(std::string_view source, std::string_view name,
     auto lines = sourceLines(document);
     const auto target = lower(trim(name));
     for (const auto& card : document.cards()) {
-        if (card.kind == NecCardKind::Comment || card.kind == NecCardKind::Blank) continue;
+        // Match NecSymbolResolver, which never resolves symbols on these lines.
+        if (card.kind == NecCardKind::Comment || card.kind == NecCardKind::Blank
+            || card.kind == NecCardKind::Unknown) continue;
         lines[card.lineNumber - 1] = substituteSymbol(card.sourceText, target, replacement, count);
     }
     return joinSource(lines, document);

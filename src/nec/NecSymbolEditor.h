@@ -25,7 +25,8 @@ namespace necwb::nec {
     std::size_t lineNumber, std::size_t fieldIndex,
     std::string_view expression) -> std::optional<std::string>;
 
-// Counts uses of a symbol in card fields and other SY expressions, ignoring comments.
+// Counts uses of a symbol in card fields and other SY expressions, ignoring comments
+// and unrecognized cards, which the resolver leaves untouched.
 [[nodiscard]] auto symbolReferenceCount(std::string_view source,
     std::string_view name) -> std::size_t;
 

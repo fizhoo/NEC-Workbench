@@ -705,6 +705,10 @@ void testSymbolResolution()
                "GW 1 11 0 0 -2.5 0 0 -(-2.5) 1e-3\r\nEX 0 1 6 0 (-2.5)^2 0") != std::string::npos
             && necwb::nec::NecSymbolResolver{}.resolve(inlined).ok(),
         "deleting a used symbol writes its value into each use and keeps the deck resolvable");
+    const auto extension = necwb::nec::removeSymbolDefinition("SY len=5\nXX len\nEN\n", 1, "len");
+    expect(extension && necwb::nec::symbolReferenceCount(*extension, "len") == 0
+            && necwb::nec::inlineSymbolReferences(*extension, "len", 5.0) == "XX len\nEN\n",
+        "unrecognized cards are preserved verbatim when a symbol is inlined");
     const std::string fixedCard =
         "CM fixed geometry\r\nGW 1 11 -5 0 6 5 0 6 0.001\r\nGE 0\r\n";
     const auto parameterized = necwb::nec::parameterizeNecCardField(
