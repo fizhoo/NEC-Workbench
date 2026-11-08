@@ -33,6 +33,15 @@ public:
     {
         return {minimumSizeHint().width(), QScrollArea::sizeHint().height()};
     }
+
+protected:
+    // Never wider than its content either, so widening the split adds no empty strip.
+    auto eventFilter(QObject* watched, QEvent* event) -> bool override
+    {
+        if (watched == widget() && event->type() == QEvent::LayoutRequest)
+            setMaximumWidth(widget()->sizeHint().width() + verticalScrollBar()->sizeHint().width());
+        return QScrollArea::eventFilter(watched, event);
+    }
 };
 
 }
@@ -112,6 +121,8 @@ auto WorkbenchLayout::eventFilter(QObject* watched, QEvent* event) -> bool
 
 void WorkbenchLayout::applyLeftColumnWidth(int width)
 {
+    const auto* leftColumn = split_->widget(0);
+    width = std::clamp(width, leftColumn->minimumSizeHint().width(), leftColumn->maximumWidth());
     split_->setSizes({width, std::max(0, split_->width() - split_->handleWidth() - width)});
 }
 

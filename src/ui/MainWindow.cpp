@@ -2274,7 +2274,6 @@ void MainWindow::openFileAtPath(const QString& path)
     analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile(path);
     editor_->document()->setModified(false);
-    showEditor(EditorDestination::RawSource);
     checkModel();
 }
 
