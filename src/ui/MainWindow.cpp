@@ -382,13 +382,6 @@ MainWindow::MainWindow()
     });
     createDocks();
     createMenusAndToolbar();
-    // The main window only shows the dashboard (every module opens in its own window), and
-    // the dashboard does not stretch, so the window is fixed to its content instead of
-    // letting a short window squeeze sections over each other.
-    layout()->setSizeConstraint(QLayout::SetFixedSize);
-    connect(dashboardStack_, &QStackedWidget::currentChanged,
-        this, [this] { fitWindowToDashboard(); });
-    fitWindowToDashboard();
     qApp->installEventFilter(this);
     setWorkspaceDensity(workspaceDensityFromId(QSettings{}.value(
         QStringLiteral("appearance/workspaceDensity"), QStringLiteral("compact")).toString()));
@@ -462,11 +455,6 @@ MainWindow::MainWindow()
 
 auto MainWindow::eventFilter(QObject* watched, QEvent* event) -> bool
 {
-    // Dashboard content changes size (results, stale markers, density), so refit the
-    // window whenever the visible dashboard page asks for a new layout.
-    if (event->type() == QEvent::LayoutRequest && dashboardStack_ != nullptr
-        && watched == dashboardStack_->currentWidget())
-        QTimer::singleShot(0, this, [this] { fitWindowToDashboard(); });
     if (event->type() == QEvent::Show) {
         auto* dialog = qobject_cast<QDialog*>(watched);
         if (dialog != nullptr && dialog->isWindow()
@@ -748,7 +736,6 @@ void MainWindow::createWorkspace()
     bottomPanel_ = new BottomPanel(central);
     centralLayout->addWidget(bottomPanel_);
     setCentralWidget(central);
-    connect(bottomPanel_, &BottomPanel::heightChanged, this, [this] { fitWindowToDashboard(); });
     auto* problems = bottomPanel_->problems();
     connect(problems, &ProblemsView::findingActivated,
         this, [this](std::size_t sourceLine) { goToDiagnostic(sourceLine); });
@@ -2382,23 +2369,6 @@ void MainWindow::openFileAtPath(const QString& path)
     editor_->document()->setModified(false);
     showEditor(EditorDestination::RawSource);
     checkModel();
-}
-
-void MainWindow::fitWindowToDashboard()
-{
-    auto* page = dashboardStack_ == nullptr ? nullptr : dashboardStack_->currentWidget();
-    if (page == nullptr) return;
-    if (isMaximized() || isFullScreen()) showNormal();
-    // The window is fixed to its layout (see the constructor), so sizing the central
-    // widget to the dashboard sizes the whole window, including any visible dock. The bottom
-    // panel adds its height below the dashboard, cut down to keep the window on screen.
-    auto size = page->sizeHint().expandedTo(page->minimumSizeHint());
-    const auto* screen = this->screen();
-    const auto chrome = frameGeometry().height() - centralWidget()->height();
-    const auto room = screen == nullptr ? QWIDGETSIZE_MAX
-        : screen->availableGeometry().bottom() - frameGeometry().top() - chrome - size.height();
-    size.rheight() += bottomPanel_->fitHeight(room);
-    centralWidget()->setFixedSize(size);
 }
 
 void MainWindow::openExample()
@@ -5394,24 +5364,19 @@ void MainWindow::setCurrentFile(QString path)
     if (optimizationPanel_ != nullptr) optimizationPanel_->setStatusText(
         tr("%1 · %2").arg(modelName,
             optimizationWorkspace_->isRunning() ? tr("Running") : tr("Ready")));
-    if (hasNecModel_) QTimer::singleShot(0, this, [this] { fitWindowToDashboard(); });
 }
 
 void MainWindow::restoreWorkspaceLayout()
 {
     QSettings settings;
-    const auto savedGeometry = settings.value(QStringLiteral("mainWindow/geometry")).toByteArray();
-    if (!savedGeometry.isEmpty()) {
-        restoreGeometry(savedGeometry);
-    } else {
-        const auto normalGeometry = settings.value(QStringLiteral("mainWindow/normalGeometry")).toRect();
-        if (normalGeometry.isValid()) setGeometry(normalGeometry);
+    // First start: 85% of the screen's available area, centered.
+    if (!restoreGeometry(settings.value(QStringLiteral("mainWindow/v2/geometry")).toByteArray())
+        && screen() != nullptr) {
+        const auto available = screen()->availableGeometry();
+        setGeometry(QStyle::alignedRect(Qt::LeftToRight, Qt::AlignCenter,
+            available.size() * 0.85, available));
     }
-    const auto savedState = settings.value(QStringLiteral("mainWindow/state")).toByteArray();
-    restoreState(savedState);
-    if (savedState.isEmpty()) resetWorkspaceLayout();
-    // The restored position decides how much of an open bottom panel fits on screen.
-    fitWindowToDashboard();
+    restoreState(settings.value(QStringLiteral("mainWindow/v2/state")).toByteArray());
     auto geometrySettings = geometrySettings_;
     geometrySettings.lengthUnit = static_cast<model::LengthUnit>(settings.value(
         QStringLiteral("model/displayLengthUnit"), static_cast<int>(model::LengthUnit::Meter)).toInt());
@@ -5472,9 +5437,8 @@ void MainWindow::restoreWorkspaceLayout()
 void MainWindow::saveWorkspaceLayout()
 {
     QSettings settings;
-    settings.setValue(QStringLiteral("mainWindow/geometry"), saveGeometry());
-    settings.setValue(QStringLiteral("mainWindow/normalGeometry"), normalGeometry());
-    settings.setValue(QStringLiteral("mainWindow/state"), saveState());
+    settings.setValue(QStringLiteral("mainWindow/v2/geometry"), saveGeometry());
+    settings.setValue(QStringLiteral("mainWindow/v2/state"), saveState());
     settings.setValue(QStringLiteral("model/displayLengthUnit"), static_cast<int>(geometrySettings_.lengthUnit));
     settings.setValue(QStringLiteral("model/snapSpacingMeters"), geometrySettings_.snapSpacingMeters);
     settings.setValue(QStringLiteral("geometry/automaticGridSpacing"), geometrySettings_.automaticGridSpacing);

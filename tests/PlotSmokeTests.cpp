@@ -369,9 +369,10 @@ auto main(int argc, char* argv[]) -> int
             && reviewRuns != nullptr && runMenu->actions().contains(reviewRuns)
             && runMenu->actions().contains(mainWindow.findChild<QAction*>(
                 QStringLiteral("openRunFolderAction")))
-            // The dashboard window is fixed to its content, and run progress lives in
+            // The main window is a normal resizable window, and run progress lives in
             // the bottom panel's Run log rather than a status bar widget.
-            && mainWindow.layout()->sizeConstraint() == QLayout::SetFixedSize
+            && mainWindow.layout()->sizeConstraint() != QLayout::SetFixedSize
+            && mainWindow.maximumSize() == QSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX)
             && !mainWindow.statusBar()->isSizeGripEnabled()
             && mainWindow.findChild<QWidget*>(QStringLiteral("solverActivityWidget")) == nullptr;
         if (openValidation != nullptr) {
@@ -490,19 +491,21 @@ auto main(int argc, char* argv[]) -> int
                 && resultsWorkspace == nullptr;
         }
         // Run history and raw output open as tabs of the bottom panel inside the main
-        // window; the panel starts collapsed, and its View toggle collapses it again.
+        // window; the panel starts collapsed, opens inside the window without resizing it,
+        // and its View toggle collapses it again.
         if (bottomPanel != nullptr && toggleBottomPanel != nullptr && reviewRuns != nullptr
             && showRawOutput != nullptr) {
             const auto startedCollapsed = !toggleBottomPanel->isChecked();
-            // The window is fixed to its central widget, so its size is the window's size.
-            const auto collapsedSize = mainWindow.centralWidget()->minimumSize();
+            const auto windowSize = mainWindow.size();
+            const auto collapsedHeight = bottomPanel->sizeHint().height();
             reviewRuns->trigger();
             application.processEvents();
             const auto* runsTable = bottomPanel->findChild<QTableWidget*>(
                 QStringLiteral("analysisRunsTable"));
             const auto runsShown = runsTable != nullptr && runsTable->isVisibleTo(&mainWindow)
                 && runsTable->window() == &mainWindow && toggleBottomPanel->isChecked()
-                && mainWindow.centralWidget()->minimumHeight() > collapsedSize.height();
+                && bottomPanel->sizeHint().height() > collapsedHeight
+                && mainWindow.size() == windowSize;
             showRawOutput->trigger();
             application.processEvents();
             const auto* rawOutput = bottomPanel->findChild<QPlainTextEdit*>(
@@ -513,7 +516,8 @@ auto main(int argc, char* argv[]) -> int
             application.processEvents();
             bottomPanelNavigation = startedCollapsed && runsShown && rawOutputShown
                 && rawOutput != nullptr && !rawOutput->isVisibleTo(&mainWindow)
-                && mainWindow.centralWidget()->minimumSize() == collapsedSize
+                && bottomPanel->sizeHint().height() == collapsedHeight
+                && mainWindow.size() == windowSize
                 && topLevelDialog(QStringLiteral("runHistoryWindow")) == nullptr
                 && topLevelDialog(QStringLiteral("rawOutputWindow")) == nullptr;
         }

@@ -29,8 +29,7 @@ auto settingsKey(const char* name) -> QString
     return QStringLiteral("ui/bottomPanel/%1").arg(QLatin1String(name));
 }
 
-// Drag handle along the panel's bottom edge. The window grows downward from a fixed top, so
-// the handle sits at the bottom where it follows the pointer.
+// Drag handle along the panel's top edge; dragging up makes the panel taller.
 class ResizeGrip final : public QWidget {
 public:
     ResizeGrip(QWidget* parent, std::function<int()> height, std::function<void(int)> resize)
@@ -49,7 +48,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override
     {
         if (event->buttons() & Qt::LeftButton)
-            resize_(startHeight_ + event->globalPosition().toPoint().y() - startY_);
+            resize_(startHeight_ - (event->globalPosition().toPoint().y() - startY_));
     }
 
 private:
@@ -84,14 +83,17 @@ BottomPanel::BottomPanel(QWidget* parent)
     rawOutput_ = new RawOutputView(pages_);
     for (auto* page : std::initializer_list<QWidget*>{problems_, runLog_, runs_, rawOutput_})
         pages_->addWidget(page);
-    resizeGrip_ = new ResizeGrip(this, [this] { return openHeight_; }, [this](int height) {
-        openHeight_ = std::max(MinimumOpenHeight, height);
+    resizeGrip_ = new ResizeGrip(this, [this] { return pages_->height(); }, [this](int height) {
+        // Leave the area above at least as tall as the panel's minimum.
+        const auto limit = parentWidget() == nullptr ? height
+            : parentWidget()->height() - tabs_->sizeHint().height() - GripHeight - MinimumOpenHeight;
+        openHeight_ = std::max(MinimumOpenHeight, std::min(height, limit));
+        applyHeight();
         saveState();
-        emit heightChanged();
     });
+    layout->addWidget(resizeGrip_);
     layout->addWidget(tabs_);
     layout->addWidget(pages_, 1);
-    layout->addWidget(resizeGrip_);
 
     const QSettings settings;
     const auto savedTab = settings.value(settingsKey("currentTab")).toString();
@@ -103,8 +105,7 @@ BottomPanel::BottomPanel(QWidget* parent)
     openHeight_ = std::max(MinimumOpenHeight,
         settings.value(settingsKey("openHeight"), openHeight_).toInt());
     collapsed_ = settings.value(settingsKey("collapsed"), true).toBool();
-    pages_->setVisible(!collapsed_);
-    resizeGrip_->setVisible(!collapsed_);
+    applyHeight();
     toggleAction_ = new QAction(tr("&Bottom Panel"), this);
     toggleAction_->setObjectName(QStringLiteral("toggleBottomPanelAction"));
     toggleAction_->setCheckable(true);
@@ -141,19 +142,17 @@ void BottomPanel::setCollapsed(bool collapsed)
 {
     if (collapsed_ == collapsed) return;
     collapsed_ = collapsed;
-    pages_->setVisible(!collapsed_);
-    resizeGrip_->setVisible(!collapsed_);
+    applyHeight();
     toggleAction_->setChecked(!collapsed_);
     saveState();
-    emit heightChanged();
 }
 
 void BottomPanel::resetLayout()
 {
     openHeight_ = 220;
     setCollapsed(true);
+    applyHeight();
     saveState();
-    emit heightChanged();
 }
 
 void BottomPanel::openForRun()
@@ -168,13 +167,22 @@ void BottomPanel::finishRun(bool succeeded)
     collapsedBeforeRun_ = false;
 }
 
-auto BottomPanel::fitHeight(int availableHeight) -> int
+auto BottomPanel::sizeHint() const -> QSize
 {
     const auto stripHeight = tabs_->sizeHint().height();
-    const auto height = collapsed_ ? stripHeight
-        : stripHeight + std::clamp(availableHeight - stripHeight, MinimumOpenHeight, openHeight_);
-    setFixedHeight(height);
-    return height;
+    return {QWidget::sizeHint().width(),
+        collapsed_ ? stripHeight : GripHeight + stripHeight + openHeight_};
+}
+
+void BottomPanel::applyHeight()
+{
+    pages_->setVisible(!collapsed_);
+    resizeGrip_->setVisible(!collapsed_);
+    // Open, the panel takes its remembered height but gives way when the window is short.
+    setSizePolicy(QSizePolicy::Preferred, collapsed_ ? QSizePolicy::Fixed : QSizePolicy::Maximum);
+    setMinimumHeight(collapsed_ ? 0
+        : GripHeight + tabs_->sizeHint().height() + MinimumOpenHeight);
+    updateGeometry();
 }
 
 void BottomPanel::saveState() const

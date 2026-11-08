@@ -133,7 +133,6 @@ private:
     void showPrimaryResultsWindow();
     void setLiveResultStatus(const QString& status);
     void showEditor(EditorDestination destination, int geometryTab = 0);
-    void fitWindowToDashboard();
     void setDisplayLengthUnit(model::LengthUnit unit);
     void changeDeckLengthUnit(model::LengthUnit unit);
     void updateDeckUnitControls(const nec::DeckGeometryUnitInfo& info);
