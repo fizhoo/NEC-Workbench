@@ -73,7 +73,7 @@ OptimizationComparePanel::OptimizationComparePanel(QWidget* parent)
 void OptimizationComparePanel::setBaseline(
     const analysis::AnalysisResult& result, QString label)
 {
-    baseline_ = result;
+    baseline_ = ResultData::make(result);
     baselineLabel_ = std::move(label);
     refresh();
 }
@@ -98,7 +98,7 @@ void OptimizationComparePanel::setCandidate(const analysis::AnalysisResult& resu
     std::optional<analysis::OptimizationObjectiveResult> directionalMetrics,
     std::optional<analysis::OptimizationObjectiveResult> baselineDirectionalMetrics)
 {
-    candidate_ = result;
+    candidate_ = ResultData::make(result);
     candidateLabel_ = std::move(label);
     candidateBreakdown_ = std::move(breakdown);
     comparisonBreakdown_ = std::move(comparisonBreakdown);
@@ -128,9 +128,9 @@ void OptimizationComparePanel::refresh()
         status_->setText(statusText_);
         status_->hide();
         breakdown_->setText(tr("Select a completed candidate to inspect its results."));
-        sweepPlots_->setResults({}, tr("a selected candidate"));
+        sweepPlots_->setResults(nullptr, tr("a selected candidate"));
         sweepPlots_->clearReferenceResults();
-        pattern_->setResults({}, tr("a selected candidate"));
+        pattern_->setResults(nullptr, tr("a selected candidate"));
         pattern_->clearReferenceResults();
         directional_->setResults({});
         directional_->clearReferenceMetrics();
@@ -139,11 +139,11 @@ void OptimizationComparePanel::refresh()
         return;
     }
 
-    sweepPlots_->setResults(*candidate_, tr("Candidate"));
-    pattern_->setResults(*candidate_, tr("Candidate"));
+    sweepPlots_->setResults(candidate_, tr("Candidate"));
+    pattern_->setResults(candidate_, tr("Candidate"));
     directional_->setResults(directionalMetrics_.value_or(
         analysis::OptimizationObjectiveResult{}));
-    const auto comparisonAvailable = baselineCompatible_ && baseline_.has_value();
+    const auto comparisonAvailable = baselineCompatible_ && baseline_ != nullptr;
     compareWithStartingModel_->setEnabled(comparisonAvailable);
     compareWithStartingModel_->setToolTip(comparisonAvailable
         ? tr("Overlay %1 as dashed traces. Candidate traces remain solid.")
@@ -163,8 +163,8 @@ void OptimizationComparePanel::refresh()
             .arg(comparisonBreakdown_);
     breakdown_->setText(details);
     if (compare) {
-        sweepPlots_->setReferenceResults(*baseline_, tr("Starting model"));
-        pattern_->setReferenceResults(*baseline_, tr("Starting model"));
+        sweepPlots_->setReferenceResults(baseline_, tr("Starting model"));
+        pattern_->setReferenceResults(baseline_, tr("Starting model"));
         if (baselineDirectionalMetrics_)
             directional_->setReferenceResults(
                 *baselineDirectionalMetrics_, tr("Starting model"));
@@ -175,11 +175,11 @@ void OptimizationComparePanel::refresh()
         pattern_->clearReferenceResults();
         directional_->clearReferenceMetrics();
     }
-    const auto hasPattern = !candidate_->radiation.empty();
+    const auto hasPattern = !candidate_->result().radiation.empty();
     auto hasMatchingPatternGrid = false;
-    if (compare && hasPattern && !baseline_->radiation.empty()) {
-        const auto candidateCoverage = analysis::optimizationResultCoverage(*candidate_);
-        const auto baselineCoverage = analysis::optimizationResultCoverage(*baseline_);
+    if (compare && hasPattern && !baseline_->result().radiation.empty()) {
+        const auto candidateCoverage = analysis::optimizationResultCoverage(candidate_->result());
+        const auto baselineCoverage = analysis::optimizationResultCoverage(baseline_->result());
         hasMatchingPatternGrid = std::ranges::any_of(
             candidateCoverage.radiation, [&baselineCoverage](const auto& candidateGrid) {
                 return std::ranges::find(baselineCoverage.radiation, candidateGrid)

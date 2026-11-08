@@ -2,6 +2,7 @@
 
 #include "analysis/AnalysisResult.h"
 #include "analysis/OptimizationObjective.h"
+#include "ui/analysis/ResultData.h"
 
 #include <QWidget>
 
@@ -50,26 +51,33 @@ class SweepPlotsView final : public QWidget {
 public:
     explicit SweepPlotsView(QWidget* parent = nullptr);
 
-    void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
-    void setReferenceResults(const analysis::AnalysisResult& result, QString label);
+    void setResults(ResultData::Pointer data, const QString& runDirectory);
+    void setReferenceResults(ResultData::Pointer data, QString label);
     void clearReferenceResults();
     void setReferenceVisible(bool visible);
     void setReferenceControlVisible(bool visible);
     void setSelectedFrequency(double frequencyMHz);
     void setReferenceImpedance(double ohms);
     void configureForCompactReview();
+    // Compact shows only the SWR plot, with no controls or labels around it.
+    void setCompact(bool compact);
+    // Called with a frequency double-clicked on either plot.
+    void setFrequencyActivatedCallback(std::function<void(double)> callback);
 
 private:
     void refreshPlots();
 
+    QWidget* heading_{};
     QLabel* summary_{};
     QCheckBox* referenceControl_{};
     QComboBox* swrScaleControl_{};
     SweepPlotWidget* impedancePlot_{};
     SweepPlotWidget* swrPlot_{};
     QSplitter* splitter_{};
-    std::optional<analysis::AnalysisResult> result_;
-    std::optional<analysis::AnalysisResult> referenceResult_;
+    ResultData::Pointer data_;
+    ResultData::Pointer referenceData_;
+    // Follows Setup's Z0, which can change after the run without a new one.
+    double referenceImpedanceOhms_{50.0};
     QString runDirectory_;
     QString referenceLabel_;
 };
@@ -85,6 +93,8 @@ public:
     void setReferenceMetrics(const std::vector<DirectionalPlotPoint>& metrics, QString label);
     void clearReferenceMetrics();
     void setSelectedFrequency(double frequencyMHz);
+    // Called with a frequency double-clicked on the plot.
+    void setFrequencyActivatedCallback(std::function<void(double)> callback);
 
 private:
     void refresh();

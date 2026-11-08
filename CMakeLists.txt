@@ -144,6 +144,8 @@ if(NECWB_BUILD_GUI)
         src/ui/analysis/ResultsSummaryView.h
         src/ui/analysis/ResultReferenceController.cpp
         src/ui/analysis/ResultReferenceController.h
+        src/ui/analysis/ResultData.cpp
+        src/ui/analysis/ResultData.h
         src/ui/analysis/ResultWindowCoordinator.cpp
         src/ui/analysis/ResultWindowCoordinator.h
         src/ui/analysis/RunReviewWindow.cpp

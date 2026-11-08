@@ -2,12 +2,14 @@
 
 #include "analysis/AnalysisResult.h"
 #include "model/AntennaModel.h"
+#include "ui/analysis/ResultData.h"
 
 #include <QPointF>
 #include <QWidget>
 
 #include <functional>
 #include <optional>
+#include <span>
 #include <vector>
 
 class QComboBox;
@@ -15,6 +17,7 @@ class QCheckBox;
 class QDoubleSpinBox;
 class QLabel;
 class QTableWidget;
+class QTabWidget;
 class QPushButton;
 
 namespace necwb::ui {
@@ -34,21 +37,27 @@ using CurrentPlotPath = std::vector<analysis::SegmentCurrentResult>;
 
 class CurrentDistributionView final : public QWidget {
 public:
+    enum class Tab { Antenna, AlongWire, Table };
     explicit CurrentDistributionView(QWidget* parent = nullptr);
-    void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
+    void setResults(ResultData::Pointer data, const QString& runDirectory);
     void setModel(const model::AntennaModel& model);
     void setSelectedFrequency(double frequencyMHz);
+    void showTab(Tab tab);
+    // Compact shows only the antenna drawing, with no controls and no animation.
+    void setCompact(bool compact);
 
 private:
     void refresh();
-    analysis::AnalysisResult result_;
+    ResultData::Pointer data_{ResultData::empty()};
     model::AntennaModel model_;
     QComboBox* frequency_{};
     QLabel* summary_{};
+    QTabWidget* views_{};
     CurrentAntennaView* antenna_{};
     CurrentPlotWidget* plot_{};
     QTableWidget* table_{};
     QString runContext_;
+    bool compact_{};
 };
 
 // Receives an NEC theta and phi chosen on a pattern to use as the forward direction.
@@ -57,9 +66,11 @@ using ForwardDirectionCallback = std::function<void(double, double)>;
 class RadiationPatternView final : public QWidget {
 public:
     using SettingsChangedCallback = std::function<void(const analysis::RadiationDisplaySettings&)>;
+    // An elevation cut is a side view at one azimuth; an azimuth cut a top view at one elevation.
+    enum class Cut { Elevation, Azimuth };
     explicit RadiationPatternView(QWidget* parent = nullptr);
-    void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
-    void setReferenceResults(const analysis::AnalysisResult& result, QString label);
+    void setResults(ResultData::Pointer data, const QString& runDirectory);
+    void setReferenceResults(ResultData::Pointer data, QString label);
     void clearReferenceResults();
     void setReferenceVisible(bool visible);
     void setReferenceControlVisible(bool visible);
@@ -68,9 +79,15 @@ public:
     void setComponent(analysis::RadiationComponent component);
     void setSettingsChangedCallback(SettingsChangedCallback callback);
     void setForwardDirectionCallback(ForwardDirectionCallback callback);
+    // Shows that kind of cut through the pattern peak, switching dataset when needed.
+    void showCut(Cut cut);
+    void setFrequencyControlVisible(bool visible);
+    // Compact shows only the plot, held on one kind of cut through the peak.
+    void setCompact(bool compact, Cut cut);
 
 private:
     enum class CutOrientation { Vertical, Horizontal };
+    [[nodiscard]] auto radiation() const -> std::span<const analysis::RadiationSample>;
     [[nodiscard]] auto availableCutPlanes(CutOrientation orientation) const -> std::vector<double>;
     [[nodiscard]] auto availableCutPlanes(CutOrientation orientation, int patternIndex) const
         -> std::vector<double>;
@@ -87,10 +104,12 @@ private:
     void exportImage();
     void exportData();
     void settingsChanged();
-    analysis::AnalysisResult result_;
-    std::optional<analysis::AnalysisResult> referenceResult_;
+    ResultData::Pointer data_{ResultData::empty()};
+    ResultData::Pointer referenceData_;
     QString referenceLabel_;
     QCheckBox* referenceControl_{};
+    QWidget* controls_{};
+    QLabel* frequencyLabel_{};
     QComboBox* frequency_{};
     QComboBox* dataset_{};
     QComboBox* phi_{};
@@ -111,14 +130,15 @@ private:
     QString datasetSwitchNote_;
     SettingsChangedCallback settingsChangedCallback_;
     bool updatingSettings_{};
+    std::optional<Cut> compactCut_;
 };
 
 class Radiation3DView final : public QWidget {
 public:
     using SettingsChangedCallback = std::function<void(const analysis::RadiationDisplaySettings&)>;
     explicit Radiation3DView(QWidget* parent = nullptr);
-    void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
-    void setReferenceResults(const analysis::AnalysisResult& result, QString label);
+    void setResults(ResultData::Pointer data, const QString& runDirectory);
+    void setReferenceResults(ResultData::Pointer data, QString label);
     void clearReferenceResults();
     void setReferenceVisible(bool visible);
     void setReferenceControlVisible(bool visible);
@@ -129,6 +149,7 @@ public:
     void setSettingsChangedCallback(SettingsChangedCallback callback);
     void setForwardDirectionCallback(ForwardDirectionCallback callback);
     void setOverviewMode(bool enabled);
+    void setFrequencyControlVisible(bool visible);
 
 private:
     void refresh();
@@ -136,10 +157,11 @@ private:
     void settingsChanged();
     void exportImage();
     void exportData();
-    analysis::AnalysisResult result_;
-    std::optional<analysis::AnalysisResult> referenceResult_;
+    ResultData::Pointer data_{ResultData::empty()};
+    ResultData::Pointer referenceData_;
     QString referenceLabel_;
     model::AntennaModel model_;
+    QLabel* frequencyLabel_{};
     QComboBox* frequency_{};
     QComboBox* dataset_{};
     QComboBox* component_{};
@@ -164,8 +186,8 @@ class RadiationPerformanceView final : public QWidget {
 public:
     using ComponentChangedCallback = std::function<void(analysis::RadiationComponent)>;
     explicit RadiationPerformanceView(QWidget* parent = nullptr);
-    void setResults(const analysis::AnalysisResult& result, const QString& runDirectory);
-    void setReferenceResults(const analysis::AnalysisResult& result, QString label);
+    void setResults(ResultData::Pointer data, const QString& runDirectory);
+    void setReferenceResults(ResultData::Pointer data, QString label);
     void clearReferenceResults();
     void setReferenceVisible(bool visible);
     void setReferenceControlVisible(bool visible);
@@ -174,12 +196,13 @@ public:
     void setComponentChangedCallback(ComponentChangedCallback callback);
     // Uses an NEC direction picked on another radiation view as the forward direction.
     void setForwardDirection(double thetaDegrees, double phiDegrees);
+    void setFrequencyActivatedCallback(std::function<void(double)> callback);
 
 private:
     void seedDirectionFromPatternPeak();
     void refresh();
-    analysis::AnalysisResult result_;
-    std::optional<analysis::AnalysisResult> referenceResult_;
+    ResultData::Pointer data_{ResultData::empty()};
+    ResultData::Pointer referenceData_;
     QString referenceLabel_;
     QComboBox* component_{};
     QDoubleSpinBox* forwardElevation_{};

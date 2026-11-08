@@ -2,6 +2,7 @@
 
 #include "analysis/AnalysisResult.h"
 #include "analysis/OptimizationObjective.h"
+#include "ui/analysis/ResultData.h"
 
 #include <QString>
 #include <QWidget>
@@ -41,8 +42,8 @@ private:
     SweepPlotsView* sweepPlots_{};
     RadiationPatternView* pattern_{};
     DirectionalMetricsView* directional_{};
-    std::optional<analysis::AnalysisResult> baseline_;
-    std::optional<analysis::AnalysisResult> candidate_;
+    ResultData::Pointer baseline_;
+    ResultData::Pointer candidate_;
     std::optional<analysis::OptimizationObjectiveResult> directionalMetrics_;
     std::optional<analysis::OptimizationObjectiveResult> baselineDirectionalMetrics_;
     QString baselineLabel_;

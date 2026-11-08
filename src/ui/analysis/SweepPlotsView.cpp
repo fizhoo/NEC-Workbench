@@ -67,6 +67,12 @@ constexpr auto plotRightMarginDualAxes = 98;
 // Stacked sweep plots never shrink below this, so the plot area keeps room for ticks.
 constexpr auto minimumPlotAreaHeight = 90;
 constexpr auto minimumSweepPlotHeight = plotTopMargin + plotBottomMargin + minimumPlotAreaHeight;
+// A compact plot keeps only its tick labels around the plot area.
+constexpr auto compactTopMargin = 6;
+constexpr auto compactBottomMargin = 18;
+constexpr auto compactLeftMargin = 34;
+constexpr auto compactRightMargin = 8;
+constexpr auto compactPlotHeight = 80;
 
 auto sameFrequency(double first, double second) -> bool
 {
@@ -344,6 +350,17 @@ public:
         hoverCallback_ = std::move(callback);
     }
 
+    // Compact draws only the plot area and its tick labels, for a thumbnail.
+    void setCompact(bool compact)
+    {
+        compact_ = compact;
+        setMinimumHeight(compact ? compactPlotHeight : 240);
+        QFont font;
+        if (compact) font.setPointSizeF(font.pointSizeF() * 0.85);
+        setFont(font);
+        update();
+    }
+
     void setHoverFrequency(double frequencyMHz)
     {
         if (sameFrequency(hoverFrequencyMHz_, frequencyMHz)) return;
@@ -367,18 +384,23 @@ protected:
         painter.setRenderHint(QPainter::Antialiasing);
         painter.fillRect(rect(), palette().brush(QPalette::Base));
         painter.setPen(palette().color(QPalette::Text));
-        auto titleFont = painter.font();
-        titleFont.setBold(true);
-        painter.setFont(titleFont);
-        painter.drawText(QRectF(14, 8, width() - 28, 24), Qt::AlignCenter, title_);
-        titleFont.setBold(false);
-        painter.setFont(titleFont);
+        if (!compact_) {
+            auto titleFont = painter.font();
+            titleFont.setBold(true);
+            painter.setFont(titleFont);
+            painter.drawText(QRectF(14, 8, width() - 28, 24), Qt::AlignCenter, title_);
+            titleFont.setBold(false);
+            painter.setFont(titleFont);
+        }
 
-        const auto rightMargin = plotKind_ == PlotKind::Impedance || reserveRightAxis_
+        const auto rightMargin = compact_ ? compactRightMargin
+            : plotKind_ == PlotKind::Impedance || reserveRightAxis_
             ? plotRightMarginDualAxes : plotRightMarginSingleAxis;
-        plotRect_ = QRectF(plotLeftMargin, plotTopMargin,
-            std::max(1, width() - plotLeftMargin - rightMargin),
-            std::max(1, height() - plotTopMargin - plotBottomMargin));
+        const auto leftMargin = compact_ ? compactLeftMargin : plotLeftMargin;
+        const auto topMargin = compact_ ? compactTopMargin : plotTopMargin;
+        const auto bottomMargin = compact_ ? compactBottomMargin : plotBottomMargin;
+        plotRect_ = QRectF(leftMargin, topMargin, std::max(1, width() - leftMargin - rightMargin),
+            std::max(1, height() - topMargin - bottomMargin));
         setPlotProperties();
         if (!boundsValid_) {
             painter.setPen(palette().color(QPalette::Mid));
@@ -386,7 +408,7 @@ protected:
             return;
         }
 
-        drawLegend(painter);
+        if (!compact_) drawLegend(painter);
         drawAxes(painter);
         drawSeries(painter);
         drawSelectedFrequency(painter);
@@ -594,13 +616,14 @@ private:
             const auto x = plotRect_.left() + fraction * plotRect_.width();
             const auto label = formatAxisTick(xValue, xTickStep);
             xTickLabels.push_back(label);
-            painter.drawText(QRectF(x - 42, plotRect_.bottom() + 5, 84, 20),
+            painter.drawText(QRectF(x - 42, plotRect_.bottom() + (compact_ ? 1 : 5), 84, 20),
                 Qt::AlignHCenter | Qt::AlignTop, label);
         }
         setProperty("xAxisTickLabels", xTickLabels);
         drawYAxis(painter, leftAxis_, AxisSide::Left);
         if (plotKind_ == PlotKind::Impedance)
             drawYAxis(painter, rightAxis_, AxisSide::Right);
+        if (compact_) return;
         painter.setPen(palette().color(QPalette::Text));
         painter.drawText(QRectF(plotRect_.left(), height() - 25, plotRect_.width(), 20),
             Qt::AlignCenter, xAxisLabel_);
@@ -619,7 +642,8 @@ private:
             lastLabelY = y;
             ++visibleLabels;
             const auto labelRect = side == AxisSide::Left
-                ? QRectF(24, y - 10, plotRect_.left() - 34, 20)
+                ? compact_ ? QRectF(0, y - 10, plotRect_.left() - 4, 20)
+                           : QRectF(24, y - 10, plotRect_.left() - 34, 20)
                 : QRectF(plotRect_.right() + 9, y - 10, width() - plotRect_.right() - 30, 20);
             painter.drawText(labelRect,
                 (side == AxisSide::Left ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignVCenter,
@@ -627,6 +651,7 @@ private:
         }
         setProperty(side == AxisSide::Left ? "leftAxisVisibleTickLabels"
             : "rightAxisVisibleTickLabels", visibleLabels);
+        if (compact_) return;
         painter.save();
         if (side == AxisSide::Left) {
             painter.translate(15, plotRect_.center().y());
@@ -661,7 +686,7 @@ private:
                 } else {
                     path.lineTo(screenPoint);
                 }
-                if (series.showMarkers) {
+                if (series.showMarkers && !compact_) {
                     const auto radius = seriesIndex == hoveredSeries_ && pointIndex == hoveredPoint_
                         ? 5.0 : 3.0;
                     painter.drawEllipse(screenPoint, radius, radius);
@@ -680,6 +705,7 @@ private:
             + (selectedFrequencyMHz_ - xMinimum_) / (xMaximum_ - xMinimum_) * plotRect_.width();
         painter.setPen(QPen(palette().color(QPalette::Highlight), 2, Qt::DashLine));
         painter.drawLine(QPointF(x, plotRect_.top()), QPointF(x, plotRect_.bottom()));
+        if (compact_) return;
         painter.drawText(QRectF(x - 75, plotRect_.top() + 8, 150, 20), Qt::AlignCenter,
             selectedCaption_);
     }
@@ -746,6 +772,7 @@ private:
     PlotKind plotKind_{PlotKind::Swr};
     bool boundsValid_{};
     bool reserveRightAxis_{};
+    bool compact_{};
     int hoveredSeries_{-1};
     int hoveredPoint_{-1};
     std::function<void(double)> xActivatedCallback_;
@@ -840,7 +867,9 @@ SweepPlotsView::SweepPlotsView(QWidget* parent)
     font.setBold(true);
     font.setPointSize(font.pointSize() + 3);
     headingLabel->setFont(font);
-    auto* heading = new QHBoxLayout;
+    heading_ = new QWidget(this);
+    auto* heading = new QHBoxLayout(heading_);
+    heading->setContentsMargins(0, 0, 0, 0);
     heading->addWidget(headingLabel);
     heading->addStretch();
     referenceControl_ = new QCheckBox(tr("Show Historical Overlay"), this);
@@ -882,7 +911,7 @@ SweepPlotsView::SweepPlotsView(QWidget* parent)
     splitter_->addWidget(swrPlot_);
     splitter_->setStretchFactor(0, 1);
     splitter_->setStretchFactor(1, 1);
-    layout->addLayout(heading);
+    layout->addWidget(heading_);
     layout->addWidget(summary_);
     layout->addWidget(splitter_, 1);
 
@@ -899,24 +928,25 @@ SweepPlotsView::SweepPlotsView(QWidget* parent)
     applySwrScale(swrScaleControl_->currentIndex());
 }
 
-void SweepPlotsView::setResults(const analysis::AnalysisResult& result, const QString& runDirectory)
+void SweepPlotsView::setResults(ResultData::Pointer data, const QString& runDirectory)
 {
-    result_ = result;
+    data_ = std::move(data);
+    if (data_) referenceImpedanceOhms_ = data_->result().referenceImpedanceOhms;
     runDirectory_ = runDirectory;
     refreshPlots();
 }
 
-void SweepPlotsView::setReferenceResults(const analysis::AnalysisResult& result, QString label)
+void SweepPlotsView::setReferenceResults(ResultData::Pointer data, QString label)
 {
-    referenceResult_ = result;
+    referenceData_ = std::move(data);
     referenceLabel_ = std::move(label);
-    referenceControl_->setEnabled(true);
+    referenceControl_->setEnabled(referenceData_ != nullptr);
     refreshPlots();
 }
 
 void SweepPlotsView::clearReferenceResults()
 {
-    referenceResult_.reset();
+    referenceData_.reset();
     referenceLabel_.clear();
     referenceControl_->setEnabled(false);
     refreshPlots();
@@ -934,9 +964,26 @@ void SweepPlotsView::setReferenceControlVisible(bool visible)
 
 void SweepPlotsView::setReferenceImpedance(double ohms)
 {
-    if (!result_) return;
-    result_->referenceImpedanceOhms = ohms;
-    refreshPlots();
+    referenceImpedanceOhms_ = ohms;
+    if (data_) refreshPlots();
+}
+
+void SweepPlotsView::setCompact(bool compact)
+{
+    heading_->setVisible(!compact);
+    summary_->setVisible(!compact);
+    impedancePlot_->setVisible(!compact);
+    swrPlot_->setReserveRightAxis(!compact);
+    swrPlot_->setCompact(compact);
+    if (!compact) swrPlot_->setMinimumHeight(minimumSweepPlotHeight);
+    const auto margin = compact ? 0 : 8;
+    layout()->setContentsMargins(margin, margin, margin, margin);
+}
+
+void SweepPlotsView::setFrequencyActivatedCallback(std::function<void(double)> callback)
+{
+    impedancePlot_->setXActivatedCallback(callback);
+    swrPlot_->setXActivatedCallback(std::move(callback));
 }
 
 void SweepPlotsView::configureForCompactReview()
@@ -949,7 +996,7 @@ void SweepPlotsView::configureForCompactReview()
 
 void SweepPlotsView::refreshPlots()
 {
-    if (!result_) {
+    if (!data_) {
         impedancePlot_->setImpedancePlot({});
         swrPlot_->setSwrPlot(tr("SWR"), {});
         summary_->setText(tr("No analysis results are loaded."));
@@ -957,7 +1004,8 @@ void SweepPlotsView::refreshPlots()
     }
 
     std::map<std::pair<int, int>, std::vector<analysis::FeedpointResult>> feedpoints;
-    for (const auto& feedpoint : result_->feedpoints)
+    const auto& result = data_->result();
+    for (const auto& feedpoint : result.feedpoints)
         feedpoints[{feedpoint.wireTag, feedpoint.segment}].push_back(feedpoint);
 
     std::vector<PlotSeries> impedanceSeries;
@@ -973,11 +1021,11 @@ void SweepPlotsView::refreshPlots()
         PlotSeries reactance{tr("X W%1:S%2").arg(source.first).arg(source.second), tr("Ω"),
             reactanceBase.lighter(100 + colorOffset), AxisSide::Right, {}};
         const auto swrUnit = tr("(Z0 %1)").arg(
-            formatReferenceImpedance(result_->referenceImpedanceOhms));
+            formatReferenceImpedance(referenceImpedanceOhms_));
         PlotSeries swr{tr("SWR W%1:S%2").arg(source.first).arg(source.second), swrUnit,
             resistanceBase.lighter(100 + colorOffset), AxisSide::Left, {}};
 
-        if (referenceResult_ && referenceControl_->isChecked()) {
+        if (referenceData_ && referenceControl_->isChecked()) {
             auto referenceResistanceColor = resistance.color;
             auto referenceReactanceColor = reactance.color;
             referenceResistanceColor.setAlpha(105);
@@ -992,7 +1040,7 @@ void SweepPlotsView::refreshPlots()
                 tr("Overlay SWR W%1:S%2").arg(source.first).arg(source.second), swrUnit,
                 referenceResistanceColor,
                 AxisSide::Left, {}, Qt::DashLine, false, true};
-            for (const auto& referencePoint : referenceResult_->feedpoints) {
+            for (const auto& referencePoint : referenceData_->result().feedpoints) {
                 if (referencePoint.wireTag != source.first
                     || referencePoint.segment != source.second) continue;
                 const auto frequencyMatches = std::ranges::any_of(points,
@@ -1008,7 +1056,7 @@ void SweepPlotsView::refreshPlots()
                 // The overlay's SWR uses the current Z0 so both curves share one reference.
                 referenceSwr.points.emplace_back(referencePoint.frequencyMHz,
                     analysis::standingWaveRatio(referencePoint.impedance,
-                        result_->referenceImpedanceOhms));
+                        referenceImpedanceOhms_));
             }
             if (!referenceResistance.points.empty()) {
                 std::ranges::sort(referenceResistance.points, {}, &QPointF::x);
@@ -1025,7 +1073,7 @@ void SweepPlotsView::refreshPlots()
             resistance.points.emplace_back(point.frequencyMHz, point.impedance.real());
             reactance.points.emplace_back(point.frequencyMHz, point.impedance.imag());
             swr.points.emplace_back(point.frequencyMHz,
-                analysis::standingWaveRatio(point.impedance, result_->referenceImpedanceOhms));
+                analysis::standingWaveRatio(point.impedance, referenceImpedanceOhms_));
         }
         impedanceSeries.push_back(std::move(resistance));
         impedanceSeries.push_back(std::move(reactance));
@@ -1037,22 +1085,22 @@ void SweepPlotsView::refreshPlots()
     std::ranges::stable_partition(swrSeries,
         [](const auto& series) { return series.reference; });
     impedancePlot_->setImpedancePlot(std::move(impedanceSeries));
-    const auto referenceImpedance = formatReferenceImpedance(result_->referenceImpedanceOhms);
+    const auto referenceImpedance = formatReferenceImpedance(referenceImpedanceOhms_);
     swrPlot_->setSwrPlot(tr("SWR (%1)").arg(referenceImpedance), std::move(swrSeries),
         referenceImpedance);
-    const auto referenceNote = referenceResult_ && referenceControl_->isChecked()
-        ? nearlyEqual(result_->referenceImpedanceOhms,
-                referenceResult_->referenceImpedanceOhms)
+    const auto referenceNote = referenceData_ && referenceControl_->isChecked()
+        ? nearlyEqual(referenceImpedanceOhms_,
+                referenceData_->result().referenceImpedanceOhms)
             ? tr(" Historical overlay %1 is shown dashed.").arg(referenceLabel_)
             : tr(" Historical overlay %1 is shown dashed; its SWR is recomputed for Z0 %2 "
                  "(run used %3).").arg(referenceLabel_, referenceImpedance,
-                    formatReferenceImpedance(referenceResult_->referenceImpedanceOhms))
+                    formatReferenceImpedance(referenceData_->result().referenceImpedanceOhms))
         : QString{};
-    summary_->setText(result_->feedpoints.empty()
+    summary_->setText(result.feedpoints.empty()
             ? tr("No supported feedpoint results were found in %1.").arg(runDirectory_)
             : tr("%1 result point(s) from %2. SWR reference Z0 %3. Hover a marker for exact "
                  "engineering values.")
-                .arg(result_->feedpoints.size()).arg(runDirectory_).arg(referenceImpedance)
+                .arg(result.feedpoints.size()).arg(runDirectory_).arg(referenceImpedance)
                 + referenceNote);
 }
 
@@ -1198,6 +1246,11 @@ void DirectionalMetricsView::refresh()
 void DirectionalMetricsView::setSelectedFrequency(double frequencyMHz)
 {
     plot_->setSelectedFrequency(frequencyMHz);
+}
+
+void DirectionalMetricsView::setFrequencyActivatedCallback(std::function<void(double)> callback)
+{
+    plot_->setXActivatedCallback(std::move(callback));
 }
 
 }

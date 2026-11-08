@@ -42,19 +42,25 @@ ImpedanceResultsView::ImpedanceResultsView(QWidget* parent)
     layout->addWidget(table_, 1);
 }
 
-void ImpedanceResultsView::setResults(const analysis::AnalysisResult& result,
-    const QString& runDirectory)
+void ImpedanceResultsView::setResults(ResultData::Pointer data, const QString& runDirectory)
 {
-    result_ = result;
+    data_ = data ? std::move(data) : ResultData::empty();
+    referenceImpedanceOhms_ = data_->result().referenceImpedanceOhms;
     runDirectory_ = runDirectory;
+    refresh();
+}
+
+void ImpedanceResultsView::refresh()
+{
+    const auto& result = data_->result();
+    const auto& runDirectory = runDirectory_;
     table_->horizontalHeaderItem(7)->setText(
-        tr("SWR (%1)").arg(formatReferenceImpedance(result.referenceImpedanceOhms)));
+        tr("SWR (%1)").arg(formatReferenceImpedance(referenceImpedanceOhms_)));
     table_->setRowCount(0);
     for (const auto& feedpoint : result.feedpoints) {
         const auto row = table_->rowCount();
         table_->insertRow(row);
-        const auto swr = analysis::standingWaveRatio(
-            feedpoint.impedance, result.referenceImpedanceOhms);
+        const auto swr = analysis::standingWaveRatio(feedpoint.impedance, referenceImpedanceOhms_);
         const QStringList values{
             formatDecimal(feedpoint.frequencyMHz),
             QString::number(feedpoint.wireTag),
@@ -77,7 +83,7 @@ void ImpedanceResultsView::setResults(const analysis::AnalysisResult& result,
             ? tr("No supported antenna-input rows were found in %1.").arg(runDirectory)
             : tr("%1 feedpoint result(s) parsed from %2. SWR uses a %3 reference.")
                 .arg(result.feedpoints.size()).arg(runDirectory)
-                .arg(formatReferenceImpedance(result.referenceImpedanceOhms)));
+                .arg(formatReferenceImpedance(referenceImpedanceOhms_)));
     table_->resizeColumnsToContents();
 }
 
@@ -86,10 +92,16 @@ void ImpedanceResultsView::setReferenceImpedance(double ohms)
     const auto* selected = table_->currentRow() >= 0 ? table_->item(table_->currentRow(), 0) : nullptr;
     const auto selectedFrequency = selected != nullptr
         ? std::optional{selected->data(FrequencyRole).toDouble()} : std::nullopt;
-    result_.referenceImpedanceOhms = ohms;
-    const auto runDirectory = runDirectory_;
-    setResults(result_, runDirectory);
+    referenceImpedanceOhms_ = ohms;
+    refresh();
     if (selectedFrequency) setSelectedFrequency(*selectedFrequency);
+}
+
+void ImpedanceResultsView::setFrequencyActivatedCallback(std::function<void(double)> callback)
+{
+    connect(table_, &QTableWidget::cellClicked, this, [this, callback = std::move(callback)](int row) {
+        if (const auto* item = table_->item(row, 0)) callback(item->data(FrequencyRole).toDouble());
+    });
 }
 
 void ImpedanceResultsView::setSelectedFrequency(double frequencyMHz)

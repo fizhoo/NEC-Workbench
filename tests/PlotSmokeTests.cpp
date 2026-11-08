@@ -726,11 +726,11 @@ auto main(int argc, char* argv[]) -> int
     plotSettings.sync();
     necwb::ui::SweepPlotsView view;
     view.resize(900, 700);
-    view.setResults(result, QStringLiteral("test-run"));
+    view.setResults(necwb::ui::ResultData::make(result), QStringLiteral("test-run"));
     auto referenceResult = result;
     for (auto& feedpoint : referenceResult.feedpoints)
         feedpoint.impedance += std::complex<double>{3.0, -2.0};
-    view.setReferenceResults(referenceResult,
+    view.setReferenceResults(necwb::ui::ResultData::make(referenceResult),
         QStringLiteral("20261019-123456-789-very-long-reference-run-identity"));
     view.setSelectedFrequency(14.2);
     view.show();
@@ -791,7 +791,7 @@ auto main(int argc, char* argv[]) -> int
         && swrSweepPlot->property("referenceSeriesCount").toInt() == 0;
     if (sweepShowReference != nullptr) sweepShowReference->setChecked(true);
     referenceResult.referenceImpedanceOhms = 75.0;
-    view.setReferenceResults(referenceResult, QStringLiteral("different-z0"));
+    view.setReferenceResults(necwb::ui::ResultData::make(referenceResult), QStringLiteral("different-z0"));
     application.processEvents();
     // The overlay's SWR is recomputed at the current Z0 rather than hidden.
     if (impedanceSweepPlot->property("referenceSeriesCount").toInt() != 2
@@ -2361,7 +2361,7 @@ auto main(int argc, char* argv[]) -> int
         necwb::ui::CurrentDistributionView pairView;
         pairView.resize(800, 600);
         pairView.setModel(parallelPair);
-        pairView.setResults(pairResult, QStringLiteral("pair-run"));
+        pairView.setResults(necwb::ui::ResultData::make(pairResult), QStringLiteral("pair-run"));
         pairView.setSelectedFrequency(14.0);
         pairView.show();
         application.processEvents();
@@ -2456,15 +2456,15 @@ auto main(int argc, char* argv[]) -> int
             && sharedTagOrder != std::vector{4, 3, 2, 1}))
         return NECWB_SMOKE_FAILURE("current paths for wires that share a tag");
     currents.setModel(currentAntenna);
-    currents.setResults(result, QStringLiteral("test-run"));
+    currents.setResults(necwb::ui::ResultData::make(result), QStringLiteral("test-run"));
     currents.setSelectedFrequency(14.1);
-    radiation2D.setResults(result, QStringLiteral("test-run"));
+    radiation2D.setResults(necwb::ui::ResultData::make(result), QStringLiteral("test-run"));
     auto radiationReference = result;
     for (auto& sample : radiationReference.radiation) sample.totalGainDb -= 1.0;
-    radiation2D.setReferenceResults(radiationReference, QStringLiteral("Original dipole"));
-    radiation3D.setReferenceResults(radiationReference, QStringLiteral("Original dipole"));
+    radiation2D.setReferenceResults(necwb::ui::ResultData::make(radiationReference), QStringLiteral("Original dipole"));
+    radiation3D.setReferenceResults(necwb::ui::ResultData::make(radiationReference), QStringLiteral("Original dipole"));
     radiationPerformance.setReferenceResults(
-        radiationReference, QStringLiteral("Original dipole"));
+        necwb::ui::ResultData::make(radiationReference), QStringLiteral("Original dipole"));
     radiation2D.resize(800, 800);
     radiation2D.show();
     application.processEvents();
@@ -2510,7 +2510,7 @@ auto main(int argc, char* argv[]) -> int
     });
     radiation2D.setReferenceVisible(true);
     radiation2D.setReferenceResults(
-        incompatibleRadiationReference, QStringLiteral("Different grid"));
+        necwb::ui::ResultData::make(incompatibleRadiationReference), QStringLiteral("Different grid"));
     application.processEvents();
     auto* initialRadiationSummary = radiation2D.findChild<QLabel*>(
         QStringLiteral("radiation2DSummary"));
@@ -2519,7 +2519,7 @@ auto main(int argc, char* argv[]) -> int
         || !initialRadiationSummary->text().contains(QStringLiteral("unavailable"))) {
         return NECWB_SMOKE_FAILURE("incompatible radiation reference grid");
     }
-    radiation2D.setReferenceResults(radiationReference, QStringLiteral("Original dipole"));
+    radiation2D.setReferenceResults(necwb::ui::ResultData::make(radiationReference), QStringLiteral("Original dipole"));
     radiation2D.setReferenceVisible(false);
     necwb::model::AntennaModel antenna;
     antenna.addWire({1, {0.0, 0.0, -0.5}, {0.0, 0.0, 0.5}, 11, 0.001, 1});
@@ -2535,8 +2535,8 @@ auto main(int argc, char* argv[]) -> int
     curvedAntenna.addWire(std::move(curvedWire));
     const auto semanticResultExtent = std::abs(
         necwb::ui::resultModelExtentFromOrigin(curvedAntenna) - 4.0) < 1.0e-12;
-    radiation3D.setResults(result, QStringLiteral("test-run"));
-    radiationPerformance.setResults(result, QStringLiteral("test-run"));
+    radiation3D.setResults(necwb::ui::ResultData::make(result), QStringLiteral("test-run"));
+    radiationPerformance.setResults(necwb::ui::ResultData::make(result), QStringLiteral("test-run"));
     radiationPerformance.setSelectedFrequency(14.2);
     radiation2D.setSettingsChangedCallback([&](const auto& settings) {
         radiation3D.setDisplaySettings(settings);
@@ -2615,7 +2615,7 @@ auto main(int argc, char* argv[]) -> int
         {14.175, 15.0, 90.0, 5.86, -999.99, 5.86},
     };
     necwb::ui::RadiationPerformanceView directionalSeedView;
-    directionalSeedView.setResults(directionalSeedResult, QStringLiteral("direction-test"));
+    directionalSeedView.setResults(necwb::ui::ResultData::make(directionalSeedResult), QStringLiteral("direction-test"));
     directionalSeedView.setSelectedFrequency(14.175);
     auto* seededElevation = directionalSeedView.findChild<QDoubleSpinBox*>(
         QStringLiteral("radiationPerformanceElevation"));
@@ -2672,10 +2672,12 @@ auto main(int argc, char* argv[]) -> int
     if (!radiationReferencesDefaultHidden || !radiationReferencesVisible
         || !radiationReferencesCanHide)
         return NECWB_SMOKE_FAILURE("radiation reference visibility controls");
-    const auto spaceChangesCutWithoutPriorFocus = std::ranges::any_of(
+    // Space belongs to the pattern only while it has focus: in the main window the key is
+    // also used by the geometry view, buttons and text fields.
+    const auto spaceChangesCutInsideView = std::ranges::any_of(
         radiation2DShortcuts, [](const QShortcut* shortcut) {
             return shortcut->key() == QKeySequence(Qt::Key_Space)
-                && shortcut->context() == Qt::WindowShortcut;
+                && shortcut->context() == Qt::WidgetWithChildrenShortcut;
         });
     radiation3D.resize(900, 700);
     radiation3D.show();
@@ -2832,7 +2834,7 @@ auto main(int argc, char* argv[]) -> int
         }
     }
     necwb::ui::RadiationPatternView signedThetaView;
-    signedThetaView.setResults(signedThetaResult, QStringLiteral("signed-theta-test"));
+    signedThetaView.setResults(necwb::ui::ResultData::make(signedThetaResult), QStringLiteral("signed-theta-test"));
     auto* signedThetaSummary = signedThetaView.findChild<QLabel*>(
         QStringLiteral("radiation2DSummary"));
     const auto signedThetaTiesNormalized = signedThetaSummary != nullptr
@@ -2857,7 +2859,7 @@ auto main(int argc, char* argv[]) -> int
             gain, -999.99, gain, {}, {}, {}, 1});
     }
     necwb::ui::RadiationPatternView offCutPeakView;
-    offCutPeakView.setResults(offCutPeakResult, QStringLiteral("off-cut-test"));
+    offCutPeakView.setResults(necwb::ui::ResultData::make(offCutPeakResult), QStringLiteral("off-cut-test"));
     auto* offCutSummary = offCutPeakView.findChild<QLabel*>(QStringLiteral("radiation2DSummary"));
     auto* offCutPlot = offCutPeakView.findChild<QWidget*>(QStringLiteral("radiationPolarPlot"));
     const auto offCutPeakNamed = offCutSummary != nullptr && offCutPlot != nullptr
@@ -2869,7 +2871,7 @@ auto main(int argc, char* argv[]) -> int
         && offCutSummary->toolTip().contains(QStringLiteral("F/B:"))
         && offCutPlot->property("cutName").toString() == QStringLiteral("Elevation cut at Az 0°");
     necwb::ui::RadiationPerformanceView offCutPerformance;
-    offCutPerformance.setResults(offCutPeakResult, QStringLiteral("off-cut-test"));
+    offCutPerformance.setResults(necwb::ui::ResultData::make(offCutPeakResult), QStringLiteral("off-cut-test"));
     offCutPerformance.setSelectedFrequency(146.0);
     offCutPerformance.setForwardDirection(80.0, 90.0);
     auto* offCutReadout = offCutPerformance.findChild<QLabel*>(
@@ -2905,7 +2907,7 @@ auto main(int argc, char* argv[]) -> int
         }
     }
     necwb::ui::RadiationPatternView crossingCutsView;
-    crossingCutsView.setResults(crossingCutsResult, QStringLiteral("crossing-test"));
+    crossingCutsView.setResults(necwb::ui::ResultData::make(crossingCutsResult), QStringLiteral("crossing-test"));
     auto* crossingDataset = crossingCutsView.findChild<QComboBox*>(
         QStringLiteral("radiation2DDataset"));
     auto* crossingPlane = crossingCutsView.findChild<QComboBox*>(
@@ -2959,7 +2961,7 @@ auto main(int argc, char* argv[]) -> int
     fieldPainter.end();
     necwb::analysis::AnalysisResult currentOnly;
     currentOnly.currents = result.currents;
-    radiation3D.setResults(currentOnly, QStringLiteral("Model: test.nec · Run: current-only"));
+    radiation3D.setResults(necwb::ui::ResultData::make(currentOnly), QStringLiteral("Model: test.nec · Run: current-only"));
     radiation3D.setSelectedFrequency(14.1);
     application.processEvents();
     const auto missingRadiationDisablesDataExport = !radiation3DExportData->isEnabled()
@@ -4540,7 +4542,7 @@ auto main(int argc, char* argv[]) -> int
         && radiationControlsSynchronized && radiationSweepSelectable
         && nonPatternFrequencyIgnored && radiationFrequencySynchronized
         && mixedPatternCutsSeparated && horizontalDatasetSelectsCompatibleCut
-        && spaceChangesCutWithoutPriorFocus
+        && spaceChangesCutInsideView
         && separateDatasetsSwitchCuts
         && horizontalMaxGainCutStaysCompatible && radiationMetricsVisible
         && radiationExportReady && maxGainCutSelected && signedThetaTiesNormalized

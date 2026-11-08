@@ -264,14 +264,15 @@ auto RunReviewWindow::showAnalysisRun(const AnalysisRunRecord& record,
     }
     summaryView_->setResults(result, context);
     summaryView_->setHistoricalInputSnapshot(authoredSource_, generatedDeck_);
-    impedanceView_->setResults(result, context);
-    sweepPlotsView_->setResults(result, context);
+    const auto data = ResultData::make(result);
+    impedanceView_->setResults(data, context);
+    sweepPlotsView_->setResults(data, context);
     currentsView_->setModel(archivedModel);
-    currentsView_->setResults(result, context);
-    radiationPatternView_->setResults(result, context);
+    currentsView_->setResults(data, context);
+    radiationPatternView_->setResults(data, context);
     radiation3DView_->setModel(archivedModel);
-    radiation3DView_->setResults(result, context);
-    radiationPerformanceView_->setResults(result, context);
+    radiation3DView_->setResults(data, context);
+    radiationPerformanceView_->setResults(data, context);
     tabs_->addTab(summaryView_, tr("Summary"));
     if (!result.feedpoints.empty()) tabs_->addTab(impedancePage_, tr("Impedance"));
     if (!result.currents.empty()) tabs_->addTab(currentsView_, tr("Currents"));

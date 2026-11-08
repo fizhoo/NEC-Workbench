@@ -480,7 +480,9 @@ CurrentAntennaView::CurrentAntennaView(QWidget* parent) : QWidget(parent)
     setObjectName(QStringLiteral("currentsAntennaView"));
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    auto* controls = new QHBoxLayout;
+    controls_ = new QWidget(this);
+    auto* controls = new QHBoxLayout(controls_);
+    controls->setContentsMargins(0, 0, 0, 0);
     mode_ = new QComboBox(this);
     mode_->setObjectName(QStringLiteral("currentsDisplayMode"));
     mode_->addItem(tr("Magnitude"), static_cast<int>(DisplayMode::Magnitude));
@@ -527,7 +529,7 @@ CurrentAntennaView::CurrentAntennaView(QWidget* parent) : QWidget(parent)
     controls->addWidget(play_);
     controls->addStretch();
     canvas_ = new CurrentAntennaCanvas(this);
-    layout->addLayout(controls);
+    layout->addWidget(controls_);
     layout->addWidget(canvas_, 1);
 
     animation_ = new QTimer(this);
@@ -560,6 +562,15 @@ void CurrentAntennaView::setCurrents(analysis::DisplayedCurrents currents,
     const model::AntennaModel& model)
 {
     canvas_->setCurrents(std::move(currents), model);
+}
+
+void CurrentAntennaView::setCompact(bool compact)
+{
+    controls_->setVisible(!compact);
+    if (compact) {
+        mode_->setCurrentIndex(mode_->findData(static_cast<int>(DisplayMode::Magnitude)));
+        play_->setChecked(false);
+    }
 }
 
 void CurrentAntennaView::updateControls()

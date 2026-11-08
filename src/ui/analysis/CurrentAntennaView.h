@@ -27,12 +27,15 @@ public:
     explicit CurrentAntennaView(QWidget* parent = nullptr);
 
     void setCurrents(analysis::DisplayedCurrents currents, const model::AntennaModel& model);
+    // Compact draws the magnitude envelope alone: no controls, no cycle animation.
+    void setCompact(bool compact);
 
 private:
     void updateControls();
     void advanceCycle();
 
     CurrentAntennaCanvas* canvas_{};
+    QWidget* controls_{};
     QComboBox* mode_{};
     QComboBox* plane_{};
     QSlider* scale_{};

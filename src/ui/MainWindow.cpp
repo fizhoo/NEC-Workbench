@@ -3962,14 +3962,15 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
         }
         if (currentRunPurpose_ == SolverRunPurpose::Analysis) {
             const auto context = runContext(*currentRunRecord_);
-            analysisResultsView_->setResults(result, context);
-            visualizePlotsView_->setResults(result, context);
+            const auto data = ResultData::make(result);
+            analysisResultsView_->setResults(data, context);
+            visualizePlotsView_->setResults(data, context);
             currentResultsView_->setModel(currentModel_);
-            currentResultsView_->setResults(result, context);
-            radiationPatternView_->setResults(result, context);
+            currentResultsView_->setResults(data, context);
+            radiationPatternView_->setResults(data, context);
             radiation3DView_->setModel(currentModel_);
-            radiation3DView_->setResults(result, context);
-            radiationPerformanceView_->setResults(result, context);
+            radiation3DView_->setResults(data, context);
+            radiationPerformanceView_->setResults(data, context);
             if (const auto peak = analysis::radiationMetrics(
                     result.radiation, analysis::RadiationComponent::Total);
                 peak.valid && result.radiation.size() > 1) {
@@ -4354,11 +4355,11 @@ void MainWindow::updateResultReference()
             ? tr("%1 — %2").arg(modelName,
                 record->started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")))
             : tr("%1 — “%2”").arg(modelName, note);
-        visualizePlotsView_->setReferenceResults(
-            *reference, plotLabel);
-        radiationPatternView_->setReferenceResults(*reference, plotLabel);
-        radiation3DView_->setReferenceResults(*reference, plotLabel);
-        radiationPerformanceView_->setReferenceResults(*reference, plotLabel);
+        const auto referenceData = ResultData::make(*reference);
+        visualizePlotsView_->setReferenceResults(referenceData, plotLabel);
+        radiationPatternView_->setReferenceResults(referenceData, plotLabel);
+        radiation3DView_->setReferenceResults(referenceData, plotLabel);
+        radiationPerformanceView_->setReferenceResults(referenceData, plotLabel);
         const auto compatibility = analysis::evaluateHistoricalOverlayCompatibility(
             displayedResults_, *reference);
         impedanceOverlayControl_->setSelection(
@@ -4462,11 +4463,12 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
         statusBar()->showMessage(message, 7000);
         return;
     }
-    analysisResultsView_->setResults(result, context);
-    visualizePlotsView_->setResults(result, context);
+    const auto data = ResultData::make(result);
+    analysisResultsView_->setResults(data, context);
+    visualizePlotsView_->setResults(data, context);
     currentResultsView_->setModel({});
-    currentResultsView_->setResults(result, context);
-    radiationPatternView_->setResults(result, context);
+    currentResultsView_->setResults(data, context);
+    radiationPatternView_->setResults(data, context);
     radiation3DView_->setModel({});
     QFile inputFile(QDir(directory).filePath(QStringLiteral("model.nec")));
     if (inputFile.open(QIODevice::ReadOnly)) {
@@ -4478,8 +4480,8 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
             radiation3DView_->setModel(conversion.model);
         }
     }
-    radiation3DView_->setResults(result, context);
-    radiationPerformanceView_->setResults(result, context);
+    radiation3DView_->setResults(data, context);
+    radiationPerformanceView_->setResults(data, context);
     setDisplayedResults(result);
     displayedRunDirectory_ = directory;
     resultsAvailable_ = true;
@@ -4519,14 +4521,15 @@ void MainWindow::clearDisplayedResults()
     convergenceWorkspace_->clearResults();
     controlPanel_->clearStudy(ControlPanel::Study::AverageGain);
     controlPanel_->clearStudy(ControlPanel::Study::Convergence);
-    analysisResultsView_->setResults(empty, context);
-    visualizePlotsView_->setResults(empty, context);
+    const auto& none = ResultData::empty();
+    analysisResultsView_->setResults(none, context);
+    visualizePlotsView_->setResults(none, context);
     currentResultsView_->setModel({});
-    currentResultsView_->setResults(empty, context);
-    radiationPatternView_->setResults(empty, context);
-    radiation3DView_->setResults(empty, context);
+    currentResultsView_->setResults(none, context);
+    radiationPatternView_->setResults(none, context);
+    radiation3DView_->setResults(none, context);
     radiation3DView_->setModel({});
-    radiationPerformanceView_->setResults(empty, context);
+    radiationPerformanceView_->setResults(none, context);
     setDisplayedResults(empty);
     controlPanel_->setResults(empty, context, false);
     displayedRunDirectory_.clear();
