@@ -2,6 +2,7 @@
 
 #include "ui/DisplayFormat.h"
 #include "ui/DetachablePanel.h"
+#include "ui/WorkbenchStatusBar.h"
 #include "ui/WorkspaceNavigator.h"
 #include "ui/WorkbenchIcon.h"
 
@@ -423,6 +424,8 @@ MainWindow::MainWindow()
     setWindowModified(false);
 
     solverRunner_ = new SolverProcessRunner(this);
+    statusBar_ = new WorkbenchStatusBar(this);
+    setStatusBar(statusBar_);
     createActions();
     createWorkspace();
     resultWindowCoordinator_ = std::make_unique<ResultWindowCoordinator>(
@@ -445,7 +448,6 @@ MainWindow::MainWindow()
     // the dashboard does not stretch, so the window is fixed to its content instead of
     // letting a short window squeeze sections over each other.
     layout()->setSizeConstraint(QLayout::SetFixedSize);
-    statusBar()->setSizeGripEnabled(false);
     connect(dashboardStack_, &QStackedWidget::currentChanged,
         this, [this] { fitWindowToDashboard(); });
     fitWindowToDashboard();
@@ -453,13 +455,8 @@ MainWindow::MainWindow()
     setWorkspaceDensity(workspaceDensityFromId(QSettings{}.value(
         QStringLiteral("appearance/workspaceDensity"), QStringLiteral("compact")).toString()));
 
-    modelFileStatus_ = new QLabel(this);
-    modelFileStatus_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    modelFileStatus_->setMinimumWidth(0);
-    modelFileStatus_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    statusBar()->addPermanentWidget(modelFileStatus_, 1);
-    checkStatus_ = new QLabel(tr("No model loaded"), this);
-    statusBar()->addPermanentWidget(checkStatus_);
+    connect(statusBar_, &WorkbenchStatusBar::problemsRequested,
+        modelCheckWindowAction_, &QAction::trigger);
     connect(solverRunner_, &SolverProcessRunner::started, this, [this] {
         solverActivityPhase_ = tr("Solving");
         updateSolverActivity();
@@ -1243,6 +1240,7 @@ void MainWindow::createWorkspace()
             solverExecutablePath_ = std::move(executablePath);
             solverExecutablePaths_.insert(solverBackendId_, solverExecutablePath_);
             solverTimeoutSeconds_ = timeoutSeconds;
+            statusBar_->setBackend(solverBackendId_);
             optimizationWorkspace_->setContext(editor_->toPlainText(), currentFile_,
                 solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_,
                 modelChecked_ && modelErrorCount_ == 0);
@@ -2960,9 +2958,7 @@ void MainWindow::checkModel(bool presentReport)
         .arg(static_cast<qulonglong>(currentModel_.wireCount()))
         .arg(static_cast<qulonglong>(currentModel_.surfacePatchCount()))
         .arg(static_cast<qulonglong>(document.cards().size()));
-    checkStatus_->setText(tr("Check: %1E · %2W")
-        .arg(result.errorCount()).arg(result.warningCount()));
-    checkStatus_->setToolTip(checkDetail);
+    statusBar_->setCheckCounts(result.errorCount(), result.warningCount(), checkDetail);
     if (presentReport || result.errorCount() != 0 || result.warningCount() != 0) {
         modelCheckWindow_->show();
         modelCheckWindow_->raise();
@@ -3007,7 +3003,7 @@ void MainWindow::clearCheckResults()
     diagnostics_->clear();
     editor_->setDiagnostics(std::span<const nec::ModelDiagnostic>{});
     validationSummary_->setText(tr("Model changed · run Check Model again"));
-    checkStatus_->setText(tr("Model changed — check required"));
+    statusBar_->setCheckRequired();
     modelChecked_ = false;
     optimizationWorkspace_->setModelValid(false);
     convergenceWorkspace_->setContext(editor_->toPlainText(), currentFile_,
@@ -3245,7 +3241,7 @@ void MainWindow::previewEndpointMove(int tag, model::WireEndpoint endpoint, cons
     (endpoint == model::WireEndpoint::Start ? wire->start : wire->end) = position;
     refreshGeometryViews();
     selectWireInProject(tag);
-    checkStatus_->setText(tr("Previewing wire %1 endpoint").arg(tag));
+    statusBar()->showMessage(tr("Previewing wire %1 endpoint").arg(tag), 3000);
 }
 
 void MainWindow::commitEndpointMove(int tag, model::WireEndpoint endpoint,
@@ -3290,7 +3286,7 @@ void MainWindow::previewWireMove(int tag, const model::Point3D& start, const mod
     wire->end = end;
     refreshGeometryViews();
     selectWireInProject(tag);
-    checkStatus_->setText(tr("Previewing wire %1 move").arg(tag));
+    statusBar()->showMessage(tr("Previewing wire %1 move").arg(tag), 3000);
 }
 
 void MainWindow::commitWireMove(int tag, const model::Point3D& originalStart,
@@ -3723,12 +3719,12 @@ void MainWindow::chooseTransmissionLineEndpoint(int wireTag, int segment)
     const auto endpoint = std::pair{wireTag, segment};
     if (!pendingTransmissionLineEndpoint_) {
         setPendingTransmissionLineEndpoint(endpoint);
-        checkStatus_->setText(tr("Transmission line start: wire %1, segment %2 — right-click the second endpoint")
+        statusBar()->showMessage(tr("Transmission line start: wire %1, segment %2 — right-click the second endpoint")
             .arg(wireTag).arg(segment));
         return;
     }
     if (*pendingTransmissionLineEndpoint_ == endpoint) {
-        checkStatus_->setText(tr("Choose a different segment for the second transmission-line endpoint"));
+        statusBar()->showMessage(tr("Choose a different segment for the second transmission-line endpoint"));
         return;
     }
     const auto first = *pendingTransmissionLineEndpoint_;
@@ -4336,6 +4332,8 @@ void MainWindow::updateSolverActivity()
     if (output.exists() && output.size() > 0)
         detail += tr(" · output %1").arg(formatByteSize(output.size()));
     runMonitorStatusLabel_->setText(detail);
+    if (solverActivityTimer_ != nullptr && solverActivityTimer_->isActive())
+        statusBar_->setRunning(solverElapsed_.elapsed() / 1000.0);
 }
 
 void MainWindow::completeSolverActivity(const QString& status)
@@ -4346,6 +4344,8 @@ void MainWindow::completeSolverActivity(const QString& status)
     runMonitorProgress_->setValue(status == tr("Completed") ? 1 : 0);
     runMonitorStopButton_->setEnabled(false);
     updateSolverActivity();
+    statusBar_->setRunFinished(status, status == tr("Completed"),
+        solverElapsed_.isValid() ? solverElapsed_.elapsed() / 1000.0 : 0.0);
     if (status == tr("Completed") && !runMonitorPinnedOpen_
         && runMonitorAutoHideTimer_ != nullptr) {
         runMonitorAutoHideTimer_->start();
@@ -4794,8 +4794,8 @@ auto MainWindow::loadRunModel(const QString& directory, const QString& modelName
     setCurrentFile({});
     const auto displayName = modelName.isEmpty() ? tr("Archived model.nec") : modelName;
     setWindowTitle(tr("%1 (snapshot)[*] — NEC Workbench").arg(displayName));
-    modelFileStatus_->setText(tr("Open snapshot as new model: %1").arg(displayName));
-    modelFileStatus_->setToolTip(tr("%1\nArchived input: %2\nUse Save As to name this editable copy.")
+    statusBar_->setFileStatus(tr("Open snapshot as new model: %1").arg(displayName),
+        tr("%1\nArchived input: %2\nUse Save As to name this editable copy.")
         .arg(runContext, inputFile.fileName()));
     editor_->document()->setModified(false);
     checkModel();
@@ -5138,6 +5138,7 @@ void MainWindow::setDisplayedResults(const analysis::AnalysisResult& result)
     for (const auto& value : result.currents) addFrequency(value.frequencyMHz);
     for (const auto& value : result.radiation) addFrequency(value.frequencyMHz);
     std::ranges::sort(frequencies);
+    statusBar_->setResultFrequencies(frequencies);
     const QSignalBlocker blocker(rawOutputFrequencyControl_);
     rawOutputFrequencyControl_->clear();
     for (const auto frequencyMHz : frequencies) {
@@ -5935,8 +5936,8 @@ void MainWindow::setCurrentFile(QString path)
     const auto name = currentFile_.isEmpty() ? tr("Untitled") : QFileInfo(currentFile_).fileName();
     setWindowTitle(tr("%1[*] — NEC Workbench").arg(name));
     const auto modelName = currentFile_.isEmpty() ? tr("Untitled model.nec") : name;
-    modelFileStatus_->setText(tr("Model: %1").arg(modelName));
-    modelFileStatus_->setToolTip(currentFile_.isEmpty() ? tr("This model has not been saved yet.") : currentFile_);
+    statusBar_->setFileStatus(tr("Model: %1").arg(modelName),
+        currentFile_.isEmpty() ? tr("This model has not been saved yet.") : currentFile_);
     if (controlPanel_ != nullptr)
         controlPanel_->setDocumentState(currentFile_.isEmpty() ? QString{} : name,
             editor_->document()->isModified());
@@ -6000,6 +6001,7 @@ void MainWindow::restoreWorkspaceLayout()
         QStringLiteral("geometry/endpointTolerancePixels"), 12.0).toDouble();
     applyGeometrySettings(geometrySettings);
     solverBackendId_ = settings.value(QStringLiteral("analysis/backendId"), QStringLiteral("nec2")).toString();
+    statusBar_->setBackend(solverBackendId_);
     const auto legacyExecutablePath = settings.value(
         QStringLiteral("analysis/executablePath")).toString();
     for (const auto& backendId : {QStringLiteral("nec2"), QStringLiteral("opennec"),

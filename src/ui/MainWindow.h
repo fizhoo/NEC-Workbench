@@ -74,6 +74,7 @@ class ParameterEditor;
 class DetachablePanel;
 class ResultWindowCoordinator;
 class HistoricalOverlayControl;
+class WorkbenchStatusBar;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -399,8 +400,7 @@ private:
     QLabel* runMonitorStatusLabel_{};
     QProgressBar* runMonitorProgress_{};
     QPushButton* runMonitorStopButton_{};
-    QLabel* checkStatus_{};
-    QLabel* modelFileStatus_{};
+    WorkbenchStatusBar* statusBar_{};
     analysis::AnalysisResult displayedResults_;
     mutable nec::NecSourceCache activeSourceCache_;
     model::AntennaModel currentModel_;
