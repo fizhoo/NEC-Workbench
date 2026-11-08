@@ -279,7 +279,8 @@ auto main(int argc, char* argv[]) -> int
     auto bottomPanelNavigation = false;
     auto validationWindowNavigation = false;
     auto modelWindowNavigation = false;
-    auto separateGeometryWindow = false;
+    auto geometryInMainWindow = false;
+    auto undoFollowsFocusChanges = false;
     auto setupWindowNavigation = false;
     auto optimizationWindowNavigation = false;
     auto dialogDensityIsIncremental = false;
@@ -291,7 +292,6 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("resultWindows/impedance/overlayVisible"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/radiation/overlayVisible"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/model-editor"));
-    resultWindowSettings.remove(QStringLiteral("workspaceWindows/geometry-editor"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/analysis-setup"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
     resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
@@ -405,27 +405,22 @@ auto main(int argc, char* argv[]) -> int
                 && modelWorkspace->window() == modelEditorWindow
                 && resultWindowSettings.value(
                     QStringLiteral("workspaceWindows/model-editor/detached"), false).toBool();
-            // Geometry has its own window, so resizing it leaves the deck window alone.
+            // Geometry lives in the main window's center, not in a window of its own.
             auto* geometryEditorAction = mainWindow.findChild<QAction*>(
                 QStringLiteral("geometryEditorAction"));
             auto* geometryWorkspace = mainWindow.findChild<QTabWidget*>(
                 QStringLiteral("geometryWorkspace"));
             if (geometryEditorAction != nullptr && geometryWorkspace != nullptr
                 && modelEditorWindow != nullptr) {
-                const auto deckSize = modelEditorWindow->size();
                 geometryEditorAction->trigger();
                 application.processEvents();
-                auto* geometryEditorWindow = topLevelDialog(
-                    QStringLiteral("geometryEditorWindow"));
-                if (geometryEditorWindow != nullptr)
-                    geometryEditorWindow->resize(deckSize + QSize{300, 200});
-                application.processEvents();
-                separateGeometryWindow = geometryEditorAction->isEnabled()
-                    && geometryEditorWindow != nullptr && geometryEditorWindow->isVisible()
-                    && geometryWorkspace->window() == geometryEditorWindow
-                    && geometryEditorWindow != modelEditorWindow
-                    && !modelEditorWindow->isAncestorOf(geometryWorkspace)
-                    && modelEditorWindow->size() == deckSize;
+                const auto* split = mainWindow.findChild<QWidget*>(QStringLiteral("workbenchSplit"));
+                geometryInMainWindow = geometryEditorAction->isEnabled()
+                    && geometryWorkspace->window() == &mainWindow
+                    && split != nullptr && split->isAncestorOf(geometryWorkspace)
+                    && geometryWorkspace->isVisibleTo(&mainWindow)
+                    && topLevelDialog(QStringLiteral("geometryEditorWindow")) == nullptr
+                    && !modelEditorWindow->isAncestorOf(geometryWorkspace);
             }
             dialogDensityIsIncremental = modelEditorWindow != nullptr
                 && !modelEditorWindow->property("workspaceDensityId").toString().isEmpty()
@@ -553,6 +548,35 @@ auto main(int argc, char* argv[]) -> int
             application.processEvents();
                 linkedParameterDeleted = deckEditor->toPlainText()
                 == QStringLiteral("GW 1 11 -5 0 6 5 0 6 0.001\nGE 0\nEN\n");
+            // Undo and Redo follow the shared source history whether the geometry view in
+            // the main window or the NEC Deck window has focus.
+            QAction* undo = nullptr;
+            QAction* redo = nullptr;
+            QAction* geometryEditor = nullptr;
+            for (auto* action : mainWindow.findChildren<QAction*>()) {
+                if (action->text().startsWith(QStringLiteral("&Undo"))) undo = action;
+                if (action->text().startsWith(QStringLiteral("&Redo"))) redo = action;
+                if (action->objectName() == QStringLiteral("geometryEditorAction"))
+                    geometryEditor = action;
+            }
+            auto* modelModule = mainWindow.findChild<QAction*>(QStringLiteral("modelModuleAction"));
+            if (undo != nullptr && redo != nullptr && geometryEditor != nullptr
+                && modelModule != nullptr) {
+                geometryEditor->trigger();
+                application.processEvents();
+                const auto undoInGeometry = undo->isEnabled() && !redo->isEnabled();
+                modelModule->trigger();
+                application.processEvents();
+                const auto undoInDeck = undo->isEnabled() && !redo->isEnabled();
+                undo->trigger();
+                application.processEvents();
+                const auto redoInDeck = redo->isEnabled();
+                geometryEditor->trigger();
+                application.processEvents();
+                undoFollowsFocusChanges = undoInGeometry && undoInDeck && redoInDeck
+                    && redo->isEnabled() && redo->text() != QStringLiteral("&Redo")
+                    && deckEditor->toPlainText().startsWith(QStringLiteral("SY wire_x1=5"));
+            }
         }
     }
     resultWindowSettings.remove(QStringLiteral("resultWindows/impedance"));
@@ -562,7 +586,6 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("resultWindows/impedance/overlayVisible"));
     resultWindowSettings.remove(QStringLiteral("resultWindows/radiation/overlayVisible"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/model-editor"));
-    resultWindowSettings.remove(QStringLiteral("workspaceWindows/geometry-editor"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/analysis-setup"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
     resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
@@ -579,8 +602,10 @@ auto main(int argc, char* argv[]) -> int
         return NECWB_SMOKE_FAILURE("validation window navigation");
     if (!modelWindowNavigation)
         return NECWB_SMOKE_FAILURE("model window navigation");
-    if (!separateGeometryWindow)
-        return NECWB_SMOKE_FAILURE("separate geometry editor window");
+    if (!geometryInMainWindow)
+        return NECWB_SMOKE_FAILURE("geometry editor in main window");
+    if (!undoFollowsFocusChanges)
+        return NECWB_SMOKE_FAILURE("undo follows focus between geometry and deck");
     if (!dialogDensityIsIncremental)
         return NECWB_SMOKE_FAILURE("incremental dialog workspace density");
     if (!setupWindowNavigation)
@@ -2900,14 +2925,13 @@ auto main(int argc, char* argv[]) -> int
     QObject::connect(&convergenceAction, &QAction::triggered,
         [&] { controlPanelConvergenceTriggered = true; });
     auto runHistoryOpened = false, controlPanelWorkspaceOpened = false,
-        controlPanelGeometryOpened = false, controlPanelEditorOpened = false,
+        controlPanelEditorOpened = false,
         controlPanelSolverOpened = false;
     controlPanel.setOpenWorkspaceCallback(
         [&runHistoryOpened, &controlPanelWorkspaceOpened,
-            &controlPanelGeometryOpened, &controlPanelSolverOpened](auto destination) {
+            &controlPanelSolverOpened](auto destination) {
         if (destination == Workspace::Runs) runHistoryOpened = true;
         if (destination == Workspace::Impedance) controlPanelWorkspaceOpened = true;
-        if (destination == Workspace::GeometryEditor) controlPanelGeometryOpened = true;
         if (destination == Workspace::Solver) controlPanelSolverOpened = true;
         });
     controlPanel.setOpenEditorCallback([&controlPanelEditorOpened](auto destination) {
@@ -2974,7 +2998,8 @@ auto main(int argc, char* argv[]) -> int
     auto* controlPanelAverageGainRun = button("controlPanelAverageGainRun");
     auto* controlPanelConvergenceRun = button("controlPanelConvergenceRun");
     auto* controlPanelImpedance = button("controlPanelImpedance");
-    auto* controlPanelGeometry = button("controlPanelGeometryEditor");
+    // Geometry is always shown beside the control panel, so it has no launcher.
+    const auto noGeometryLauncher = button("controlPanelGeometryEditor") == nullptr;
     auto* controlPanelOpenMenu = controlPanel.findChild<QMenu*>(
         QStringLiteral("controlPanelOpenMenu"));
     if (controlPanelOpenMenu != nullptr) {
@@ -3011,7 +3036,6 @@ auto main(int argc, char* argv[]) -> int
     if (controlPanelConvergenceRun != nullptr) controlPanelConvergenceRun->click();
     if (controlPanelRuns != nullptr) controlPanelRuns->click();
     if (controlPanelImpedance != nullptr) controlPanelImpedance->click();
-    if (controlPanelGeometry != nullptr) controlPanelGeometry->click();
     if (controlPanelBackend != nullptr) controlPanelBackend->click();
     if (controlPanelRows != nullptr) {
         QMetaObject::invokeMethod(controlPanelRows, "cellClicked", Qt::DirectConnection,
@@ -3069,7 +3093,7 @@ auto main(int argc, char* argv[]) -> int
         std::pair{"window state", controlPanelWindowStateVisible},
         std::pair{"run history", runHistoryOpened},
         std::pair{"workspace", controlPanelWorkspaceOpened},
-        std::pair{"geometry", controlPanelGeometryOpened},
+        std::pair{"no geometry launcher", noGeometryLauncher},
         std::pair{"engine opens solver", controlPanelSolverOpened},
         std::pair{"editor", controlPanelEditorOpened},
     };
