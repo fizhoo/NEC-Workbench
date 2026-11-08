@@ -3121,10 +3121,12 @@ auto main(int argc, char* argv[]) -> int
         detachablePanel.setContent(detachableContent);
         detachablePanel.show();
         application.processEvents();
-        auto* popOutButton = detachablePanel.findChild<QPushButton*>(
-            QStringLiteral("smoke-testPopOutButton"));
-        if (popOutButton == nullptr) return NECWB_SMOKE_FAILURE("detachable panel button");
-        popOutButton->click();
+        // Floating windows cannot be attached back: there is no Pop Out/Attach toggle.
+        for (auto* button : detachablePanel.findChildren<QPushButton*>())
+            if (button->text().contains(QStringLiteral("Attach"))
+                || button->text() == QStringLiteral("Pop Out"))
+                return NECWB_SMOKE_FAILURE("detachable panel offers attach");
+        detachablePanel.showWindow();
         application.processEvents();
         auto* resultWindow = topLevelDialog(QStringLiteral("smoke-testResultWindow"));
         resultPanelDetached = detachablePanel.isDetached()

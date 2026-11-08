@@ -37,10 +37,6 @@ DetachablePanel::DetachablePanel(
     statusLabel_->setObjectName(id_ + QStringLiteral("StatusLabel"));
     toolbar->addWidget(statusLabel_);
     toolbar->addStretch();
-    toggleButton_ = new QPushButton(tr("Pop Out"), this);
-    toggleButton_->setObjectName(id_ + QStringLiteral("PopOutButton"));
-    toggleButton_->setToolTip(tr("Keep this live result view in its own reusable window"));
-    toolbar->addWidget(toggleButton_);
     layout_->addLayout(toolbar);
 
     placeholder_ = new QWidget(this);
@@ -48,16 +44,12 @@ DetachablePanel::DetachablePanel(
     placeholderLayout->setAlignment(Qt::AlignCenter);
     auto* message = new QLabel(tr("%1 is open in a separate window.").arg(title_), placeholder_);
     auto* showButton = new QPushButton(tr("Show Window"), placeholder_);
-    auto* attachButton = new QPushButton(tr("Attach Here"), placeholder_);
     placeholderLayout->addWidget(message, 0, Qt::AlignCenter);
     placeholderLayout->addWidget(showButton, 0, Qt::AlignCenter);
-    placeholderLayout->addWidget(attachButton, 0, Qt::AlignCenter);
     placeholder_->hide();
     layout_->addWidget(placeholder_, 1);
 
-    connect(toggleButton_, &QPushButton::clicked, this, [this] { toggleDetached(); });
     connect(showButton, &QPushButton::clicked, this, [this] { showDetached(); });
-    connect(attachButton, &QPushButton::clicked, this, [this] { attach(); });
 }
 
 DetachablePanel::~DetachablePanel()
@@ -118,12 +110,6 @@ void DetachablePanel::setVisibilityChangedCallback(std::function<void(bool)> cal
     if (visibilityChanged_) visibilityChanged_(isWindowVisible());
 }
 
-void DetachablePanel::toggleDetached()
-{
-    if (detached_) attach();
-    else detach();
-}
-
 void DetachablePanel::detach(bool showWindow)
 {
     if (detached_ || content_ == nullptr) return;
@@ -166,26 +152,9 @@ void DetachablePanel::detach(bool showWindow)
     ensureWindowOnScreen();
     placeholder_->show();
     detached_ = true;
-    toggleButton_->setText(tr("Attach"));
     saveWindowState();
     if (showWindow) showDetached();
     else dialog_->hide();
-}
-
-void DetachablePanel::attach()
-{
-    if (!detached_ || content_ == nullptr) return;
-    saveWindowGeometry();
-    dialog_->layout()->removeWidget(content_);
-    content_->setParent(this);
-    layout_->addWidget(content_, 1);
-    placeholder_->hide();
-    content_->show();
-    detached_ = false;
-    toggleButton_->setText(tr("Pop Out"));
-    dialog_->hide();
-    saveWindowState();
-    if (visibilityChanged_) visibilityChanged_(false);
 }
 
 void DetachablePanel::showDetached(WindowActivation activation)
