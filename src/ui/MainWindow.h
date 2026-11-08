@@ -75,6 +75,7 @@ class DetachablePanel;
 class ResultWindowCoordinator;
 class HistoricalOverlayControl;
 class WorkbenchStatusBar;
+class BottomPanel;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -164,7 +165,7 @@ private:
     void checkModel(bool presentReport = false);
     void showGeneratedSolverDeck();
     void clearCheckResults();
-    void goToDiagnostic(QTreeWidgetItem* item);
+    void goToDiagnostic(std::size_t sourceLine);
     void activateProjectItem(QTreeWidgetItem* item);
     void selectWireInProject(int tag);
     void selectExcitation(std::size_t sourceLine);
@@ -238,7 +239,6 @@ private:
     void startSolverProcess(const analysis::SolverCommand& command, const QString& activity);
     void cancelAnalysis();
     void appendSolverOutput(const QString& text);
-    void showRunMonitor(bool manuallyRequested);
     void updateSolverActivity();
     void completeSolverActivity(const QString& status);
     void finishAnalysis(SolverProcessResult result);
@@ -313,8 +313,8 @@ private:
     QAction* resultsModuleAction_{};
     QAction* optimizeModuleAction_{};
     QAction* resetLayoutAction_{};
-    QAction* modelCheckWindowAction_{};
-    QAction* runMonitorWindowAction_{};
+    QAction* problemsAction_{};
+    QAction* runLogAction_{};
     QAction* compactDensityAction_{};
     QAction* standardDensityAction_{};
     QAction* spaciousDensityAction_{};
@@ -387,20 +387,11 @@ private:
     QPushButton* editRunNoteButton_{};
     QPushButton* deleteRunButton_{};
     QTreeWidget* projectTree_{};
-    QTreeWidget* diagnostics_{};
-    QPlainTextEdit* solverOutput_{};
     QDockWidget* projectDock_{};
-    QDialog* modelCheckWindow_{};
-    QDialog* runMonitorWindow_{};
-    QLabel* validationSummary_{};
-    QLabel* validationScope_{};
     QLabel* validationOverviewSummary_{};
     QLabel* validationOverviewScope_{};
-    QLabel* runMonitorContextLabel_{};
-    QLabel* runMonitorStatusLabel_{};
-    QProgressBar* runMonitorProgress_{};
-    QPushButton* runMonitorStopButton_{};
     WorkbenchStatusBar* statusBar_{};
+    BottomPanel* bottomPanel_{};
     analysis::AnalysisResult displayedResults_;
     mutable nec::NecSourceCache activeSourceCache_;
     model::AntennaModel currentModel_;
@@ -416,7 +407,6 @@ private:
     int solverTimeoutSeconds_{120};
     SolverProcessRunner* solverRunner_{};
     QTimer* solverActivityTimer_{};
-    QTimer* runMonitorAutoHideTimer_{};
     QElapsedTimer solverElapsed_;
     QString solverActivityName_;
     QString solverActivityPhase_;
@@ -468,7 +458,6 @@ private:
     bool resultsAvailable_{};
     bool liveResultsStale_{};
     bool runHistoryLoaded_{};
-    bool runMonitorPinnedOpen_{};
     bool suppressSourceHistoryRecording_{};
     std::optional<SourceHistoryEntry> pendingSourceHistoryEntry_;
     std::vector<SourceHistoryEntry> sourceUndoHistory_;

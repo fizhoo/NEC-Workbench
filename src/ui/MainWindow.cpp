@@ -1,8 +1,11 @@
 #include "ui/MainWindow.h"
 
 #include "ui/DisplayFormat.h"
+#include "ui/BottomPanel.h"
 #include "ui/DetachablePanel.h"
 #include "ui/WorkbenchStatusBar.h"
+#include "ui/bottom/ProblemsView.h"
+#include "ui/bottom/RunLogView.h"
 #include "ui/WorkspaceNavigator.h"
 #include "ui/WorkbenchIcon.h"
 
@@ -94,6 +97,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollArea>
+#include <QScreen>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSizePolicy>
@@ -456,7 +460,7 @@ MainWindow::MainWindow()
         QStringLiteral("appearance/workspaceDensity"), QStringLiteral("compact")).toString()));
 
     connect(statusBar_, &WorkbenchStatusBar::problemsRequested,
-        modelCheckWindowAction_, &QAction::trigger);
+        problemsAction_, &QAction::trigger);
     connect(solverRunner_, &SolverProcessRunner::started, this, [this] {
         solverActivityPhase_ = tr("Solving");
         updateSolverActivity();
@@ -712,19 +716,16 @@ void MainWindow::createActions()
     connect(resetLayoutAction_, &QAction::triggered, this,
         [this] { resetWorkspaceLayout(); });
 
-    modelCheckWindowAction_ = new QAction(tr("Model Check &Report"), this);
-    modelCheckWindowAction_->setObjectName(QStringLiteral("showModelCheckWindowAction"));
-    connect(modelCheckWindowAction_, &QAction::triggered, this, [this] {
-        if (modelCheckWindow_ == nullptr) return;
-        modelCheckWindow_->show();
-        modelCheckWindow_->raise();
-        modelCheckWindow_->activateWindow();
-    });
-    runMonitorWindowAction_ = new QAction(tr("&Run Monitor"), this);
-    runMonitorWindowAction_->setObjectName(QStringLiteral("showRunMonitorWindowAction"));
-    connect(runMonitorWindowAction_, &QAction::triggered, this, [this] {
-        showRunMonitor(true);
-    });
+    problemsAction_ = new QAction(tr("&Problems"), this);
+    problemsAction_->setObjectName(QStringLiteral("showProblemsAction"));
+    problemsAction_->setStatusTip(tr("Show the model check findings in the bottom panel"));
+    connect(problemsAction_, &QAction::triggered, this,
+        [this] { bottomPanel_->showTab(BottomPanel::Tab::Problems); });
+    runLogAction_ = new QAction(tr("Run &Log"), this);
+    runLogAction_->setObjectName(QStringLiteral("showRunLogAction"));
+    runLogAction_->setStatusTip(tr("Show the solver run log in the bottom panel"));
+    connect(runLogAction_, &QAction::triggered, this,
+        [this] { bottomPanel_->showTab(BottomPanel::Tab::RunLog); });
 
     auto* densityGroup = new QActionGroup(this);
     densityGroup->setExclusive(true);
@@ -809,7 +810,19 @@ void MainWindow::createWorkspace()
     moduleStack_ = new QStackedWidget(central);
     moduleStack_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     centralLayout->addWidget(moduleStack_, 1);
+    bottomPanel_ = new BottomPanel(central);
+    centralLayout->addWidget(bottomPanel_);
     setCentralWidget(central);
+    connect(bottomPanel_, &BottomPanel::heightChanged, this, [this] { fitWindowToDashboard(); });
+    auto* problems = bottomPanel_->problems();
+    connect(problems, &ProblemsView::findingActivated,
+        this, [this](std::size_t sourceLine) { goToDiagnostic(sourceLine); });
+    connect(problems, &ProblemsView::recheckRequested, this, [this] { checkModel(true); });
+    connect(problems, &ProblemsView::generatedDeckRequested,
+        this, [this] { showGeneratedSolverDeck(); });
+    connect(problems, &ProblemsView::changeSolverRequested,
+        this, [this] { showEditor(EditorDestination::Solver); });
+    connect(bottomPanel_->runLog(), &RunLogView::stopRequested, this, [this] { cancelAnalysis(); });
 
     modelWorkspace_ = new QTabWidget(moduleStack_);
     modelWorkspace_->setObjectName(QStringLiteral("modelWorkspace"));
@@ -1449,8 +1462,8 @@ void MainWindow::createResultWindows()
     auto* validationOverviewButtons = new QHBoxLayout;
     auto* checkFromValidationButton = new QPushButton(tr("Check Model…"), validationOverview);
     checkFromValidationButton->setObjectName(QStringLiteral("checkModelFromValidationButton"));
-    auto* openModelCheckButton = new QPushButton(tr("Open Current Report"), validationOverview);
-    openModelCheckButton->setObjectName(QStringLiteral("openModelCheckReportButton"));
+    auto* openModelCheckButton = new QPushButton(tr("Show Problems"), validationOverview);
+    openModelCheckButton->setObjectName(QStringLiteral("showProblemsButton"));
     auto* changeValidationSolverButton = new QPushButton(tr("Change Solver…"), validationOverview);
     changeValidationSolverButton->setObjectName(QStringLiteral("changeValidationSolverButton"));
     validationOverviewButtons->addWidget(checkFromValidationButton);
@@ -1464,7 +1477,7 @@ void MainWindow::createResultWindows()
     validationOverviewLayout->addStretch();
     connect(checkFromValidationButton, &QPushButton::clicked,
         this, [this] { checkModel(true); });
-    connect(openModelCheckButton, &QPushButton::clicked, modelCheckWindowAction_, &QAction::trigger);
+    connect(openModelCheckButton, &QPushButton::clicked, problemsAction_, &QAction::trigger);
     connect(changeValidationSolverButton, &QPushButton::clicked,
         this, [this] { showEditor(EditorDestination::Solver); });
     validationOverviewTabIndex_ = validationWorkspace_->addTab(
@@ -2193,129 +2206,6 @@ void MainWindow::createDocks()
     addDockWidget(Qt::LeftDockWidgetArea, projectDock_);
     projectDock_->hide();
 
-    modelCheckWindow_ = new QDialog(this, Qt::Tool);
-    modelCheckWindow_->setObjectName(QStringLiteral("modelCheckWindow"));
-    modelCheckWindow_->setWindowTitle(tr("Model Check Report — NEC Workbench"));
-    modelCheckWindow_->setModal(false);
-    modelCheckWindow_->setAttribute(Qt::WA_DeleteOnClose, false);
-    modelCheckWindow_->resize(820, 440);
-    auto* validationLayout = new QVBoxLayout(modelCheckWindow_);
-    validationLayout->setContentsMargins(6, 4, 6, 4);
-    validationLayout->setSpacing(4);
-    validationSummary_ = new QLabel(
-        tr("Run Check Model to evaluate the current source."), modelCheckWindow_);
-    auto summaryFont = validationSummary_->font();
-    summaryFont.setBold(true);
-    validationSummary_->setFont(summaryFont);
-    validationScope_ = new QLabel(tr(
-        "Static source and geometry findings. AGT and convergence results are available in "
-        "the Validation window."), modelCheckWindow_);
-    validationScope_->setWordWrap(true);
-    diagnostics_ = new QTreeWidget(modelCheckWindow_);
-    diagnostics_->setHeaderLabels({tr("Severity"), tr("Category"), tr("Line"), tr("Message")});
-    diagnostics_->setRootIsDecorated(false);
-    diagnostics_->setAlternatingRowColors(true);
-    diagnostics_->header()->setStretchLastSection(true);
-    diagnostics_->setColumnWidth(0, 90);
-    diagnostics_->setColumnWidth(1, 130);
-    diagnostics_->setColumnWidth(2, 60);
-    validationLayout->addWidget(validationSummary_);
-    validationLayout->addWidget(validationScope_);
-    validationLayout->addWidget(diagnostics_, 1);
-    auto* validationButtons = new QHBoxLayout;
-    auto* recheckButton = new QPushButton(tr("Recheck"), modelCheckWindow_);
-    auto* goToFindingButton = new QPushButton(tr("Go to Selected Finding"), modelCheckWindow_);
-    auto* generatedDeckButton = new QPushButton(tr("View Generated Solver Deck…"), modelCheckWindow_);
-    auto* changeSolverButton = new QPushButton(tr("Change Solver…"), modelCheckWindow_);
-    auto* closeValidationButton = new QPushButton(tr("Close"), modelCheckWindow_);
-    validationButtons->addWidget(recheckButton);
-    validationButtons->addWidget(goToFindingButton);
-    validationButtons->addWidget(generatedDeckButton);
-    validationButtons->addStretch();
-    validationButtons->addWidget(changeSolverButton);
-    validationButtons->addWidget(closeValidationButton);
-    validationLayout->addLayout(validationButtons);
-    connect(recheckButton, &QPushButton::clicked, this, [this] { checkModel(true); });
-    connect(goToFindingButton, &QPushButton::clicked, this, [this] {
-        if (auto* item = diagnostics_->currentItem()) goToDiagnostic(item);
-    });
-    connect(generatedDeckButton, &QPushButton::clicked,
-        this, [this] { showGeneratedSolverDeck(); });
-    connect(changeSolverButton, &QPushButton::clicked, this, [this] {
-        modelCheckWindow_->hide();
-        showEditor(EditorDestination::Solver);
-    });
-    connect(closeValidationButton, &QPushButton::clicked,
-        modelCheckWindow_, &QDialog::hide);
-
-    runMonitorWindow_ = new QDialog(this, Qt::Tool);
-    runMonitorWindow_->setObjectName(QStringLiteral("runMonitorWindow"));
-    runMonitorWindow_->setWindowTitle(tr("Run Monitor — NEC Workbench"));
-    runMonitorWindow_->setModal(false);
-    runMonitorWindow_->setAttribute(Qt::WA_DeleteOnClose, false);
-    runMonitorWindow_->resize(760, 460);
-    runMonitorAutoHideTimer_ = new QTimer(this);
-    runMonitorAutoHideTimer_->setSingleShot(true);
-    runMonitorAutoHideTimer_->setInterval(1250);
-    connect(runMonitorAutoHideTimer_, &QTimer::timeout, this, [this] {
-        if (!solverRunner_->isRunning() && !runMonitorPinnedOpen_)
-            runMonitorWindow_->hide();
-    });
-    auto* monitorLayout = new QVBoxLayout(runMonitorWindow_);
-    monitorLayout->setContentsMargins(6, 6, 6, 6);
-    monitorLayout->setSpacing(6);
-    runMonitorContextLabel_ = new QLabel(tr("No solver run has started."), runMonitorWindow_);
-    runMonitorContextLabel_->setObjectName(QStringLiteral("runMonitorContext"));
-    runMonitorContextLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    runMonitorContextLabel_->setWordWrap(true);
-    runMonitorStatusLabel_ = new QLabel(tr("Idle"), runMonitorWindow_);
-    runMonitorStatusLabel_->setObjectName(QStringLiteral("runMonitorStatus"));
-    runMonitorProgress_ = new QProgressBar(runMonitorWindow_);
-    runMonitorProgress_->setObjectName(QStringLiteral("runMonitorProgress"));
-    runMonitorProgress_->setRange(0, 1);
-    runMonitorProgress_->setValue(0);
-    runMonitorProgress_->setTextVisible(false);
-    solverOutput_ = new QPlainTextEdit(runMonitorWindow_);
-    solverOutput_->setObjectName(QStringLiteral("runMonitorLog"));
-    solverOutput_->setReadOnly(true);
-    solverOutput_->setPlaceholderText(tr(
-        "External solver command, progress, and diagnostics will appear here."));
-    monitorLayout->addWidget(runMonitorContextLabel_);
-    monitorLayout->addWidget(runMonitorStatusLabel_);
-    monitorLayout->addWidget(runMonitorProgress_);
-    monitorLayout->addWidget(solverOutput_, 1);
-    auto* monitorButtons = new QHBoxLayout;
-    auto* copyCommandButton = new QPushButton(tr("Copy Command"), runMonitorWindow_);
-    auto* openActiveRunFolderButton = new QPushButton(tr("Open Run Folder"), runMonitorWindow_);
-    runMonitorStopButton_ = new QPushButton(tr("Stop"), runMonitorWindow_);
-    runMonitorStopButton_->setEnabled(false);
-    auto* hideMonitorButton = new QPushButton(tr("Hide"), runMonitorWindow_);
-    monitorButtons->addWidget(copyCommandButton);
-    monitorButtons->addWidget(openActiveRunFolderButton);
-    monitorButtons->addStretch();
-    monitorButtons->addWidget(runMonitorStopButton_);
-    monitorButtons->addWidget(hideMonitorButton);
-    monitorLayout->addLayout(monitorButtons);
-    connect(copyCommandButton, &QPushButton::clicked, this, [this] {
-        if (!currentSolverCommand_.isEmpty())
-            QApplication::clipboard()->setText(currentSolverCommand_);
-    });
-    connect(openActiveRunFolderButton, &QPushButton::clicked, this, [this] {
-        if (!currentRunDirectory_.isEmpty())
-            QDesktopServices::openUrl(QUrl::fromLocalFile(currentRunDirectory_));
-    });
-    connect(runMonitorStopButton_, &QPushButton::clicked,
-        this, [this] { cancelAnalysis(); });
-    connect(hideMonitorButton, &QPushButton::clicked, this, [this] {
-        runMonitorPinnedOpen_ = false;
-        if (runMonitorAutoHideTimer_ != nullptr) runMonitorAutoHideTimer_->stop();
-        runMonitorWindow_->hide();
-    });
-
-    connect(diagnostics_, &QTreeWidget::itemClicked, this,
-        [this](QTreeWidgetItem* item) { goToDiagnostic(item); });
-    connect(diagnostics_, &QTreeWidget::itemDoubleClicked, this,
-        [this](QTreeWidgetItem* item) { goToDiagnostic(item); });
     connect(projectTree_, &QTreeWidget::itemClicked, this,
         [this](QTreeWidgetItem* item) { synchronizeProjectItemSelection(item); });
     connect(projectTree_, &QTreeWidget::itemDoubleClicked, this,
@@ -2397,8 +2287,8 @@ void MainWindow::createMenusAndToolbar()
     auto* projectTreeAction = projectDock_->toggleViewAction();
     projectTreeAction->setText(tr("Project Tree"));
     viewMenu->addAction(projectTreeAction);
-    viewMenu->addAction(modelCheckWindowAction_);
-    viewMenu->addAction(runMonitorWindowAction_);
+    viewMenu->addAction(problemsAction_);
+    viewMenu->addAction(runLogAction_);
     viewMenu->addSeparator();
     viewMenu->addAction(resetLayoutAction_);
     viewMenu->addSeparator();
@@ -2449,7 +2339,7 @@ void MainWindow::createMenusAndToolbar()
     connect(reviewRunsAction, &QAction::triggered, this, [this] {
         showRunHistory();
     });
-    runMenu->addAction(runMonitorWindowAction_);
+    runMenu->addAction(runLogAction_);
     auto* openRunFolderAction = runMenu->addAction(tr("Open Run Folder"));
     openRunFolderAction->setObjectName(QStringLiteral("openRunFolderAction"));
     // The run started in this session, otherwise the newest run in the history.
@@ -2478,8 +2368,7 @@ void MainWindow::createMenusAndToolbar()
 void MainWindow::resetWorkspaceLayout()
 {
     projectDock_->hide();
-    modelCheckWindow_->hide();
-    runMonitorWindow_->hide();
+    bottomPanel_->resetLayout();
     statusBar()->showMessage(tr("Workspace layout reset."), 4000);
 }
 
@@ -2702,8 +2591,15 @@ void MainWindow::fitWindowToDashboard()
     if (page == nullptr) return;
     if (isMaximized() || isFullScreen()) showNormal();
     // The window is fixed to its layout (see the constructor), so sizing the central
-    // widget to the dashboard sizes the whole window, including any visible dock.
-    centralWidget()->setFixedSize(page->sizeHint().expandedTo(page->minimumSizeHint()));
+    // widget to the dashboard sizes the whole window, including any visible dock. The bottom
+    // panel adds its height below the dashboard, cut down to keep the window on screen.
+    auto size = page->sizeHint().expandedTo(page->minimumSizeHint());
+    const auto* screen = this->screen();
+    const auto chrome = frameGeometry().height() - centralWidget()->height();
+    const auto room = screen == nullptr ? QWIDGETSIZE_MAX
+        : screen->availableGeometry().bottom() - frameGeometry().top() - chrome - size.height();
+    size.rheight() += bottomPanel_->fitHeight(room);
+    centralWidget()->setFixedSize(size);
 }
 
 void MainWindow::openExample()
@@ -2853,24 +2749,6 @@ void MainWindow::checkModel(bool presentReport)
     modelWarningCount_ = result.warningCount();
     modelChecked_ = true;
 
-    diagnostics_->clear();
-    for (const auto& diagnostic : result.diagnostics) {
-        const bool isError = diagnostic.severity == nec::DiagnosticSeverity::Error;
-        const bool isWarning = diagnostic.severity == nec::DiagnosticSeverity::Warning;
-        auto* item = new QTreeWidgetItem(diagnostics_, {
-            isError ? tr("Error") : isWarning ? tr("Warning") : tr("Converted"),
-            QString::fromStdString(diagnostic.category),
-            QString::number(diagnostic.lineNumber),
-            QString::fromStdString(diagnostic.message)});
-        item->setData(0, SourceLineRole, static_cast<qulonglong>(diagnostic.lineNumber));
-        item->setIcon(0, style()->standardIcon(isError ? QStyle::SP_MessageBoxCritical
-            : isWarning ? QStyle::SP_MessageBoxWarning : QStyle::SP_MessageBoxInformation));
-    }
-    if (result.diagnostics.empty()) {
-        auto* item = new QTreeWidgetItem(diagnostics_,
-            {tr("OK"), tr("Static checks"), {}, tr("No issues found")});
-        item->setIcon(0, style()->standardIcon(QStyle::SP_DialogApplyButton));
-    }
     const auto adequacyWarnings = std::ranges::count_if(result.diagnostics,
         [](const auto& diagnostic) {
             return diagnostic.severity == nec::DiagnosticSeverity::Warning
@@ -2882,28 +2760,27 @@ void MainWindow::checkModel(bool presentReport)
         nec::compatibilityProfileForBackend(solverBackendId_.toStdString()));
     const auto compatibilityName = QString::fromUtf8(
         profileName.data(), static_cast<qsizetype>(profileName.size()));
-    validationScope_->setText(tr(
-        "Validation target: %1. Static source and geometry findings are shown below; AGT and "
-        "convergence results are available in the Validation window.").arg(compatibilityName));
+    QString summary;
     if (result.errorCount() != 0) {
-        validationSummary_->setText(tr("Not ready for %1 · %2 blocking error(s)")
+        summary = tr("Not ready for %1 · %2 blocking error(s)")
             .arg(compatibilityName)
-            .arg(static_cast<qulonglong>(result.errorCount())));
+            .arg(static_cast<qulonglong>(result.errorCount()));
     } else if (incomplete) {
-        validationSummary_->setText(tr("Incomplete model · finish geometry and analysis setup"));
+        summary = tr("Incomplete model · finish geometry and analysis setup");
     } else if (adequacyWarnings != 0) {
-        validationSummary_->setText(tr("Static adequacy: Caution · %1 finding(s) to review")
-            .arg(static_cast<qulonglong>(adequacyWarnings)));
+        summary = tr("Static adequacy: Caution · %1 finding(s) to review")
+            .arg(static_cast<qulonglong>(adequacyWarnings));
     } else {
-        validationSummary_->setText(result.informationCount() == 0
+        summary = result.informationCount() == 0
                 ? tr("Compatible with %1 · static adequacy checks passed").arg(compatibilityName)
                 : tr("Compatible with %1 · %2 automatic conversion(s)")
                     .arg(compatibilityName)
-                    .arg(static_cast<qulonglong>(result.informationCount())));
+                    .arg(static_cast<qulonglong>(result.informationCount()));
     }
-    validationOverviewSummary_->setText(validationSummary_->text());
+    bottomPanel_->problems()->setFindings(result.diagnostics, currentModel_, summary);
+    validationOverviewSummary_->setText(summary);
     validationOverviewScope_->setText(tr(
-        "Validation target: %1. Open the report for individual findings; use the other tabs "
+        "Validation target: %1. See Problems for individual findings; use the other tabs "
         "for solver-backed Average Gain Test and convergence studies.").arg(compatibilityName));
 
     editor_->setDiagnostics(result.diagnostics);
@@ -2959,11 +2836,8 @@ void MainWindow::checkModel(bool presentReport)
         .arg(static_cast<qulonglong>(currentModel_.surfacePatchCount()))
         .arg(static_cast<qulonglong>(document.cards().size()));
     statusBar_->setCheckCounts(result.errorCount(), result.warningCount(), checkDetail);
-    if (presentReport || result.errorCount() != 0 || result.warningCount() != 0) {
-        modelCheckWindow_->show();
-        modelCheckWindow_->raise();
-        if (presentReport) modelCheckWindow_->activateWindow();
-    }
+    if (presentReport || result.errorCount() != 0)
+        bottomPanel_->showTab(BottomPanel::Tab::Problems);
     updateAnalysisReadiness();
 }
 
@@ -2976,7 +2850,7 @@ void MainWindow::showGeneratedSolverDeck()
         return;
     }
 
-    QDialog dialog(modelCheckWindow_);
+    QDialog dialog(this);
     dialog.setWindowTitle(tr("Generated Solver Deck — NEC Workbench"));
     dialog.resize(820, 560);
     auto* layout = new QVBoxLayout(&dialog);
@@ -3000,9 +2874,8 @@ void MainWindow::showGeneratedSolverDeck()
 
 void MainWindow::clearCheckResults()
 {
-    diagnostics_->clear();
     editor_->setDiagnostics(std::span<const nec::ModelDiagnostic>{});
-    validationSummary_->setText(tr("Model changed · run Check Model again"));
+    bottomPanel_->problems()->clearFindings(tr("Model changed · run Check Model again"));
     statusBar_->setCheckRequired();
     modelChecked_ = false;
     optimizationWorkspace_->setModelValid(false);
@@ -3036,14 +2909,26 @@ void MainWindow::clearCheckResults()
     updateAnalysisReadiness();
 }
 
-void MainWindow::goToDiagnostic(QTreeWidgetItem* item)
+void MainWindow::goToDiagnostic(std::size_t sourceLine)
 {
-    const auto lineNumber = item->data(0, SourceLineRole).toULongLong();
-    if (lineNumber == 0) {
-        return;
-    }
     showEditor(EditorDestination::RawSource);
-    editor_->goToLine(static_cast<std::size_t>(lineNumber));
+    editor_->goToLine(sourceLine);
+    // A finding on a wire, source, load, or network card also selects that object.
+    const auto onLine = [sourceLine](const auto& items, auto member) {
+        return std::ranges::find(items, sourceLine, member) != items.end();
+    };
+    const auto& wires = currentModel_.wires();
+    if (const auto wire = std::ranges::find(wires, sourceLine, &model::Wire::sourceLine);
+        wire != wires.end())
+        selectWireInProject(wire->tag);
+    else if (onLine(currentSetup_.excitations, &model::Excitation::sourceLine))
+        selectExcitation(sourceLine);
+    else if (onLine(currentSetup_.loads, &model::LoadDefinition::sourceLine))
+        selectLoad(sourceLine);
+    else if (onLine(currentSetup_.transmissionLines, &model::TransmissionLineDefinition::sourceLine))
+        selectTransmissionLine(sourceLine);
+    else if (onLine(currentSetup_.networks, &model::NetworkDefinition::sourceLine))
+        selectNetwork(sourceLine);
 }
 
 void MainWindow::activateProjectItem(QTreeWidgetItem* item)
@@ -4222,7 +4107,6 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
     currentRunRow_ = 0;
     analysisRuns_->selectRow(0);
 
-    solverOutput_->clear();
     analysisOutput_->clear();
     rawOutputFrequencyControl_->clear();
     rawOutputFrequencyControl_->setEnabled(false);
@@ -4241,14 +4125,12 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
             : tr("\nStandard input supplied");
         currentSolverCommand_ += standardInputDescription;
     }
+    bottomPanel_->runLog()->beginRun(runContext(*currentRunRecord_), currentSolverCommand_,
+        currentRunDirectory_);
+    bottomPanel_->openForRun();
     appendSolverOutput(tr("%1\nRun folder: %2\nCommand: %3 %4\n\n")
         .arg(runContext(*currentRunRecord_), currentRunDirectory_, program,
             arguments.join(QLatin1Char(' '))) + standardInputDescription + QStringLiteral("\n"));
-    runMonitorContextLabel_->setText(tr("%1\nRun folder: %2\nCommand: %3")
-        .arg(runContext(*currentRunRecord_), currentRunDirectory_, currentSolverCommand_));
-    runMonitorProgress_->setRange(0, 0);
-    runMonitorStopButton_->setEnabled(true);
-    showRunMonitor(false);
 
     solverActivityName_ = activity;
     solverActivityPhase_ = tr("Starting solver");
@@ -4286,7 +4168,7 @@ void MainWindow::cancelAnalysis()
     if (!solverRunner_->isRunning()) return;
     stopAction_->setEnabled(false);
     solverActivityPhase_ = tr("Canceling");
-    runMonitorStopButton_->setEnabled(false);
+    bottomPanel_->runLog()->setStopEnabled(false);
     updateSolverActivity();
     appendSolverOutput(tr("\nCancellation requested; stopping solver.\n"));
     solverRunner_->cancel();
@@ -4297,12 +4179,7 @@ void MainWindow::appendSolverOutput(const QString& text)
     if (text.isEmpty()) {
         return;
     }
-    const auto appendToEditor = [&text](QPlainTextEdit* output) {
-        output->moveCursor(QTextCursor::End);
-        output->insertPlainText(text);
-        output->moveCursor(QTextCursor::End);
-    };
-    appendToEditor(solverOutput_);
+    bottomPanel_->runLog()->append(text);
     if (!currentRunDirectory_.isEmpty()) {
         QFile logFile(QDir(currentRunDirectory_).filePath(QStringLiteral("run.log")));
         if (logFile.open(QIODevice::WriteOnly | QIODevice::Append)) {
@@ -4311,27 +4188,15 @@ void MainWindow::appendSolverOutput(const QString& text)
     }
 }
 
-void MainWindow::showRunMonitor(bool manuallyRequested)
-{
-    if (runMonitorWindow_ == nullptr) return;
-    if (manuallyRequested) runMonitorPinnedOpen_ = true;
-    if (runMonitorAutoHideTimer_ != nullptr) runMonitorAutoHideTimer_->stop();
-    if (runMonitorWindow_->isMinimized()) runMonitorWindow_->showNormal();
-    else runMonitorWindow_->show();
-    runMonitorWindow_->raise();
-    runMonitorWindow_->activateWindow();
-}
-
 void MainWindow::updateSolverActivity()
 {
-    if (runMonitorStatusLabel_ == nullptr) return;
     auto detail = tr("%1 · %2 · %3 s")
         .arg(solverActivityName_, solverActivityPhase_)
         .arg(formatDecimal(solverElapsed_.isValid() ? solverElapsed_.elapsed() / 1000.0 : 0.0));
     const QFileInfo output(currentRunOutputPath_);
     if (output.exists() && output.size() > 0)
         detail += tr(" · output %1").arg(formatByteSize(output.size()));
-    runMonitorStatusLabel_->setText(detail);
+    bottomPanel_->runLog()->setActivity(detail);
     if (solverActivityTimer_ != nullptr && solverActivityTimer_->isActive())
         statusBar_->setRunning(solverElapsed_.elapsed() / 1000.0);
 }
@@ -4340,16 +4205,10 @@ void MainWindow::completeSolverActivity(const QString& status)
 {
     if (solverActivityTimer_ != nullptr) solverActivityTimer_->stop();
     solverActivityPhase_ = status;
-    runMonitorProgress_->setRange(0, 1);
-    runMonitorProgress_->setValue(status == tr("Completed") ? 1 : 0);
-    runMonitorStopButton_->setEnabled(false);
+    bottomPanel_->runLog()->finishRun(status == tr("Completed"));
     updateSolverActivity();
     statusBar_->setRunFinished(status, status == tr("Completed"),
         solverElapsed_.isValid() ? solverElapsed_.elapsed() / 1000.0 : 0.0);
-    if (status == tr("Completed") && !runMonitorPinnedOpen_
-        && runMonitorAutoHideTimer_ != nullptr) {
-        runMonitorAutoHideTimer_->start();
-    }
 }
 
 void MainWindow::finishAnalysis(SolverProcessResult processResult)
@@ -4589,9 +4448,9 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     statusBar()->showMessage(tr("%1 %2. Artifacts: %3")
         .arg(activity, status.toLower(), currentRunDirectory_), 10000);
     completeSolverActivity(status);
-    if (!runCompleted && processResult.status != SolverProcessStatus::Canceled) {
-        showRunMonitor(false);
-    }
+    bottomPanel_->finishRun(runCompleted);
+    if (!runCompleted && processResult.status != SolverProcessStatus::Canceled)
+        bottomPanel_->showTab(BottomPanel::Tab::RunLog);
     cancelRunButton_->setEnabled(false);
     synchronizeRunnerState();
     updateRunSelectionActions();
@@ -5049,7 +4908,7 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
     QFile logFile(QDir(directory).filePath(QStringLiteral("run.log")));
     const auto logText = logFile.open(QIODevice::ReadOnly)
         ? QString::fromLocal8Bit(logFile.readAll()) : tr("No run log is available.");
-    solverOutput_->setPlainText(logText);
+    bottomPanel_->runLog()->showArchivedLog(logText);
 
     QFile outputFile(QDir(directory).filePath(QStringLiteral("model.out")));
     if (!outputFile.open(QIODevice::ReadOnly)) {
@@ -5963,12 +5822,6 @@ void MainWindow::restoreWorkspaceLayout()
     const auto savedState = settings.value(QStringLiteral("mainWindow/state")).toByteArray();
     restoreState(savedState);
     if (savedState.isEmpty()) resetWorkspaceLayout();
-    const auto modelCheckGeometry = settings.value(
-        QStringLiteral("modelCheckWindow/geometry")).toByteArray();
-    if (!modelCheckGeometry.isEmpty()) modelCheckWindow_->restoreGeometry(modelCheckGeometry);
-    const auto runMonitorGeometry = settings.value(
-        QStringLiteral("runMonitorWindow/geometry")).toByteArray();
-    if (!runMonitorGeometry.isEmpty()) runMonitorWindow_->restoreGeometry(runMonitorGeometry);
     auto geometrySettings = geometrySettings_;
     geometrySettings.lengthUnit = static_cast<model::LengthUnit>(settings.value(
         QStringLiteral("model/displayLengthUnit"), static_cast<int>(model::LengthUnit::Meter)).toInt());
@@ -6032,10 +5885,6 @@ void MainWindow::saveWorkspaceLayout()
     settings.setValue(QStringLiteral("mainWindow/geometry"), saveGeometry());
     settings.setValue(QStringLiteral("mainWindow/normalGeometry"), normalGeometry());
     settings.setValue(QStringLiteral("mainWindow/state"), saveState());
-    settings.setValue(QStringLiteral("modelCheckWindow/geometry"),
-        modelCheckWindow_->saveGeometry());
-    settings.setValue(QStringLiteral("runMonitorWindow/geometry"),
-        runMonitorWindow_->saveGeometry());
     settings.setValue(QStringLiteral("model/displayLengthUnit"), static_cast<int>(geometrySettings_.lengthUnit));
     settings.setValue(QStringLiteral("model/snapSpacingMeters"), geometrySettings_.snapSpacingMeters);
     settings.setValue(QStringLiteral("geometry/automaticGridSpacing"), geometrySettings_.automaticGridSpacing);
