@@ -145,7 +145,7 @@ void testHistoricalOverlayCompatibility()
         "historical overlay rejects unrelated result grids");
 }
 
-void testControlPanelSummaries()
+void testModelSummaries()
 {
     necwb::model::AntennaModel model;
     model.addWire({1, {-5.0, 0.0, 10.0}, {0.0, 0.0, 10.0}, 11, 0.001, 3});
@@ -3926,7 +3926,7 @@ auto main() -> int
     testReferenceRunSelection();
     testSegmentCurrentDisplay();
     testHistoricalOverlayCompatibility();
-    testControlPanelSummaries();
+    testModelSummaries();
     testOptimizationBaselineFingerprint();
     testOptimizationBaselineCompatibility();
     testOptimizationPresets();

@@ -292,7 +292,6 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/validation"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/model-editor"));
-    resultWindowSettings.remove(QStringLiteral("workspaceWindows/analysis-setup"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
     resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
     resultWindowSettings.sync();
@@ -598,7 +597,6 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("resultsColumn"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/validation"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/model-editor"));
-    resultWindowSettings.remove(QStringLiteral("workspaceWindows/analysis-setup"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
     resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
     resultWindowSettings.sync();
