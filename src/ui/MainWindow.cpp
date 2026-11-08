@@ -3631,6 +3631,8 @@ void MainWindow::synchronizeRunnerState()
         solverRunner_->isRunning() || convergenceWorkspace_->isRunning());
     convergenceWorkspace_->setExternalRunActive(
         solverRunner_->isRunning() || optimizationWorkspace_->isRunning());
+    // The Runs tab caches busy state for its buttons; refresh it after every transition.
+    updateRunSelectionActions();
     updateAnalysisReadiness();
 }
 
@@ -3949,7 +3951,6 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
         validationWorkspace_->setCurrentIndex(averageGainValidationTabIndex_);
         validationPanel_->showWindow();
     }
-    updateRunSelectionActions();
     statusBar()->showMessage(tr("Running %1…").arg(activity));
     solverRunner_->start(command, currentRunDirectory_, solverTimeoutSeconds_);
     synchronizeRunnerState();
@@ -4225,7 +4226,6 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     if (!runCompleted && processResult.status != SolverProcessStatus::Canceled)
         bottomPanel_->showTab(BottomPanel::Tab::RunLog);
     synchronizeRunnerState();
-    updateRunSelectionActions();
     updateAnalysisReadiness();
     refreshDashboardRuns();
 }
