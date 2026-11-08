@@ -693,6 +693,22 @@ void testSymbolResolution()
     expect(removedSymbol && removedSymbol->find("SY half=length/2") != std::string::npos
             && removedSymbol->find("SY length=") == std::string::npos,
         "one assignment on a multi-symbol SY line can be removed");
+    const std::string linkedSymbol =
+        "CM len stays in comments\r\nSY len=-2.5, other=len*2\r\n"
+        "GW 1 11 0 0 len 0 0 -len 1e-3\r\nEX 0 1 6 0 len^2 0\r\nEN\r\n";
+    const auto unlinked = necwb::nec::removeSymbolDefinition(linkedSymbol, 2, "LEN");
+    expect(unlinked && necwb::nec::symbolReferenceCount(*unlinked, "len") == 4,
+        "symbol uses are counted in card fields and other SY expressions, not comments");
+    const auto inlined = unlinked
+        ? necwb::nec::inlineSymbolReferences(*unlinked, "len", -2.5) : std::string{};
+    expect(inlined.find("CM len stays in comments\r\nSY other=-2.5*2\r\n"
+               "GW 1 11 0 0 -2.5 0 0 -(-2.5) 1e-3\r\nEX 0 1 6 0 (-2.5)^2 0") != std::string::npos
+            && necwb::nec::NecSymbolResolver{}.resolve(inlined).ok(),
+        "deleting a used symbol writes its value into each use and keeps the deck resolvable");
+    const auto extension = necwb::nec::removeSymbolDefinition("SY len=5\nXX len\nEN\n", 1, "len");
+    expect(extension && necwb::nec::symbolReferenceCount(*extension, "len") == 0
+            && necwb::nec::inlineSymbolReferences(*extension, "len", 5.0) == "XX len\nEN\n",
+        "unrecognized cards are preserved verbatim when a symbol is inlined");
     const std::string fixedCard =
         "CM fixed geometry\r\nGW 1 11 -5 0 6 5 0 6 0.001\r\nGE 0\r\n";
     const auto parameterized = necwb::nec::parameterizeNecCardField(
