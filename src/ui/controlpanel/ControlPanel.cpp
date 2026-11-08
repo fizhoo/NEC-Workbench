@@ -5,6 +5,7 @@
 #include "model/ModelSummary.h"
 #include "nec/NecDocument.h"
 #include "ui/DisplayFormat.h"
+#include "ui/ElidedLabel.h"
 #include "ui/WorkbenchIcon.h"
 
 #include <QAction>
@@ -17,7 +18,6 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
-#include <QPainter>
 #include <QSignalBlocker>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -32,22 +32,6 @@
 
 namespace necwb::ui {
 namespace {
-
-// A one-line label that ends in "…" when its text does not fit. A study's status can be a
-// whole sentence; as a plain label it would set the panel's minimum width and widen the
-// dashboard for good.
-class ElidedLabel final : public QLabel {
-public:
-    using QLabel::QLabel;
-
-protected:
-    void paintEvent(QPaintEvent*) override
-    {
-        QPainter painter(this);
-        painter.drawText(contentsRect(), alignment() | Qt::TextSingleLine,
-            fontMetrics().elidedText(text(), Qt::ElideRight, contentsRect().width()));
-    }
-};
 
 auto groundName(model::GroundType ground) -> QString
 {

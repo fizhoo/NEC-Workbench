@@ -111,6 +111,7 @@ if(NECWB_BUILD_GUI)
         src/ui/WorkbenchLayout.h
         src/ui/WorkbenchStatusBar.cpp
         src/ui/WorkbenchStatusBar.h
+        src/ui/ElidedLabel.h
         src/ui/FileIo.h
         src/ui/ParameterFieldStyle.cpp
         src/ui/ParameterFieldStyle.h

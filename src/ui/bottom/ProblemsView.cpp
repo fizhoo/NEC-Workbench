@@ -1,9 +1,10 @@
 #include "ui/bottom/ProblemsView.h"
 
+#include "ui/ElidedLabel.h"
+
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
-#include <QPainter>
 #include <QStyle>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -15,21 +16,6 @@ namespace necwb::ui {
 namespace {
 
 constexpr auto SourceLineRole = Qt::UserRole + 1;
-
-// One-line label that elides with "…" instead of cutting text mid-word.
-class ElidedLabel final : public QLabel {
-public:
-    using QLabel::QLabel;
-
-protected:
-    void paintEvent(QPaintEvent*) override
-    {
-        QPainter painter(this);
-        const auto area = contentsRect();
-        painter.drawText(area, Qt::AlignLeft | Qt::AlignVCenter,
-            fontMetrics().elidedText(text(), Qt::ElideRight, area.width()));
-    }
-};
 
 auto toolButton(const QString& text, QWidget* parent) -> QToolButton*
 {
