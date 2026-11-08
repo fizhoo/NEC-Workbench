@@ -174,14 +174,19 @@ auto BottomPanel::sizeHint() const -> QSize
         collapsed_ ? stripHeight : GripHeight + stripHeight + openHeight_};
 }
 
+auto BottomPanel::openMinimumHeight() const -> int
+{
+    return GripHeight + tabs_->sizeHint().height() + MinimumOpenHeight;
+}
+
 void BottomPanel::applyHeight()
 {
+    // Open, the panel takes its remembered height but gives way when the window is short.
+    // The policy changes before the pages show, since showing them lays the window out.
+    setSizePolicy(QSizePolicy::Preferred, collapsed_ ? QSizePolicy::Fixed : QSizePolicy::Maximum);
+    setMinimumHeight(collapsed_ ? 0 : openMinimumHeight());
     pages_->setVisible(!collapsed_);
     resizeGrip_->setVisible(!collapsed_);
-    // Open, the panel takes its remembered height but gives way when the window is short.
-    setSizePolicy(QSizePolicy::Preferred, collapsed_ ? QSizePolicy::Fixed : QSizePolicy::Maximum);
-    setMinimumHeight(collapsed_ ? 0
-        : GripHeight + tabs_->sizeHint().height() + MinimumOpenHeight);
     updateGeometry();
 }
 

@@ -591,9 +591,11 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
     resultWindowSettings.sync();
     // Opening an existing model shows it in the main window without raising the NEC Deck
-    // window, and the left column never grows wider than the control panel.
+    // window, the left column never grows wider than the control panel, and at its minimum
+    // size the window still has room to open the bottom panel.
     auto openModelKeepsDeckClosed = false;
     auto leftColumnCappedAtContent = false;
+    auto bottomPanelOpensAtMinimumSize = false;
     {
         const auto savedRecentModels = resultWindowSettings.value(
             QStringLiteral("files/recentModels"));
@@ -644,17 +646,31 @@ auto main(int argc, char* argv[]) -> int
                 leftColumnCappedAtContent = leftColumn->maximumWidth() < QWIDGETSIZE_MAX
                     && split->sizes().value(0) == leftColumn->maximumWidth()
                     && leftColumn->width() == leftColumn->maximumWidth();
+                auto* toggleBottomPanel = mainWindow.findChild<QAction*>(
+                    QStringLiteral("toggleBottomPanelAction"));
+                if (toggleBottomPanel != nullptr && !toggleBottomPanel->isChecked()) {
+                    mainWindow.resize(mainWindow.minimumSizeHint());
+                    application.processEvents();
+                    const auto minimumSize = mainWindow.size();
+                    toggleBottomPanel->trigger();
+                    application.processEvents();
+                    bottomPanelOpensAtMinimumSize = toggleBottomPanel->isChecked()
+                        && mainWindow.size() == minimumSize;
+                }
             }
             mainWindow.close();
         }
         resultWindowSettings.setValue(QStringLiteral("files/recentModels"), savedRecentModels);
         resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
+        resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
         resultWindowSettings.sync();
     }
     if (!openModelKeepsDeckClosed)
         return NECWB_SMOKE_FAILURE("open model keeps NEC Deck closed");
     if (!leftColumnCappedAtContent)
         return NECWB_SMOKE_FAILURE("left column capped at control panel width");
+    if (!bottomPanelOpensAtMinimumSize)
+        return NECWB_SMOKE_FAILURE("bottom panel opens at minimum window size");
     if (!consolidatedSetupNavigation)
         return NECWB_SMOKE_FAILURE("consolidated setup navigation");
     if (!linkedParameterDeleted)

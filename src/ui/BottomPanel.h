@@ -41,6 +41,8 @@ public:
     void openForRun();
     void finishRun(bool succeeded);
     [[nodiscard]] auto sizeHint() const -> QSize override;
+    // The least height the panel needs when open, whether or not it is open now.
+    [[nodiscard]] auto openMinimumHeight() const -> int;
 
 private:
     void applyHeight();

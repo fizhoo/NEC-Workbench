@@ -49,6 +49,7 @@ protected:
 WorkbenchLayout::WorkbenchLayout(QWidget* welcome, QWidget* leftColumn, QWidget* center,
     BottomPanel* bottomPanel, QWidget* parent)
     : QWidget(parent)
+    , bottomPanel_(bottomPanel)
 {
     setObjectName(QStringLiteral("workbenchLayout"));
     auto* layout = new QVBoxLayout(this);
@@ -106,6 +107,16 @@ void WorkbenchLayout::resetLayout()
 {
     QSettings{}.remove(LeftColumnWidthKey);
     applyLeftColumnWidth(split_->widget(0)->sizeHint().width());
+}
+
+auto WorkbenchLayout::minimumSizeHint() const -> QSize
+{
+    // Leave room for the open bottom panel even while it is collapsed, so opening it never
+    // has to grow the window.
+    auto hint = QWidget::minimumSizeHint();
+    hint.setHeight(std::max(hint.height(),
+        pages_->minimumSizeHint().height() + bottomPanel_->openMinimumHeight()));
+    return hint;
 }
 
 auto WorkbenchLayout::eventFilter(QObject* watched, QEvent* event) -> bool
