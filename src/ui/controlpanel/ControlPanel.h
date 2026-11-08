@@ -31,7 +31,6 @@ public:
     enum class StudyState { NotRun, Running, Complete, Failed, Stale };
     enum class Workspace {
         Solver,
-        GeometryEditor,
         Impedance,
         Currents,
         Radiation,
@@ -125,7 +124,7 @@ private:
     std::array<StudyState, 2> studyStates_{StudyState::NotRun, StudyState::NotRun};
     QLabel* footer_{};
     QTableWidget* modelRows_{};
-    std::array<ResultLauncher, 4> resultLaunchers_{};
+    std::array<ResultLauncher, 3> resultLaunchers_{};
     std::function<void(Workspace)> openWorkspace_;
     std::function<void(Editor)> openEditor_;
     std::function<void(const QString&)> openRecent_;

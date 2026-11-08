@@ -34,7 +34,6 @@ class QEvent;
 class QLabel;
 class QMenu;
 class QTabWidget;
-class QStackedWidget;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QTimer;
@@ -70,6 +69,7 @@ class ResultWindowCoordinator;
 class HistoricalOverlayControl;
 class WorkbenchStatusBar;
 class BottomPanel;
+class WorkbenchLayout;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -92,6 +92,13 @@ private:
         AverageGainTest,
         OptimizationPeakSearch,
         OptimizationBaseline
+    };
+
+    // Work areas that still open in their own windows.
+    enum class Module {
+        Model,
+        Setup,
+        Optimize
     };
 
     enum class EditorDestination {
@@ -127,13 +134,11 @@ private:
     void showGettingStarted();
     void openUserGuide();
     void showAboutDialog();
-    auto showModule(int index) -> bool;
-    [[nodiscard]] auto confirmCurrentEditorNavigation() -> bool;
+    void showModule(Module module);
     [[nodiscard]] auto confirmPendingEdits(QWidget* page) -> bool;
     void showPrimaryResultsWindow();
     void setLiveResultStatus(const QString& status);
     void showEditor(EditorDestination destination, int geometryTab = 0);
-    void fitWindowToDashboard();
     void setDisplayLengthUnit(model::LengthUnit unit);
     void changeDeckLengthUnit(model::LengthUnit unit);
     void updateDeckUnitControls(const nec::DeckGeometryUnitInfo& info);
@@ -297,7 +302,6 @@ private:
     QAction* autoSegmentationAction_{};
     QAction* undoAction_{};
     QAction* redoAction_{};
-    QAction* homeModuleAction_{};
     QAction* modelModuleAction_{};
     QAction* analysisModuleAction_{};
     QAction* resultsModuleAction_{};
@@ -316,18 +320,16 @@ private:
     QComboBox* deckUnitControl_{};
     QLabel* deckScaleLabel_{};
     QDoubleSpinBox* snapSpacingControl_{};
-    QStackedWidget* moduleStack_{};
-    QStackedWidget* dashboardStack_{};
     QTabWidget* modelWorkspace_{};
     QTabWidget* workspace_{};
     QTabWidget* sourceWorkspace_{};
-    QWidget* resultWindowsHost_{};
+    QWidget* windowHost_{};
+    WorkbenchLayout* workbenchLayout_{};
     DetachablePanel* impedancePanel_{};
     DetachablePanel* currentsPanel_{};
     DetachablePanel* radiationPanel_{};
     DetachablePanel* validationPanel_{};
     DetachablePanel* modelPanel_{};
-    DetachablePanel* geometryPanel_{};
     DetachablePanel* setupPanel_{};
     DetachablePanel* optimizationPanel_{};
     ControlPanel* controlPanel_{};
@@ -411,21 +413,16 @@ private:
     int geometry3DTabIndex_{};
     int structuredSourceTabIndex_{1};
     int loadNetworkTabIndex_{};
-    int homeModuleIndex_{};
-    int modelModuleIndex_{};
-    int geometryModuleIndex_{};
     int modelParametersWorkspaceIndex_{};
     int modelSourcesWorkspaceIndex_{};
     int modelEnvironmentWorkspaceIndex_{};
     int modelDeckWorkspaceIndex_{};
-    int analysisModuleIndex_{};
     int analysisSolverTabIndex_{};
     int analysisFrequencyTabIndex_{};
     int analysisRequestsTabIndex_{};
     int validationOverviewTabIndex_{};
     int averageGainValidationTabIndex_{};
     int convergenceValidationTabIndex_{};
-    int optimizeModuleIndex_{};
     std::size_t modelErrorCount_{};
     std::size_t modelWarningCount_{};
     bool modelChecked_{};

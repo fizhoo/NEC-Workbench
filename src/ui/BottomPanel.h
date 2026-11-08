@@ -13,8 +13,9 @@ class RawOutputView;
 class RunHistoryView;
 class RunLogView;
 
-// Tabbed panel below the dashboard. Collapsed it is just its tab strip; clicking a tab opens
-// it and clicking the open tab collapses it again.
+// Tabbed panel along the bottom of the window. Collapsed it is just its tab strip; clicking a
+// tab opens it and clicking the open tab collapses it again. Open, a grip on its top edge sets
+// its height.
 class BottomPanel final : public QWidget {
     Q_OBJECT
 
@@ -39,14 +40,10 @@ public:
     // panel was collapsed before the run opened it.
     void openForRun();
     void finishRun(bool succeeded);
-    // Sizes the panel for the window (the window is fixed to its content for now): open, it
-    // takes its remembered height, cut down to fit availableHeight.
-    auto fitHeight(int availableHeight) -> int;
-
-signals:
-    void heightChanged();
+    [[nodiscard]] auto sizeHint() const -> QSize override;
 
 private:
+    void applyHeight();
     void saveState() const;
 
     QTabBar* tabs_{};

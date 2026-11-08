@@ -8,7 +8,6 @@
 
 class QDialog;
 class QLabel;
-class QPushButton;
 class QVBoxLayout;
 
 namespace necwb::ui {
@@ -38,9 +37,7 @@ public:
     void setVisibilityChangedCallback(std::function<void(bool)> callback);
 
 private:
-    void toggleDetached();
     void detach(bool showWindow = true);
-    void attach();
     void showDetached(WindowActivation activation = WindowActivation::Activate);
     void ensureWindowOnScreen();
     void saveWindowGeometry() const;
@@ -55,7 +52,6 @@ private:
     QVBoxLayout* layout_{};
     QWidget* content_{};
     QWidget* placeholder_{};
-    QPushButton* toggleButton_{};
     QLabel* statusLabel_{};
     QLabel* dialogStatusLabel_{};
     QDialog* dialog_{};

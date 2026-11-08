@@ -147,11 +147,6 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     commands->addLayout(runRow);
     commands->addWidget(sweepButton_);
     commands->addWidget(checkButton_);
-    // A model window, not a result: it shares the launcher's open indicator but sits above
-    // the results group.
-    auto* geometryButton = compactButton(tr("Geometry Editor"), panel,
-        QStringLiteral("controlPanelGeometryEditor"), "geometry");
-    commands->addWidget(geometryButton);
     auto* resultsHeading = new QLabel(tr("RESULTS  (live windows)"), panel);
     resultsHeading->setObjectName(QStringLiteral("controlPanelResultsHeading"));
     auto resultsFont = resultsHeading->font();
@@ -167,10 +162,9 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
         QStringLiteral("controlPanelRadiation"), "radiation-pattern");
     resultLaunchers_ = {{{Workspace::Impedance, impedanceButton, tr("Impedance / SWR")},
         {Workspace::Currents, currentsButton, tr("Currents")},
-        {Workspace::Radiation, radiationButton, tr("Radiation")},
-        {Workspace::GeometryEditor, geometryButton, tr("Geometry Editor")}}};
+        {Workspace::Radiation, radiationButton, tr("Radiation")}}};
     for (auto& launcher : resultLaunchers_) {
-        if (launcher.workspace != Workspace::GeometryEditor) commands->addWidget(launcher.button);
+        commands->addWidget(launcher.button);
         connect(launcher.button, &QToolButton::clicked, this,
             [this, workspace = launcher.workspace] {
                 if (openWorkspace_) openWorkspace_(workspace);
@@ -475,9 +469,6 @@ void ControlPanel::setModel(const model::AntennaModel& model,
             : countText(summary.radiationRequests.size(), tr("pattern"), tr("patterns")));
     setModelRow(Editor::Deck, countText(summary.cardCount, tr("card"), tr("cards")));
     modelRows_->setEnabled(summary.cardCount != 0);
-    auto* geometry = resultLauncher(Workspace::GeometryEditor);
-    geometry->available = !model.empty();
-    refreshResultLauncher(Workspace::GeometryEditor);
 }
 
 void ControlPanel::setResults(const analysis::AnalysisResult& result,
@@ -488,9 +479,7 @@ void ControlPanel::setResults(const analysis::AnalysisResult& result,
     resultLauncher(Workspace::Impedance)->available = !result.feedpoints.empty();
     resultLauncher(Workspace::Currents)->available = !result.currents.empty();
     resultLauncher(Workspace::Radiation)->available = !result.radiation.empty();
-    const auto hasResults = std::ranges::any_of(resultLaunchers_, [](const auto& launcher) {
-        return launcher.workspace != Workspace::GeometryEditor && launcher.available;
-    });
+    const auto hasResults = std::ranges::any_of(resultLaunchers_, &ResultLauncher::available);
     resultStatus_ = !hasResults
         ? tr("Results none") : stale ? tr("Results stale") : tr("Results current");
     referenceImpedanceOhms_ = result.referenceImpedanceOhms;
@@ -614,9 +603,7 @@ void ControlPanel::refreshQuickResults()
 
 void ControlPanel::markResultsStale()
 {
-    if (std::ranges::none_of(resultLaunchers_, [](const auto& launcher) {
-            return launcher.workspace != Workspace::GeometryEditor && launcher.available;
-        })) return;
+    if (std::ranges::none_of(resultLaunchers_, &ResultLauncher::available)) return;
     resultsStale_ = true;
     resultStatus_ = tr("Results stale");
     refreshHeader();
@@ -699,9 +686,7 @@ void ControlPanel::fitModelRowsHeight()
 void ControlPanel::refreshFooter()
 {
     const auto state = resultsStale_ ? tr("model changed · results stale")
-        : std::ranges::any_of(resultLaunchers_, [](const auto& launcher) {
-              return launcher.workspace != Workspace::GeometryEditor && launcher.available;
-          })
+        : std::ranges::any_of(resultLaunchers_, &ResultLauncher::available)
             ? tr("model unchanged since run") : tr("no current results");
     footer_->setText(tr("%1 · %2").arg(lastRunText_, state));
     footer_->setToolTip(resultContext_);
@@ -714,15 +699,10 @@ void ControlPanel::refreshResultLauncher(Workspace workspace)
     launcher->button->setEnabled(launcher->available);
     launcher->button->setText(tr("%1 %2").arg(launcher->visible
         ? QStringLiteral("●") : QStringLiteral("○"), launcher->label));
-    const auto geometry = workspace == Workspace::GeometryEditor;
     launcher->button->setToolTip(!launcher->available
-        ? geometry ? tr("Open a model first")
-                   : tr("Run an analysis that produces these results first")
-        : launcher->visible
-            ? geometry ? tr("The geometry editor is open; click to raise it")
-                       : tr("This live window is open; click to raise it")
-            : geometry ? tr("Edit wires in 2D and view the antenna in 3D")
-                       : tr("Open this live result window"));
+        ? tr("Run an analysis that produces these results first")
+        : launcher->visible ? tr("This live window is open; click to raise it")
+                            : tr("Open this live result window"));
 }
 
 void ControlPanel::setModelRow(Editor editor, const QString& value)

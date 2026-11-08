@@ -107,6 +107,8 @@ if(NECWB_BUILD_GUI)
         src/ui/BottomPanel.h
         src/ui/DetachablePanel.cpp
         src/ui/DetachablePanel.h
+        src/ui/WorkbenchLayout.cpp
+        src/ui/WorkbenchLayout.h
         src/ui/WorkbenchStatusBar.cpp
         src/ui/WorkbenchStatusBar.h
         src/ui/FileIo.h

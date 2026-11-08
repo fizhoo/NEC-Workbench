@@ -53,25 +53,28 @@ same definitions.
 
 ## Workspaces
 
-Home is the main window: a compact control panel (`ui/controlpanel`) whose layout is
-fixed to its content. It summarizes the active model, selected-frequency quick results,
-model quality, and the latest run, and launches the focused windows without
-duplicating their content. Every other workspace is a separate top-level window:
+The main window is resizable and laid out by `WorkbenchLayout`: with no model, the
+Welcome page; with a model, Home — a compact control panel (`ui/controlpanel`) — in a
+top-aligned left column beside the geometry editor (2D and 3D views), split by one
+handle. Home summarizes the active model, selected-frequency quick results, model
+quality, and the latest run, and launches the focused windows without duplicating
+their content. The remaining workspaces are separate top-level windows:
 
-- **Geometry Editor** owns the 2D and 3D geometry views.
 - **NEC Deck** owns Raw Source, Structured Cards, and Parameters.
 - **Setup** owns frequency, sources, loads/networks, environment, output requests,
   and solver configuration.
 - **Impedance / SWR**, **Currents**, and **Radiation** present current or historical
   parsed output.
-- The **bottom panel** (`BottomPanel`) below Home holds Problems, the Run log, Runs,
+- The **bottom panel** (`BottomPanel`) along the bottom of the main window holds Problems, the Run log, Runs,
   and Raw output; `WorkbenchStatusBar` shows backend, result frequencies, run state,
   and check counts.
 - **Optimize** owns parameter studies and candidate review.
 
-Work windows are `DetachablePanel`s, and result windows are coordinated by
-`ResultWindowCoordinator`. Each window persists its own geometry, so resizing one
-never resizes another, and opening a window again raises the existing instance.
+The separate windows are `DetachablePanel`s, parented to a hidden host in the main
+window, and result windows are coordinated by `ResultWindowCoordinator`. Each window
+persists its own geometry, so resizing one never resizes another, and opening a window
+again raises the existing instance. They cannot be attached back into the main window;
+each moves in during its own step of the layout rework.
 Menus expose the complete command set; a compact navigator selects pages inside
 Setup and the NEC Deck window.
 

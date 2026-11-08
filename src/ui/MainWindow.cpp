@@ -3,6 +3,7 @@
 #include "ui/DisplayFormat.h"
 #include "ui/BottomPanel.h"
 #include "ui/DetachablePanel.h"
+#include "ui/WorkbenchLayout.h"
 #include "ui/WorkbenchStatusBar.h"
 #include "ui/bottom/ProblemsView.h"
 #include "ui/bottom/RawOutputView.h"
@@ -102,7 +103,6 @@
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSplitter>
-#include <QStackedWidget>
 #include <QStatusBar>
 #include <QStyle>
 #include <QStandardPaths>
@@ -377,18 +377,8 @@ MainWindow::MainWindow()
     radiationPanel_->setVisibilityChangedCallback([this](bool visible) {
         controlPanel_->setResultWindowVisible(ControlPanel::Workspace::Radiation, visible);
     });
-    geometryPanel_->setVisibilityChangedCallback([this](bool visible) {
-        controlPanel_->setResultWindowVisible(ControlPanel::Workspace::GeometryEditor, visible);
-    });
     createDocks();
     createMenusAndToolbar();
-    // The main window only shows the dashboard (every module opens in its own window), and
-    // the dashboard does not stretch, so the window is fixed to its content instead of
-    // letting a short window squeeze sections over each other.
-    layout()->setSizeConstraint(QLayout::SetFixedSize);
-    connect(dashboardStack_, &QStackedWidget::currentChanged,
-        this, [this] { fitWindowToDashboard(); });
-    fitWindowToDashboard();
     qApp->installEventFilter(this);
     setWorkspaceDensity(workspaceDensityFromId(QSettings{}.value(
         QStringLiteral("appearance/workspaceDensity"), QStringLiteral("compact")).toString()));
@@ -453,8 +443,6 @@ MainWindow::MainWindow()
         if (index == structuredSourceTabIndex_ && !modelChecked_) checkModel();
         updateUndoActions();
     });
-    connect(moduleStack_, &QStackedWidget::currentChanged, this,
-        [this] { updateUndoActions(); });
 
     restoreWorkspaceLayout();
     updateUndoActions();
@@ -462,11 +450,6 @@ MainWindow::MainWindow()
 
 auto MainWindow::eventFilter(QObject* watched, QEvent* event) -> bool
 {
-    // Dashboard content changes size (results, stale markers, density), so refit the
-    // window whenever the visible dashboard page asks for a new layout.
-    if (event->type() == QEvent::LayoutRequest && dashboardStack_ != nullptr
-        && watched == dashboardStack_->currentWidget())
-        QTimer::singleShot(0, this, [this] { fitWindowToDashboard(); });
     if (event->type() == QEvent::Show) {
         auto* dialog = qobject_cast<QDialog*>(watched);
         if (dialog != nullptr && dialog->isWindow()
@@ -703,13 +686,10 @@ void MainWindow::createActions()
     connect(aboutAction_, &QAction::triggered, this,
         [this] { showAboutDialog(); });
 
-    auto* moduleGroup = new QActionGroup(this);
-    moduleGroup->setExclusive(true);
-    homeModuleAction_ = moduleGroup->addAction(tr("&Home"));
-    modelModuleAction_ = moduleGroup->addAction(tr("&Model"));
-    analysisModuleAction_ = moduleGroup->addAction(tr("&Setup"));
-    resultsModuleAction_ = moduleGroup->addAction(tr("&Results"));
-    optimizeModuleAction_ = moduleGroup->addAction(tr("&Optimize"));
+    modelModuleAction_ = new QAction(tr("&Model"), this);
+    analysisModuleAction_ = new QAction(tr("&Setup"), this);
+    resultsModuleAction_ = new QAction(tr("&Results"), this);
+    optimizeModuleAction_ = new QAction(tr("&Optimize"), this);
     modelModuleAction_->setObjectName(QStringLiteral("modelModuleAction"));
     analysisModuleAction_->setObjectName(QStringLiteral("setupModuleAction"));
     optimizeModuleAction_->setObjectName(QStringLiteral("optimizeModuleAction"));
@@ -717,38 +697,25 @@ void MainWindow::createActions()
     analysisModuleAction_->setIcon(workbenchIcon("settings"));
     resultsModuleAction_->setIcon(workbenchIcon("results"));
     optimizeModuleAction_->setIcon(workbenchIcon("optimize"));
-    for (auto* action : moduleGroup->actions()) {
-        action->setCheckable(true);
-    }
-    resultsModuleAction_->setCheckable(false);
-    homeModuleAction_->setChecked(true);
     modelModuleAction_->setEnabled(false);
     analysisModuleAction_->setEnabled(false);
     resultsModuleAction_->setEnabled(true);
     optimizeModuleAction_->setEnabled(false);
-    connect(homeModuleAction_, &QAction::triggered, this, [this] { showModule(homeModuleIndex_); });
-    connect(modelModuleAction_, &QAction::triggered, this, [this] { showModule(modelModuleIndex_); });
-    connect(analysisModuleAction_, &QAction::triggered, this, [this] { showModule(analysisModuleIndex_); });
+    connect(modelModuleAction_, &QAction::triggered, this, [this] { showModule(Module::Model); });
+    connect(analysisModuleAction_, &QAction::triggered, this, [this] { showModule(Module::Setup); });
     connect(resultsModuleAction_, &QAction::triggered, this, [this] {
         showPrimaryResultsWindow();
     });
     connect(optimizeModuleAction_, &QAction::triggered,
-        this, [this] { showModule(optimizeModuleIndex_); });
+        this, [this] { showModule(Module::Optimize); });
 }
 
 void MainWindow::createWorkspace()
 {
-    auto* central = new QWidget(this);
-    auto* centralLayout = new QVBoxLayout(central);
-    centralLayout->setContentsMargins(0, 0, 0, 0);
-    centralLayout->setSpacing(0);
-    moduleStack_ = new QStackedWidget(central);
-    moduleStack_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-    centralLayout->addWidget(moduleStack_, 1);
-    bottomPanel_ = new BottomPanel(central);
-    centralLayout->addWidget(bottomPanel_);
-    setCentralWidget(central);
-    connect(bottomPanel_, &BottomPanel::heightChanged, this, [this] { fitWindowToDashboard(); });
+    // Parent of the panels that still open in their own windows.
+    windowHost_ = new QWidget(this);
+    windowHost_->hide();
+    bottomPanel_ = new BottomPanel(this);
     auto* problems = bottomPanel_->problems();
     connect(problems, &ProblemsView::findingActivated,
         this, [this](std::size_t sourceLine) { goToDiagnostic(sourceLine); });
@@ -773,7 +740,7 @@ void MainWindow::createWorkspace()
             statusBar()->showMessage(message, timeoutMs);
         });
 
-    modelWorkspace_ = new QTabWidget(moduleStack_);
+    modelWorkspace_ = new QTabWidget(windowHost_);
     modelWorkspace_->setObjectName(QStringLiteral("modelWorkspace"));
     modelWorkspace_->setDocumentMode(true);
     sourceWorkspace_ = new QTabWidget(modelWorkspace_);
@@ -784,12 +751,10 @@ void MainWindow::createWorkspace()
     new NecHighlighter(editor_->document());
     sourceWorkspace_->addTab(editor_, tr("Raw Source"));
 
-    dashboardStack_ = new QStackedWidget(moduleStack_);
     welcomePage_ = new WelcomePage(newAction_, openAction_,
         [this](const QString& path) { openFileAtPath(path); },
-        [this] { openExample(); }, [this] { clearRecentFiles(); }, dashboardStack_);
-    dashboardStack_->addWidget(welcomePage_);
-    controlPanel_ = new ControlPanel(dashboardStack_);
+        [this] { openExample(); }, [this] { clearRecentFiles(); }, this);
+    controlPanel_ = new ControlPanel(this);
     controlPanel_->setFileActions(openAction_, saveAction_);
     refreshRecentFileViews(recentFiles());
     controlPanel_->setQuickActions(
@@ -800,9 +765,6 @@ void MainWindow::createWorkspace()
         switch (destination) {
         case ControlPanel::Workspace::Solver:
             showEditor(EditorDestination::Solver);
-            break;
-        case ControlPanel::Workspace::GeometryEditor:
-            showModule(geometryModuleIndex_);
             break;
         case ControlPanel::Workspace::Impedance:
             resultWindowCoordinator_->showImpedance();
@@ -817,7 +779,7 @@ void MainWindow::createWorkspace()
             showRunHistory();
             break;
         case ControlPanel::Workspace::Optimize:
-            showModule(optimizeModuleIndex_);
+            showModule(Module::Optimize);
             break;
         }
     });
@@ -840,9 +802,8 @@ void MainWindow::createWorkspace()
         case ControlPanel::Editor::Deck: showEditor(EditorDestination::RawSource); break;
         }
     });
-    dashboardStack_->addWidget(controlPanel_);
     QTimer::singleShot(0, this, [this] { refreshDashboardRuns(); });
-    homeModuleIndex_ = moduleStack_->addWidget(dashboardStack_);
+
 
     auto* structuredContainer = new QWidget(sourceWorkspace_);
     auto* structuredLayout = new QVBoxLayout(structuredContainer);
@@ -927,7 +888,7 @@ void MainWindow::createWorkspace()
             detachFieldParameter(sourceLine, fieldIndex, fieldLabel);
         });
 
-    workspace_ = new QTabWidget(moduleStack_);
+    workspace_ = new QTabWidget(windowHost_);
     workspace_->setObjectName(QStringLiteral("geometryWorkspace"));
     workspace_->setDocumentMode(true);
     workspace_->setMovable(true);
@@ -1081,15 +1042,6 @@ void MainWindow::createWorkspace()
     geometry3DTabIndex_ = workspace_->addTab(geometry3DPage, tr("3D Geometry"));
     workspace_->setTabIcon(geometryTabIndex_, workbenchIcon("geometry"));
     workspace_->setTabIcon(geometry3DTabIndex_, workbenchIcon("3d-view"));
-    // Geometry and the deck live in separate windows so each keeps its own size: the deck
-    // is usually small beside a run, while geometry work wants a large window.
-    geometryPanel_ = new DetachablePanel(QStringLiteral("geometry-editor"),
-        tr("Geometry Editor"), moduleStack_, {QStringLiteral("workspaceWindows"),
-            QStringLiteral("geometryEditorWindow"), QSize{1000, 760}});
-    geometryPanel_->setStatusText(tr("No model loaded"));
-    geometryPanel_->setContent(workspace_);
-    geometryModuleIndex_ = moduleStack_->addWidget(geometryPanel_);
-
     parameterEditor_ = new ParameterEditor(modelWorkspace_);
     connect(parameterEditor_, &ParameterEditor::parameterChanged, this,
         [this](std::size_t sourceLine, QString originalName, QString name, QString expression) {
@@ -1100,7 +1052,7 @@ void MainWindow::createWorkspace()
     connect(parameterEditor_, &ParameterEditor::parameterSelected, this,
         [this](std::size_t sourceLine) { editor_->goToLine(sourceLine); });
 
-    analysisWorkspace_ = new QTabWidget(moduleStack_);
+    analysisWorkspace_ = new QTabWidget(windowHost_);
     analysisWorkspace_->setObjectName(QStringLiteral("setupWorkspace"));
     analysisWorkspace_->setDocumentMode(true);
 
@@ -1185,14 +1137,13 @@ void MainWindow::createWorkspace()
     modelWorkspace_->setTabIcon(modelParametersWorkspaceIndex_, workbenchIcon("structured-cards"));
     modelWorkspace_->setTabIcon(modelDeckWorkspaceIndex_, workbenchIcon("nec-deck"));
     auto* modelNavigator = new WorkspaceNavigator(
-        modelWorkspace_, QStringLiteral("model"), moduleStack_);
+        modelWorkspace_, QStringLiteral("model"), windowHost_);
     // Keeps the former Model Editor's settings key so its saved size carries over.
     modelPanel_ = new DetachablePanel(QStringLiteral("model-editor"),
-        tr("NEC Deck"), moduleStack_, {QStringLiteral("workspaceWindows"),
+        tr("NEC Deck"), windowHost_, {QStringLiteral("workspaceWindows"),
             QStringLiteral("modelEditorWindow")});
     modelPanel_->setStatusText(tr("No model loaded"));
     modelPanel_->setContent(modelNavigator);
-    modelModuleIndex_ = moduleStack_->addWidget(modelPanel_);
 
     analysisSetupEditor_ = new AnalysisSetupEditor(analysisWorkspace_);
     connect(analysisSetupEditor_, &AnalysisSetupEditor::settingsChanged, this,
@@ -1270,27 +1221,24 @@ void MainWindow::createWorkspace()
     analysisWorkspace_->setTabIcon(analysisRequestsTabIndex_, workbenchIcon("radiation-pattern"));
 
     auto* analysisNavigator = new WorkspaceNavigator(
-        analysisWorkspace_, QStringLiteral("analysis"), moduleStack_);
+        analysisWorkspace_, QStringLiteral("analysis"), windowHost_);
     setupPanel_ = new DetachablePanel(QStringLiteral("analysis-setup"),
-        tr("Analysis Setup"), moduleStack_, {QStringLiteral("workspaceWindows"),
+        tr("Analysis Setup"), windowHost_, {QStringLiteral("workspaceWindows"),
             QStringLiteral("analysisSetupWindow")});
     setupPanel_->setStatusText(tr("No model loaded"));
     setupPanel_->setContent(analysisNavigator);
-    analysisModuleIndex_ = moduleStack_->addWidget(setupPanel_);
 
     createResultWindows();
     createOptimizationWorkspace();
-    preserveControlHeights(moduleStack_);
-    showModule(homeModuleIndex_);
+    workbenchLayout_ = new WorkbenchLayout(welcomePage_, controlPanel_, workspace_, bottomPanel_, this);
+    setCentralWidget(workbenchLayout_);
+    preserveControlHeights(this);
 }
 
 void MainWindow::createResultWindows()
 {
-    resultWindowsHost_ = new QWidget(moduleStack_);
-    resultWindowsHost_->setObjectName(QStringLiteral("resultWindowsHost"));
-    resultWindowsHost_->hide();
     validationPanel_ = new DetachablePanel(QStringLiteral("validation"),
-        tr("Validation"), resultWindowsHost_, {QStringLiteral("resultWindows"),
+        tr("Validation"), windowHost_, {QStringLiteral("resultWindows"),
             QStringLiteral("validationWindow"), kResultWindowSize});
     validationWorkspace_ = new QTabWidget(validationPanel_);
     validationWorkspace_->setObjectName(QStringLiteral("validationWorkspace"));
@@ -1355,7 +1303,7 @@ void MainWindow::createResultWindows()
             ControlPanel::StudyState::Complete, summary);
     });
 
-    auto* impedanceContent = new QWidget(resultWindowsHost_);
+    auto* impedanceContent = new QWidget(windowHost_);
     auto* impedanceLayout = new QVBoxLayout(impedanceContent);
     impedanceLayout->setContentsMargins(0, 0, 0, 0);
     impedanceLayout->setSpacing(2);
@@ -1378,17 +1326,17 @@ void MainWindow::createResultWindows()
     impedanceLayout->addWidget(impedanceOverlayControl_);
     impedanceLayout->addWidget(impedanceTabs, 1);
     impedancePanel_ = new DetachablePanel(
-        QStringLiteral("impedance"), tr("Impedance Results"), resultWindowsHost_,
+        QStringLiteral("impedance"), tr("Impedance Results"), windowHost_,
         {QStringLiteral("resultWindows"), {}, kResultWindowSize});
     impedancePanel_->setContent(impedanceContent);
 
     currentsPanel_ = new DetachablePanel(
-        QStringLiteral("currents"), tr("Current Distribution"), resultWindowsHost_,
+        QStringLiteral("currents"), tr("Current Distribution"), windowHost_,
         {QStringLiteral("resultWindows"), {}, kResultWindowSize});
     currentResultsView_ = new CurrentDistributionView(currentsPanel_);
     currentsPanel_->setContent(currentResultsView_);
 
-    auto* radiationContent = new QWidget(resultWindowsHost_);
+    auto* radiationContent = new QWidget(windowHost_);
     auto* radiationLayout = new QVBoxLayout(radiationContent);
     radiationLayout->setContentsMargins(0, 0, 0, 0);
     radiationLayout->setSpacing(2);
@@ -1416,7 +1364,7 @@ void MainWindow::createResultWindows()
     radiationLayout->addWidget(radiationOverlayControl_);
     radiationLayout->addWidget(radiationTabs, 1);
     radiationPanel_ = new DetachablePanel(
-        QStringLiteral("radiation"), tr("Radiation Results"), resultWindowsHost_,
+        QStringLiteral("radiation"), tr("Radiation Results"), windowHost_,
         {QStringLiteral("resultWindows"), {}, kResultWindowSize});
     radiationPanel_->setContent(radiationContent);
     radiationPatternView_->setSettingsChangedCallback([this](const auto& settings) {
@@ -1443,7 +1391,7 @@ void MainWindow::createResultWindows()
 void MainWindow::createOptimizationWorkspace()
 {
     optimizationPanel_ = new DetachablePanel(QStringLiteral("optimization"),
-        tr("Optimization"), moduleStack_, {QStringLiteral("workspaceWindows"),
+        tr("Optimization"), windowHost_, {QStringLiteral("workspaceWindows"),
             QStringLiteral("optimizationWindow")});
     optimizationPanel_->setStatusText(tr("No model loaded"));
     optimizationWorkspace_ = new OptimizationWorkspace(optimizationPanel_);
@@ -1460,7 +1408,7 @@ void MainWindow::createOptimizationWorkspace()
             optimizationWorkspace_->isRunning() ? tr("Running") : tr("Ready")));
     });
     optimizationWorkspace_->setParameterizationHelpCallback([this] {
-        if (!showModule(modelModuleIndex_)) return;
+        showModule(Module::Model);
         modelWorkspace_->setCurrentIndex(modelDeckWorkspaceIndex_);
         sourceWorkspace_->setCurrentIndex(structuredSourceTabIndex_);
         auto* cardTabs = qobject_cast<QTabWidget*>(wireCardEditor_->parentWidget());
@@ -1522,74 +1470,16 @@ void MainWindow::createOptimizationWorkspace()
             return startOptimizationPeakSearch(frequencyMHz);
         });
     optimizationPanel_->setContent(optimizationWorkspace_);
-    optimizeModuleIndex_ = moduleStack_->addWidget(optimizationPanel_);
 }
 
-auto MainWindow::showModule(int index) -> bool
+void MainWindow::showModule(Module module)
 {
-    if (moduleStack_ == nullptr || index < 0 || index >= moduleStack_->count()) {
-        return false;
-    }
-    if (index == geometryModuleIndex_ && geometryPanel_ != nullptr) {
-        geometryPanel_->showWindow();
-        updateUndoActions();
-        return true;
-    }
-    if (index == modelModuleIndex_ && modelPanel_ != nullptr) {
-        modelPanel_->showWindow();
-        const auto current = moduleStack_->currentIndex();
-        if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
-        else if (current == analysisModuleIndex_) analysisModuleAction_->setChecked(true);
-        else if (current == optimizeModuleIndex_) optimizeModuleAction_->setChecked(true);
-        updateUndoActions();
-        return true;
-    }
-    if (index == analysisModuleIndex_ && setupPanel_ != nullptr) {
-        setupPanel_->showWindow();
-        const auto current = moduleStack_->currentIndex();
-        if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
-        else if (current == optimizeModuleIndex_) optimizeModuleAction_->setChecked(true);
-        updateUndoActions();
-        return true;
-    }
-    if (index == optimizeModuleIndex_ && optimizationPanel_ != nullptr) {
-        optimizationPanel_->showWindow();
-        const auto current = moduleStack_->currentIndex();
-        if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
-        updateUndoActions();
-        return true;
-    }
-    if (index != moduleStack_->currentIndex() && !confirmCurrentEditorNavigation()) {
-        const auto current = moduleStack_->currentIndex();
-        if (current == homeModuleIndex_) homeModuleAction_->setChecked(true);
-        else if (current == modelModuleIndex_) modelModuleAction_->setChecked(true);
-        else if (current == analysisModuleIndex_) analysisModuleAction_->setChecked(true);
-        else if (current == optimizeModuleIndex_) optimizeModuleAction_->setChecked(true);
-        return false;
-    }
-    moduleStack_->setCurrentIndex(index);
-    if (index == homeModuleIndex_) {
-        homeModuleAction_->setChecked(true);
-        dashboardStack_->setCurrentIndex(hasNecModel_ ? 1 : 0);
-    } else if (index == modelModuleIndex_) {
-        modelModuleAction_->setChecked(true);
-    } else if (index == analysisModuleIndex_) {
-        analysisModuleAction_->setChecked(true);
-    } else if (index == optimizeModuleIndex_) {
-        optimizeModuleAction_->setChecked(true);
+    switch (module) {
+    case Module::Model: modelPanel_->showWindow(); break;
+    case Module::Setup: setupPanel_->showWindow(); break;
+    case Module::Optimize: optimizationPanel_->showWindow(); break;
     }
     updateUndoActions();
-    return true;
-}
-
-auto MainWindow::confirmCurrentEditorNavigation() -> bool
-{
-    if (moduleStack_ == nullptr) return true;
-    if (moduleStack_->currentIndex() == modelModuleIndex_)
-        return confirmPendingEdits(modelWorkspace_->currentWidget());
-    if (moduleStack_->currentIndex() == analysisModuleIndex_)
-        return confirmPendingEdits(analysisWorkspace_->currentWidget());
-    return true;
 }
 
 auto MainWindow::confirmPendingEdits(QWidget* page) -> bool
@@ -1638,33 +1528,36 @@ void MainWindow::setLiveResultStatus(const QString& status)
 void MainWindow::showEditor(EditorDestination destination, int geometryTab)
 {
     if (destination == EditorDestination::RawSource) {
-        if (!showModule(modelModuleIndex_)) return;
+        showModule(Module::Model);
         modelWorkspace_->setCurrentIndex(modelDeckWorkspaceIndex_);
         sourceWorkspace_->setCurrentIndex(0);
     } else if (destination == EditorDestination::Frequency) {
-        if (!showModule(analysisModuleIndex_)) return;
+        showModule(Module::Setup);
         analysisWorkspace_->setCurrentIndex(analysisFrequencyTabIndex_);
     } else if (destination == EditorDestination::Sources) {
-        if (!showModule(analysisModuleIndex_)) return;
+        showModule(Module::Setup);
         analysisWorkspace_->setCurrentIndex(modelSourcesWorkspaceIndex_);
     } else if (destination == EditorDestination::Loads) {
-        if (!showModule(analysisModuleIndex_)) return;
+        showModule(Module::Setup);
         analysisWorkspace_->setCurrentIndex(loadNetworkTabIndex_);
     } else if (destination == EditorDestination::Environment) {
-        if (!showModule(analysisModuleIndex_)) return;
+        showModule(Module::Setup);
         analysisWorkspace_->setCurrentIndex(modelEnvironmentWorkspaceIndex_);
     } else if (destination == EditorDestination::Requests) {
-        if (!showModule(analysisModuleIndex_)) return;
+        showModule(Module::Setup);
         analysisWorkspace_->setCurrentIndex(analysisRequestsTabIndex_);
     } else if (destination == EditorDestination::Solver) {
-        if (!showModule(analysisModuleIndex_)) return;
+        showModule(Module::Setup);
         analysisWorkspace_->setCurrentIndex(analysisSolverTabIndex_);
     } else if (destination == EditorDestination::Parameters) {
-        if (!showModule(modelModuleIndex_)) return;
+        showModule(Module::Model);
         modelWorkspace_->setCurrentIndex(modelParametersWorkspaceIndex_);
     } else {
-        if (!showModule(geometryModuleIndex_)) return;
+        workbenchLayout_->showModel();
         workspace_->setCurrentIndex(geometryTab);
+        workspace_->currentWidget()->setFocus();
+        raise();
+        activateWindow();
     }
 }
 
@@ -2099,7 +1992,7 @@ void MainWindow::createMenusAndToolbar()
         workbenchIcon("geometry"), tr("&Geometry Editor"));
     geometryEditorAction->setObjectName(QStringLiteral("geometryEditorAction"));
     connect(geometryEditorAction, &QAction::triggered,
-        this, [this] { showModule(geometryModuleIndex_); });
+        this, [this] { showEditor(EditorDestination::Geometry); });
     auto* necDeckAction = modelMenu->addAction(workbenchIcon("nec-deck"), tr("NEC &Deck"));
     necDeckAction->setObjectName(QStringLiteral("necDeckAction"));
     connect(necDeckAction, &QAction::triggered,
@@ -2167,6 +2060,7 @@ void MainWindow::createMenusAndToolbar()
 void MainWindow::resetWorkspaceLayout()
 {
     projectDock_->hide();
+    workbenchLayout_->resetLayout();
     bottomPanel_->resetLayout();
     statusBar()->showMessage(tr("Workspace layout reset."), 4000);
 }
@@ -2340,7 +2234,7 @@ void MainWindow::newModel()
     modelModuleAction_->setEnabled(true);
     analysisModuleAction_->setEnabled(true);
     resultsModuleAction_->setEnabled(true);
-    dashboardStack_->setCurrentIndex(1);
+    workbenchLayout_->showModel();
     analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile({});
     editor_->document()->setModified(false);
@@ -2376,29 +2270,12 @@ void MainWindow::openFileAtPath(const QString& path)
     modelModuleAction_->setEnabled(true);
     analysisModuleAction_->setEnabled(true);
     resultsModuleAction_->setEnabled(true);
-    dashboardStack_->setCurrentIndex(1);
+    workbenchLayout_->showModel();
     analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile(path);
     editor_->document()->setModified(false);
     showEditor(EditorDestination::RawSource);
     checkModel();
-}
-
-void MainWindow::fitWindowToDashboard()
-{
-    auto* page = dashboardStack_ == nullptr ? nullptr : dashboardStack_->currentWidget();
-    if (page == nullptr) return;
-    if (isMaximized() || isFullScreen()) showNormal();
-    // The window is fixed to its layout (see the constructor), so sizing the central
-    // widget to the dashboard sizes the whole window, including any visible dock. The bottom
-    // panel adds its height below the dashboard, cut down to keep the window on screen.
-    auto size = page->sizeHint().expandedTo(page->minimumSizeHint());
-    const auto* screen = this->screen();
-    const auto chrome = frameGeometry().height() - centralWidget()->height();
-    const auto room = screen == nullptr ? QWIDGETSIZE_MAX
-        : screen->availableGeometry().bottom() - frameGeometry().top() - chrome - size.height();
-    size.rheight() += bottomPanel_->fitHeight(room);
-    centralWidget()->setFixedSize(size);
 }
 
 void MainWindow::openExample()
@@ -2503,7 +2380,6 @@ auto MainWindow::writeFile(const QString& path) -> bool
 
 auto MainWindow::maybeSaveChanges() -> bool
 {
-    if (!confirmCurrentEditorNavigation()) return false;
     if (!editor_->document()->isModified()) {
         return true;
     }
@@ -2802,7 +2678,7 @@ void MainWindow::activateProjectItem(QTreeWidgetItem* item)
         return;
     }
     if (mnemonic == QStringLiteral("RP") || mnemonic == QStringLiteral("XQ")) {
-        showModule(analysisModuleIndex_);
+        showModule(Module::Setup);
         analysisWorkspace_->setCurrentIndex(analysisRequestsTabIndex_);
         return;
     }
@@ -4335,7 +4211,7 @@ auto MainWindow::loadRunModel(const QString& directory, const QString& modelName
     modelModuleAction_->setEnabled(true);
     analysisModuleAction_->setEnabled(true);
     resultsModuleAction_->setEnabled(true);
-    dashboardStack_->setCurrentIndex(1);
+    workbenchLayout_->showModel();
     analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile({});
     const auto displayName = modelName.isEmpty() ? tr("Archived model.nec") : modelName;
@@ -5022,8 +4898,7 @@ void MainWindow::pushGeometrySourceEdit(const QString& description, QString upda
     }
     auto destination = EditorDestination::Geometry;
     const auto geometryTab = workspace_->currentIndex();
-    if (moduleStack_->currentIndex() == analysisModuleIndex_
-        || (setupPanel_ != nullptr && setupPanel_->isWindowActive())) {
+    if (setupPanel_ != nullptr && setupPanel_->isWindowActive()) {
         if (analysisWorkspace_->currentIndex() == modelSourcesWorkspaceIndex_)
             destination = EditorDestination::Sources;
         else if (analysisWorkspace_->currentIndex() == loadNetworkTabIndex_)
@@ -5032,8 +4907,7 @@ void MainWindow::pushGeometrySourceEdit(const QString& description, QString upda
             destination = EditorDestination::Environment;
         else
             destination = EditorDestination::Frequency;
-    } else if (moduleStack_->currentIndex() == modelModuleIndex_
-        || (modelPanel_ != nullptr && modelPanel_->isWindowActive())) {
+    } else if (modelPanel_ != nullptr && modelPanel_->isWindowActive()) {
         if (modelWorkspace_->currentIndex() == modelDeckWorkspaceIndex_)
             destination = EditorDestination::RawSource;
         else if (modelWorkspace_->currentIndex() == modelParametersWorkspaceIndex_)
@@ -5054,7 +4928,7 @@ void MainWindow::applyGeometrySource(const QString& description, const QString& 
     editor_->document()->setModified(true);
     checkModel();
     if (destination == EditorDestination::Frequency) {
-        showModule(analysisModuleIndex_);
+        showModule(Module::Setup);
         analysisWorkspace_->setCurrentIndex(analysisTab);
     } else {
         showEditor(destination, geometryTab);
@@ -5389,29 +5263,23 @@ void MainWindow::setCurrentFile(QString path)
         controlPanel_->setDocumentState(currentFile_.isEmpty() ? QString{} : name,
             editor_->document()->isModified());
     if (modelPanel_ != nullptr) modelPanel_->setStatusText(modelName);
-    if (geometryPanel_ != nullptr) geometryPanel_->setStatusText(modelName);
     if (setupPanel_ != nullptr) setupPanel_->setStatusText(modelName);
     if (optimizationPanel_ != nullptr) optimizationPanel_->setStatusText(
         tr("%1 · %2").arg(modelName,
             optimizationWorkspace_->isRunning() ? tr("Running") : tr("Ready")));
-    if (hasNecModel_) QTimer::singleShot(0, this, [this] { fitWindowToDashboard(); });
 }
 
 void MainWindow::restoreWorkspaceLayout()
 {
     QSettings settings;
-    const auto savedGeometry = settings.value(QStringLiteral("mainWindow/geometry")).toByteArray();
-    if (!savedGeometry.isEmpty()) {
-        restoreGeometry(savedGeometry);
-    } else {
-        const auto normalGeometry = settings.value(QStringLiteral("mainWindow/normalGeometry")).toRect();
-        if (normalGeometry.isValid()) setGeometry(normalGeometry);
+    // First start: 85% of the screen's available area, centered.
+    if (!restoreGeometry(settings.value(QStringLiteral("mainWindow/v2/geometry")).toByteArray())
+        && screen() != nullptr) {
+        const auto available = screen()->availableGeometry();
+        setGeometry(QStyle::alignedRect(Qt::LeftToRight, Qt::AlignCenter,
+            available.size() * 0.85, available));
     }
-    const auto savedState = settings.value(QStringLiteral("mainWindow/state")).toByteArray();
-    restoreState(savedState);
-    if (savedState.isEmpty()) resetWorkspaceLayout();
-    // The restored position decides how much of an open bottom panel fits on screen.
-    fitWindowToDashboard();
+    restoreState(settings.value(QStringLiteral("mainWindow/v2/state")).toByteArray());
     auto geometrySettings = geometrySettings_;
     geometrySettings.lengthUnit = static_cast<model::LengthUnit>(settings.value(
         QStringLiteral("model/displayLengthUnit"), static_cast<int>(model::LengthUnit::Meter)).toInt());
@@ -5472,9 +5340,8 @@ void MainWindow::restoreWorkspaceLayout()
 void MainWindow::saveWorkspaceLayout()
 {
     QSettings settings;
-    settings.setValue(QStringLiteral("mainWindow/geometry"), saveGeometry());
-    settings.setValue(QStringLiteral("mainWindow/normalGeometry"), normalGeometry());
-    settings.setValue(QStringLiteral("mainWindow/state"), saveState());
+    settings.setValue(QStringLiteral("mainWindow/v2/geometry"), saveGeometry());
+    settings.setValue(QStringLiteral("mainWindow/v2/state"), saveState());
     settings.setValue(QStringLiteral("model/displayLengthUnit"), static_cast<int>(geometrySettings_.lengthUnit));
     settings.setValue(QStringLiteral("model/snapSpacingMeters"), geometrySettings_.snapSpacingMeters);
     settings.setValue(QStringLiteral("geometry/automaticGridSpacing"), geometrySettings_.automaticGridSpacing);

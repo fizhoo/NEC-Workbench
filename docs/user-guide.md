@@ -1,15 +1,17 @@
 # NEC Workbench User Guide
 
-NEC Workbench uses **Home**, a compact control panel, as its operating base. The
-Geometry Editor, NEC Deck, Setup, and Optimize open as reusable work windows, the
-result launchers open focused live-result windows, and a bottom panel below Home holds
-Problems, the Run log, Runs, and Raw output. Controls provide tooltips; this guide
+NEC Workbench runs in one resizable main window. With a model open, **Home**, a compact
+control panel, sits in the left column beside the **geometry editor**, and a bottom
+panel underneath holds Problems, the Run log, Runs, and Raw output. NEC Deck, Setup,
+and Optimize still open as reusable work windows, and the result launchers open
+focused live-result windows. Controls provide tooltips; this guide
 focuses on workflow and behavior that is not obvious from an individual control.
 
 ## Getting Started
 
 1. Create or open a `.nec` model from Home or the File menu.
-2. Edit wires in the **Geometry Editor** and cards in the **NEC Deck** window.
+2. Edit wires in the geometry editor in the main window and cards in the **NEC Deck**
+   window.
 3. Configure frequency, sources, loads, environment, requests, and solver under Setup.
 4. Run **Check Model** (`F7`) and resolve the blocking errors listed under **Problems**.
 5. Select **Run Analysis** (`F5`).
@@ -38,12 +40,17 @@ only the archived `model.nec` sent directly to NEC2dXS is normalized.
 
 ## Application Layout
 
-The main window is Home, which is fixed to the size of its content, with the bottom
-panel below it. The Geometry Editor, NEC Deck, Setup, and Optimize work windows, plus
-the Impedance / SWR, Currents, and Radiation windows that can stay visible during edits
-and reruns, open in their own windows. Each window remembers its own size and
-position, and opening one again raises the existing window rather than creating a
-duplicate. Historical Run Review remains a separate read-only window. Inside Setup and
+The main window is a normal resizable, maximizable window. The first time it opens it
+takes about 85% of the screen, centered; after that it reopens where you left it.
+With no model open, the Welcome page sits centered at the top. With a model open,
+Home is the left column and the geometry editor fills the rest of the width; drag the
+thin handle between them to change the column's width, which is remembered. The
+bottom panel spans the full width underneath.
+
+The NEC Deck, Setup, and Optimize work windows, plus the Impedance / SWR, Currents,
+and Radiation windows that can stay visible during edits and reruns, still open in
+their own windows. Each remembers its own size and position, and opening one again
+raises the existing window rather than creating a duplicate. Historical Run Review remains a separate read-only window. Inside Setup and
 the NEC Deck window, a compact navigator selects pages; collapse it to icons when
 screen space is limited.
 
@@ -51,10 +58,9 @@ screen space is limited.
 
 The bottom panel has four tabs: **Problems**, **Run log**, **Runs**, and **Raw
 output**. Collapsed, it is just its tab strip. Click a tab to open it, click the open
-tab to collapse it again, or use **View → Bottom Panel** (`Ctrl+J`). Drag the panel's
-bottom edge to change its height; the window grows by that height but never past the
-bottom of the screen, and returns to its previous size when the panel collapses. The
-panel remembers its tab, height, and collapsed state.
+tab to collapse it again, or use **View → Bottom Panel** (`Ctrl+J`). The panel opens
+inside the window; drag its top edge to change its height. It remembers its tab,
+height, and collapsed state.
 
 The panel opens by itself when a model check finds errors (Problems) and when a solver
 run starts (Run log). After a successful run it collapses again if it was collapsed
@@ -90,11 +96,11 @@ With a model open, it becomes a compact control panel:
 - **Commands** — Open (its arrow lists recent models), Save, Run (`F5`), Frequency
   Sweep, Stop, and Check Model. The header shows the model, its check status, and the
   solver engine; click the engine to configure it.
-- **Geometry Editor** and the **RESULTS** launchers for Impedance / SWR, Currents,
-  and Radiation open or raise those windows; **Runs…** and **Optimize…** sit below.
+- The **RESULTS** launchers for Impedance / SWR, Currents, and Radiation open or raise
+  those windows; **Runs…** and **Optimize…** sit below.
 - **MODEL** lists frequency, wires, sources, loads, transmission lines, ground,
-  variables, requests, and deck size. Click a row to open its editor: Wires opens the
-  Geometry Editor, Deck and Variables open the NEC Deck window, and the setup rows
+  variables, requests, and deck size. Click a row to open its editor: Wires focuses
+  the geometry editor, Deck and Variables open the NEC Deck window, and the setup rows
   open Setup.
 - **QUICK RESULTS** shows Rin, Xin, SWR, gain, and F/B at the frequency chosen in
   **At:**, plus the sweep's minimum SWR and peak gain. Click a value to open its result
@@ -108,11 +114,10 @@ Home.
 
 ## Model
 
-The model is edited in two windows, each of which remembers its own size and
-position: the **Geometry Editor** (2D and 3D geometry) and the **NEC Deck** window
-(Raw Source, Structured Cards, and Parameters). Keep the deck window small beside your
-runs and the Geometry Editor large for drawing; switching between them does not
-resize either one.
+The model is edited in two places: the **geometry editor** (2D and 3D geometry) in
+the center of the main window, and the **NEC Deck** window (Raw Source, Structured
+Cards, and Parameters), which remembers its own size and position. **Model → Geometry
+Editor** brings the main window forward with the geometry view focused.
 
 ### Geometry
 
