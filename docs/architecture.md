@@ -54,35 +54,46 @@ same definitions.
 ## Workspaces
 
 The main window is resizable and laid out by `WorkbenchLayout`: with no model, the
-Welcome page; with a model, Home — a compact control panel (`ui/controlpanel`) — in a
-top-aligned left column beside the geometry editor (2D and 3D views), split by one
-handle. Home summarizes the active model, selected-frequency quick results, model
-quality, and the latest run, and launches the focused windows without duplicating
-their content. The remaining workspaces are separate top-level windows:
+Welcome page; with a model, one splitter with three panes. Home — a compact control
+panel (`ui/controlpanel`) — is a top-aligned left column; the center shows the
+geometry editor (2D and 3D views) or one full result view; the collapsible results
+column is on the right. Home summarizes the active model, model quality, and the
+latest run. The results (`ui/results`) are:
+
+- `ResultsController`, which owns the displayed run, the overlay, the stale flag, and
+  the one selected frequency (`ResultState`), and brings everything else up to date.
+- `ResultsColumn`: `KeyNumberStrip` (the frequency selector and key numbers), the
+  overlay control, four `ResultThumbnail`s, and the More Views list.
+- `ResultFullView`: one existing result view with all its controls in the center.
+
+Thumbnails are compact instances of the existing views (`setCompact`). Every view
+receives the same `ResultData`, which groups the radiation samples by frequency once,
+so no view copies or rescans the run. `applyResultState` gives a view only what changed
+since it was last updated, and the full view brings only the view on screen up to date;
+the others catch up when they are shown. The remaining workspaces are separate
+top-level windows:
 
 - **NEC Deck** owns Raw Source, Structured Cards, and Parameters.
 - **Setup** owns frequency, sources, loads/networks, environment, output requests,
   and solver configuration.
-- **Impedance / SWR**, **Currents**, and **Radiation** present current or historical
-  parsed output.
+- **Validation** shows the static check, Average Gain Test, and convergence studies.
 - The **bottom panel** (`BottomPanel`) along the bottom of the main window holds Problems, the Run log, Runs,
-  and Raw output; `WorkbenchStatusBar` shows backend, result frequencies, run state,
-  and check counts.
+  and Raw output; `WorkbenchStatusBar` shows backend, the selected and loaded result
+  frequencies, run state, and check counts.
 - **Optimize** owns parameter studies and candidate review.
 
 The separate windows are `DetachablePanel`s, parented to a hidden host in the main
-window, and result windows are coordinated by `ResultWindowCoordinator`. Each window
-persists its own geometry, so resizing one never resizes another, and opening a window
-again raises the existing instance. They cannot be attached back into the main window;
-each moves in during its own step of the layout rework.
+window. Each window persists its own geometry, so resizing one never resizes another,
+and opening a window again raises the existing instance. They cannot be attached back
+into the main window; each moves in during its own step of the layout rework.
 Menus expose the complete command set; a compact navigator selects pages inside
 Setup and the NEC Deck window.
 
 A detached view is the same live content, not a copied result model. Historical Run
 Review is separate and read-only so opening archived output cannot silently replace
 the active editor. The historical-overlay controller selects at most one archived run
-and never changes the active result; each result window independently decides whether
-to display it.
+and never changes the active result; the results column's one overlay control decides
+whether to display it.
 
 ## Validation
 
@@ -219,7 +230,7 @@ solver work while preserving the stated metric definition.
 
 An optimization baseline is a durable analysis of the actual current model, not an
 optimizer candidate. Baseline identity and coverage are modeled independently from
-the live result windows' optional historical overlay so those two comparisons cannot
+the results column's optional historical overlay so those two comparisons cannot
 silently replace one another. When the current study lacks a compatible baseline,
 the optimization workspace requests one through the ordinary MainWindow analysis
 pipeline with an optimization-specific generated deck containing only the study
@@ -237,7 +248,7 @@ candidate-preview window, leaving the main evaluation table and search-progress 
 uncompressed. It reuses the normal SWR/impedance and 2D-pattern views, placing the
 compatible baseline behind the selected candidate as a labeled dashed series. The
 core fingerprint and coverage evaluator is Qt-free; widgets only present its status
-and data. Optimization candidates are not injected into the live result windows;
+and data. Optimization candidates are not injected into the results column;
 their historical-overlay controller remains exclusively run-to-run comparison.
 
 The optimization workspace resolves and fingerprints the active deck once per model

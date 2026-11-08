@@ -1,10 +1,10 @@
 # NEC Workbench User Guide
 
 NEC Workbench runs in one resizable main window. With a model open, **Home**, a compact
-control panel, sits in the left column beside the **geometry editor**, and a bottom
-panel underneath holds Problems, the Run log, Runs, and Raw output. NEC Deck, Setup,
-and Optimize still open as reusable work windows, and the result launchers open
-focused live-result windows. Controls provide tooltips; this guide
+control panel, sits in the left column, the **geometry editor** fills the center, and
+the **results column** on the right shows the key numbers and live result thumbnails.
+A bottom panel underneath holds Problems, the Run log, Runs, and Raw output. NEC Deck,
+Setup, and Optimize still open as reusable work windows. Controls provide tooltips; this guide
 focuses on workflow and behavior that is not obvious from an individual control.
 
 ## Getting Started
@@ -15,9 +15,9 @@ focuses on workflow and behavior that is not obvious from an individual control.
 3. Configure frequency, sources, loads, environment, requests, and solver under Setup.
 4. Run **Check Model** (`F7`) and resolve the blocking errors listed under **Problems**.
 5. Select **Run Analysis** (`F5`).
-6. Open the Impedance / SWR, Currents, or Radiation windows from Home's RESULTS
-   launchers or **View → Result Windows**. Use the **Runs** tab and Run Review for
-   archived input and historical raw output.
+6. Read the key numbers and thumbnails in the results column; click a thumbnail to
+   open that view in the center. Use the **Runs** tab and Run Review for archived
+   input and historical raw output.
 
 NEC Workbench does not include an NEC solver. Configure a separately installed
 `nec2c`, OpenNEC, or 4nec2 NEC2dXS executable under **Setup → Solver**.
@@ -43,14 +43,15 @@ only the archived `model.nec` sent directly to NEC2dXS is normalized.
 The main window is a normal resizable, maximizable window. The first time it opens it
 takes about 85% of the screen, centered; after that it reopens where you left it.
 With no model open, the Welcome page sits centered at the top. With a model open,
-Home is the left column and the geometry editor fills the rest of the width; drag the
-thin handle between them to change the column's width, which is remembered. The
-bottom panel spans the full width underneath.
+Home is the left column, the geometry editor or a full result view fills the center,
+and the results column is on the right. Drag the thin handles between them to change
+the columns' widths, which are remembered. Drag the results column shut, or use
+**View → Results Column** (`Ctrl+Shift+R`), to collapse it. The bottom panel spans the
+full width underneath.
 
-The NEC Deck, Setup, and Optimize work windows, plus the Impedance / SWR, Currents,
-and Radiation windows that can stay visible during edits and reruns, still open in
-their own windows. Each remembers its own size and position, and opening one again
-raises the existing window rather than creating a duplicate. Historical Run Review remains a separate read-only window. Inside Setup and
+The NEC Deck, Setup, Optimize, and Validation work windows still open in their own
+windows. Each remembers its own size and position, and opening one again raises the
+existing window rather than creating a duplicate. Historical Run Review remains a separate read-only window. Inside Setup and
 the NEC Deck window, a compact navigator selects pages; collapse it to icons when
 screen space is limited.
 
@@ -66,15 +67,15 @@ The panel opens by itself when a model check finds errors (Problems) and when a 
 run starts (Run log). After a successful run it collapses again if it was collapsed
 before the run; after a failure it stays open.
 
-The status bar shows the model file, the solver backend, the frequencies of the loaded
-results, the run state (idle, running with elapsed time, done, or the failure), and the
+The status bar shows the model file, the solver backend, the selected frequency and the
+range of the loaded results, the run state (idle, running with elapsed time, done, or the failure), and the
 model check error and warning counts. Click the counts to open Problems.
 
 The menu bar holds the complete command set. Important actions include:
 
 - **File → Open Recent**
-- **View → Result Windows** — Impedance & SWR, Currents, and Radiation
-- **View → Bottom Panel**, **Problems**, **Run Log**, and **Raw Output**
+- **View → Results Column** and **Bottom Panel**
+- **View → Problems**, **Run Log**, and **Raw Output**
 - **View → Workspace Density**, **Project Tree**, and **Reset Layout**
 - **Model → Geometry Editor**, **NEC Deck**, and **Automatic Segmentation**
 - **Validate → Check Model**, **Average Gain Test**, **Segmentation Convergence**,
@@ -96,15 +97,11 @@ With a model open, it becomes a compact control panel:
 - **Commands** — Open (its arrow lists recent models), Save, Run (`F5`), Frequency
   Sweep, Stop, and Check Model. The header shows the model, its check status, and the
   solver engine; click the engine to configure it.
-- The **RESULTS** launchers for Impedance / SWR, Currents, and Radiation open or raise
-  those windows; **Runs…** and **Optimize…** sit below.
+- **Runs…** and **Optimize…** sit below the commands.
 - **MODEL** lists frequency, wires, sources, loads, transmission lines, ground,
   variables, requests, and deck size. Click a row to open its editor: Wires focuses
   the geometry editor, Deck and Variables open the NEC Deck window, and the setup rows
   open Setup.
-- **QUICK RESULTS** shows Rin, Xin, SWR, gain, and F/B at the frequency chosen in
-  **At:**, plus the sweep's minimum SWR and peak gain. Click a value to open its result
-  window. **STALE** appears when the model has changed since the run.
 - **MODEL QUALITY** shows the Average Gain Test and segmentation convergence status,
   each with its own Run button.
 
@@ -363,6 +360,37 @@ Results remain associated with the exact archived solver deck that produced them
 If the active model changes, existing results are marked stale rather than silently
 reinterpreted.
 
+### Results Column
+
+When a run finishes, the results column on the right of the main window updates; no
+windows open. From top to bottom it shows:
+
+- **At:** — the selected frequency. It is the only frequency selector: the key
+  numbers, the thumbnails, the full view in the center, and the status bar all follow
+  it. Double-click a point on a sweep plot or the Performance plot, or click a row of
+  the impedance table, to select that frequency there. A new run keeps the selected
+  frequency when it has it; the first run of a model starts at its minimum SWR.
+- **R**, **X**, **SWR** with its Z0, **Gain** with its direction, **F/B**, and **F/R**
+  at the selected frequency, then the band's minimum SWR and peak gain. Gain and F/B
+  use the peak at the selected frequency as forward. F/R is the strongest sample more
+  than 90° behind that peak at the same elevation; it reads **—** when the run has no
+  azimuth samples behind the peak, and its tooltip says why. Click a number to open
+  the view it comes from. **STALE** appears, and the numbers grey out, when the model
+  has changed since the run.
+- **Overlay** — the historical overlay (see below).
+- Four live thumbnails: SWR against frequency, the azimuth pattern, the elevation
+  pattern, and the currents on the antenna. A thumbnail shrinks to a one-line note when
+  the run has no data for it at the selected frequency. With no results yet, the
+  column shows **Run analysis to see results** instead.
+- **MORE VIEWS** — the impedance table, currents along the wire, the currents table,
+  the 3D pattern, and performance against frequency. **Smith chart** is listed but not
+  available yet.
+
+Click a thumbnail or a More Views entry to show that view, with all its controls, in
+the center in place of the geometry. **← Geometry** or `Esc` returns to the geometry
+editor with its tab and zoom unchanged. When the window is narrow, collapse a column
+to give the center view more room.
+
 ### Summary and Numerical Results
 
 Summary identifies model, run, backend, and reference impedance. Numerical views
@@ -370,17 +398,17 @@ show feedpoint impedance, SWR, current data, and available directional metrics b
 frequency. Plot hover readouts expose exact sampled values.
 
 After a completed analysis, Workbench automatically selects the previous completed run
-of the same saved model as a historical overlay, but overlays start hidden. The
-Impedance and Radiation windows each have an independent **Show Historical Overlay**
-checkbox and **Choose Overlay…** menu. The selected run is shared, while visibility
-is local to each window. **Compatible**, **Partial**, or **No matching data** indicates
-whether that window can compare all, some, or none of its current data. Manual choices
+of the same saved model as a historical overlay, but the overlay starts hidden. The
+results column has one **Overlay** checkbox, which draws it dashed on the SWR and
+impedance plots and the 2D, 3D, and performance views, and a **Choose Overlay…** menu.
+The line beneath says whether the overlay is **Compatible**, **Partial**, or has **No
+matching data** for the impedance and pattern data. Manual choices
 may come from another antenna; Workbench only draws genuinely matching frequencies,
 feedpoints, cuts, and sample grids. Use **Clear Overlay** to remove the selection.
 
 ### Currents
 
-The Currents window has three tabs. **Antenna** draws the segment currents on a 2D
+The full Currents view has three tabs. **Antenna** draws the segment currents on a 2D
 view of the solved antenna; **Along Wire** plots magnitude along connected wire paths;
 **Table** lists every segment.
 
@@ -502,10 +530,10 @@ row, opens one reusable read-only Run Review window. Neither replaces the active
 editor.
 
 Use **Use as Overlay** to select a completed analysis or quick sweep for
-comparison. Then enable it in the Impedance or Radiation result window where it is
-useful. The overlay remains labeled and never becomes the active result or model.
+comparison. Then turn on **Overlay** in the results column. The overlay remains
+labeled and never becomes the active result or model.
 
-The live result windows compare one historical overlay at a time. Comparing several
+The results column compares one historical overlay at a time. Comparing several
 runs belongs in a separate comparison workflow and is not performed implicitly.
 
 Use **Note…**, or double-click the Note cell, to record what changed or why
@@ -625,7 +653,7 @@ lobes. Candidate frequency details show the elevation and azimuth actually selec
 (NEC θ/φ in the cell tooltip). F/B
 compares the front with the same elevation turned 180° in azimuth; F/R uses the
 strongest sample at the lobe's elevation more than 90° away in azimuth, the same rule
-as the Radiation window. An elevation cut has no azimuth spread, so there F/R uses the
+as the results column and the pattern views. An elevation cut has no azimuth spread, so there F/R uses the
 back half of the cut. **F/R rear region** can switch to **F/R (3D rear hemisphere)**,
 which takes the strongest sample more than 90° from the front at any elevation and adds
 a 5° grid to every candidate run so those samples exist. See
@@ -658,9 +686,9 @@ baseline internally. If no
 compatible result is available, the run button reads **Build Baseline & Optimize**.
 Workbench first runs only the study frequencies and focused outputs required by the
 enabled objective, then starts the selected search after that baseline succeeds.
-This internal optimization run leaves the live result windows unchanged and keeps Optimize in
+This internal optimization run leaves the results column unchanged and keeps Optimize in
 front. Use **Run Analysis**—or **Apply This Candidate and Run**—to run the authored
-deck requests and populate the live result windows.
+deck requests and update the results column.
 
 A baseline is compatible only when its solver-effective model, backend, reference
 impedance, required frequencies, and radiation coverage match the study. Directional
@@ -682,7 +710,7 @@ traces remain solid and starting-model traces are dashed on SWR/impedance, 2D pa
 and Directional vs Frequency views; Objective Details then adds
 candidate-minus-starting-model deltas for enabled criteria. This compares one
 candidate with the model recorded before the search, not multiple candidates. The
-live result windows remain reserved for normal analysis runs and manually selected
+results column remains reserved for normal analysis runs and manually selected
 historical overlays.
 
 The candidate menu can apply a scored candidate directly to the model or apply it

@@ -20,8 +20,10 @@ Workbench remains solver-independent and does not bundle external NEC engines.
 
 ### Analysis and Results
 
-- Fixed-size Home control panel with model summary, selected-frequency quick results,
-  model-quality status, recent models, and launchers for reusable work and result windows
+- Home control panel with model summary, model-quality status, recent models, and
+  launchers for reusable work windows
+- Results column with one selected frequency, key numbers (including F/R), live
+  thumbnails, and full result views in the center of the main window
 - `nec2c`, OpenNEC, and 4nec2 NEC2dXS process adapters with independent saved paths
 - Normal runs and temporary quick sweeps without rewriting the authored model
 - Durable run history with authored source, generated solver deck, output, logs,

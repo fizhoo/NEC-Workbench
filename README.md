@@ -16,8 +16,9 @@ process protocols.
 - SWR, impedance, and interactive 2D/3D radiation results
 - Currents drawn on the antenna as magnitude, phase relative to the feed, or an
   animated RF cycle, plus along-wire plots and a segment table
-- Compact Home control panel with quick results and reusable setup, result, and run windows
-- Optional labeled historical overlays for impedance, SWR, and radiation results
+- One main window: Home control panel, geometry editor, and a results column with key
+  numbers and live thumbnails that open full views in the center
+- An optional labeled historical overlay for impedance, SWR, and radiation results
 - Static model checks, Average Gain Test, and segmentation convergence studies
 - `SY` parameterization plus sweep, adaptive, Nelder–Mead, and Differential
   Evolution optimization with impedance and directional objectives
