@@ -2,6 +2,7 @@
 
 #include "ui/DisplayFormat.h"
 
+#include <QFrame>
 #include <QLabel>
 #include <QToolButton>
 
@@ -31,10 +32,13 @@ WorkbenchStatusBar::WorkbenchStatusBar(QWidget* parent)
     counts_->setAutoRaise(true);
     counts_->setToolButtonStyle(Qt::ToolButtonTextOnly);
     addPermanentWidget(file_, 1);
-    addPermanentWidget(backend_);
-    addPermanentWidget(frequency_);
-    addPermanentWidget(runState_);
-    addPermanentWidget(counts_);
+    for (auto* field : std::initializer_list<QWidget*>{backend_, frequency_, runState_, counts_}) {
+        auto* separator = new QFrame(this);
+        separator->setFrameShape(QFrame::VLine);
+        separator->setFrameShadow(QFrame::Sunken);
+        addPermanentWidget(separator);
+        addPermanentWidget(field);
+    }
     setCheckRequired();
     connect(counts_, &QToolButton::clicked, this, &WorkbenchStatusBar::problemsRequested);
 }

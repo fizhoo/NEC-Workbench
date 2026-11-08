@@ -37,10 +37,13 @@ ProblemsView::ProblemsView(QWidget* parent)
     header->setSpacing(0);
     summary_ = new QLabel(tr("Run Check Model to evaluate the current source."), this);
     summary_->setObjectName(QStringLiteral("problemsSummary"));
+    summary_->setMinimumWidth(0);
+    summary_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* recheck = toolButton(tr("Recheck"), this);
-    auto* generatedDeck = toolButton(tr("Generated Deck…"), this);
+    auto* generatedDeck = toolButton(tr("Deck…"), this);
     generatedDeck->setToolTip(tr("View the numeric solver deck generated from this source"));
-    auto* changeSolver = toolButton(tr("Change Solver…"), this);
+    auto* changeSolver = toolButton(tr("Solver…"), this);
+    changeSolver->setToolTip(tr("Change the solver backend this model is checked against"));
     header->addWidget(summary_, 1);
     header->addWidget(recheck);
     header->addWidget(generatedDeck);
@@ -73,6 +76,7 @@ void ProblemsView::setFindings(std::span<const nec::ModelDiagnostic> diagnostics
     const model::AntennaModel& model, const QString& summary)
 {
     summary_->setText(summary);
+    summary_->setToolTip(summary);
     findings_->clear();
     for (const auto& diagnostic : diagnostics) {
         const auto isError = diagnostic.severity == nec::DiagnosticSeverity::Error;
@@ -97,6 +101,7 @@ void ProblemsView::setFindings(std::span<const nec::ModelDiagnostic> diagnostics
 void ProblemsView::clearFindings(const QString& summary)
 {
     summary_->setText(summary);
+    summary_->setToolTip(summary);
     findings_->clear();
 }
 

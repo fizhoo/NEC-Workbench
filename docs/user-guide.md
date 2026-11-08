@@ -25,8 +25,8 @@ uses strict original NEC-2 card rules, while **OpenNEC** accepts the verified
 4nec2 extensions that it implements. Workbench always resolves `SY` symbols and
 formulas into a numeric generated solver deck while preserving the authored source.
 The **Problems** tab identifies backend-specific incompatibilities and links back to
-Solver settings (**Change Solver…**); **Generated Deck…** shows the numeric base deck
-used for execution.
+Solver settings (**Solver…**); **Deck…** shows the numeric base deck used for
+execution.
 
 The **4nec2 NEC2dXS** adapter launches the calculator executable directly. Features
 normally preprocessed by the full 4nec2 application, beginning with `LD 6` LC traps,
