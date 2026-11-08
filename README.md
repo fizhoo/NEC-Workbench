@@ -8,15 +8,15 @@ process protocols.
 ## Highlights
 
 - Raw and structured NEC editing over one authoritative source document
-- One resizable main window with the control panel beside the geometry editor
-  (synchronized 2D/3D wire editing, selection, units, and snapping), and a separate
-  NEC Deck window (raw source, structured cards, and parameters)
+- One resizable main window with a model tree and properties pane beside the geometry
+  editor (synchronized 2D/3D wire editing, selection, units, and snapping), and a
+  separate NEC Deck window (raw source, structured cards, and parameters)
 - Structured sources, grounds, loads, transmission lines, frequencies, and requests
 - External-solver execution with live status, durable run artifacts, run notes, and history
 - SWR, impedance, and interactive 2D/3D radiation results
 - Currents drawn on the antenna as magnitude, phase relative to the feed, or an
   animated RF cycle, plus along-wire plots and a segment table
-- One main window: Home control panel, geometry editor, and a results column with key
+- One main window: toolbar, model tree, geometry editor, and a results column with key
   numbers and live thumbnails that open full views in the center
 - An optional labeled historical overlay for impedance, SWR, and radiation results
 - Static model checks, Average Gain Test, and segmentation convergence studies
@@ -94,7 +94,7 @@ and manual dispatch. Download artifacts from a successful run on the repository'
 - `NEC-Workbench-Windows-x64`
 
 Artifacts include the required Qt runtime files but not an NEC solver. Configure
-a separately installed solver under **Setup → Solver**.
+a separately installed solver on the model tree's **Solver** row.
 
 ## Design Boundary
 

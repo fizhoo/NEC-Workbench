@@ -1,18 +1,20 @@
 # NEC Workbench User Guide
 
-NEC Workbench runs in one resizable main window. With a model open, **Home**, a compact
-control panel, sits in the left column, the **geometry editor** fills the center, and
-the **results column** on the right shows the key numbers and live result thumbnails.
-A bottom panel underneath holds Problems, the Run log, Runs, and Raw output. NEC Deck,
-Setup, and Optimize still open as reusable work windows. Controls provide tooltips; this guide
+NEC Workbench runs in one resizable main window. A toolbar runs across the top. With a
+model open, the **model tree** and the **properties pane** for what is selected form the
+left column, the **geometry editor** fills the center, and the **results column** on the
+right shows the key numbers and live result thumbnails. A bottom panel underneath holds
+Problems, the Run log, Runs, and Raw output. The NEC Deck, Optimize, and Validation
+windows still open on their own. Controls provide tooltips; this guide
 focuses on workflow and behavior that is not obvious from an individual control.
 
 ## Getting Started
 
-1. Create or open a `.nec` model from Home or the File menu.
-2. Edit wires in the geometry editor in the main window and cards in the **NEC Deck**
-   window.
-3. Configure frequency, sources, loads, environment, requests, and solver under Setup.
+1. Create or open a `.nec` model from the Welcome page, the toolbar, or the File menu.
+2. Edit wires in the geometry editor or the properties pane, and cards in the **NEC
+   Deck** window.
+3. Select Frequency, Sources, Loads, Ground, Requests, and Solver in the model tree to
+   set them up in the properties pane.
 4. Run **Check Model** (`F7`) and resolve the blocking errors listed under **Problems**.
 5. Select **Run Analysis** (`F5`).
 6. Read the key numbers and thumbnails in the results column; click a thumbnail to
@@ -20,7 +22,8 @@ focuses on workflow and behavior that is not obvious from an individual control.
    input and historical raw output.
 
 NEC Workbench does not include an NEC solver. Configure a separately installed
-`nec2c`, OpenNEC, or 4nec2 NEC2dXS executable under **Setup → Solver**.
+`nec2c`, OpenNEC, or 4nec2 NEC2dXS executable on the model tree's **Solver** row (or
+**Configure…** in the toolbar's engine list).
 
 The selected backend also controls compatibility validation. **NEC-2 / nec2c**
 uses strict original NEC-2 card rules, while **OpenNEC** accepts the verified
@@ -42,16 +45,22 @@ only the archived `model.nec` sent directly to NEC2dXS is normalized.
 
 The main window is a normal resizable, maximizable window. The first time it opens it
 takes about 85% of the screen, centered; after that it reopens where you left it.
-With no model open, the Welcome page sits centered at the top. With a model open,
-Home is the left column, the geometry editor or a full result view fills the center,
-and the results column is on the right. Drag the thin handles between them to change
-the columns' widths, which are remembered. Drag the results column shut, or use
+With no model open, the Welcome page sits centered at the top. With a model open, the
+model tree and properties pane are the left column, the geometry editor or a full result
+view fills the center, and the results column is on the right. Drag the thin handles
+between them to change the columns' widths, which are remembered; the left column is
+460 px wide by default and between 360 and 600 px. Drag the results column shut, or use
 **View → Results Column** (`Ctrl+Shift+R`), to collapse it. The bottom panel spans the
 full width underneath.
 
-The NEC Deck, Setup, Optimize, and Validation work windows still open in their own
-windows. Each remembers its own size and position, and opening one again raises the
-existing window rather than creating a duplicate. Historical Run Review remains a separate read-only window. Inside Setup and
+The toolbar holds **Open** (its arrow lists recent models), **Save**, the calculation
+engine, **Run** (`F5`), **Stop**, **Sweep**, **Check** (`F7`), and **Optimize**. Choose
+**Configure…** in the engine list to set the engine's executable. `F5` and `F7` work
+from anywhere in the main window, including the model tree and the properties pane.
+
+The NEC Deck, Optimize, and Validation windows still open on their own. Each remembers
+its own size and position, and opening one again raises the existing window rather than
+creating a duplicate. Historical Run Review remains a separate read-only window. Inside
 the NEC Deck window, a compact navigator selects pages; collapse it to icons when
 screen space is limited.
 
@@ -76,7 +85,7 @@ The menu bar holds the complete command set. Important actions include:
 - **File → Open Recent**
 - **View → Results Column** and **Bottom Panel**
 - **View → Problems**, **Run Log**, and **Raw Output**
-- **View → Workspace Density**, **Project Tree**, and **Reset Layout**
+- **View → Workspace Density** and **Reset Layout**
 - **Model → Geometry Editor**, **NEC Deck**, and **Automatic Segmentation**
 - **Validate → Check Model**, **Average Gain Test**, **Segmentation Convergence**,
   and **Open Validation Results**
@@ -86,28 +95,34 @@ The menu bar holds the complete command set. Important actions include:
 Workspace Density offers Compact, Standard, and Spacious spacing without changing
 the application font size. Use Compact on smaller displays.
 
-The Project Tree is hidden by default; show it from the View menu when you want an
-outline of the model.
+## Model Tree and Properties
 
-## Home
+With no model open, the Welcome page provides New, Open, recent files, and
+documentation. With a model open, the left column shows the model tree and, under it,
+the properties pane.
 
-With no model open, Home provides New, Open, recent files, and documentation.
-With a model open, it becomes a compact control panel:
+The tree lists **Frequency**, **Wires**, **Sources**, **Loads**, **Trans. lines**,
+**Networks**, **Ground**, **Variables**, **Requests**, **Solver**, **Deck**, and
+**Validation**, each with a one-line summary. Expand a group to see its wires, sources,
+loads, lines, or networks. Selecting a wire in the tree selects it in the geometry views,
+and selecting one in geometry selects it in the tree. Right-click **Properties…** in
+geometry selects the item and moves the keyboard into the properties pane.
 
-- **Commands** — Open (its arrow lists recent models), Save, Run (`F5`), Frequency
-  Sweep, Stop, and Check Model. The header shows the model, its check status, and the
-  solver engine; click the engine to configure it.
-- **Runs…** and **Optimize…** sit below the commands.
-- **MODEL** lists frequency, wires, sources, loads, transmission lines, ground,
-  variables, requests, and deck size. Click a row to open its editor: Wires focuses
-  the geometry editor, Deck and Variables open the NEC Deck window, and the setup rows
-  open Setup.
-- **MODEL QUALITY** shows the Average Gain Test and segmentation convergence status,
-  each with its own Run button.
+The properties pane shows the editor for the selection: a wire's tag, segments,
+endpoints, and size; the Sources page with the selected source; the Loads, transmission
+lines and networks page with the selected row; and the Frequency, Ground, Requests, and
+Solver pages. The tree takes the rows it shows, up to about 45% of the column, and
+scrolls beyond that; the pane takes the rest and scrolls. Groups with nothing to edit
+here, such as Wires, hide the pane.
 
-The footer shows the last run and whether the displayed results are current or stale.
-Run progress appears in the bottom panel's Run log and the status bar rather than on
-Home.
+Edits in the pane stay pending, with the Apply button emphasized, until applied. `Enter`
+applies them and `Esc` reverts them. Selecting something else applies valid pending
+edits as one undoable step; only edits that cannot be applied ask whether to discard
+them. Undo returns to the page an edit was made on.
+
+**Deck** and **Variables** open the NEC Deck window. **Validation** shows the Average
+Gain Test and segmentation convergence, each with its result and a **Run** button;
+double-click a row to open the Validation window.
 
 ## Model
 
@@ -118,7 +133,7 @@ Editor** brings the main window forward with the geometry view focused.
 
 ### Geometry
 
-The XY, XZ, YZ, and 3D views share selection with Structured Cards and Project.
+The XY, XZ, YZ, and 3D views share selection with Structured Cards and the model tree.
 Ordinary `GW` wires can be selected and edited. The 2D views support endpoint and
 whole-wire dragging, snapping, fitting, panning, and zooming. Right-click a wire
 for properties, splitting, deletion, source creation, or AWG sizing.
@@ -229,10 +244,13 @@ stability between levels, not universal model correctness.
 
 ## Setup
 
+These pages open in the properties pane when Frequency, Sources, Loads, Trans. lines,
+Networks, Ground, Requests, or Solver is selected in the model tree.
+
 ### Sources, Loads, Networks, and Environment
 
 These pages provide structured editing for supported `EX`, `LD`, `TL`, `NT`, `GN`, and
-related model setup. The dashboard's **Networks** row opens the `NT` table, where each
+related model setup. The model tree's **Networks** row opens the `NT` table, where each
 two-port network is given by its ports and its short-circuit admittances Y11, Y12, and
 Y22 in siemens. **Add Network**, and **Add NT** in the card editor, start a draft row with
 its ports on two different segments and the admittances blank. It is written to the deck
@@ -306,7 +324,7 @@ and 7° at 2 λ. You can't know the exact takeoff angle before running, so the u
 workflow is two steps:
 
 1. Run the Full 3D pattern (or an elevation cut) and read its sampled peak, for
-   example "12.960 dBi @ El 10°, Az 0° (5° grid)" on Home.
+   example "12.960 dBi @ El 10°, Az 0° (5° grid)" in the results column.
 2. Click **Add Cuts Through Peak**. It adds a 1° azimuth cut at the peak's elevation
    and a 1° elevation cut at the peak's azimuth, crossing at the peak. Run again for
    smooth, finely sampled cuts.
@@ -512,8 +530,8 @@ the next run the finer sample wins and the note disappears.
 | Peak in this cut | 2D Pattern | the cut on screen |
 | Dataset peak | 3D Pattern; **Go to Peak** | the selected RP dataset |
 | Sampled peak (all RP data) | 2D Pattern note; **Use Sampled Peak** | every RP dataset at the selected frequency |
-| Peak at this frequency | Home | every RP dataset at the selected frequency |
-| Peak across the band | Home | every frequency |
+| Peak at this frequency | Results column | every RP dataset at the selected frequency |
+| Peak across the band | Results column | every frequency |
 | Sampled peak (5° grid) | Optimizer **Find Sampled Peak** | a temporary 5° grid at one frequency |
 
 F/B compares the peak with the same elevation angle turned 180° in azimuth, as other
