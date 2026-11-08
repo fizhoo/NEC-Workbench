@@ -1,8 +1,11 @@
 #include "ui/BottomPanel.h"
 
 #include "ui/bottom/ProblemsView.h"
+#include "ui/bottom/RawOutputView.h"
+#include "ui/bottom/RunHistoryView.h"
 #include "ui/bottom/RunLogView.h"
 
+#include <QAction>
 #include <QMouseEvent>
 #include <QSettings>
 #include <QStackedWidget>
@@ -19,7 +22,7 @@ namespace {
 
 constexpr auto MinimumOpenHeight = 80;
 constexpr auto GripHeight = 4;
-constexpr std::array TabIds{"problems", "runLog"};
+constexpr std::array TabIds{"problems", "runLog", "runs", "rawOutput"};
 
 auto settingsKey(const char* name) -> QString
 {
@@ -72,10 +75,14 @@ BottomPanel::BottomPanel(QWidget* parent)
     tabs_->setExpanding(false);
     tabs_->addTab(tr("Problems"));
     tabs_->addTab(tr("Run log"));
+    tabs_->addTab(tr("Runs"));
+    tabs_->addTab(tr("Raw output"));
     pages_ = new QStackedWidget(this);
     problems_ = new ProblemsView(pages_);
     runLog_ = new RunLogView(pages_);
-    for (auto* page : std::initializer_list<QWidget*>{problems_, runLog_})
+    runs_ = new RunHistoryView(pages_);
+    rawOutput_ = new RawOutputView(pages_);
+    for (auto* page : std::initializer_list<QWidget*>{problems_, runLog_, runs_, rawOutput_})
         pages_->addWidget(page);
     resizeGrip_ = new ResizeGrip(this, [this] { return openHeight_; }, [this](int height) {
         openHeight_ = std::max(MinimumOpenHeight, height);
@@ -98,6 +105,13 @@ BottomPanel::BottomPanel(QWidget* parent)
     collapsed_ = settings.value(settingsKey("collapsed"), true).toBool();
     pages_->setVisible(!collapsed_);
     resizeGrip_->setVisible(!collapsed_);
+    toggleAction_ = new QAction(tr("&Bottom Panel"), this);
+    toggleAction_->setObjectName(QStringLiteral("toggleBottomPanelAction"));
+    toggleAction_->setCheckable(true);
+    toggleAction_->setChecked(!collapsed_);
+    toggleAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_J));
+    toggleAction_->setStatusTip(tr("Open or collapse the bottom panel"));
+    connect(toggleAction_, &QAction::toggled, this, [this](bool open) { setCollapsed(!open); });
 
     // tabBarClicked arrives before the bar changes its current tab, so a click on the
     // already-current tab is the collapse/expand toggle.
@@ -129,6 +143,7 @@ void BottomPanel::setCollapsed(bool collapsed)
     collapsed_ = collapsed;
     pages_->setVisible(!collapsed_);
     resizeGrip_->setVisible(!collapsed_);
+    toggleAction_->setChecked(!collapsed_);
     saveState();
     emit heightChanged();
 }

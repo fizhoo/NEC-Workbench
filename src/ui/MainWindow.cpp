@@ -5,6 +5,8 @@
 #include "ui/DetachablePanel.h"
 #include "ui/WorkbenchStatusBar.h"
 #include "ui/bottom/ProblemsView.h"
+#include "ui/bottom/RawOutputView.h"
+#include "ui/bottom/RunHistoryView.h"
 #include "ui/bottom/RunLogView.h"
 #include "ui/WorkspaceNavigator.h"
 #include "ui/WorkbenchIcon.h"
@@ -190,11 +192,7 @@ void invokeFocusedEditCommand(const char* command)
     }
 }
 
-constexpr auto RunDirectoryRole = Qt::UserRole + 3;
-constexpr auto RunContextRole = Qt::UserRole + 4;
 constexpr auto CardMnemonicRole = Qt::UserRole + 5;
-constexpr auto RunTypeRole = Qt::UserRole + 6;
-constexpr auto RunIdRole = Qt::UserRole + 7;
 
 auto workspaceDensityFromId(const QString& id) -> MainWindow::WorkspaceDensity
 {
@@ -233,50 +231,6 @@ auto workspaceDensityFontSize(MainWindow::WorkspaceDensity density) -> int
     return 9;
 }
 
-enum RunColumn {
-    RunStartedColumn,
-    RunModelColumn,
-    RunNoteColumn,
-    RunTypeColumn,
-    RunResultsColumn,
-    RunOutputSizeColumn,
-    RunBackendColumn,
-    RunStatusColumn,
-    RunDurationColumn,
-    RunFolderColumn,
-    RunColumnCount
-};
-
-auto formatByteSize(qint64 bytes) -> QString
-{
-    if (bytes <= 0) return QObject::tr("—");
-    constexpr auto kibibyte = 1024.0;
-    constexpr auto mebibyte = kibibyte * 1024.0;
-    if (bytes >= mebibyte) return QObject::tr("%1 MB").arg(formatDecimal(bytes / mebibyte));
-    if (bytes >= kibibyte) return QObject::tr("%1 KB").arg(formatDecimal(bytes / kibibyte));
-    return QObject::tr("%1 B").arg(bytes);
-}
-
-auto runResultsText(const AnalysisRunRecord& record) -> QString
-{
-    if (record.runType == QStringLiteral("optimization-session"))
-        return record.summary.isEmpty()
-            ? QObject::tr("%1 candidates").arg(record.candidateCount) : record.summary;
-    if (record.runType == QStringLiteral("convergence-session"))
-        return record.summary.isEmpty()
-            ? QObject::tr("%1 levels").arg(record.candidateCount) : record.summary;
-    if (record.runType == QStringLiteral("average-gain-test"))
-        return record.summary.isEmpty() ? QObject::tr("AGT") : record.summary;
-    QStringList types;
-    if (record.hasImpedance) types.append(QObject::tr("Z"));
-    if (record.hasCurrents) types.append(QObject::tr("I"));
-    if (record.hasRadiation) types.append(QObject::tr("RP"));
-    if (types.empty()) return record.outputBytes > 0 ? QObject::tr("Not indexed") : QObject::tr("—");
-    return record.frequencyCount > 0
-        ? QObject::tr("%1 freq · %2").arg(record.frequencyCount).arg(types.join(QStringLiteral(" · ")))
-        : types.join(QStringLiteral(" · "));
-}
-
 void setRunResultMetadata(AnalysisRunRecord& record, const analysis::AnalysisResult& result,
     qint64 outputBytes)
 {
@@ -298,22 +252,6 @@ void setRunResultMetadata(AnalysisRunRecord& record, const analysis::AnalysisRes
     for (const auto& value : result.currents) addFrequency(value.frequencyMHz);
     for (const auto& value : result.radiation) addFrequency(value.frequencyMHz);
     record.frequencyCount = static_cast<int>(frequencies.size());
-}
-
-auto runContext(const AnalysisRunRecord& record) -> QString
-{
-    const auto modelName = record.sourceFile.isEmpty()
-        ? QObject::tr("Archived model.nec")
-        : QFileInfo(record.sourceFile).fileName();
-    const auto started = record.started.isValid()
-        ? record.started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : record.id;
-    const auto backend = record.backend.isEmpty() ? QObject::tr("Unknown backend") : record.backend;
-    const auto purpose = record.runType == QStringLiteral("quick-sweep")
-        ? record.summary.isEmpty() ? QObject::tr(" · Quick Sweep")
-                                   : QObject::tr(" · Quick Sweep: %1").arg(record.summary)
-        : QString{};
-    return QObject::tr("Model: %1 · Run: %2%3 · Backend: %4")
-        .arg(modelName, started, purpose, backend);
 }
 
 auto averageGainEnvironmentId(analysis::AverageGainEnvironment environment) -> QString
@@ -823,6 +761,20 @@ void MainWindow::createWorkspace()
     connect(problems, &ProblemsView::changeSolverRequested,
         this, [this] { showEditor(EditorDestination::Solver); });
     connect(bottomPanel_->runLog(), &RunLogView::stopRequested, this, [this] { cancelAnalysis(); });
+    auto* runs = bottomPanel_->runs();
+    runs->setRecordSource([this] { return runStore_.load(); });
+    connect(runs, &RunHistoryView::reviewRequested, this, [this] { loadSelectedRun(); });
+    connect(runs, &RunHistoryView::inspectInputRequested,
+        this, [this] { inspectSelectedRunInput(); });
+    connect(runs, &RunHistoryView::openSnapshotRequested,
+        this, [this] { openSelectedRunSnapshot(); });
+    connect(runs, &RunHistoryView::overlayRequested, this, [this] { pinSelectedRunReference(); });
+    connect(runs, &RunHistoryView::editNoteRequested, this, [this] { editSelectedRunNote(); });
+    connect(runs, &RunHistoryView::deleteRequested, this, [this] { deleteSelectedRun(); });
+    connect(bottomPanel_->rawOutput(), &RawOutputView::statusMessage,
+        this, [this](const QString& message, int timeoutMs) {
+            statusBar()->showMessage(message, timeoutMs);
+        });
 
     modelWorkspace_ = new QTabWidget(moduleStack_);
     modelWorkspace_->setObjectName(QStringLiteral("modelWorkspace"));
@@ -1320,101 +1272,6 @@ void MainWindow::createWorkspace()
     analysisWorkspace_->setTabIcon(analysisFrequencyTabIndex_, workbenchIcon("frequency-sweep"));
     analysisWorkspace_->setTabIcon(analysisRequestsTabIndex_, workbenchIcon("radiation-pattern"));
 
-    auto* runsPage = new QWidget(moduleStack_);
-    auto* runsLayout = new QVBoxLayout(runsPage);
-    runsLayout->setContentsMargins(10, 10, 10, 10);
-    auto* runsHeading = new QLabel(tr("Runs"), runsPage);
-    auto runsHeadingFont = runsHeading->font();
-    runsHeadingFont.setBold(true);
-    runsHeadingFont.setPointSize(runsHeadingFont.pointSize() + 3);
-    runsHeading->setFont(runsHeadingFont);
-    auto* runsDescription = new QLabel(tr(
-        "Analysis runs appear individually. Optimization candidates are grouped under one session row. "
-        "Open or double-click a row to inspect it in the separate, reusable Run Review window."), runsPage);
-    runsDescription->setWordWrap(true);
-    analysisRuns_ = new QTableWidget(0, RunColumnCount, runsPage);
-    analysisRuns_->setObjectName(QStringLiteral("analysisRunsTable"));
-    analysisRuns_->setHorizontalHeaderLabels({tr("Started"), tr("Model"), tr("Note"), tr("Type"),
-        tr("Results"), tr("Output"), tr("Backend"), tr("Status"), tr("Duration"), tr("Run Folder")});
-    analysisRuns_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    analysisRuns_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    analysisRuns_->setSelectionMode(QAbstractItemView::SingleSelection);
-    analysisRuns_->setAlternatingRowColors(true);
-    analysisRuns_->horizontalHeader()->setStretchLastSection(true);
-    auto* runViewButtons = new QHBoxLayout;
-    auto* runManagementButtons = new QHBoxLayout;
-    cancelRunButton_ = new QPushButton(tr("Cancel Active Run"), runsPage);
-    cancelRunButton_->setEnabled(false);
-    openRunResultsButton_ = new QPushButton(tr("Open Run Review"), runsPage);
-    openRunResultsButton_->setObjectName(QStringLiteral("openRunResultsButton"));
-    openRunResultsButton_->setEnabled(false);
-    inspectRunInputButton_ = new QPushButton(tr("Inspect Input Snapshot"), runsPage);
-    inspectRunInputButton_->setObjectName(QStringLiteral("inspectRunInputButton"));
-    inspectRunInputButton_->setEnabled(false);
-    openRunSnapshotButton_ = new QPushButton(tr("Open Snapshot as New Model"), runsPage);
-    openRunSnapshotButton_->setObjectName(QStringLiteral("openRunSnapshotButton"));
-    openRunSnapshotButton_->setEnabled(false);
-    openRunFolderButton_ = new QPushButton(tr("Open Run Folder"), runsPage);
-    openRunFolderButton_->setEnabled(false);
-    pinRunReferenceButton_ = new QPushButton(tr("Use as Historical Overlay"), runsPage);
-    pinRunReferenceButton_->setObjectName(QStringLiteral("pinRunReferenceButton"));
-    pinRunReferenceButton_->setEnabled(false);
-    editRunNoteButton_ = new QPushButton(tr("Edit Run Note…"), runsPage);
-    editRunNoteButton_->setObjectName(QStringLiteral("editRunNoteButton"));
-    editRunNoteButton_->setEnabled(false);
-    deleteRunButton_ = new QPushButton(tr("Delete Run…"), runsPage);
-    deleteRunButton_->setObjectName(QStringLiteral("deleteRunButton"));
-    deleteRunButton_->setEnabled(false);
-    runViewButtons->addWidget(openRunResultsButton_);
-    runViewButtons->addWidget(inspectRunInputButton_);
-    runViewButtons->addWidget(openRunSnapshotButton_);
-    runViewButtons->addWidget(pinRunReferenceButton_);
-    runViewButtons->addStretch();
-    runManagementButtons->addWidget(cancelRunButton_);
-    runManagementButtons->addWidget(editRunNoteButton_);
-    runManagementButtons->addWidget(openRunFolderButton_);
-    runManagementButtons->addWidget(deleteRunButton_);
-    runManagementButtons->addStretch();
-    runsLayout->addWidget(runsHeading);
-    runsLayout->addWidget(runsDescription);
-    runsLayout->addWidget(analysisRuns_, 1);
-    runsLayout->addLayout(runViewButtons);
-    runsLayout->addLayout(runManagementButtons);
-    connect(cancelRunButton_, &QPushButton::clicked, this, [this] { cancelAnalysis(); });
-    connect(openRunResultsButton_, &QPushButton::clicked, this, [this] { loadSelectedRun(); });
-    connect(inspectRunInputButton_, &QPushButton::clicked, this, [this] { inspectSelectedRunInput(); });
-    connect(openRunSnapshotButton_, &QPushButton::clicked, this, [this] { openSelectedRunSnapshot(); });
-    connect(pinRunReferenceButton_, &QPushButton::clicked,
-        this, [this] { pinSelectedRunReference(); });
-    connect(editRunNoteButton_, &QPushButton::clicked,
-        this, [this] { editSelectedRunNote(); });
-    connect(deleteRunButton_, &QPushButton::clicked, this, [this] { deleteSelectedRun(); });
-    connect(openRunFolderButton_, &QPushButton::clicked, this, [this] {
-        const auto* item = analysisRuns_->currentRow() >= 0
-            ? analysisRuns_->item(analysisRuns_->currentRow(), RunStartedColumn) : nullptr;
-        const auto directory = item != nullptr
-            ? item->data(RunDirectoryRole).toString() : currentRunDirectory_;
-        if (!directory.isEmpty()) {
-            QDesktopServices::openUrl(QUrl::fromLocalFile(directory));
-        }
-    });
-    connect(analysisRuns_, &QTableWidget::itemSelectionChanged,
-        this, [this] { updateRunSelectionActions(); });
-    connect(analysisRuns_, &QTableWidget::cellDoubleClicked,
-        this, [this](int, int column) {
-            if (column == RunNoteColumn) editSelectedRunNote();
-            else loadSelectedRun();
-        });
-    runHistoryPanel_ = new DetachablePanel(QStringLiteral("run-history"),
-        tr("Run History"), moduleStack_, {QStringLiteral("workspaceWindows"),
-            QStringLiteral("runHistoryWindow"), kResultWindowSize});
-    runHistoryPanel_->setStatusText(tr("Saved analysis and study runs"));
-    runHistoryPanel_->setContent(runsPage);
-    moduleStack_->addWidget(runHistoryPanel_);
-    QTimer::singleShot(0, this, [this] {
-        if (runHistoryPanel_->isWindowVisible() && !runHistoryLoaded_) loadRunHistory();
-    });
-
     auto* analysisNavigator = new WorkspaceNavigator(
         analysisWorkspace_, QStringLiteral("analysis"), moduleStack_);
     setupPanel_ = new DetachablePanel(QStringLiteral("analysis-setup"),
@@ -1491,7 +1348,7 @@ void MainWindow::createResultWindows()
         convergenceWorkspace_, tr("Segmentation Convergence"));
     validationPanel_->setContent(validationWorkspace_);
     convergenceWorkspace_->setRunsChangedCallback([this] {
-        if (runHistoryLoaded_) loadRunHistory();
+        bottomPanel_->runs()->reload();
         refreshDashboardRuns();
     });
     convergenceWorkspace_->setRunningChangedCallback([this] { synchronizeRunnerState(); });
@@ -1584,51 +1441,6 @@ void MainWindow::createResultWindows()
     radiationPatternView_->setForwardDirectionCallback(useAsForwardDirection);
     radiation3DView_->setForwardDirectionCallback(useAsForwardDirection);
 
-    auto* rawOutputContent = new QWidget(resultWindowsHost_);
-    auto* rawOutputLayout = new QVBoxLayout(rawOutputContent);
-    rawOutputLayout->setContentsMargins(6, 4, 6, 6);
-    rawOutputLayout->setSpacing(4);
-    auto* rawOutputDescription = new QLabel(tr(
-        "Complete, immutable model.out from the latest loaded analysis. Parsed result windows "
-        "do not alter this text."), rawOutputContent);
-    rawOutputDescription->setWordWrap(true);
-    auto* rawOutputControls = new QHBoxLayout;
-    rawOutputControls->setSpacing(6);
-    rawOutputFrequencyControl_ = new QComboBox(rawOutputContent);
-    rawOutputFrequencyControl_->setObjectName(QStringLiteral("rawOutputFrequencyControl"));
-    rawOutputFrequencyControl_->setMinimumContentsLength(12);
-    rawOutputFrequencyControl_->setEnabled(false);
-    auto* jumpFrequencyButton = new QPushButton(
-        tr("Jump to Frequency"), rawOutputContent);
-    rawOutputFindControl_ = new QLineEdit(rawOutputContent);
-    rawOutputFindControl_->setObjectName(QStringLiteral("rawOutputFindControl"));
-    rawOutputFindControl_->setPlaceholderText(tr("Find text"));
-    auto* findOutputButton = new QPushButton(tr("Find Next"), rawOutputContent);
-    rawOutputControls->addWidget(new QLabel(tr("Frequency:"), rawOutputContent));
-    rawOutputControls->addWidget(rawOutputFrequencyControl_);
-    rawOutputControls->addWidget(jumpFrequencyButton);
-    rawOutputControls->addSpacing(8);
-    rawOutputControls->addWidget(rawOutputFindControl_, 1);
-    rawOutputControls->addWidget(findOutputButton);
-    analysisOutput_ = new QPlainTextEdit(rawOutputContent);
-    analysisOutput_->setObjectName(QStringLiteral("analysisRawOutput"));
-    analysisOutput_->setReadOnly(true);
-    analysisOutput_->setLineWrapMode(QPlainTextEdit::NoWrap);
-    analysisOutput_->setPlaceholderText(tr("Complete solver output will appear here."));
-    rawOutputLayout->addWidget(rawOutputDescription);
-    rawOutputLayout->addLayout(rawOutputControls);
-    rawOutputLayout->addWidget(analysisOutput_, 1);
-    connect(jumpFrequencyButton, &QPushButton::clicked,
-        this, [this] { jumpRawOutputToSelectedFrequency(); });
-    connect(findOutputButton, &QPushButton::clicked,
-        this, [this] { findInRawOutput(); });
-    connect(rawOutputFindControl_, &QLineEdit::returnPressed,
-        this, [this] { findInRawOutput(); });
-    rawOutputPanel_ = new DetachablePanel(
-        QStringLiteral("raw-output"), tr("Raw Solver Output"), resultWindowsHost_,
-        {QStringLiteral("resultWindows"), QStringLiteral("rawOutputWindow"),
-            kResultWindowSize});
-    rawOutputPanel_->setContent(rawOutputContent);
 }
 
 void MainWindow::createOptimizationWorkspace()
@@ -1640,7 +1452,7 @@ void MainWindow::createOptimizationWorkspace()
     optimizationWorkspace_ = new OptimizationWorkspace(optimizationPanel_);
     optimizationWorkspace_->setObjectName(QStringLiteral("optimizationWorkspace"));
     optimizationWorkspace_->setRunsChangedCallback([this] {
-        if (runHistoryLoaded_) loadRunHistory();
+        bottomPanel_->runs()->reload();
         refreshDashboardRuns();
     });
     optimizationWorkspace_->setRunningChangedCallback([this] {
@@ -1824,7 +1636,6 @@ void MainWindow::setLiveResultStatus(const QString& status)
     if (impedancePanel_ != nullptr) impedancePanel_->setStatusText(status);
     if (currentsPanel_ != nullptr) currentsPanel_->setStatusText(status);
     if (radiationPanel_ != nullptr) radiationPanel_->setStatusText(status);
-    if (rawOutputPanel_ != nullptr) rawOutputPanel_->setStatusText(status);
 }
 
 void MainWindow::showEditor(EditorDestination destination, int geometryTab)
@@ -2268,27 +2079,18 @@ void MainWindow::createMenusAndToolbar()
         tr("Open or raise the live radiation-result window"));
     connect(showRadiationWindowAction, &QAction::triggered, this,
         [this] { resultWindowCoordinator_->showRadiation(); });
-    auto* showRawOutputWindowAction = resultWindowsMenu->addAction(
-        workbenchIcon("nec-deck"), tr("Raw Solver Output"));
-    showRawOutputWindowAction->setObjectName(QStringLiteral("showRawOutputWindowAction"));
-    showRawOutputWindowAction->setStatusTip(
-        tr("Open or raise the complete output from the latest loaded analysis"));
-    connect(showRawOutputWindowAction, &QAction::triggered, this,
-        [this] { rawOutputPanel_->showWindow(); });
-    resultWindowsMenu->addSeparator();
-    auto* showRunHistoryAction = resultWindowsMenu->addAction(
-        workbenchIcon("analysis"), tr("Run History"));
-    showRunHistoryAction->setObjectName(QStringLiteral("showRunHistoryAction"));
-    showRunHistoryAction->setStatusTip(tr("Open the saved analysis-run history"));
-    connect(showRunHistoryAction, &QAction::triggered, this, [this] {
-        showRunHistory();
-    });
     viewMenu->addSeparator();
-    auto* projectTreeAction = projectDock_->toggleViewAction();
+    auto* projectTreeAction =projectDock_->toggleViewAction();
     projectTreeAction->setText(tr("Project Tree"));
     viewMenu->addAction(projectTreeAction);
+    viewMenu->addAction(bottomPanel_->toggleAction());
     viewMenu->addAction(problemsAction_);
     viewMenu->addAction(runLogAction_);
+    auto* rawOutputAction = viewMenu->addAction(tr("Raw &Output"));
+    rawOutputAction->setObjectName(QStringLiteral("showRawOutputAction"));
+    rawOutputAction->setStatusTip(tr("Show the complete output of the loaded run"));
+    connect(rawOutputAction, &QAction::triggered,
+        this, [this] { bottomPanel_->showTab(BottomPanel::Tab::RawOutput); });
     viewMenu->addSeparator();
     viewMenu->addAction(resetLayoutAction_);
     viewMenu->addSeparator();
@@ -4102,14 +3904,9 @@ void MainWindow::startAverageGainTest()
 void MainWindow::startSolverProcess(const analysis::SolverCommand& command, const QString& activity)
 {
     if (!currentRunRecord_) return;
-    addRunRecord(*currentRunRecord_, true);
+    bottomPanel_->runs()->addActiveRun(*currentRunRecord_);
     refreshDashboardRuns();
-    currentRunRow_ = 0;
-    analysisRuns_->selectRow(0);
-
-    analysisOutput_->clear();
-    rawOutputFrequencyControl_->clear();
-    rawOutputFrequencyControl_->setEnabled(false);
+    bottomPanel_->rawOutput()->clear();
     const auto program = QString::fromStdString(command.executable);
     QStringList arguments;
     for (const auto& argument : command.arguments) {
@@ -4143,8 +3940,6 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
             this, [this] { updateSolverActivity(); });
     }
     solverActivityTimer_->start();
-    cancelRunButton_->setEnabled(true);
-    openRunFolderButton_->setEnabled(true);
     runAction_->setEnabled(false);
     if (currentRunPurpose_ == SolverRunPurpose::Analysis)
         setLiveResultStatus(tr("Running…"));
@@ -4229,7 +4024,7 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     QFile outputFile(currentRunOutputPath_);
     if (processSucceeded && outputFile.open(QIODevice::ReadOnly)) {
         const auto outputBytes = outputFile.readAll();
-        analysisOutput_->setPlainText(QString::fromLocal8Bit(outputBytes));
+        bottomPanel_->rawOutput()->setText(QString::fromLocal8Bit(outputBytes));
         auto result = analysis::NecOutputParser{}.parse(std::string_view(
             outputBytes.constData(), static_cast<std::size_t>(outputBytes.size())));
         // A baseline is judged against the study's reference, which may differ from the model's.
@@ -4287,18 +4082,10 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
                     ControlPanel::StudyState::Failed, {},
                     tr("No average power gain was reported."));
             }
-            analysisRuns_->setItem(currentRunRow_, RunResultsColumn,
-                new QTableWidgetItem(runResultsText(*currentRunRecord_)));
-            analysisRuns_->setItem(currentRunRow_, RunOutputSizeColumn,
-                new QTableWidgetItem(formatByteSize(outputBytes.size())));
+            bottomPanel_->runs()->updateRun(*currentRunRecord_);
         } else if (currentRunRecord_) {
             setRunResultMetadata(*currentRunRecord_, result, outputBytes.size());
-            if (currentRunRow_ >= 0) {
-                analysisRuns_->setItem(currentRunRow_, RunResultsColumn,
-                    new QTableWidgetItem(runResultsText(*currentRunRecord_)));
-                analysisRuns_->setItem(currentRunRow_, RunOutputSizeColumn,
-                    new QTableWidgetItem(formatByteSize(currentRunRecord_->outputBytes)));
-            }
+            bottomPanel_->runs()->updateRun(*currentRunRecord_);
         }
         if (currentRunPurpose_ == SolverRunPurpose::Analysis) {
             const auto context = runContext(*currentRunRecord_);
@@ -4374,11 +4161,8 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
                 ControlPanel::StudyState::Failed, {}, message);
         }
         currentRunRecord_->outputBytes = QFileInfo(currentRunOutputPath_).size();
-        if (currentRunRow_ >= 0) {
-            analysisRuns_->setItem(currentRunRow_, RunOutputSizeColumn,
-                new QTableWidgetItem(formatByteSize(currentRunRecord_->outputBytes)));
-        }
-        analysisOutput_->setPlainText(tr(
+        bottomPanel_->runs()->updateRun(*currentRunRecord_);
+        bottomPanel_->rawOutput()->setText(tr(
             "This run did not complete successfully. Its partial solver output was not loaded "
             "or parsed, preventing large canceled runs from blocking the interface.\n\n"
             "Run folder: %1").arg(currentRunDirectory_));
@@ -4416,16 +4200,8 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             : liveResultsStale_ ? tr("Stale — previous results retained")
                                 : tr("Previous results retained"));
     }
+    if (currentRunRecord_) currentRunRecord_->durationSeconds = processResult.durationSeconds;
     setCurrentRunStatus(status);
-    if (currentRunRow_ >= 0) {
-        const auto duration = processResult.durationSeconds;
-        analysisRuns_->setItem(currentRunRow_, RunDurationColumn,
-            new QTableWidgetItem(tr("%1 s").arg(formatDecimal(duration))));
-        if (currentRunRecord_) {
-            currentRunRecord_->durationSeconds = duration;
-            runStore_.save(*currentRunRecord_);
-        }
-    }
     if (currentRunPurpose_ == SolverRunPurpose::Analysis && runCompleted
         && currentRunRecord_) {
         resultReferenceController_.selectAutomatic(*currentRunRecord_);
@@ -4451,7 +4227,6 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     bottomPanel_->finishRun(runCompleted);
     if (!runCompleted && processResult.status != SolverProcessStatus::Canceled)
         bottomPanel_->showTab(BottomPanel::Tab::RunLog);
-    cancelRunButton_->setEnabled(false);
     synchronizeRunnerState();
     updateRunSelectionActions();
     updateAnalysisReadiness();
@@ -4460,37 +4235,15 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
 
 void MainWindow::setCurrentRunStatus(const QString& status)
 {
-    if (currentRunRow_ >= 0) {
-        analysisRuns_->setItem(currentRunRow_, RunStatusColumn, new QTableWidgetItem(status));
-    }
-    if (currentRunRecord_) {
-        currentRunRecord_->status = status;
-        runStore_.save(*currentRunRecord_);
-    }
-}
-
-void MainWindow::loadRunHistory()
-{
-    analysisRuns_->setRowCount(0);
-    analysisRuns_->setUpdatesEnabled(false);
-    for (const auto& record : runStore_.load()) {
-        if (record.runType == QStringLiteral("optimization-candidate")
-            || record.runType == QStringLiteral("convergence-step")) continue;
-        addRunRecord(record, false);
-    }
-    analysisRuns_->setUpdatesEnabled(true);
-    analysisRuns_->resizeColumnsToContents();
-    analysisRuns_->setColumnWidth(RunNoteColumn,
-        std::clamp(analysisRuns_->columnWidth(RunNoteColumn), 120, 240));
-    analysisRuns_->clearSelection();
-    runHistoryLoaded_ = true;
-    updateRunSelectionActions();
+    if (!currentRunRecord_) return;
+    currentRunRecord_->status = status;
+    runStore_.save(*currentRunRecord_);
+    bottomPanel_->runs()->updateRun(*currentRunRecord_);
 }
 
 void MainWindow::showRunHistory()
 {
-    if (!runHistoryLoaded_) loadRunHistory();
-    runHistoryPanel_->showWindow();
+    bottomPanel_->showTab(BottomPanel::Tab::Runs);
 }
 
 void MainWindow::refreshDashboardRuns()
@@ -4500,92 +4253,33 @@ void MainWindow::refreshDashboardRuns()
     if (controlPanel_ != nullptr) controlPanel_->setRecentRuns(recentRuns);
 }
 
-void MainWindow::addRunRecord(const AnalysisRunRecord& record, bool prepend)
-{
-    const auto row = prepend ? 0 : analysisRuns_->rowCount();
-    analysisRuns_->insertRow(row);
-    const auto outputBytes = record.outputBytes > 0 ? record.outputBytes
-        : QFileInfo(QDir(record.directory).filePath(QStringLiteral("model.out"))).size();
-    auto displayRecord = record;
-    displayRecord.outputBytes = outputBytes;
-    const auto type = record.runType == QStringLiteral("optimization-session")
-        ? tr("Optimization")
-        : record.runType == QStringLiteral("convergence-session") ? tr("Convergence")
-        : record.runType == QStringLiteral("average-gain-test") ? tr("AGT")
-        : record.runType == QStringLiteral("quick-sweep") ? tr("Quick Sweep") : tr("Analysis");
-    const QStringList values{
-        record.started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")),
-        record.sourceFile.isEmpty() ? tr("Archived model.nec") : QFileInfo(record.sourceFile).fileName(),
-        record.userNote.trimmed().isEmpty() ? tr("—") : record.userNote.simplified(),
-        type,
-        runResultsText(displayRecord),
-        formatByteSize(outputBytes),
-        record.backend,
-        record.status,
-        record.durationSeconds > 0.0
-            ? tr("%1 s").arg(formatDecimal(record.durationSeconds)) : tr("—"),
-        record.directory,
-    };
-    for (auto column = 0; column < values.size(); ++column) {
-        auto* item = new QTableWidgetItem(values[column]);
-        item->setData(RunDirectoryRole, record.directory);
-        item->setData(RunContextRole, runContext(record));
-        item->setData(RunTypeRole, record.runType);
-        item->setData(RunIdRole, record.id);
-        if (column == RunNoteColumn && !record.userNote.trimmed().isEmpty())
-            item->setToolTip(record.userNote);
-        analysisRuns_->setItem(row, column, item);
-    }
-    if (prepend) {
-        analysisRuns_->resizeColumnsToContents();
-        analysisRuns_->setColumnWidth(RunNoteColumn,
-            std::clamp(analysisRuns_->columnWidth(RunNoteColumn), 120, 240));
-    }
-}
-
 void MainWindow::loadSelectedRun()
 {
+    const auto selected = bottomPanel_->runs()->selection();
     if (solverRunner_->isRunning() || optimizationWorkspace_->isRunning()
-        || convergenceWorkspace_->isRunning()
-        || analysisRuns_->currentRow() < 0) {
+        || convergenceWorkspace_->isRunning() || !selected) {
         return;
     }
-    const auto row = analysisRuns_->currentRow();
-    const auto* item = analysisRuns_->item(row, RunStartedColumn);
-    if (item != nullptr) {
-        AnalysisRunRecord record;
-        record.id = item->data(RunIdRole).toString();
-        record.directory = item->data(RunDirectoryRole).toString();
-        record.runType = item->data(RunTypeRole).toString();
-        record.sourceFile = analysisRuns_->item(row, RunModelColumn)->text();
-        record.started = QDateTime::fromString(
-            analysisRuns_->item(row, RunStartedColumn)->text(), QStringLiteral("yyyy-MM-dd HH:mm:ss"));
-        record.backend = analysisRuns_->item(row, RunBackendColumn)->text();
-        record.status = analysisRuns_->item(row, RunStatusColumn)->text();
-        if (runReviewWindow_ == nullptr) {
-            runReviewWindow_ = new RunReviewWindow;
-            runReviewWindow_->setOpenSnapshotCallback(
-                [this](const QString& directory, const QString& modelName, const QString& context) {
-                    if (!loadRunModel(directory, modelName, context)) return;
-                    activeModelResultsDirectory_ = directory;
-                    activeModelResultsContext_ = context;
-                    displayRunArtifacts(directory, context);
-                });
-        }
-        const auto activeModelName = !hasNecModel_ ? QString{}
-            : currentFile_.isEmpty() ? tr("Untitled model.nec") : QFileInfo(currentFile_).fileName();
-        runReviewWindow_->showRun(record, activeModelName);
+    if (runReviewWindow_ == nullptr) {
+        runReviewWindow_ = new RunReviewWindow;
+        runReviewWindow_->setOpenSnapshotCallback(
+            [this](const QString& directory, const QString& modelName, const QString& context) {
+                if (!loadRunModel(directory, modelName, context)) return;
+                activeModelResultsDirectory_ = directory;
+                activeModelResultsContext_ = context;
+                displayRunArtifacts(directory, context);
+            });
     }
+    const auto activeModelName = !hasNecModel_ ? QString{}
+        : currentFile_.isEmpty() ? tr("Untitled model.nec") : QFileInfo(currentFile_).fileName();
+    runReviewWindow_->showRun(selected->record, activeModelName);
 }
 
 void MainWindow::inspectSelectedRunInput()
 {
-    const auto row = analysisRuns_->currentRow();
-    if (row < 0) return;
-    const auto* item = analysisRuns_->item(row, RunStartedColumn);
-    if (item == nullptr) return;
-    const auto inputPath = QDir(item->data(RunDirectoryRole).toString())
-        .filePath(QStringLiteral("model.nec"));
+    const auto selected = bottomPanel_->runs()->selection();
+    if (!selected) return;
+    const auto inputPath = QDir(selected->record.directory).filePath(QStringLiteral("model.nec"));
     QFile inputFile(inputPath);
     if (!inputFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
         QMessageBox::information(this, tr("Input Snapshot Unavailable"),
@@ -4594,8 +4288,7 @@ void MainWindow::inspectSelectedRunInput()
     }
 
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("Input Snapshot — %1")
-        .arg(analysisRuns_->item(row, RunModelColumn)->text()));
+    dialog.setWindowTitle(tr("Input Snapshot — %1").arg(selected->modelName));
     dialog.resize(850, 650);
     auto* layout = new QVBoxLayout(&dialog);
     auto* description = new QLabel(tr(
@@ -4618,14 +4311,11 @@ void MainWindow::openSelectedRunSnapshot()
 {
     if (solverRunner_->isRunning() || optimizationWorkspace_->isRunning()
         || convergenceWorkspace_->isRunning()) return;
-    const auto row = analysisRuns_->currentRow();
-    if (row < 0) return;
-    const auto* item = analysisRuns_->item(row, RunStartedColumn);
-    if (item == nullptr) return;
-    const auto directory = item->data(RunDirectoryRole).toString();
-    const auto modelName = analysisRuns_->item(row, RunModelColumn)->text();
-    const auto context = item->data(RunContextRole).toString();
-    if (!loadRunModel(directory, modelName, context)) return;
+    const auto selected = bottomPanel_->runs()->selection();
+    if (!selected) return;
+    const auto& directory = selected->record.directory;
+    const auto& context = selected->context;
+    if (!loadRunModel(directory, selected->modelName, context)) return;
     activeModelResultsDirectory_ = directory;
     activeModelResultsContext_ = context;
     displayRunArtifacts(directory, context);
@@ -4664,48 +4354,16 @@ auto MainWindow::loadRunModel(const QString& directory, const QString& modelName
 
 void MainWindow::updateRunSelectionActions()
 {
-    const auto row = analysisRuns_->currentRow();
-    const auto hasSelection = row >= 0 && analysisRuns_->item(row, RunStartedColumn) != nullptr;
-    auto activeSelection = false;
-    if (hasSelection && solverRunner_->isRunning()) {
-        activeSelection = analysisRuns_->item(row, RunStartedColumn)->data(RunDirectoryRole).toString()
-            == currentRunDirectory_;
-    }
-    const auto solverBusy = solverRunner_->isRunning() || optimizationWorkspace_->isRunning()
-        || convergenceWorkspace_->isRunning();
-    openRunResultsButton_->setEnabled(hasSelection && !activeSelection && !solverBusy);
-    const auto selectedType = hasSelection
-        ? analysisRuns_->item(row, RunStartedColumn)->data(RunTypeRole).toString() : QString{};
-    openRunResultsButton_->setText(selectedType == QStringLiteral("optimization-session")
-        ? tr("Review Optimization")
-        : selectedType == QStringLiteral("convergence-session") ? tr("Review Convergence")
-        : selectedType == QStringLiteral("average-gain-test") ? tr("Review AGT") : tr("Open Run Review"));
-    const auto hasInputSnapshot = hasSelection
-        && QFileInfo::exists(QDir(analysisRuns_->item(row, RunStartedColumn)
-            ->data(RunDirectoryRole).toString()).filePath(QStringLiteral("model.nec")));
-    const auto isSession = selectedType == QStringLiteral("optimization-session")
-        || selectedType == QStringLiteral("convergence-session");
-    inspectRunInputButton_->setEnabled(hasInputSnapshot && !isSession);
-    openRunSnapshotButton_->setEnabled(hasInputSnapshot && !isSession && !activeSelection && !solverBusy);
-    const auto canPinReference = hasSelection && !activeSelection && !solverBusy
-        && (selectedType == QStringLiteral("analysis")
-            || selectedType == QStringLiteral("quick-sweep"))
-        && analysisRuns_->item(row, RunStatusColumn)->text() == tr("Completed")
-        && QFileInfo::exists(QDir(analysisRuns_->item(row, RunStartedColumn)
-            ->data(RunDirectoryRole).toString()).filePath(QStringLiteral("model.out")));
-    pinRunReferenceButton_->setEnabled(canPinReference);
-    editRunNoteButton_->setEnabled(hasSelection && !solverBusy);
-    openRunFolderButton_->setEnabled(hasSelection);
-    deleteRunButton_->setEnabled(hasSelection && !activeSelection && !solverBusy);
+    bottomPanel_->runs()->setBusy(solverRunner_->isRunning() || optimizationWorkspace_->isRunning()
+            || convergenceWorkspace_->isRunning(),
+        solverRunner_->isRunning() ? currentRunDirectory_ : QString{});
 }
 
 auto MainWindow::selectedRunRecord() const -> std::optional<AnalysisRunRecord>
 {
-    const auto row = analysisRuns_->currentRow();
-    if (row < 0) return std::nullopt;
-    const auto* item = analysisRuns_->item(row, RunStartedColumn);
-    if (item == nullptr) return std::nullopt;
-    const auto id = item->data(RunIdRole).toString();
+    const auto selected = bottomPanel_->runs()->selection();
+    if (!selected) return std::nullopt;
+    const auto& id = selected->record.id;
     const auto records = runStore_.load();
     const auto found = std::ranges::find(records, id, &AnalysisRunRecord::id);
     return found == records.end() ? std::nullopt : std::optional<AnalysisRunRecord>{*found};
@@ -4784,16 +4442,7 @@ void MainWindow::editSelectedRunNote()
     }
     if (currentRunRecord_ && currentRunRecord_->id == record->id)
         currentRunRecord_->userNote = record->userNote;
-    const auto row = analysisRuns_->currentRow();
-    if (row >= 0) {
-        auto* noteItem = analysisRuns_->item(row, RunNoteColumn);
-        if (noteItem == nullptr) {
-            noteItem = new QTableWidgetItem;
-            analysisRuns_->setItem(row, RunNoteColumn, noteItem);
-        }
-        noteItem->setText(record->userNote.isEmpty() ? tr("—") : record->userNote.simplified());
-        noteItem->setToolTip(record->userNote);
-    }
+    bottomPanel_->runs()->updateRun(*record);
     resultReferenceController_.refreshMetadata(*record);
     updateResultReference();
     refreshDashboardRuns();
@@ -4863,26 +4512,23 @@ void MainWindow::updateResultReference()
 void MainWindow::deleteSelectedRun()
 {
     if (optimizationWorkspace_->isRunning() || convergenceWorkspace_->isRunning()) return;
-    const auto row = analysisRuns_->currentRow();
-    if (row < 0) return;
-    const auto* item = analysisRuns_->item(row, RunStartedColumn);
-    if (item == nullptr) return;
-    const auto directory = item->data(RunDirectoryRole).toString();
+    const auto selected = bottomPanel_->runs()->selection();
+    if (!selected) return;
+    const auto directory = selected->record.directory;
     if (solverRunner_->isRunning() && directory == currentRunDirectory_) {
         QMessageBox::information(this, tr("Run Is Active"),
             tr("The active solver run cannot be deleted."));
         return;
     }
-    const auto modelName = analysisRuns_->item(row, RunModelColumn)->text();
     const auto answer = QMessageBox::warning(this, tr("Delete Run"),
         tr("Permanently delete the selected run for %1?\n\n%2")
-            .arg(modelName, directory), QMessageBox::Yes | QMessageBox::Cancel,
+            .arg(selected->modelName, directory), QMessageBox::Yes | QMessageBox::Cancel,
         QMessageBox::Cancel);
     if (answer != QMessageBox::Yes) return;
-    const auto runType = item->data(RunTypeRole).toString();
+    const auto& runType = selected->record.runType;
     const auto removed = runType == QStringLiteral("optimization-session")
             || runType == QStringLiteral("convergence-session")
-        ? runStore_.removeGroup(item->data(RunIdRole).toString(), directory)
+        ? runStore_.removeGroup(selected->record.id, directory)
         : runStore_.remove(directory);
     if (!removed) {
         QMessageBox::critical(this, tr("Delete Failed"),
@@ -4893,7 +4539,7 @@ void MainWindow::deleteSelectedRun()
         reference != nullptr && reference->directory == directory) {
         clearResultReference();
     }
-    analysisRuns_->removeRow(row);
+    bottomPanel_->runs()->removeRun(directory);
     if (activeModelResultsDirectory_ == directory) {
         activeModelResultsDirectory_.clear();
         activeModelResultsContext_.clear();
@@ -4915,14 +4561,14 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
         clearDisplayedResults();
         const auto message = tr("Historical run is incomplete — model.out is missing or unreadable. %1")
             .arg(context);
-        analysisOutput_->setPlainText(tr("Solver output unavailable: %1").arg(outputFile.fileName()));
-        rawOutputPanel_->setStatusText(message);
+        bottomPanel_->rawOutput()->setText(
+            tr("Solver output unavailable: %1").arg(outputFile.fileName()));
         showRunHistory();
         statusBar()->showMessage(message, 7000);
         return;
     }
     const auto outputBytes = outputFile.readAll();
-    analysisOutput_->setPlainText(QString::fromLocal8Bit(outputBytes));
+    bottomPanel_->rawOutput()->setText(QString::fromLocal8Bit(outputBytes));
     auto result = analysis::NecOutputParser{}.parse(std::string_view(
         outputBytes.constData(), static_cast<std::size_t>(outputBytes.size())));
     QFile archivedSourceFile(QDir(directory).filePath(QStringLiteral("model.source.nec")));
@@ -4934,23 +4580,13 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
     }
     AnalysisRunRecord summary;
     setRunResultMetadata(summary, result, outputBytes.size());
-    const auto selectedRow = analysisRuns_->currentRow();
-    const auto* selectedItem = selectedRow >= 0
-        ? analysisRuns_->item(selectedRow, RunStartedColumn) : nullptr;
-    if (selectedItem != nullptr
-        && selectedItem->data(RunDirectoryRole).toString() == directory) {
-        analysisRuns_->setItem(selectedRow, RunResultsColumn,
-            new QTableWidgetItem(runResultsText(summary)));
-        analysisRuns_->setItem(selectedRow, RunOutputSizeColumn,
-            new QTableWidgetItem(formatByteSize(summary.outputBytes)));
-    }
+    bottomPanel_->runs()->updateRunSummary(directory, summary);
     const auto hasParsedResults = !result.feedpoints.empty()
         || !result.currents.empty() || !result.radiation.empty();
     if (!hasParsedResults) {
         clearDisplayedResults();
         const auto message = tr("Historical run contains no supported result data. %1").arg(context);
-        rawOutputPanel_->setStatusText(message);
-        rawOutputPanel_->showWindow();
+        bottomPanel_->showTab(BottomPanel::Tab::RawOutput);
         statusBar()->showMessage(message, 7000);
         return;
     }
@@ -4998,53 +4634,8 @@ void MainWindow::setDisplayedResults(const analysis::AnalysisResult& result)
     for (const auto& value : result.radiation) addFrequency(value.frequencyMHz);
     std::ranges::sort(frequencies);
     statusBar_->setResultFrequencies(frequencies);
-    const QSignalBlocker blocker(rawOutputFrequencyControl_);
-    rawOutputFrequencyControl_->clear();
-    for (const auto frequencyMHz : frequencies) {
-        rawOutputFrequencyControl_->addItem(
-            tr("%1 MHz").arg(formatDecimal(frequencyMHz)), frequencyMHz);
-    }
-    rawOutputFrequencyControl_->setEnabled(!frequencies.empty());
+    bottomPanel_->rawOutput()->setFrequencies(frequencies);
     updateResultReference();
-}
-
-void MainWindow::jumpRawOutputToSelectedFrequency()
-{
-    if (rawOutputFrequencyControl_->currentIndex() < 0
-        || analysisOutput_->document()->isEmpty()) return;
-    const auto target = rawOutputFrequencyControl_->currentData().toDouble();
-    static const QRegularExpression frequencyExpression(
-        QStringLiteral("FREQUENCY\\s*:\\s*([+\\-0-9.EeDd]+)"),
-        QRegularExpression::CaseInsensitiveOption);
-    for (auto block = analysisOutput_->document()->begin(); block.isValid(); block = block.next()) {
-        const auto match = frequencyExpression.match(block.text());
-        if (!match.hasMatch()) continue;
-        auto valueText = match.captured(1);
-        valueText.replace(QLatin1Char('D'), QLatin1Char('E'), Qt::CaseInsensitive);
-        bool valid{};
-        const auto value = valueText.toDouble(&valid);
-        if (!valid || !nearlyEqual(value, target)) continue;
-        QTextCursor cursor(block);
-        analysisOutput_->setTextCursor(cursor);
-        analysisOutput_->centerCursor();
-        statusBar()->showMessage(
-            tr("Raw output positioned at %1 MHz.").arg(formatDecimal(target)), 3000);
-        return;
-    }
-    statusBar()->showMessage(
-        tr("No raw-output section was found for %1 MHz.").arg(formatDecimal(target)), 5000);
-}
-
-void MainWindow::findInRawOutput()
-{
-    const auto text = rawOutputFindControl_->text();
-    if (text.isEmpty() || analysisOutput_->document()->isEmpty()) return;
-    if (analysisOutput_->find(text)) return;
-    auto cursor = analysisOutput_->textCursor();
-    cursor.movePosition(QTextCursor::Start);
-    analysisOutput_->setTextCursor(cursor);
-    if (!analysisOutput_->find(text))
-        statusBar()->showMessage(tr("Text not found in raw output: %1").arg(text), 4000);
 }
 
 void MainWindow::clearDisplayedResults()

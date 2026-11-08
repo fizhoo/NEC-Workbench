@@ -2,12 +2,15 @@
 
 #include <QWidget>
 
+class QAction;
 class QStackedWidget;
 class QTabBar;
 
 namespace necwb::ui {
 
 class ProblemsView;
+class RawOutputView;
+class RunHistoryView;
 class RunLogView;
 
 // Tabbed panel below the dashboard. Collapsed it is just its tab strip; clicking a tab opens
@@ -16,12 +19,16 @@ class BottomPanel final : public QWidget {
     Q_OBJECT
 
 public:
-    enum class Tab { Problems, RunLog };
+    enum class Tab { Problems, RunLog, Runs, RawOutput };
 
     explicit BottomPanel(QWidget* parent = nullptr);
 
     [[nodiscard]] auto problems() const -> ProblemsView* { return problems_; }
     [[nodiscard]] auto runLog() const -> RunLogView* { return runLog_; }
+    [[nodiscard]] auto runs() const -> RunHistoryView* { return runs_; }
+    [[nodiscard]] auto rawOutput() const -> RawOutputView* { return rawOutput_; }
+    // Checkable View-menu action (Ctrl+J) that opens or collapses the panel.
+    [[nodiscard]] auto toggleAction() const -> QAction* { return toggleAction_; }
 
     [[nodiscard]] auto isCollapsed() const -> bool { return collapsed_; }
     [[nodiscard]] auto currentTab() const -> Tab;
@@ -45,8 +52,11 @@ private:
     QTabBar* tabs_{};
     QStackedWidget* pages_{};
     QWidget* resizeGrip_{};
+    QAction* toggleAction_{};
     ProblemsView* problems_{};
     RunLogView* runLog_{};
+    RunHistoryView* runs_{};
+    RawOutputView* rawOutput_{};
     int openHeight_{220};
     bool collapsed_{true};
     bool collapsedBeforeRun_{};

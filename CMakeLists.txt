@@ -116,6 +116,10 @@ if(NECWB_BUILD_GUI)
         src/ui/WorkspaceNavigator.h
         src/ui/bottom/ProblemsView.cpp
         src/ui/bottom/ProblemsView.h
+        src/ui/bottom/RawOutputView.cpp
+        src/ui/bottom/RawOutputView.h
+        src/ui/bottom/RunHistoryView.cpp
+        src/ui/bottom/RunHistoryView.h
         src/ui/bottom/RunLogView.cpp
         src/ui/bottom/RunLogView.h
         src/ui/analysis/AnalysisSetupEditor.cpp

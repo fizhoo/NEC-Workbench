@@ -138,8 +138,6 @@ private:
     [[nodiscard]] auto confirmPendingEdits(QWidget* page) -> bool;
     void showPrimaryResultsWindow();
     void setLiveResultStatus(const QString& status);
-    void jumpRawOutputToSelectedFrequency();
-    void findInRawOutput();
     void showEditor(EditorDestination destination, int geometryTab = 0);
     void fitWindowToDashboard();
     void setDisplayLengthUnit(model::LengthUnit unit);
@@ -243,10 +241,8 @@ private:
     void completeSolverActivity(const QString& status);
     void finishAnalysis(SolverProcessResult result);
     void setCurrentRunStatus(const QString& status);
-    void loadRunHistory();
     void showRunHistory();
     void refreshDashboardRuns();
-    void addRunRecord(const AnalysisRunRecord& record, bool prepend);
     void loadSelectedRun();
     void inspectSelectedRunInput();
     void openSelectedRunSnapshot();
@@ -335,15 +331,11 @@ private:
     DetachablePanel* impedancePanel_{};
     DetachablePanel* currentsPanel_{};
     DetachablePanel* radiationPanel_{};
-    DetachablePanel* rawOutputPanel_{};
     DetachablePanel* validationPanel_{};
-    DetachablePanel* runHistoryPanel_{};
     DetachablePanel* modelPanel_{};
     DetachablePanel* geometryPanel_{};
     DetachablePanel* setupPanel_{};
     DetachablePanel* optimizationPanel_{};
-    QComboBox* rawOutputFrequencyControl_{};
-    QLineEdit* rawOutputFindControl_{};
     ControlPanel* controlPanel_{};
     WelcomePage* welcomePage_{};
     WireCardEditor* wireCardEditor_{};
@@ -376,16 +368,6 @@ private:
     int previousAnalysisWorkspaceIndex_{-1};
     bool restoringWorkspaceTab_{};
     QTabWidget* validationWorkspace_{};
-    QTableWidget* analysisRuns_{};
-    QPlainTextEdit* analysisOutput_{};
-    QPushButton* cancelRunButton_{};
-    QPushButton* openRunFolderButton_{};
-    QPushButton* openRunResultsButton_{};
-    QPushButton* inspectRunInputButton_{};
-    QPushButton* openRunSnapshotButton_{};
-    QPushButton* pinRunReferenceButton_{};
-    QPushButton* editRunNoteButton_{};
-    QPushButton* deleteRunButton_{};
     QTreeWidget* projectTree_{};
     QDockWidget* projectDock_{};
     QLabel* validationOverviewSummary_{};
@@ -431,7 +413,6 @@ private:
     double currentPeakSearchFrequencyMHz_{};
     // SWR reference requested by the optimization study whose baseline is running.
     double currentBaselineReferenceImpedanceOhms_{50.0};
-    int currentRunRow_{-1};
     int geometryTabIndex_{};
     int geometry3DTabIndex_{};
     int structuredSourceTabIndex_{1};
@@ -457,7 +438,6 @@ private:
     bool hasNecModel_{};
     bool resultsAvailable_{};
     bool liveResultsStale_{};
-    bool runHistoryLoaded_{};
     bool suppressSourceHistoryRecording_{};
     std::optional<SourceHistoryEntry> pendingSourceHistoryEntry_;
     std::vector<SourceHistoryEntry> sourceUndoHistory_;
