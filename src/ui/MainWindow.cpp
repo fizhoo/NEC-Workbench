@@ -61,7 +61,6 @@
 #include <QActionGroup>
 #include <QAbstractSpinBox>
 #include <QApplication>
-#include <QClipboard>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QCommandLinkButton>
@@ -79,9 +78,9 @@
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QFrame>
-#include <QHeaderView>
 #include <QInputDialog>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QIcon>
 #include <QKeySequence>
 #include <QLabel>
@@ -95,7 +94,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPlainTextEdit>
-#include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollArea>
@@ -108,10 +106,8 @@
 #include <QStatusBar>
 #include <QStyle>
 #include <QStandardPaths>
-#include <QTableWidget>
 #include <QTableView>
 #include <QTabWidget>
-#include <QTextBlock>
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTextEdit>
@@ -5413,6 +5409,8 @@ void MainWindow::restoreWorkspaceLayout()
     const auto savedState = settings.value(QStringLiteral("mainWindow/state")).toByteArray();
     restoreState(savedState);
     if (savedState.isEmpty()) resetWorkspaceLayout();
+    // The restored position decides how much of an open bottom panel fits on screen.
+    fitWindowToDashboard();
     auto geometrySettings = geometrySettings_;
     geometrySettings.lengthUnit = static_cast<model::LengthUnit>(settings.value(
         QStringLiteral("model/displayLengthUnit"), static_cast<int>(model::LengthUnit::Meter)).toInt());

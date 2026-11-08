@@ -28,17 +28,11 @@
 class QAction;
 class QCloseEvent;
 class QDockWidget;
-class QDialog;
 class QComboBox;
 class QDoubleSpinBox;
 class QEvent;
 class QLabel;
-class QLineEdit;
 class QMenu;
-class QPlainTextEdit;
-class QProgressBar;
-class QPushButton;
-class QTableWidget;
 class QTabWidget;
 class QStackedWidget;
 class QTreeWidget;

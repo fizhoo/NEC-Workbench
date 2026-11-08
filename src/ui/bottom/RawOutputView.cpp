@@ -102,7 +102,7 @@ void RawOutputView::jumpToSelectedFrequency()
         return;
     }
     emit statusMessage(
-        tr("No raw-output section was found for %1 MHz.").arg(formatDecimal(target)), 5000);
+        tr("No section for %1 MHz was found in the raw output.").arg(formatDecimal(target)), 5000);
 }
 
 void RawOutputView::findNext()
