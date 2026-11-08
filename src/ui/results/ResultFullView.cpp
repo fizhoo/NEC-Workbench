@@ -111,8 +111,10 @@ ResultFullView::ResultFullView(const ResultState& state, QWidget* parent)
     pattern3D_->setForwardDirectionCallback(useAsForwardDirection);
 
     connect(back, &QToolButton::clicked, this, [this] { if (back_) back_(); });
-    // A window shortcut on this view is live only while the view is on screen.
+    // Only while the view has focus (showView gives it focus): elsewhere in the window Esc
+    // belongs to the properties pane, where it reverts an edit.
     auto* escape = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    escape->setContext(Qt::WidgetWithChildrenShortcut);
     connect(escape, &QShortcut::activated, this, [this] { if (back_) back_(); });
 }
 
