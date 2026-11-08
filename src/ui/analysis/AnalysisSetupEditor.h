@@ -3,6 +3,9 @@
 #include <QHash>
 #include <QWidget>
 
+#include <utility>
+#include <vector>
+
 class QComboBox;
 class QLabel;
 class QLineEdit;
@@ -16,8 +19,12 @@ class AnalysisSetupEditor final : public QWidget {
 public:
     explicit AnalysisSetupEditor(QWidget* parent = nullptr);
 
+    // Display name and id of each engine Workbench can run.
+    [[nodiscard]] static auto backends() -> std::vector<std::pair<QString, QString>>;
     void setSettings(const QString& backendId,
         const QHash<QString, QString>& executablePaths, int timeoutSeconds);
+    // Switches engine as if chosen here, reporting the change.
+    void selectBackend(const QString& backendId);
 
 signals:
     void settingsChanged(QString backendId, QString executablePath, int timeoutSeconds);
