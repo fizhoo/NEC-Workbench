@@ -34,7 +34,6 @@ class QEvent;
 class QLabel;
 class QMenu;
 class QTabWidget;
-class QStackedWidget;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QTimer;

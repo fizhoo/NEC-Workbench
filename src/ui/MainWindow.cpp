@@ -103,7 +103,6 @@
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSplitter>
-#include <QStackedWidget>
 #include <QStatusBar>
 #include <QStyle>
 #include <QStandardPaths>

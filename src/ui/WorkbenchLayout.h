@@ -21,11 +21,17 @@ public:
     void showModel();
     void resetLayout();
 
+protected:
+    auto eventFilter(QObject* watched, QEvent* event) -> bool override;
+
 private:
+    void applyLeftColumnWidth(int width);
     void saveLeftColumnWidth() const;
 
     QStackedWidget* pages_{};
     QSplitter* split_{};
+    // The saved width is applied once the split first has a real width.
+    bool leftColumnWidthApplied_{};
 };
 
 }

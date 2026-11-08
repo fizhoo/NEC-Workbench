@@ -8,7 +8,6 @@
 
 class QDialog;
 class QLabel;
-class QPushButton;
 class QVBoxLayout;
 
 namespace necwb::ui {

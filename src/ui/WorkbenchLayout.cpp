@@ -2,6 +2,7 @@
 
 #include "ui/BottomPanel.h"
 
+#include <QEvent>
 #include <QHBoxLayout>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -9,6 +10,8 @@
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QVBoxLayout>
+
+#include <algorithm>
 
 namespace necwb::ui {
 namespace {
@@ -72,8 +75,7 @@ WorkbenchLayout::WorkbenchLayout(QWidget* welcome, QWidget* leftColumn, QWidget*
     split_->addWidget(center);
     split_->setStretchFactor(0, 0);
     split_->setStretchFactor(1, 1);
-    split_->setSizes({QSettings{}.value(LeftColumnWidthKey, leftScroll->sizeHint().width()).toInt(),
-        QWIDGETSIZE_MAX});
+    split_->installEventFilter(this);
     pages_->addWidget(split_);
 
     layout->addWidget(pages_, 1);
@@ -93,8 +95,24 @@ void WorkbenchLayout::showModel()
 
 void WorkbenchLayout::resetLayout()
 {
-    split_->setSizes({split_->widget(0)->sizeHint().width(), QWIDGETSIZE_MAX});
     QSettings{}.remove(LeftColumnWidthKey);
+    applyLeftColumnWidth(split_->widget(0)->sizeHint().width());
+}
+
+auto WorkbenchLayout::eventFilter(QObject* watched, QEvent* event) -> bool
+{
+    if (watched == split_ && event->type() == QEvent::Resize && !leftColumnWidthApplied_
+        && split_->width() > 0) {
+        leftColumnWidthApplied_ = true;
+        applyLeftColumnWidth(QSettings{}.value(LeftColumnWidthKey,
+            split_->widget(0)->sizeHint().width()).toInt());
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void WorkbenchLayout::applyLeftColumnWidth(int width)
+{
+    split_->setSizes({width, std::max(0, split_->width() - split_->handleWidth() - width)});
 }
 
 void WorkbenchLayout::saveLeftColumnWidth() const
