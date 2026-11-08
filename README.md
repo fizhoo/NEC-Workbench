@@ -8,8 +8,9 @@ process protocols.
 ## Highlights
 
 - Raw and structured NEC editing over one authoritative source document
-- Separate Geometry Editor (synchronized 2D/3D wire editing, selection, units, and
-  snapping) and NEC Deck (raw source, structured cards, and parameters) windows
+- One resizable main window with the control panel beside the geometry editor
+  (synchronized 2D/3D wire editing, selection, units, and snapping), and a separate
+  NEC Deck window (raw source, structured cards, and parameters)
 - Structured sources, grounds, loads, transmission lines, frequencies, and requests
 - External-solver execution with live status, durable run artifacts, run notes, and history
 - SWR, impedance, and interactive 2D/3D radiation results
