@@ -2,7 +2,6 @@
 
 #include "analysis/AnalysisResult.h"
 #include "analysis/AverageGainTest.h"
-#include "analysis/ResultSummary.h"
 #include "model/AntennaModel.h"
 #include "model/ModelSetup.h"
 #include "ui/analysis/AnalysisRunStore.h"
@@ -15,7 +14,6 @@
 #include <vector>
 
 class QAction;
-class QComboBox;
 class QLabel;
 class QMenu;
 class QTableWidget;
@@ -31,9 +29,6 @@ public:
     enum class StudyState { NotRun, Running, Complete, Failed, Stale };
     enum class Workspace {
         Solver,
-        Impedance,
-        Currents,
-        Radiation,
         Runs,
         Optimize
     };
@@ -66,33 +61,20 @@ public:
         std::size_t errors, std::size_t warnings);
     void setResults(const analysis::AnalysisResult& result, const QString& context, bool stale);
     void markResultsStale();
-    // Recomputes SWR after a Z0 change without moving the selected frequency.
-    void updateReferenceImpedance(const analysis::AnalysisResult& result);
     void setStudyStatus(Study study, StudyState state, const QString& text = {},
         const QString& toolTip = {});
     void clearStudy(Study study);
     void setRecentRuns(const std::vector<AnalysisRunRecord>& runs);
-    void setResultWindowVisible(Workspace workspace, bool visible);
     void setOpenWorkspaceCallback(std::function<void(Workspace)> callback);
     void setOpenEditorCallback(std::function<void(Editor)> callback);
 
 private:
-    struct ResultLauncher {
-        Workspace workspace{};
-        QToolButton* button{};
-        QString label;
-        bool available{};
-        bool visible{};
-    };
     void refreshHeader();
     void refreshFooter();
     void fitModelRowsHeight();
-    void refreshQuickResults();
     void refreshOpenMenu();
-    void refreshResultLauncher(Workspace workspace);
     void setStudyAction(Study study, QAction* action);
     void setModelRow(Editor editor, const QString& value);
-    [[nodiscard]] auto resultLauncher(Workspace workspace) -> ResultLauncher*;
 
     QLabel* modelName_{};
     QToolButton* backendState_{};
@@ -106,25 +88,11 @@ private:
     QToolButton* checkButton_{};
     QLabel* modelState_{};
     QLabel* resultState_{};
-    QComboBox* resultFrequency_{};
-    QLabel* resultStale_{};
-    QWidget* quickResults_{};
-    QLabel* resultExtrema_{};
-    QToolButton* resistanceResult_{};
-    QToolButton* reactanceResult_{};
-    QLabel* quickResultsHeading_{};
-    QLabel* swrResultLabel_{};
-    QToolButton* swrResult_{};
-    QLabel* gainResultLabel_{};
-    QToolButton* gainResult_{};
-    QLabel* frontToBackResultLabel_{};
-    QToolButton* frontToBackResult_{};
     std::array<QLabel*, 2> studyStateLabels_{};
     std::array<QToolButton*, 2> studyButtons_{};
     std::array<StudyState, 2> studyStates_{StudyState::NotRun, StudyState::NotRun};
     QLabel* footer_{};
     QTableWidget* modelRows_{};
-    std::array<ResultLauncher, 3> resultLaunchers_{};
     std::function<void(Workspace)> openWorkspace_;
     std::function<void(Editor)> openEditor_;
     std::function<void(const QString&)> openRecent_;
@@ -136,10 +104,9 @@ private:
     QString resultStatus_{tr("Results none")};
     QString resultContext_;
     QString lastRunText_{tr("No completed run")};
-    std::vector<analysis::ResultSummary> resultSummaries_;
-    double referenceImpedanceOhms_{50.0};
     bool modified_{};
     bool resultsStale_{};
+    bool hasResults_{};
 };
 
 }

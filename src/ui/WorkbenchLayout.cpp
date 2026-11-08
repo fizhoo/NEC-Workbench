@@ -2,11 +2,13 @@
 
 #include "ui/BottomPanel.h"
 
+#include <QAction>
 #include <QEvent>
 #include <QHBoxLayout>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QVBoxLayout>
@@ -17,6 +19,10 @@ namespace necwb::ui {
 namespace {
 
 const auto LeftColumnWidthKey = QStringLiteral("mainWindow/v2/leftColumnWidth");
+const auto RightColumnWidthKey = QStringLiteral("mainWindow/v2/rightColumnWidth");
+const auto RightColumnCollapsedKey = QStringLiteral("mainWindow/v2/rightColumnCollapsed");
+constexpr auto LeftPane = 0;
+constexpr auto RightPane = 2;
 
 // Never narrower than its content (which changes with density), so the column scrolls
 // vertically but never clips sideways.
@@ -46,10 +52,11 @@ protected:
 
 }
 
-WorkbenchLayout::WorkbenchLayout(QWidget* welcome, QWidget* leftColumn, QWidget* center,
-    BottomPanel* bottomPanel, QWidget* parent)
+WorkbenchLayout::WorkbenchLayout(Panes panes, QWidget* parent)
     : QWidget(parent)
-    , bottomPanel_(bottomPanel)
+    , geometry_(panes.geometry)
+    , fullView_(panes.fullView)
+    , bottomPanel_(panes.bottomPanel)
 {
     setObjectName(QStringLiteral("workbenchLayout"));
     auto* layout = new QVBoxLayout(this);
@@ -60,7 +67,7 @@ WorkbenchLayout::WorkbenchLayout(QWidget* welcome, QWidget* leftColumn, QWidget*
     auto* welcomePage = new QWidget(pages_);
     auto* welcomeLayout = new QHBoxLayout(welcomePage);
     welcomeLayout->setContentsMargins(0, 0, 0, 0);
-    welcomeLayout->addWidget(welcome, 0, Qt::AlignHCenter | Qt::AlignTop);
+    welcomeLayout->addWidget(panes.welcome, 0, Qt::AlignHCenter | Qt::AlignTop);
     pages_->addWidget(welcomePage);
 
     // The left column keeps its content at the top and scrolls when the window is shorter.
@@ -73,24 +80,41 @@ WorkbenchLayout::WorkbenchLayout(QWidget* welcome, QWidget* leftColumn, QWidget*
     auto* leftLayout = new QVBoxLayout(leftContent);
     leftLayout->setContentsMargins(0, 0, 0, 0);
     leftLayout->setSpacing(0);
-    leftLayout->addWidget(leftColumn);
+    leftLayout->addWidget(panes.leftColumn);
     leftLayout->addStretch();
     leftScroll->setWidget(leftContent);
+
+    center_ = new QStackedWidget;
+    center_->setObjectName(QStringLiteral("workbenchCenter"));
+    center_->addWidget(geometry_);
+    center_->addWidget(fullView_);
 
     split_ = new QSplitter(Qt::Horizontal, pages_);
     split_->setObjectName(QStringLiteral("workbenchSplit"));
     split_->setHandleWidth(3);
-    split_->setChildrenCollapsible(false);
     split_->addWidget(leftScroll);
-    split_->addWidget(center);
-    split_->setStretchFactor(0, 0);
+    split_->addWidget(center_);
+    split_->addWidget(panes.rightColumn);
+    split_->setCollapsible(LeftPane, false);
+    split_->setCollapsible(1, false);
+    split_->setCollapsible(RightPane, true);
+    split_->setStretchFactor(LeftPane, 0);
     split_->setStretchFactor(1, 1);
+    split_->setStretchFactor(RightPane, 0);
     split_->installEventFilter(this);
     pages_->addWidget(split_);
 
     layout->addWidget(pages_, 1);
-    layout->addWidget(bottomPanel);
-    connect(split_, &QSplitter::splitterMoved, this, [this] { saveLeftColumnWidth(); });
+    layout->addWidget(bottomPanel_);
+
+    rightColumnAction_ = new QAction(tr("&Results Column"), this);
+    rightColumnAction_->setObjectName(QStringLiteral("toggleResultsColumnAction"));
+    rightColumnAction_->setCheckable(true);
+    rightColumnAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
+    rightColumnAction_->setChecked(!QSettings{}.value(RightColumnCollapsedKey, false).toBool());
+    connect(rightColumnAction_, &QAction::toggled, this,
+        [this](bool shown) { setRightColumnShown(shown); });
+    connect(split_, &QSplitter::splitterMoved, this, [this] { saveColumnWidths(); });
 }
 
 void WorkbenchLayout::showWelcome()
@@ -103,10 +127,30 @@ void WorkbenchLayout::showModel()
     pages_->setCurrentWidget(split_);
 }
 
+void WorkbenchLayout::showGeometry()
+{
+    center_->setCurrentWidget(geometry_);
+}
+
+void WorkbenchLayout::showFullView()
+{
+    center_->setCurrentWidget(fullView_);
+}
+
+auto WorkbenchLayout::fullViewShown() const -> bool
+{
+    return center_->currentWidget() == fullView_;
+}
+
 void WorkbenchLayout::resetLayout()
 {
-    QSettings{}.remove(LeftColumnWidthKey);
-    applyLeftColumnWidth(split_->widget(0)->sizeHint().width());
+    QSettings settings;
+    settings.remove(LeftColumnWidthKey);
+    settings.remove(RightColumnWidthKey);
+    settings.remove(RightColumnCollapsedKey);
+    rightColumnAction_->setChecked(true);
+    applyColumnWidths(split_->widget(LeftPane)->sizeHint().width(),
+        split_->widget(RightPane)->sizeHint().width());
 }
 
 auto WorkbenchLayout::minimumSizeHint() const -> QSize
@@ -121,25 +165,47 @@ auto WorkbenchLayout::minimumSizeHint() const -> QSize
 
 auto WorkbenchLayout::eventFilter(QObject* watched, QEvent* event) -> bool
 {
-    if (watched == split_ && event->type() == QEvent::Resize && !leftColumnWidthApplied_
+    if (watched == split_ && event->type() == QEvent::Resize && !columnWidthsApplied_
         && split_->width() > 0) {
-        leftColumnWidthApplied_ = true;
-        applyLeftColumnWidth(QSettings{}.value(LeftColumnWidthKey,
-            split_->widget(0)->sizeHint().width()).toInt());
+        columnWidthsApplied_ = true;
+        const QSettings settings;
+        applyColumnWidths(
+            settings.value(LeftColumnWidthKey, split_->widget(LeftPane)->sizeHint().width()).toInt(),
+            rightColumnAction_->isChecked() ? settings.value(RightColumnWidthKey,
+                split_->widget(RightPane)->sizeHint().width()).toInt() : 0);
     }
     return QWidget::eventFilter(watched, event);
 }
 
-void WorkbenchLayout::applyLeftColumnWidth(int width)
+void WorkbenchLayout::applyColumnWidths(int left, int right)
 {
-    const auto* leftColumn = split_->widget(0);
-    width = std::clamp(width, leftColumn->minimumSizeHint().width(), leftColumn->maximumWidth());
-    split_->setSizes({width, std::max(0, split_->width() - split_->handleWidth() - width)});
+    const auto* leftColumn = split_->widget(LeftPane);
+    left = std::clamp(left, leftColumn->minimumSizeHint().width(), leftColumn->maximumWidth());
+    if (right > 0) right = std::max(right, split_->widget(RightPane)->minimumSizeHint().width());
+    const auto center = split_->width() - 2 * split_->handleWidth() - left - right;
+    split_->setSizes({left, std::max(0, center), right});
 }
 
-void WorkbenchLayout::saveLeftColumnWidth() const
+void WorkbenchLayout::saveColumnWidths()
 {
-    QSettings{}.setValue(LeftColumnWidthKey, split_->sizes().value(0));
+    const auto sizes = split_->sizes();
+    QSettings settings;
+    settings.setValue(LeftColumnWidthKey, sizes.value(LeftPane));
+    // Dragging the right column shut collapses it; its width is kept for when it comes back.
+    const auto right = sizes.value(RightPane);
+    if (right > 0) settings.setValue(RightColumnWidthKey, right);
+    const QSignalBlocker blocker(rightColumnAction_);
+    rightColumnAction_->setChecked(right > 0);
+    settings.setValue(RightColumnCollapsedKey, right == 0);
+}
+
+void WorkbenchLayout::setRightColumnShown(bool shown)
+{
+    QSettings settings;
+    settings.setValue(RightColumnCollapsedKey, !shown);
+    applyColumnWidths(split_->sizes().value(LeftPane), shown
+        ? settings.value(RightColumnWidthKey, split_->widget(RightPane)->sizeHint().width()).toInt()
+        : 0);
 }
 
 }

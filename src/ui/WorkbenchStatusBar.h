@@ -3,6 +3,7 @@
 #include <QStatusBar>
 
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 class QLabel;
@@ -20,7 +21,9 @@ public:
 
     void setFileStatus(const QString& text, const QString& toolTip);
     void setBackend(const QString& backend);
-    void setResultFrequencies(const std::vector<double>& frequenciesMHz);
+    // Shows the selected frequency with the range of the loaded results.
+    void setResultFrequencies(const std::vector<double>& frequenciesMHz,
+        std::optional<double> selectedMHz);
     void setRunning(double elapsedSeconds);
     void setRunFinished(const QString& status, bool succeeded, double elapsedSeconds);
     void setCheckCounts(std::size_t errors, std::size_t warnings, const QString& detail);

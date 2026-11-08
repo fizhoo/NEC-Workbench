@@ -15,11 +15,6 @@
 #include <ranges>
 
 namespace necwb::ui {
-DetachablePanel::DetachablePanel(QString id, QString title, QWidget* parent)
-    : DetachablePanel(std::move(id), std::move(title), parent, Options{})
-{
-}
-
 DetachablePanel::DetachablePanel(
     QString id, QString title, QWidget* parent, Options options)
     : QWidget(parent), id_(std::move(id)), title_(std::move(title)),
@@ -88,13 +83,10 @@ auto DetachablePanel::isWindowActive() const -> bool
     return detached_ && dialog_ != nullptr && dialog_->isActiveWindow();
 }
 
-void DetachablePanel::showWindow(WindowActivation activation)
+void DetachablePanel::showWindow()
 {
-    if (detached_) showDetached(activation);
-    else {
-        detach(false);
-        showDetached(activation);
-    }
+    if (!detached_) detach(false);
+    showDetached();
 }
 
 void DetachablePanel::setStatusText(QString status)
@@ -102,12 +94,6 @@ void DetachablePanel::setStatusText(QString status)
     statusText_ = std::move(status);
     statusLabel_->setText(statusText_);
     if (dialogStatusLabel_ != nullptr) dialogStatusLabel_->setText(statusText_);
-}
-
-void DetachablePanel::setVisibilityChangedCallback(std::function<void(bool)> callback)
-{
-    visibilityChanged_ = std::move(callback);
-    if (visibilityChanged_) visibilityChanged_(isWindowVisible());
 }
 
 void DetachablePanel::detach(bool showWindow)
@@ -132,7 +118,6 @@ void DetachablePanel::detach(bool showWindow)
         connect(dialog_, &QDialog::finished, this, [this] {
             saveWindowGeometry();
             saveWindowState();
-            if (visibilityChanged_) visibilityChanged_(false);
         });
     }
 
@@ -157,18 +142,15 @@ void DetachablePanel::detach(bool showWindow)
     else dialog_->hide();
 }
 
-void DetachablePanel::showDetached(WindowActivation activation)
+void DetachablePanel::showDetached()
 {
     if (dialog_ == nullptr) return;
     ensureWindowOnScreen();
     if (dialog_->isMinimized()) dialog_->showNormal();
     else dialog_->show();
-    if (activation == WindowActivation::Activate) {
-        dialog_->raise();
-        dialog_->activateWindow();
-    }
+    dialog_->raise();
+    dialog_->activateWindow();
     saveWindowState();
-    if (visibilityChanged_) visibilityChanged_(true);
 }
 
 void DetachablePanel::ensureWindowOnScreen()

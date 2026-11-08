@@ -1,7 +1,7 @@
 #pragma once
 
-#include "analysis/AnalysisResult.h"
 #include "ui/analysis/AnalysisRunStore.h"
+#include "ui/analysis/ResultData.h"
 
 #include <optional>
 
@@ -19,7 +19,8 @@ public:
     [[nodiscard]] auto hasReference() const -> bool;
     [[nodiscard]] auto isPinned() const -> bool;
     [[nodiscard]] auto record() const -> const AnalysisRunRecord*;
-    [[nodiscard]] auto result() const -> const analysis::AnalysisResult*;
+    // Parsed once and shared by every view that draws the overlay; null when unreadable.
+    [[nodiscard]] auto data() const -> ResultData::Pointer;
     [[nodiscard]] auto label() const -> QString;
 
 private:
@@ -28,7 +29,7 @@ private:
 
     const AnalysisRunStore& store_;
     std::optional<AnalysisRunRecord> reference_;
-    mutable std::optional<analysis::AnalysisResult> parsedResult_;
+    mutable ResultData::Pointer parsedData_;
     mutable bool parseAttempted_{};
     bool pinned_{};
 };

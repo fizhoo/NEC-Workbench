@@ -54,17 +54,20 @@ void WorkbenchStatusBar::setBackend(const QString& backend)
     backend_->setText(backend);
 }
 
-void WorkbenchStatusBar::setResultFrequencies(const std::vector<double>& frequenciesMHz)
+void WorkbenchStatusBar::setResultFrequencies(const std::vector<double>& frequenciesMHz,
+    std::optional<double> selectedMHz)
 {
     if (frequenciesMHz.empty()) {
         frequency_->setText(tr("No results"));
         return;
     }
     const auto [low, high] = std::ranges::minmax(frequenciesMHz);
-    frequency_->setText(frequenciesMHz.size() == 1
-            ? tr("%1 MHz").arg(formatDecimal(low))
-            : tr("%1–%2 MHz · %3 pts").arg(formatDecimal(low), formatDecimal(high))
-                  .arg(frequenciesMHz.size()));
+    const auto range = frequenciesMHz.size() == 1
+        ? tr("%1 MHz").arg(formatDecimal(low))
+        : tr("%1–%2 MHz · %3 pts").arg(formatDecimal(low), formatDecimal(high))
+              .arg(frequenciesMHz.size());
+    frequency_->setText(selectedMHz && frequenciesMHz.size() > 1
+        ? tr("%1 MHz of %2").arg(formatDecimal(*selectedMHz), range) : range);
 }
 
 void WorkbenchStatusBar::setRunning(double elapsedSeconds)

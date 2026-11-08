@@ -71,7 +71,7 @@ constexpr auto minimumSweepPlotHeight = plotTopMargin + plotBottomMargin + minim
 constexpr auto compactTopMargin = 6;
 constexpr auto compactBottomMargin = 18;
 constexpr auto compactLeftMargin = 34;
-constexpr auto compactRightMargin = 8;
+constexpr auto compactRightMargin = 18;
 constexpr auto compactPlotHeight = 80;
 
 auto sameFrequency(double first, double second) -> bool

@@ -65,8 +65,10 @@ auto makeGainSummary(const AnalysisResult& result, const RadiationSample& sample
 }
 
 auto summarizeResults(const AnalysisResult& result, double selectedFrequencyMHz,
-    std::optional<FeedpointIdentity> selectedSource) -> ResultSummary
+    std::optional<FeedpointIdentity> selectedSource,
+    std::optional<double> referenceImpedanceOhms) -> ResultSummary
 {
+    const auto z0 = referenceImpedanceOhms.value_or(result.referenceImpedanceOhms);
     ResultSummary summary;
     const FeedpointResult* selected{};
     auto nearestDistance = std::numeric_limits<double>::infinity();
@@ -84,12 +86,12 @@ auto summarizeResults(const AnalysisResult& result, double selectedFrequencyMHz,
             selected->frequencyMHz,
             source,
             selected->impedance,
-            standingWaveRatio(selected->impedance, result.referenceImpedanceOhms),
+            standingWaveRatio(selected->impedance, z0),
         };
         for (const auto& feedpoint : result.feedpoints) {
             if (!matchesSource(feedpoint, source)) continue;
             const auto swr = standingWaveRatio(
-                feedpoint.impedance, result.referenceImpedanceOhms);
+                feedpoint.impedance, z0);
             if (!std::isfinite(swr)
                 || (summary.minimumSwr && swr >= summary.minimumSwr->swr)) continue;
             summary.minimumSwr = MinimumSwrSummary{

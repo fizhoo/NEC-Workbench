@@ -620,7 +620,7 @@ void OptimizationWorkspace::finishOptimizationBaseline(bool succeeded, QString d
                 "The optimization baseline does not cover the current study."));
         } else {
             statusLabel_->setText(tr(
-                "Optimization baseline created; live result windows remain unchanged. Starting optimization."));
+                "Optimization baseline created; the results column is unchanged. Starting optimization."));
         }
     }
     updateReadiness();

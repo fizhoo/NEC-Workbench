@@ -81,6 +81,8 @@ public:
     void setForwardDirectionCallback(ForwardDirectionCallback callback);
     // Shows that kind of cut through the pattern peak, switching dataset when needed.
     void showCut(Cut cut);
+    // Whether any dataset at the selected frequency has that kind of cut.
+    [[nodiscard]] auto hasCut(Cut cut) const -> bool;
     void setFrequencyControlVisible(bool visible);
     // Compact shows only the plot, held on one kind of cut through the peak.
     void setCompact(bool compact, Cut cut);

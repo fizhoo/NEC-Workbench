@@ -4,8 +4,6 @@
 #include <QSize>
 #include <QWidget>
 
-#include <functional>
-
 class QDialog;
 class QLabel;
 class QVBoxLayout;
@@ -15,16 +13,10 @@ namespace necwb::ui {
 class DetachablePanel final : public QWidget {
 public:
     struct Options {
-        QString settingsRoot{QStringLiteral("resultWindows")};
+        QString settingsRoot;
         QString windowObjectName;
         QSize defaultWindowSize{900, 680};
     };
-    enum class WindowActivation {
-        Preserve,
-        Activate
-    };
-
-    DetachablePanel(QString id, QString title, QWidget* parent = nullptr);
     DetachablePanel(QString id, QString title, QWidget* parent, Options options);
     ~DetachablePanel() override;
 
@@ -32,13 +24,12 @@ public:
     [[nodiscard]] auto isDetached() const -> bool;
     [[nodiscard]] auto isWindowVisible() const -> bool;
     [[nodiscard]] auto isWindowActive() const -> bool;
-    void showWindow(WindowActivation activation = WindowActivation::Activate);
+    void showWindow();
     void setStatusText(QString status);
-    void setVisibilityChangedCallback(std::function<void(bool)> callback);
 
 private:
     void detach(bool showWindow = true);
-    void showDetached(WindowActivation activation = WindowActivation::Activate);
+    void showDetached();
     void ensureWindowOnScreen();
     void saveWindowGeometry() const;
     void saveWindowState() const;
@@ -61,7 +52,6 @@ private:
     mutable bool savedDetached_{};
     mutable bool savedVisible_{};
     QString statusText_;
-    std::function<void(bool)> visibilityChanged_;
 };
 
 }

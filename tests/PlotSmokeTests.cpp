@@ -5,11 +5,13 @@
 #include "ui/MainWindow.h"
 #include "ui/WorkspaceNavigator.h"
 #include "ui/analysis/SweepPlotsView.h"
+#include "ui/results/ResultFullView.h"
+#include "ui/results/ResultsColumn.h"
+#include "ui/results/ResultsController.h"
 #include "ui/analysis/AnalysisSetupEditor.h"
 #include "ui/analysis/AnalysisRunStore.h"
 #include "ui/analysis/ResultsSummaryView.h"
 #include "ui/analysis/RunReviewWindow.h"
-#include "ui/analysis/ResultWindowCoordinator.h"
 #include "ui/analysis/AverageGainResultsView.h"
 #include "ui/analysis/AnalysisRequestEditor.h"
 #include "ui/analysis/ConvergenceWorkspace.h"
@@ -195,12 +197,11 @@ auto main(int argc, char* argv[]) -> int
         || necwb::ui::formatAxisTick(5.3, 0.14) != QStringLiteral("5.3")) {
         return NECWB_SMOKE_FAILURE("display formatting");
     }
-    QSettings{}.remove(QStringLiteral("resultWindows/smoke-overlay/overlayVisible"));
+    QSettings{}.remove(QStringLiteral("smoke/overlayVisible"));
     auto overlayVisibilityChanged = false;
     auto overlayChooseRequested = false;
     {
-        necwb::ui::HistoricalOverlayControl overlay(
-            QStringLiteral("smoke-overlay"));
+        necwb::ui::HistoricalOverlayControl overlay(QStringLiteral("smoke/overlayVisible"));
         overlay.setVisibilityChangedCallback([&overlayVisibilityChanged](bool visible) {
             overlayVisibilityChanged = visible;
         });
@@ -208,9 +209,9 @@ auto main(int argc, char* argv[]) -> int
             overlayChooseRequested = true;
         });
         auto* showOverlay = overlay.findChild<QCheckBox*>(
-            QStringLiteral("smoke-overlayShowHistoricalOverlay"));
+            QStringLiteral("showHistoricalOverlay"));
         auto* chooseOverlay = overlay.findChild<QPushButton*>(
-            QStringLiteral("smoke-overlayChooseHistoricalOverlay"));
+            QStringLiteral("chooseHistoricalOverlay"));
         if (showOverlay == nullptr || chooseOverlay == nullptr || showOverlay->isEnabled()
             || showOverlay->isChecked()) {
             return NECWB_SMOKE_FAILURE("historical overlay defaults");
@@ -224,12 +225,11 @@ auto main(int argc, char* argv[]) -> int
         }
     }
     {
-        necwb::ui::HistoricalOverlayControl overlay(
-            QStringLiteral("smoke-overlay"));
+        necwb::ui::HistoricalOverlayControl overlay(QStringLiteral("smoke/overlayVisible"));
         if (!overlay.isChecked())
             return NECWB_SMOKE_FAILURE("historical overlay visibility persistence");
     }
-    QSettings{}.remove(QStringLiteral("resultWindows/smoke-overlay/overlayVisible"));
+    QSettings{}.remove(QStringLiteral("smoke/overlayVisible"));
     QSettings{}.remove(QStringLiteral("workspaceNavigation/smoke/collapsed"));
     auto* navigationPages = new QTabWidget;
     navigationPages->addTab(new QWidget(navigationPages), QStringLiteral("First"));
@@ -275,7 +275,7 @@ auto main(int argc, char* argv[]) -> int
     };
     auto consolidatedSetupNavigation = false;
     auto linkedParameterDeleted = false;
-    auto resultWindowNavigation = false;
+    auto resultsColumnNavigation = false;
     auto bottomPanelNavigation = false;
     auto validationWindowNavigation = false;
     auto modelWindowNavigation = false;
@@ -285,12 +285,9 @@ auto main(int argc, char* argv[]) -> int
     auto optimizationWindowNavigation = false;
     auto dialogDensityIsIncremental = false;
     QSettings resultWindowSettings;
-    resultWindowSettings.remove(QStringLiteral("resultWindows/impedance"));
-    resultWindowSettings.remove(QStringLiteral("resultWindows/currents"));
-    resultWindowSettings.remove(QStringLiteral("resultWindows/radiation"));
-    resultWindowSettings.remove(QStringLiteral("resultWindows/validation"));
-    resultWindowSettings.remove(QStringLiteral("resultWindows/impedance/overlayVisible"));
-    resultWindowSettings.remove(QStringLiteral("resultWindows/radiation/overlayVisible"));
+    resultWindowSettings.remove(QStringLiteral("resultsColumn"));
+    resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
+    resultWindowSettings.remove(QStringLiteral("workspaceWindows/validation"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/model-editor"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/analysis-setup"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
@@ -334,24 +331,12 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("segmentationConvergenceAction"));
         auto* reviewRuns = mainWindow.findChild<QAction*>(
             QStringLiteral("reviewRunHistoryAction"));
-        auto* resultWindowsMenu = mainWindow.findChild<QMenu*>(
-            QStringLiteral("resultWindowsMenu"));
-        auto* showImpedanceWindow = mainWindow.findChild<QAction*>(
-            QStringLiteral("showImpedanceWindowAction"));
-        auto* showCurrentsWindow = mainWindow.findChild<QAction*>(
-            QStringLiteral("showCurrentsWindowAction"));
-        auto* showRadiationWindow = mainWindow.findChild<QAction*>(
-            QStringLiteral("showRadiationWindowAction"));
+        auto* toggleResultsColumn = mainWindow.findChild<QAction*>(
+            QStringLiteral("toggleResultsColumnAction"));
         auto* showRawOutput = mainWindow.findChild<QAction*>(
             QStringLiteral("showRawOutputAction"));
-        auto* impedanceOverlay = mainWindow.findChild<QCheckBox*>(
-            QStringLiteral("impedanceShowHistoricalOverlay"));
-        auto* impedanceOverlayChooser = mainWindow.findChild<QPushButton*>(
-            QStringLiteral("impedanceChooseHistoricalOverlay"));
-        auto* radiationOverlay = mainWindow.findChild<QCheckBox*>(
-            QStringLiteral("radiationShowHistoricalOverlay"));
-        auto* radiationOverlayChooser = mainWindow.findChild<QPushButton*>(
-            QStringLiteral("radiationChooseHistoricalOverlay"));
+        const auto overlays = mainWindow.findChildren<QCheckBox*>(
+            QStringLiteral("showHistoricalOverlay"));
         consolidatedSetupNavigation = setupModuleAction != nullptr
             && setupModuleAction->text() == QStringLiteral("&Setup")
             && tabNames(modelWorkspace) == QStringList{QStringLiteral("NEC Deck"),
@@ -461,28 +446,36 @@ auto main(int argc, char* argv[]) -> int
                 && resultWindowSettings.value(
                     QStringLiteral("workspaceWindows/optimization/detached"), false).toBool();
         }
-        if (resultWindowsMenu != nullptr && showImpedanceWindow != nullptr
-            && showCurrentsWindow != nullptr && showRadiationWindow != nullptr) {
-            showImpedanceWindow->trigger();
-            showCurrentsWindow->trigger();
-            showRadiationWindow->trigger();
+        // Results live in the main window's right column: no result windows, no Result
+        // Windows menu, one overlay control, and View › Results Column collapses the column.
+        auto* split = mainWindow.findChild<QSplitter*>(QStringLiteral("workbenchSplit"));
+        auto* resultsColumn = mainWindow.findChild<QWidget*>(QStringLiteral("resultsColumn"));
+        if (toggleResultsColumn != nullptr && split != nullptr && resultsColumn != nullptr) {
+            mainWindow.resize(1400, 900);
+            mainWindow.show();
             application.processEvents();
-            const auto* impedanceWindow = topLevelDialog(
-                QStringLiteral("impedanceResultWindow"));
-            const auto* currentsWindow = topLevelDialog(
-                QStringLiteral("currentsResultWindow"));
-            const auto* radiationWindow = topLevelDialog(
-                QStringLiteral("radiationResultWindow"));
-            resultWindowNavigation = resultWindowsMenu->actions().size() == 3
-                && resultWindowsMenu->actions().contains(showImpedanceWindow)
-                && resultWindowsMenu->actions().contains(showCurrentsWindow)
-                && resultWindowsMenu->actions().contains(showRadiationWindow)
-                && impedanceWindow != nullptr && impedanceWindow->isVisible()
-                && currentsWindow != nullptr && currentsWindow->isVisible()
-                && radiationWindow != nullptr && radiationWindow->isVisible()
-                && impedanceOverlay != nullptr && impedanceOverlayChooser != nullptr
-                && radiationOverlay != nullptr && radiationOverlayChooser != nullptr
-                && !impedanceOverlay->isChecked() && !radiationOverlay->isChecked()
+            const auto* empty = resultsColumn->findChild<QLabel*>(
+                QStringLiteral("resultsColumnEmpty"));
+            const auto* thumbnail = resultsColumn->findChild<QWidget*>(
+                QStringLiteral("swrThumbnail"));
+            const auto columnShown = split->indexOf(resultsColumn) == 2
+                && split->sizes().value(2) > 0 && toggleResultsColumn->isChecked()
+                && empty != nullptr && empty->isVisible() && thumbnail != nullptr
+                && !thumbnail->isVisible();
+            toggleResultsColumn->trigger();
+            application.processEvents();
+            const auto columnCollapsed = split->sizes().value(2) == 0
+                && resultWindowSettings.value(
+                    QStringLiteral("mainWindow/v2/rightColumnCollapsed")).toBool();
+            toggleResultsColumn->trigger();
+            application.processEvents();
+            resultsColumnNavigation = columnShown && columnCollapsed
+                && split->sizes().value(2) >= resultsColumn->minimumSizeHint().width()
+                && mainWindow.findChild<QMenu*>(QStringLiteral("resultWindowsMenu")) == nullptr
+                && topLevelDialog(QStringLiteral("impedanceResultWindow")) == nullptr
+                && topLevelDialog(QStringLiteral("currentsResultWindow")) == nullptr
+                && topLevelDialog(QStringLiteral("radiationResultWindow")) == nullptr
+                && overlays.size() == 1 && !overlays.front()->isChecked()
                 && resultsWorkspace == nullptr;
         }
         // Run history and raw output open as tabs of the bottom panel inside the main
@@ -579,12 +572,8 @@ auto main(int argc, char* argv[]) -> int
             }
         }
     }
-    resultWindowSettings.remove(QStringLiteral("resultWindows/impedance"));
-    resultWindowSettings.remove(QStringLiteral("resultWindows/currents"));
-    resultWindowSettings.remove(QStringLiteral("resultWindows/radiation"));
-    resultWindowSettings.remove(QStringLiteral("resultWindows/validation"));
-    resultWindowSettings.remove(QStringLiteral("resultWindows/impedance/overlayVisible"));
-    resultWindowSettings.remove(QStringLiteral("resultWindows/radiation/overlayVisible"));
+    resultWindowSettings.remove(QStringLiteral("resultsColumn"));
+    resultWindowSettings.remove(QStringLiteral("workspaceWindows/validation"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/model-editor"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/analysis-setup"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
@@ -675,8 +664,8 @@ auto main(int argc, char* argv[]) -> int
         return NECWB_SMOKE_FAILURE("consolidated setup navigation");
     if (!linkedParameterDeleted)
         return NECWB_SMOKE_FAILURE("delete linked parameter");
-    if (!resultWindowNavigation)
-        return NECWB_SMOKE_FAILURE("result window navigation");
+    if (!resultsColumnNavigation)
+        return NECWB_SMOKE_FAILURE("results column navigation");
     if (!bottomPanelNavigation)
         return NECWB_SMOKE_FAILURE("bottom panel navigation");
     if (!validationWindowNavigation)
@@ -3014,7 +3003,7 @@ auto main(int argc, char* argv[]) -> int
         [&runHistoryOpened, &controlPanelWorkspaceOpened,
             &controlPanelSolverOpened](auto destination) {
         if (destination == Workspace::Runs) runHistoryOpened = true;
-        if (destination == Workspace::Impedance) controlPanelWorkspaceOpened = true;
+        if (destination == Workspace::Optimize) controlPanelWorkspaceOpened = true;
         if (destination == Workspace::Solver) controlPanelSolverOpened = true;
         });
     controlPanel.setOpenEditorCallback([&controlPanelEditorOpened](auto destination) {
@@ -3039,7 +3028,6 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("running @ 14.100 MHz"));
     controlPanel.setStudyStatus(Study::AverageGain, StudyState::Failed, {},
         QStringLiteral("solver failed"));
-    controlPanel.setResultWindowVisible(Workspace::Impedance, true);
     controlPanel.show(); application.processEvents();
     // A finished convergence study reports a whole sentence; it must not widen the panel.
     const auto widthBeforeLongStudy = controlPanel.minimumSizeHint().width();
@@ -3062,13 +3050,10 @@ auto main(int argc, char* argv[]) -> int
     };
     const auto* controlPanelName = label("controlPanelModelName");
     auto* controlPanelBackend = button("controlPanelBackend");
-    const auto* controlPanelExtrema = label("controlPanelResultExtrema");
-    const auto* controlPanelStale = label("controlPanelResultStale");
+    const auto* controlPanelResultState = label("controlPanelResultState");
     const auto* controlPanelFooter = label("controlPanelFooter");
     const auto* controlPanelAverageGain = label("controlPanelAverageGainState");
     const auto* controlPanelConvergence = label("controlPanelConvergenceState");
-    auto* controlPanelQuickResults = controlPanel.findChild<QWidget*>(
-        QStringLiteral("controlPanelQuickResults"));
     auto* controlPanelRows = controlPanel.findChild<QTableWidget*>(
         QStringLiteral("controlPanelModelRows"));
     auto* controlPanelOpen = button("controlPanelOpen");
@@ -3080,9 +3065,13 @@ auto main(int argc, char* argv[]) -> int
     auto* controlPanelRuns = button("controlPanelRuns");
     auto* controlPanelAverageGainRun = button("controlPanelAverageGainRun");
     auto* controlPanelConvergenceRun = button("controlPanelConvergenceRun");
-    auto* controlPanelImpedance = button("controlPanelImpedance");
-    // Geometry is always shown beside the control panel, so it has no launcher.
-    const auto noGeometryLauncher = button("controlPanelGeometryEditor") == nullptr;
+    auto* controlPanelOptimize = button("controlPanelOptimize");
+    // Geometry sits beside the control panel and results in the column to its right, so
+    // the panel has no launchers or quick results for them.
+    const auto noViewLaunchers = button("controlPanelGeometryEditor") == nullptr
+        && button("controlPanelImpedance") == nullptr && button("controlPanelCurrents") == nullptr
+        && button("controlPanelRadiation") == nullptr
+        && controlPanel.findChild<QWidget*>(QStringLiteral("controlPanelQuickResults")) == nullptr;
     auto* controlPanelOpenMenu = controlPanel.findChild<QMenu*>(
         QStringLiteral("controlPanelOpenMenu"));
     if (controlPanelOpenMenu != nullptr) {
@@ -3093,32 +3082,19 @@ auto main(int argc, char* argv[]) -> int
                 action->trigger();
         }
     }
-    const auto staleInitiallyHidden = controlPanelStale != nullptr && !controlPanelStale->isVisible();
+    const auto staleInitiallyHidden = controlPanelResultState != nullptr
+        && controlPanelResultState->text() == QStringLiteral("Results current");
     controlPanel.markResultsStale();
     application.processEvents();
-    const auto staleStateVisible = controlPanelStale != nullptr && controlPanelStale->isVisible()
-        && controlPanelQuickResults != nullptr && !controlPanelQuickResults->isEnabled();
-    controlPanel.setResults(result, QStringLiteral("Model: test.nec · Run: controlPanel"), false);
-    auto* controlPanelFrequency = controlPanel.findChild<QComboBox*>(
-        QStringLiteral("controlPanelResultFrequency"));
-    const auto selectedQuickIndex = controlPanelFrequency->count() - 1;
-    controlPanelFrequency->setCurrentIndex(selectedQuickIndex);
-    auto changedZ0Result = result;
-    changedZ0Result.referenceImpedanceOhms = 200.0;
-    controlPanel.updateReferenceImpedance(changedZ0Result);
-    const auto controlPanelSwrLabels = controlPanel.findChildren<QLabel*>();
-    const auto quickResultsFollowZ0 = controlPanelFrequency->currentIndex() == selectedQuickIndex
-        && controlPanelExtrema->text().contains(QStringLiteral("(Z0 200 Ω)"))
-        && std::ranges::any_of(controlPanelSwrLabels, [](const QLabel* swrLabel) {
-            return swrLabel->objectName() == QStringLiteral("controlPanelQuickResultsHeading")
-                && swrLabel->text().endsWith(QStringLiteral("Z0 200 Ω"));
-        });
-    if (!quickResultsFollowZ0) return NECWB_SMOKE_FAILURE("quick results follow a Z0 change");
+    const auto staleStateVisible = controlPanelResultState != nullptr
+        && controlPanelResultState->text() == QStringLiteral("Results stale")
+        && controlPanelFooter != nullptr
+        && controlPanelFooter->text().contains(QStringLiteral("results stale"));
     controlPanel.setResults(result, QStringLiteral("Model: test.nec · Run: controlPanel"), false);
     if (controlPanelAverageGainRun != nullptr) controlPanelAverageGainRun->click();
     if (controlPanelConvergenceRun != nullptr) controlPanelConvergenceRun->click();
     if (controlPanelRuns != nullptr) controlPanelRuns->click();
-    if (controlPanelImpedance != nullptr) controlPanelImpedance->click();
+    if (controlPanelOptimize != nullptr) controlPanelOptimize->click();
     if (controlPanelBackend != nullptr) controlPanelBackend->click();
     if (controlPanelRows != nullptr) {
         QMetaObject::invokeMethod(controlPanelRows, "cellClicked", Qt::DirectConnection,
@@ -3131,11 +3107,6 @@ auto main(int argc, char* argv[]) -> int
         && controlPanelBackend != nullptr
         && controlPanelBackend->text() == QStringLiteral("Engine: nec2")
         && !controlPanelBackend->autoRaise()
-        && controlPanelQuickResults != nullptr
-        && controlPanelExtrema != nullptr
-        && controlPanelExtrema->text().contains(QStringLiteral("Min SWR"))
-        && controlPanelExtrema->text().contains(QStringLiteral("Peak across the band"))
-        && controlPanelExtrema->text().contains(QStringLiteral("dBi @ El"))
         && controlPanelFooter != nullptr
         && controlPanelFooter->text().contains(QStringLiteral("Last run"))
         && studiesCleared
@@ -3165,41 +3136,156 @@ auto main(int argc, char* argv[]) -> int
         && controlPanelConvergenceRun != nullptr
         && controlPanelConvergenceRun->text() == QStringLiteral("Run")
         && controlPanelAverageGainTriggered && controlPanelConvergenceTriggered;
-    const auto controlPanelWindowStateVisible = controlPanelImpedance != nullptr
-        && controlPanelImpedance->text().startsWith(QStringLiteral("●"));
     // Named separately so a platform-only failure says which check broke.
     const std::array controlPanelChecks{
         std::pair{"actions", controlPanelActionsCorrect},
         std::pair{"state", controlPanelStateVisible},
         std::pair{"dense layout", controlPanelDenseLayout},
         std::pair{"long study status keeps width", longStudyKeepsWidth},
-        std::pair{"window state", controlPanelWindowStateVisible},
         std::pair{"run history", runHistoryOpened},
         std::pair{"workspace", controlPanelWorkspaceOpened},
-        std::pair{"no geometry launcher", noGeometryLauncher},
+        std::pair{"no view launchers", noViewLaunchers},
         std::pair{"engine opens solver", controlPanelSolverOpened},
         std::pair{"editor", controlPanelEditorOpened},
     };
     for (const auto& [name, passed] : controlPanelChecks) {
         if (passed) continue;
         std::fprintf(stderr, "controlPanel %s failed: sizeHint %d, rows %d, row size %d, "
-            "extrema \"%s\", footer \"%s\"\n", name, controlPanel.sizeHint().width(),
+            "footer \"%s\"\n", name, controlPanel.sizeHint().width(),
             controlPanelRows == nullptr ? -1 : controlPanelRows->height(),
             controlPanelRows == nullptr ? -1
                 : controlPanelRows->verticalHeader()->defaultSectionSize(),
-            controlPanelExtrema == nullptr ? "" : qUtf8Printable(controlPanelExtrema->text()),
             controlPanelFooter == nullptr ? "" : qUtf8Printable(controlPanelFooter->text()));
         return NECWB_SMOKE_FAILURE("controlPanel workspace");
     }
+    // The results column: one selected frequency drives the key numbers, the thumbnails
+    // and the full view, and survives a new run that has it.
+    {
+        QSettings{}.remove(QStringLiteral("resultsColumn"));
+        QWidget host;
+        necwb::ui::ResultsController results(&host);
+        auto fullViewShown = false;
+        std::optional<double> statusFrequency;
+        results.setShowFullViewCallback([&fullViewShown](bool shown) { fullViewShown = shown; });
+        results.setFrequenciesChangedCallback(
+            [&statusFrequency](const auto&, std::optional<double> selected) {
+                statusFrequency = selected;
+            });
+        auto* column = results.column();
+        auto* fullView = results.fullView();
+        auto* hostLayout = new QHBoxLayout(&host);
+        hostLayout->addWidget(fullView, 1);
+        hostLayout->addWidget(column);
+        host.resize(1100, 900);
+        host.show();
+        application.processEvents();
+        const auto text = [column](const char* name) {
+            const auto* found = column->findChild<QLabel*>(QString::fromLatin1(name));
+            return found == nullptr ? QString{} : found->text();
+        };
+        auto* frequency = column->findChild<QComboBox*>(QStringLiteral("resultsFrequency"));
+        auto* empty = column->findChild<QLabel*>(QStringLiteral("resultsColumnEmpty"));
+        auto* azimuth = column->findChild<QWidget*>(QStringLiteral("azimuthThumbnail"));
+        auto* currents = column->findChild<QWidget*>(QStringLiteral("currentsThumbnail"));
+        if (frequency == nullptr || empty == nullptr || azimuth == nullptr || currents == nullptr)
+            return NECWB_SMOKE_FAILURE("results column controls");
+        const auto emptyState = empty->isVisible() && !azimuth->isVisible();
+        results.setResults(necwb::ui::ResultData::make(result), QStringLiteral("column-run"), {});
+        application.processEvents();
+        // A first run selects minimum SWR: 50 Ω at 14.1 MHz.
+        const auto minimumSwrSelected = frequency->count() == 3
+            && frequency->currentData().toDouble() == 14.1 && statusFrequency == 14.1
+            && !empty->isVisible() && azimuth->isVisible()
+            && text("resultsSwr").startsWith(QStringLiteral("1"))
+            && text("resultsSwr").contains(QStringLiteral("(Z0 50 Ω)"))
+            && text("resultsGain").contains(QStringLiteral("dBi @"))
+            && text("resultsExtrema").contains(QStringLiteral("Min SWR"))
+            && text("resultsExtrema").contains(QStringLiteral("Band peak"));
+        // 14.0 MHz has impedance only: the pattern and current thumbnails shrink to a note.
+        frequency->setCurrentIndex(frequency->findData(14.0));
+        application.processEvents();
+        const auto missingDataNoted = statusFrequency == 14.0
+            && text("resultsGain") == QString::fromUtf8("—")
+            && azimuth->height() < 60 && currents->height() < 60;
+        frequency->setCurrentIndex(frequency->findData(14.2));
+        results.setResults(necwb::ui::ResultData::make(result), QStringLiteral("rerun"), {});
+        application.processEvents();
+        const auto frequencyKept = frequency->currentData().toDouble() == 14.2;
+        results.setReferenceImpedance(200.0);
+        application.processEvents();
+        const auto z0Followed = frequency->currentData().toDouble() == 14.2
+            && text("resultsSwr").contains(QStringLiteral("(Z0 200 Ω)"));
+        results.setStale(true);
+        application.processEvents();
+        const auto* stale = column->findChild<QLabel*>(QStringLiteral("resultsStale"));
+        const auto staleMarked = stale != nullptr && stale->isVisible()
+            && !column->findChild<QWidget*>(QStringLiteral("resultsStripValues"))->isEnabled();
+        results.setStale(false);
+        // Clicking a thumbnail opens its view in the center; Esc goes back.
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(20, 20), azimuth->mapToGlobal(QPointF(20, 20)),
+            Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease, QPointF(20, 20),
+            azimuth->mapToGlobal(QPointF(20, 20)), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(azimuth, &press);
+        QApplication::sendEvent(azimuth, &release);
+        application.processEvents();
+        const auto* title = fullView->findChild<QLabel*>(QStringLiteral("resultFullViewTitle"));
+        const auto fullViewOpened = fullViewShown && title != nullptr
+            && title->text() == QStringLiteral("Azimuth pattern")
+            && fullView->findChild<QComboBox*>(QStringLiteral("radiation2DFrequency"))->isHidden();
+        for (auto* escapeShortcut : fullView->findChildren<QShortcut*>()) {
+            if (escapeShortcut->key() == QKeySequence(Qt::Key_Escape))
+                emit escapeShortcut->activated();
+        }
+        const auto escapeReturned = !fullViewShown;
+        // A row clicked in the full impedance table selects its frequency everywhere.
+        results.showView(necwb::ui::ResultView::ImpedanceTable);
+        application.processEvents();
+        // The impedance table has nine columns; the currents table eight.
+        const auto tables = fullView->findChildren<QTableWidget*>();
+        const auto impedanceTable = std::ranges::find_if(tables,
+            [](const QTableWidget* table) { return table->columnCount() == 9; });
+        if (impedanceTable != tables.end()) {
+            QMetaObject::invokeMethod(*impedanceTable, "cellClicked", Qt::DirectConnection,
+                Q_ARG(int, 0), Q_ARG(int, 0));
+        }
+        application.processEvents();
+        const auto tableSetsFrequency = frequency->currentData().toDouble() == 14.0
+            && statusFrequency == 14.0;
+        // The currents thumbnail never animates.
+        const auto noAnimation = std::ranges::none_of(column->findChildren<QTimer*>(),
+            [](const QTimer* timer) { return timer->isActive(); });
+        results.clear();
+        results.setResults(necwb::ui::ResultData::make(result), QStringLiteral("next-model"), {});
+        const auto clearForgetsFrequency = frequency->currentData().toDouble() == 14.1;
+        const std::array checks{std::pair{"empty state", emptyState},
+            std::pair{"minimum SWR selected", minimumSwrSelected},
+            std::pair{"missing data noted", missingDataNoted},
+            std::pair{"frequency kept", frequencyKept}, std::pair{"Z0 followed", z0Followed},
+            std::pair{"stale marked", staleMarked}, std::pair{"full view opened", fullViewOpened},
+            std::pair{"escape returned", escapeReturned},
+            std::pair{"table sets frequency", tableSetsFrequency},
+            std::pair{"no animation", noAnimation},
+            std::pair{"clear forgets frequency", clearForgetsFrequency}};
+        for (const auto& [name, passed] : checks) {
+            if (passed) continue;
+            std::fprintf(stderr, "results column %s failed: frequency %s, SWR \"%s\", gain \"%s\"\n",
+                name, qUtf8Printable(frequency->currentText()), qUtf8Printable(text("resultsSwr")),
+                qUtf8Printable(text("resultsGain")));
+            return NECWB_SMOKE_FAILURE("results column");
+        }
+        QSettings{}.remove(QStringLiteral("resultsColumn"));
+    }
     QSettings detachableSettings;
-    detachableSettings.remove(QStringLiteral("resultWindows/smoke-test"));
+    detachableSettings.remove(QStringLiteral("workspaceWindows/smoke-test"));
     detachableSettings.sync();
     auto resultPanelDetached = false;
     auto resultPanelHiddenButLive = false;
     auto resultPanelRaisedWithUpdate = false;
     {
         necwb::ui::DetachablePanel detachablePanel(
-            QStringLiteral("smoke-test"), QStringLiteral("Smoke Results"));
+            QStringLiteral("smoke-test"), QStringLiteral("Smoke Results"), nullptr,
+            {QStringLiteral("workspaceWindows")});
         auto* detachableContent = new QLabel(QStringLiteral("Live result content"));
         detachablePanel.setContent(detachableContent);
         detachablePanel.show();
@@ -3227,7 +3313,7 @@ auto main(int argc, char* argv[]) -> int
             && !detachablePanel.isWindowVisible()
             && detachableContent->window() == resultWindow
             && !detachableSettings.value(
-                QStringLiteral("resultWindows/smoke-test/visible"), true).toBool();
+                QStringLiteral("workspaceWindows/smoke-test/visible"), true).toBool();
         detachablePanel.showWindow();
         application.processEvents();
         auto* windowStatus = resultWindow->findChild<QLabel*>(
@@ -3243,7 +3329,8 @@ auto main(int argc, char* argv[]) -> int
     auto resultPanelOpenStateSaved = false;
     {
         necwb::ui::DetachablePanel restoredPanel(
-            QStringLiteral("smoke-test"), QStringLiteral("Smoke Results"));
+            QStringLiteral("smoke-test"), QStringLiteral("Smoke Results"), nullptr,
+            {QStringLiteral("workspaceWindows")});
         auto* restoredContent = new QLabel(QStringLiteral("Restored content"));
         restoredPanel.setContent(restoredContent);
         restoredPanel.show();
@@ -3258,80 +3345,28 @@ auto main(int argc, char* argv[]) -> int
     auto resultPanelRestoredVisible = false;
     {
         necwb::ui::DetachablePanel restoredPanel(
-            QStringLiteral("smoke-test"), QStringLiteral("Smoke Results"));
+            QStringLiteral("smoke-test"), QStringLiteral("Smoke Results"), nullptr,
+            {QStringLiteral("workspaceWindows")});
         restoredPanel.setContent(new QLabel(QStringLiteral("Visible restored content")));
         restoredPanel.show();
         application.processEvents();
         resultPanelRestoredVisible = restoredPanel.isDetached()
             && restoredPanel.isWindowVisible();
     }
-    detachableSettings.remove(QStringLiteral("resultWindows/openSetEstablished"));
-    detachableSettings.remove(QStringLiteral("resultWindows/policy-impedance"));
-    detachableSettings.remove(QStringLiteral("resultWindows/policy-currents"));
-    detachableSettings.remove(QStringLiteral("resultWindows/policy-radiation"));
-    detachableSettings.sync();
-    auto firstRunWindowPolicy = false;
-    {
-        necwb::ui::DetachablePanel impedance(
-            QStringLiteral("policy-impedance"), QStringLiteral("Impedance"));
-        necwb::ui::DetachablePanel currents(
-            QStringLiteral("policy-currents"), QStringLiteral("Currents"));
-        necwb::ui::DetachablePanel radiation(
-            QStringLiteral("policy-radiation"), QStringLiteral("Radiation"));
-        impedance.setContent(new QLabel(QStringLiteral("Impedance")));
-        currents.setContent(new QLabel(QStringLiteral("Currents")));
-        radiation.setContent(new QLabel(QStringLiteral("Radiation")));
-        necwb::ui::ResultWindowCoordinator coordinator(&impedance, &currents, &radiation);
-        necwb::analysis::AnalysisResult completed;
-        completed.feedpoints.push_back({});
-        completed.radiation.push_back({});
-        coordinator.presentCompletedAnalysis(completed);
-        application.processEvents();
-        firstRunWindowPolicy = impedance.isWindowVisible() && !currents.isWindowVisible()
-            && radiation.isWindowVisible()
-            && detachableSettings.value(
-                QStringLiteral("resultWindows/openSetEstablished"), false).toBool();
-        if (auto* window = topLevelDialog(QStringLiteral("policy-impedanceResultWindow")))
-            window->close();
-        if (auto* window = topLevelDialog(QStringLiteral("policy-radiationResultWindow")))
-            window->close();
-        application.processEvents();
-    }
-    auto closedResultWindowsStayClosed = false;
-    {
-        necwb::ui::DetachablePanel impedance(
-            QStringLiteral("policy-impedance"), QStringLiteral("Impedance"));
-        necwb::ui::DetachablePanel currents(
-            QStringLiteral("policy-currents"), QStringLiteral("Currents"));
-        necwb::ui::DetachablePanel radiation(
-            QStringLiteral("policy-radiation"), QStringLiteral("Radiation"));
-        impedance.setContent(new QLabel(QStringLiteral("Impedance")));
-        currents.setContent(new QLabel(QStringLiteral("Currents")));
-        radiation.setContent(new QLabel(QStringLiteral("Radiation")));
-        impedance.show(); currents.show(); radiation.show();
-        application.processEvents();
-        necwb::ui::ResultWindowCoordinator coordinator(&impedance, &currents, &radiation);
-        necwb::analysis::AnalysisResult completed;
-        completed.feedpoints.push_back({});
-        completed.radiation.push_back({});
-        coordinator.presentCompletedAnalysis(completed);
-        application.processEvents();
-        closedResultWindowsStayClosed = !impedance.isWindowVisible()
-            && !currents.isWindowVisible() && !radiation.isWindowVisible();
-    }
-    detachableSettings.remove(QStringLiteral("resultWindows/offscreen"));
+    detachableSettings.remove(QStringLiteral("workspaceWindows/offscreen"));
     QDialog offscreenGeometry;
     offscreenGeometry.resize(420, 300);
     offscreenGeometry.move(50000, 50000);
     detachableSettings.setValue(
-        QStringLiteral("resultWindows/offscreen/geometry"), offscreenGeometry.saveGeometry());
-    detachableSettings.setValue(QStringLiteral("resultWindows/offscreen/detached"), true);
-    detachableSettings.setValue(QStringLiteral("resultWindows/offscreen/visible"), true);
+        QStringLiteral("workspaceWindows/offscreen/geometry"), offscreenGeometry.saveGeometry());
+    detachableSettings.setValue(QStringLiteral("workspaceWindows/offscreen/detached"), true);
+    detachableSettings.setValue(QStringLiteral("workspaceWindows/offscreen/visible"), true);
     detachableSettings.sync();
     auto offscreenWindowRecovered = false;
     {
         necwb::ui::DetachablePanel restoredPanel(
-            QStringLiteral("offscreen"), QStringLiteral("Off-screen Results"));
+            QStringLiteral("offscreen"), QStringLiteral("Off-screen Results"), nullptr,
+            {QStringLiteral("workspaceWindows")});
         restoredPanel.setContent(new QLabel(QStringLiteral("Recovered content")));
         restoredPanel.show();
         application.processEvents();
@@ -3345,19 +3380,20 @@ auto main(int argc, char* argv[]) -> int
                 });
         }
     }
-    detachableSettings.remove(QStringLiteral("resultWindows/oversized"));
+    detachableSettings.remove(QStringLiteral("workspaceWindows/oversized"));
     QDialog oversizedGeometry;
     oversizedGeometry.resize(50000, 50000);
     oversizedGeometry.move(0, 0);
     detachableSettings.setValue(
-        QStringLiteral("resultWindows/oversized/geometry"), oversizedGeometry.saveGeometry());
-    detachableSettings.setValue(QStringLiteral("resultWindows/oversized/detached"), true);
-    detachableSettings.setValue(QStringLiteral("resultWindows/oversized/visible"), true);
+        QStringLiteral("workspaceWindows/oversized/geometry"), oversizedGeometry.saveGeometry());
+    detachableSettings.setValue(QStringLiteral("workspaceWindows/oversized/detached"), true);
+    detachableSettings.setValue(QStringLiteral("workspaceWindows/oversized/visible"), true);
     detachableSettings.sync();
     auto oversizedWindowClamped = false;
     {
         necwb::ui::DetachablePanel restoredPanel(
-            QStringLiteral("oversized"), QStringLiteral("Oversized Results"));
+            QStringLiteral("oversized"), QStringLiteral("Oversized Results"), nullptr,
+            {QStringLiteral("workspaceWindows")});
         restoredPanel.setContent(new QLabel(QStringLiteral("Recovered content")));
         restoredPanel.show();
         application.processEvents();
@@ -3374,16 +3410,12 @@ auto main(int argc, char* argv[]) -> int
                 });
         }
     }
-    detachableSettings.remove(QStringLiteral("resultWindows/openSetEstablished"));
-    detachableSettings.remove(QStringLiteral("resultWindows/policy-impedance"));
-    detachableSettings.remove(QStringLiteral("resultWindows/policy-currents"));
-    detachableSettings.remove(QStringLiteral("resultWindows/policy-radiation"));
-    detachableSettings.remove(QStringLiteral("resultWindows/offscreen"));
-    detachableSettings.remove(QStringLiteral("resultWindows/oversized"));
-    detachableSettings.remove(QStringLiteral("resultWindows/smoke-test"));
+    detachableSettings.remove(QStringLiteral("workspaceWindows/offscreen"));
+    detachableSettings.remove(QStringLiteral("workspaceWindows/oversized"));
+    detachableSettings.remove(QStringLiteral("workspaceWindows/smoke-test"));
     detachableSettings.sync();
-    if (!firstRunWindowPolicy || !closedResultWindowsStayClosed || !offscreenWindowRecovered)
-        return NECWB_SMOKE_FAILURE("result window open-set policy");
+    if (!offscreenWindowRecovered)
+        return NECWB_SMOKE_FAILURE("off-screen window recovery");
     if (!oversizedWindowClamped)
         return NECWB_SMOKE_FAILURE("oversized result window clamping");
     QAction welcomeNew(QStringLiteral("New NEC Model"));

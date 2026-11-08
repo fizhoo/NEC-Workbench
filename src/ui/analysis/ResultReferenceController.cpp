@@ -60,7 +60,7 @@ void ResultReferenceController::refreshMetadata(const AnalysisRunRecord& run)
 void ResultReferenceController::clear()
 {
     reference_.reset();
-    parsedResult_.reset();
+    parsedData_.reset();
     parseAttempted_ = false;
     pinned_ = false;
 }
@@ -80,10 +80,10 @@ auto ResultReferenceController::record() const -> const AnalysisRunRecord*
     return reference_ ? &*reference_ : nullptr;
 }
 
-auto ResultReferenceController::result() const -> const analysis::AnalysisResult*
+auto ResultReferenceController::data() const -> ResultData::Pointer
 {
     if (!reference_) return nullptr;
-    if (parseAttempted_) return parsedResult_ ? &*parsedResult_ : nullptr;
+    if (parseAttempted_) return parsedData_;
     parseAttempted_ = true;
 
     const auto output = readFile(QDir(reference_->directory).filePath(QStringLiteral("model.out")));
@@ -98,8 +98,8 @@ auto ResultReferenceController::result() const -> const analysis::AnalysisResult
         parsed.referenceImpedanceOhms = model::referenceImpedanceOhms(
             nec::NecSetupConverter{}.convert(document));
     }
-    parsedResult_ = std::move(parsed);
-    return &*parsedResult_;
+    parsedData_ = ResultData::make(std::move(parsed));
+    return parsedData_;
 }
 
 auto ResultReferenceController::label() const -> QString
@@ -125,7 +125,7 @@ auto ResultReferenceController::modelIdentity(const QString& sourceFile) -> QStr
 void ResultReferenceController::select(AnalysisRunRecord run, bool pinned)
 {
     reference_ = std::move(run);
-    parsedResult_.reset();
+    parsedData_.reset();
     parseAttempted_ = false;
     pinned_ = pinned;
 }

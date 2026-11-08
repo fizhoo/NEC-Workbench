@@ -300,7 +300,7 @@ void OptimizationWorkspace::updateCandidateDetails(int row)
     if (headerText.size() > 110) headerText = headerText.left(109) + QChar(0x2026);
     candidateDetailLabel_->setText(headerText);
     candidateDetailLabel_->setToolTip(tr(
-        "%1\n%2\nTemporary optimization evaluation; live result windows remain separate.")
+        "%1\n%2\nTemporary optimization evaluation; the results column is unchanged.")
         .arg(candidateIdentity,
             breakdown.isEmpty() ? tr("Objective breakdown unavailable")
                                 : breakdown.join(tr(" · "))));

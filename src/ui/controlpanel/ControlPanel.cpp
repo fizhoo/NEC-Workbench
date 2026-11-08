@@ -1,6 +1,5 @@
 #include "ui/controlpanel/ControlPanel.h"
 
-#include "analysis/ResultSummary.h"
 #include "analysis/FrequencyComparison.h"
 #include "model/ModelSummary.h"
 #include "nec/NecDocument.h"
@@ -10,7 +9,6 @@
 
 #include <QAction>
 #include <QFont>
-#include <QComboBox>
 #include <QDir>
 #include <QFileInfo>
 #include <QGridLayout>
@@ -131,29 +129,6 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     commands->addLayout(runRow);
     commands->addWidget(sweepButton_);
     commands->addWidget(checkButton_);
-    auto* resultsHeading = new QLabel(tr("RESULTS  (live windows)"), panel);
-    resultsHeading->setObjectName(QStringLiteral("controlPanelResultsHeading"));
-    auto resultsFont = resultsHeading->font();
-    resultsFont.setPointSize(std::max(7, resultsFont.pointSize() - 1));
-    resultsHeading->setFont(resultsFont);
-    commands->addSpacing(4);
-    commands->addWidget(resultsHeading);
-    auto* impedanceButton = compactButton(tr("Impedance / SWR"), panel,
-        QStringLiteral("controlPanelImpedance"), "results");
-    auto* currentsButton = compactButton(tr("Currents"), panel,
-        QStringLiteral("controlPanelCurrents"), "currents");
-    auto* radiationButton = compactButton(tr("Radiation"), panel,
-        QStringLiteral("controlPanelRadiation"), "radiation-pattern");
-    resultLaunchers_ = {{{Workspace::Impedance, impedanceButton, tr("Impedance / SWR")},
-        {Workspace::Currents, currentsButton, tr("Currents")},
-        {Workspace::Radiation, radiationButton, tr("Radiation")}}};
-    for (auto& launcher : resultLaunchers_) {
-        commands->addWidget(launcher.button);
-        connect(launcher.button, &QToolButton::clicked, this,
-            [this, workspace = launcher.workspace] {
-                if (openWorkspace_) openWorkspace_(workspace);
-            });
-    }
     commands->addSpacing(5);
     auto* runs = compactButton(tr("Runs…"), panel,
         QStringLiteral("controlPanelRuns"), "runs");
@@ -173,7 +148,9 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     modelArea->setSpacing(3);
     auto* modelHeading = new QLabel(tr("MODEL  (click a row to edit)"), panel);
     modelHeading->setObjectName(QStringLiteral("controlPanelModelHeading"));
-    modelHeading->setFont(resultsFont);
+    auto sectionFont = modelHeading->font();
+    sectionFont.setPointSize(std::max(7, sectionFont.pointSize() - 1));
+    modelHeading->setFont(sectionFont);
     modelRows_ = new QTableWidget(10, 3, panel);
     modelRows_->setObjectName(QStringLiteral("controlPanelModelRows"));
     modelRows_->horizontalHeader()->hide();
@@ -211,56 +188,8 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     connect(modelRows_, &QTableWidget::cellClicked, this, [this](int row, int) {
         if (openEditor_) openEditor_(static_cast<Editor>(row));
     });
-    quickResultsHeading_ = new QLabel(tr("QUICK RESULTS"), panel);
-    quickResultsHeading_->setObjectName(QStringLiteral("controlPanelQuickResultsHeading"));
-    quickResultsHeading_->setFont(resultsFont);
-    auto* frequencyRow = new QHBoxLayout;
-    frequencyRow->addWidget(new QLabel(tr("At:"), panel));
-    resultFrequency_ = new QComboBox(panel);
-    resultFrequency_->setObjectName(QStringLiteral("controlPanelResultFrequency"));
-    frequencyRow->addWidget(resultFrequency_, 1);
-    resultStale_ = new QLabel(tr("STALE"), panel);
-    resultStale_->setObjectName(QStringLiteral("controlPanelResultStale"));
-    resultStale_->setStyleSheet(QStringLiteral("color: palette(mid); font-weight: bold;"));
-    resultStale_->hide();
-    frequencyRow->addWidget(resultStale_);
-    quickResults_ = new QWidget(panel);
-    quickResults_->setObjectName(QStringLiteral("controlPanelQuickResults"));
-    auto* quickGrid = new QGridLayout(quickResults_);
-    quickGrid->setContentsMargins(0, 0, 0, 0);
-    quickGrid->setHorizontalSpacing(3);
-    quickGrid->setVerticalSpacing(1);
-    const auto addMetric = [&](int row, int pair, const QString& name,
-                               QToolButton*& value, bool radiation,
-                               QLabel** labelOutput = nullptr) {
-        auto* label = new QLabel(name, quickResults_);
-        if (labelOutput != nullptr) *labelOutput = label;
-        quickGrid->addWidget(label, row, pair * 2);
-        value = compactButton(tr("—"), quickResults_);
-        value->setAutoRaise(true);
-        value->setStyleSheet(QStringLiteral(
-            "QToolButton { border: 1px solid transparent; padding: 1px 3px; text-align: left; }"
-            "QToolButton:hover { border-color: palette(mid); background: palette(alternate-base); }"));
-        value->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        quickGrid->addWidget(value, row, pair * 2 + 1);
-        connect(value, &QToolButton::clicked, this, [this, radiation] {
-            if (openWorkspace_) openWorkspace_(radiation
-                ? Workspace::Radiation : Workspace::Impedance);
-        });
-    };
-    addMetric(0, 0, tr("Rin"), resistanceResult_, false);
-    addMetric(0, 1, tr("Xin"), reactanceResult_, false);
-    addMetric(1, 0, tr("SWR"), swrResult_, false, &swrResultLabel_);
-    addMetric(1, 1, tr("Gain"), gainResult_, true, &gainResultLabel_);
-    addMetric(2, 0, tr("F/B"), frontToBackResult_, true,
-        &frontToBackResultLabel_);
-    resultExtrema_ = new QLabel(panel);
-    resultExtrema_->setObjectName(QStringLiteral("controlPanelResultExtrema"));
-    resultExtrema_->setWordWrap(true);
-    // A long wrapped line would otherwise widen the whole panel through its width hint.
-    resultExtrema_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* qualityHeading = new QLabel(tr("MODEL QUALITY"), panel);
-    qualityHeading->setFont(resultsFont);
+    qualityHeading->setFont(sectionFont);
     auto* qualityGrid = new QGridLayout;
     qualityGrid->setContentsMargins(0, 0, 0, 0);
     qualityGrid->setHorizontalSpacing(4);
@@ -285,11 +214,6 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
     modelArea->addWidget(modelHeading);
     modelArea->addWidget(modelRows_);
     modelArea->addSpacing(3);
-    modelArea->addWidget(quickResultsHeading_);
-    modelArea->addLayout(frequencyRow);
-    modelArea->addWidget(quickResults_);
-    modelArea->addWidget(resultExtrema_);
-    modelArea->addSpacing(2);
     modelArea->addWidget(qualityHeading);
     modelArea->addLayout(qualityGrid);
     modelArea->addStretch();
@@ -308,10 +232,6 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent)
 
     refreshHeader();
     refreshFooter();
-    for (const auto& launcher : resultLaunchers_)
-        refreshResultLauncher(launcher.workspace);
-    connect(resultFrequency_, &QComboBox::currentIndexChanged,
-        this, [this] { refreshQuickResults(); });
 }
 
 void ControlPanel::setFileActions(QAction* open, QAction* save)
@@ -460,139 +380,21 @@ void ControlPanel::setResults(const analysis::AnalysisResult& result,
 {
     resultContext_ = context;
     resultsStale_ = stale;
-    resultLauncher(Workspace::Impedance)->available = !result.feedpoints.empty();
-    resultLauncher(Workspace::Currents)->available = !result.currents.empty();
-    resultLauncher(Workspace::Radiation)->available = !result.radiation.empty();
-    const auto hasResults = std::ranges::any_of(resultLaunchers_, &ResultLauncher::available);
-    resultStatus_ = !hasResults
+    hasResults_ = !result.feedpoints.empty() || !result.currents.empty()
+        || !result.radiation.empty();
+    resultStatus_ = !hasResults_
         ? tr("Results none") : stale ? tr("Results stale") : tr("Results current");
-    referenceImpedanceOhms_ = result.referenceImpedanceOhms;
-    std::vector<double> frequencies;
-    for (const auto& value : result.feedpoints) frequencies.push_back(value.frequencyMHz);
-    for (const auto& value : result.radiation) frequencies.push_back(value.frequencyMHz);
-    std::ranges::sort(frequencies);
-    frequencies.erase(std::unique(frequencies.begin(), frequencies.end(), [](double left, double right) {
-        return nearlyEqual(left, right);
-    }), frequencies.end());
-    const QSignalBlocker blocker(resultFrequency_);
-    resultFrequency_->clear();
-    resultSummaries_.clear();
-    for (const auto frequency : frequencies) {
-        resultFrequency_->addItem(tr("%1 MHz").arg(formatDecimal(frequency)), frequency);
-        resultSummaries_.push_back(analysis::summarizeResults(result, frequency));
-    }
-    if (!resultSummaries_.empty() && resultSummaries_.front().minimumSwr) {
-        const auto index = resultFrequency_->findData(
-            resultSummaries_.front().minimumSwr->frequencyMHz);
-        if (index >= 0) resultFrequency_->setCurrentIndex(index);
-    }
-    refreshQuickResults();
     refreshHeader();
     refreshFooter();
-    for (const auto workspace : {Workspace::Impedance, Workspace::Currents,
-             Workspace::Radiation})
-        refreshResultLauncher(workspace);
-}
-
-void ControlPanel::updateReferenceImpedance(const analysis::AnalysisResult& result)
-{
-    referenceImpedanceOhms_ = result.referenceImpedanceOhms;
-    for (auto index = 0; index < resultFrequency_->count()
-         && index < static_cast<int>(resultSummaries_.size()); ++index) {
-        resultSummaries_[static_cast<std::size_t>(index)] = analysis::summarizeResults(
-            result, resultFrequency_->itemData(index).toDouble());
-    }
-    refreshQuickResults();
-}
-
-void ControlPanel::refreshQuickResults()
-{
-    const auto index = resultFrequency_->currentIndex();
-    const auto summary = index >= 0 && index < static_cast<int>(resultSummaries_.size())
-        ? resultSummaries_[static_cast<std::size_t>(index)] : analysis::ResultSummary{};
-    const auto set = [](QToolButton* button, const std::optional<double>& value,
-                        const QString& suffix = {}) {
-        button->setText(value ? formatDecimal(*value) + suffix : QString::fromUtf8("—"));
-    };
-    if (summary.selectedFeedpoint) {
-        set(resistanceResult_, summary.selectedFeedpoint->impedance.real(), tr(" Ω"));
-        set(reactanceResult_, summary.selectedFeedpoint->impedance.imag(), tr(" Ω"));
-        set(swrResult_, summary.selectedFeedpoint->swr);
-    } else {
-        set(resistanceResult_, std::nullopt); set(reactanceResult_, std::nullopt);
-        set(swrResult_, std::nullopt);
-    }
-    const auto referenceImpedance = formatReferenceImpedance(referenceImpedanceOhms_);
-    // Z0 goes in the heading: on the SWR label it would widen the grid and the panel.
-    quickResultsHeading_->setText(tr("QUICK RESULTS · Z0 %1").arg(referenceImpedance));
-    const auto swrToolTip = tr("SWR against the Z0 %1 reference impedance set in Setup.")
-        .arg(referenceImpedance);
-    quickResultsHeading_->setToolTip(swrToolTip);
-    swrResultLabel_->setToolTip(swrToolTip);
-    swrResult_->setToolTip(swrToolTip);
-    set(gainResult_, summary.selectedGain
-        ? std::optional<double>{summary.selectedGain->gainDb} : std::nullopt, tr(" dBi"));
-    set(frontToBackResult_, summary.selectedFrontToBackDb, tr(" dB"));
-    const auto gainText = [](const analysis::PeakGainSummary& gain) {
-        return analysis::formatGain({.gainDb = gain.gainDb,
-            .thetaDegrees = gain.thetaDegrees, .phiDegrees = gain.phiDegrees,
-            .frequencyMHz = gain.frequencyMHz,
-            .sampleStep = gain.sampleStep});
-    };
-    const auto selectedGainText = summary.selectedGain
-        ? std::optional{gainText(*summary.selectedGain)} : std::nullopt;
-    gainResult_->setToolTip(selectedGainText
-        ? tr("Peak at this frequency (all RP data): %1\n%2")
-              .arg(fromCore(selectedGainText->text), fromCore(selectedGainText->toolTip))
-        : QString{});
-    frontToBackResult_->setToolTip(summary.selectedGain
-        ? tr("%1\nForward direction: the peak at this frequency, %2.")
-              .arg(fromCore(analysis::frontToBackDefinition()),
-                  fromCore(analysis::formatDirection(summary.selectedGain->thetaDegrees,
-                      summary.selectedGain->phiDegrees)))
-        : QString{});
-    const std::array radiationRows{
-        std::tuple{gainResultLabel_, gainResult_, summary.selectedGain.has_value()},
-        std::tuple{frontToBackResultLabel_, frontToBackResult_,
-            summary.selectedFrontToBackDb.has_value()}};
-    for (const auto& [label, value, visible] : radiationRows) {
-        label->setVisible(visible);
-        value->setVisible(visible);
-    }
-    // The compact grid has no room for directions, so they go on the wrapping line below.
-    QStringList extrema;
-    QStringList extremaToolTips;
-    if (selectedGainText) {
-        extrema.append(tr("Peak at this frequency %1").arg(fromCore(selectedGainText->text)));
-        extremaToolTips.append(tr("Peak at this frequency: strongest Total sample in all RP "
-            "data at the selected frequency · %1")
-            .arg(fromCore(selectedGainText->toolTip)));
-    }
-    if (summary.minimumSwr) extrema.append(tr("Min SWR %1 @ %2 MHz (Z0 %3)")
-        .arg(formatDecimal(summary.minimumSwr->swr), formatDecimal(summary.minimumSwr->frequencyMHz),
-            referenceImpedance));
-    if (summary.peakGain) {
-        const auto peak = gainText(*summary.peakGain);
-        extrema.append(tr("Peak across the band %1, %2 MHz")
-            .arg(fromCore(peak.text), formatDecimal(summary.peakGain->frequencyMHz)));
-        extremaToolTips.append(tr("Peak across the band: strongest Total sample at any "
-            "frequency · %1")
-            .arg(fromCore(peak.toolTip)));
-    }
-    resultExtrema_->setText(extrema.join(QStringLiteral(" · ")));
-    resultExtrema_->setToolTip(extremaToolTips.join(QStringLiteral("\n")));
-    quickResults_->setEnabled(!resultsStale_);
-    resultStale_->setVisible(resultsStale_);
 }
 
 void ControlPanel::markResultsStale()
 {
-    if (std::ranges::none_of(resultLaunchers_, &ResultLauncher::available)) return;
+    if (!hasResults_) return;
     resultsStale_ = true;
     resultStatus_ = tr("Results stale");
     refreshHeader();
     refreshFooter();
-    refreshQuickResults();
 }
 
 void ControlPanel::setStudyStatus(
@@ -633,14 +435,6 @@ void ControlPanel::setRecentRuns(const std::vector<AnalysisRunRecord>& runs)
     refreshFooter();
 }
 
-void ControlPanel::setResultWindowVisible(Workspace workspace, bool visible)
-{
-    auto* launcher = resultLauncher(workspace);
-    if (launcher == nullptr) return;
-    launcher->visible = visible;
-    refreshResultLauncher(workspace);
-}
-
 void ControlPanel::setOpenWorkspaceCallback(std::function<void(Workspace)> callback)
 {
     openWorkspace_ = std::move(callback);
@@ -670,23 +464,9 @@ void ControlPanel::fitModelRowsHeight()
 void ControlPanel::refreshFooter()
 {
     const auto state = resultsStale_ ? tr("model changed · results stale")
-        : std::ranges::any_of(resultLaunchers_, &ResultLauncher::available)
-            ? tr("model unchanged since run") : tr("no current results");
+        : hasResults_ ? tr("model unchanged since run") : tr("no current results");
     footer_->setText(tr("%1 · %2").arg(lastRunText_, state));
     footer_->setToolTip(resultContext_);
-}
-
-void ControlPanel::refreshResultLauncher(Workspace workspace)
-{
-    auto* launcher = resultLauncher(workspace);
-    if (launcher == nullptr) return;
-    launcher->button->setEnabled(launcher->available);
-    launcher->button->setText(tr("%1 %2").arg(launcher->visible
-        ? QStringLiteral("●") : QStringLiteral("○"), launcher->label));
-    launcher->button->setToolTip(!launcher->available
-        ? tr("Run an analysis that produces these results first")
-        : launcher->visible ? tr("This live window is open; click to raise it")
-                            : tr("Open this live result window"));
 }
 
 void ControlPanel::setModelRow(Editor editor, const QString& value)
@@ -694,13 +474,6 @@ void ControlPanel::setModelRow(Editor editor, const QString& value)
     auto* item = modelRows_->item(static_cast<int>(editor), 1);
     item->setText(value);
     item->setToolTip(value);
-}
-
-auto ControlPanel::resultLauncher(Workspace workspace) -> ResultLauncher*
-{
-    const auto found = std::ranges::find(resultLaunchers_, workspace,
-        &ResultLauncher::workspace);
-    return found == resultLaunchers_.end() ? nullptr : &*found;
 }
 
 }

@@ -11,6 +11,11 @@ class ElidedLabel final : public QLabel {
 public:
     using QLabel::QLabel;
 
+    [[nodiscard]] auto minimumSizeHint() const -> QSize override
+    {
+        return {0, QLabel::minimumSizeHint().height()};
+    }
+
 protected:
     void paintEvent(QPaintEvent*) override
     {

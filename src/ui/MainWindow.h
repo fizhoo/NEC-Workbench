@@ -47,15 +47,9 @@ class AnalysisSetupEditor;
 class AnalysisRequestEditor;
 class Geometry3DView;
 class GeometryView;
-class ImpedanceResultsView;
 class RunReviewWindow;
 class AverageGainResultsView;
 class ConvergenceWorkspace;
-class SweepPlotsView;
-class CurrentDistributionView;
-class RadiationPatternView;
-class Radiation3DView;
-class RadiationPerformanceView;
 class SetupEditor;
 class LoadNetworkEditor;
 class WireCardEditor;
@@ -65,8 +59,7 @@ class WelcomePage;
 class OptimizationWorkspace;
 class ParameterEditor;
 class DetachablePanel;
-class ResultWindowCoordinator;
-class HistoricalOverlayControl;
+class ResultsController;
 class WorkbenchStatusBar;
 class BottomPanel;
 class WorkbenchLayout;
@@ -123,7 +116,8 @@ private:
 
     void createActions();
     void createWorkspace();
-    void createResultWindows();
+    void createResultsColumn();
+    void createValidationWindow();
     void createOptimizationWorkspace();
     void createDocks();
     void createMenusAndToolbar();
@@ -136,8 +130,6 @@ private:
     void showAboutDialog();
     void showModule(Module module);
     [[nodiscard]] auto confirmPendingEdits(QWidget* page) -> bool;
-    void showPrimaryResultsWindow();
-    void setLiveResultStatus(const QString& status);
     void showEditor(EditorDestination destination, int geometryTab = 0);
     void setDisplayLengthUnit(model::LengthUnit unit);
     void changeDeckLengthUnit(model::LengthUnit unit);
@@ -304,7 +296,6 @@ private:
     QAction* redoAction_{};
     QAction* modelModuleAction_{};
     QAction* analysisModuleAction_{};
-    QAction* resultsModuleAction_{};
     QAction* optimizeModuleAction_{};
     QAction* resetLayoutAction_{};
     QAction* problemsAction_{};
@@ -325,9 +316,6 @@ private:
     QTabWidget* sourceWorkspace_{};
     QWidget* windowHost_{};
     WorkbenchLayout* workbenchLayout_{};
-    DetachablePanel* impedancePanel_{};
-    DetachablePanel* currentsPanel_{};
-    DetachablePanel* radiationPanel_{};
     DetachablePanel* validationPanel_{};
     DetachablePanel* modelPanel_{};
     DetachablePanel* setupPanel_{};
@@ -349,14 +337,6 @@ private:
     RunReviewWindow* runReviewWindow_{};
     AverageGainResultsView* averageGainResultsView_{};
     ConvergenceWorkspace* convergenceWorkspace_{};
-    ImpedanceResultsView* analysisResultsView_{};
-    SweepPlotsView* visualizePlotsView_{};
-    CurrentDistributionView* currentResultsView_{};
-    RadiationPatternView* radiationPatternView_{};
-    Radiation3DView* radiation3DView_{};
-    RadiationPerformanceView* radiationPerformanceView_{};
-    HistoricalOverlayControl* impedanceOverlayControl_{};
-    HistoricalOverlayControl* radiationOverlayControl_{};
     OptimizationWorkspace* optimizationWorkspace_{};
     ParameterEditor* parameterEditor_{};
     QTabWidget* analysisWorkspace_{};
@@ -370,7 +350,6 @@ private:
     QLabel* validationOverviewScope_{};
     WorkbenchStatusBar* statusBar_{};
     BottomPanel* bottomPanel_{};
-    analysis::AnalysisResult displayedResults_;
     mutable nec::NecSourceCache activeSourceCache_;
     model::AntennaModel currentModel_;
     model::ModelSetup currentSetup_;
@@ -400,7 +379,7 @@ private:
     QString activeModelResultsContext_;
     AnalysisRunStore runStore_;
     ResultReferenceController resultReferenceController_{runStore_};
-    std::unique_ptr<ResultWindowCoordinator> resultWindowCoordinator_;
+    std::unique_ptr<ResultsController> resultsController_;
     std::optional<AnalysisRunRecord> currentRunRecord_;
     SolverRunPurpose currentRunPurpose_{SolverRunPurpose::Analysis};
     analysis::AverageGainEnvironment currentAverageGainEnvironment_{

@@ -111,6 +111,17 @@ if(NECWB_BUILD_GUI)
         src/ui/WorkbenchLayout.h
         src/ui/WorkbenchStatusBar.cpp
         src/ui/WorkbenchStatusBar.h
+        src/ui/results/KeyNumberStrip.cpp
+        src/ui/results/KeyNumberStrip.h
+        src/ui/results/ResultFullView.cpp
+        src/ui/results/ResultFullView.h
+        src/ui/results/ResultState.h
+        src/ui/results/ResultThumbnail.cpp
+        src/ui/results/ResultThumbnail.h
+        src/ui/results/ResultsColumn.cpp
+        src/ui/results/ResultsColumn.h
+        src/ui/results/ResultsController.cpp
+        src/ui/results/ResultsController.h
         src/ui/ElidedLabel.h
         src/ui/FileIo.h
         src/ui/ParameterFieldStyle.cpp
@@ -147,8 +158,6 @@ if(NECWB_BUILD_GUI)
         src/ui/analysis/ResultReferenceController.h
         src/ui/analysis/ResultData.cpp
         src/ui/analysis/ResultData.h
-        src/ui/analysis/ResultWindowCoordinator.cpp
-        src/ui/analysis/ResultWindowCoordinator.h
         src/ui/analysis/RunReviewWindow.cpp
         src/ui/analysis/RunReviewWindow.h
         src/ui/analysis/SolverProcessRunner.cpp

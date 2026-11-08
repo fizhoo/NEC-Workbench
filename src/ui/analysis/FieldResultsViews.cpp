@@ -1344,6 +1344,11 @@ void CurrentDistributionView::setCompact(bool compact)
     summary_->setVisible(!compact);
     views_->tabBar()->setVisible(!compact);
     if (compact) showTab(Tab::Antenna);
+    // The hidden tabs would otherwise hold the view at their own minimum height.
+    for (auto* page : {static_cast<QWidget*>(plot_), static_cast<QWidget*>(table_)}) {
+        page->setSizePolicy(compact ? QSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored)
+                                    : QSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding));
+    }
     const auto margin = compact ? 0 : 11;
     layout()->setContentsMargins(margin, margin, margin, margin);
     antenna_->setCompact(compact);
@@ -1560,6 +1565,11 @@ void RadiationPatternView::showCut(Cut cut)
     orientation_ = wanted;
     refreshCutControls();
     showMaxGainCut();
+}
+auto RadiationPatternView::hasCut(Cut cut) const -> bool
+{
+    const auto wanted = cut == Cut::Elevation ? CutOrientation::Vertical : CutOrientation::Horizontal;
+    return !availableCutPlanes(wanted).empty() || bestDatasetForCut(wanted).has_value();
 }
 void RadiationPatternView::setFrequencyControlVisible(bool visible)
 {
@@ -2254,13 +2264,15 @@ RadiationPerformanceView::RadiationPerformanceView(QWidget* parent)
         "the selected frequency."));
     controls->addWidget(new QLabel(tr("Component"), this));
     controls->addWidget(component_);
-    controls->addSpacing(12);
-    controls->addWidget(new QLabel(tr("Forward elevation"), this));
-    controls->addWidget(forwardElevation_);
-    controls->addWidget(new QLabel(tr("Azimuth"), this));
-    controls->addWidget(forwardAzimuth_);
-    controls->addWidget(usePatternPeak_);
     controls->addStretch();
+    // The forward direction gets its own row so the view fits a narrow center.
+    auto* direction = new QHBoxLayout;
+    direction->addWidget(new QLabel(tr("Forward elevation"), this));
+    direction->addWidget(forwardElevation_);
+    direction->addWidget(new QLabel(tr("Azimuth"), this));
+    direction->addWidget(forwardAzimuth_);
+    direction->addWidget(usePatternPeak_);
+    direction->addStretch();
     referenceControl_ = new QCheckBox(tr("Show Historical Overlay"), this);
     referenceControl_->setObjectName(QStringLiteral("radiationPerformanceShowReference"));
     referenceControl_->setChecked(false);
@@ -2284,6 +2296,7 @@ RadiationPerformanceView::RadiationPerformanceView(QWidget* parent)
             fromCore(analysis::frontToRearDefinition(
                 analysis::DirectionalEvaluationMode::SpecifiedDirection))));
     layout->addLayout(controls);
+    layout->addLayout(direction);
     layout->addWidget(readout_);
     layout->addWidget(summary_);
     layout->addWidget(plot_, 1);

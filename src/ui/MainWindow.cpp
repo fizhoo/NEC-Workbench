@@ -36,13 +36,9 @@
 #include "ui/analysis/AnalysisRequestEditor.h"
 #include "ui/analysis/AverageGainResultsView.h"
 #include "ui/analysis/ConvergenceWorkspace.h"
-#include "ui/analysis/ImpedanceResultsView.h"
-#include "ui/analysis/QuickSweepDialog.h"
-#include "ui/analysis/ResultWindowCoordinator.h"
-#include "ui/analysis/RunReviewWindow.h"
-#include "ui/analysis/SweepPlotsView.h"
 #include "ui/analysis/FieldResultsViews.h"
-#include "ui/analysis/HistoricalOverlayControl.h"
+#include "ui/analysis/QuickSweepDialog.h"
+#include "ui/analysis/RunReviewWindow.h"
 #include "ui/editor/NecEditor.h"
 #include "ui/editor/NecHighlighter.h"
 #include "ui/geometry/EngineeringSpinBox.h"
@@ -53,6 +49,9 @@
 #include "ui/geometry/WirePropertiesDialog.h"
 #include "ui/optimization/OptimizationWorkspace.h"
 #include "ui/model/ParameterEditor.h"
+#include "ui/results/ResultFullView.h"
+#include "ui/results/ResultsColumn.h"
+#include "ui/results/ResultsController.h"
 #include "ui/setup/SetupEditor.h"
 #include "ui/setup/LoadNetworkEditor.h"
 #include "ui/setup/ExcitationPropertiesDialog.h"
@@ -138,7 +137,7 @@
 namespace necwb::ui {
 namespace {
 
-constexpr QSize kResultWindowSize{520, 380};
+constexpr QSize kValidationWindowSize{520, 380};
 
 constexpr auto ItemKindRole = Qt::UserRole;
 constexpr auto WireTagRole = Qt::UserRole + 1;
@@ -366,17 +365,6 @@ MainWindow::MainWindow()
     setStatusBar(statusBar_);
     createActions();
     createWorkspace();
-    resultWindowCoordinator_ = std::make_unique<ResultWindowCoordinator>(
-        impedancePanel_, currentsPanel_, radiationPanel_);
-    impedancePanel_->setVisibilityChangedCallback([this](bool visible) {
-        controlPanel_->setResultWindowVisible(ControlPanel::Workspace::Impedance, visible);
-    });
-    currentsPanel_->setVisibilityChangedCallback([this](bool visible) {
-        controlPanel_->setResultWindowVisible(ControlPanel::Workspace::Currents, visible);
-    });
-    radiationPanel_->setVisibilityChangedCallback([this](bool visible) {
-        controlPanel_->setResultWindowVisible(ControlPanel::Workspace::Radiation, visible);
-    });
     createDocks();
     createMenusAndToolbar();
     qApp->installEventFilter(this);
@@ -688,24 +676,18 @@ void MainWindow::createActions()
 
     modelModuleAction_ = new QAction(tr("&Model"), this);
     analysisModuleAction_ = new QAction(tr("&Setup"), this);
-    resultsModuleAction_ = new QAction(tr("&Results"), this);
     optimizeModuleAction_ = new QAction(tr("&Optimize"), this);
     modelModuleAction_->setObjectName(QStringLiteral("modelModuleAction"));
     analysisModuleAction_->setObjectName(QStringLiteral("setupModuleAction"));
     optimizeModuleAction_->setObjectName(QStringLiteral("optimizeModuleAction"));
     modelModuleAction_->setIcon(workbenchIcon("geometry"));
     analysisModuleAction_->setIcon(workbenchIcon("settings"));
-    resultsModuleAction_->setIcon(workbenchIcon("results"));
     optimizeModuleAction_->setIcon(workbenchIcon("optimize"));
     modelModuleAction_->setEnabled(false);
     analysisModuleAction_->setEnabled(false);
-    resultsModuleAction_->setEnabled(true);
     optimizeModuleAction_->setEnabled(false);
     connect(modelModuleAction_, &QAction::triggered, this, [this] { showModule(Module::Model); });
     connect(analysisModuleAction_, &QAction::triggered, this, [this] { showModule(Module::Setup); });
-    connect(resultsModuleAction_, &QAction::triggered, this, [this] {
-        showPrimaryResultsWindow();
-    });
     connect(optimizeModuleAction_, &QAction::triggered,
         this, [this] { showModule(Module::Optimize); });
 }
@@ -765,15 +747,6 @@ void MainWindow::createWorkspace()
         switch (destination) {
         case ControlPanel::Workspace::Solver:
             showEditor(EditorDestination::Solver);
-            break;
-        case ControlPanel::Workspace::Impedance:
-            resultWindowCoordinator_->showImpedance();
-            break;
-        case ControlPanel::Workspace::Currents:
-            resultWindowCoordinator_->showCurrents();
-            break;
-        case ControlPanel::Workspace::Radiation:
-            resultWindowCoordinator_->showRadiation();
             break;
         case ControlPanel::Workspace::Runs:
             showRunHistory();
@@ -1228,18 +1201,36 @@ void MainWindow::createWorkspace()
     setupPanel_->setStatusText(tr("No model loaded"));
     setupPanel_->setContent(analysisNavigator);
 
-    createResultWindows();
+    createValidationWindow();
     createOptimizationWorkspace();
-    workbenchLayout_ = new WorkbenchLayout(welcomePage_, controlPanel_, workspace_, bottomPanel_, this);
+    createResultsColumn();
+    workbenchLayout_ = new WorkbenchLayout({.welcome = welcomePage_, .leftColumn = controlPanel_,
+        .geometry = workspace_, .fullView = resultsController_->fullView(),
+        .rightColumn = resultsController_->column(), .bottomPanel = bottomPanel_}, this);
     setCentralWidget(workbenchLayout_);
     preserveControlHeights(this);
 }
 
-void MainWindow::createResultWindows()
+void MainWindow::createResultsColumn()
+{
+    resultsController_ = std::make_unique<ResultsController>(this);
+    resultsController_->setChooseReferenceCallback(
+        [this](QWidget* anchor) { chooseResultReference(anchor); });
+    resultsController_->setFrequenciesChangedCallback(
+        [this](const std::vector<double>& frequencies, std::optional<double> selected) {
+            statusBar_->setResultFrequencies(frequencies, selected);
+        });
+    resultsController_->setShowFullViewCallback([this](bool fullView) {
+        if (fullView) workbenchLayout_->showFullView();
+        else showEditor(EditorDestination::Geometry, workspace_->currentIndex());
+    });
+}
+
+void MainWindow::createValidationWindow()
 {
     validationPanel_ = new DetachablePanel(QStringLiteral("validation"),
-        tr("Validation"), windowHost_, {QStringLiteral("resultWindows"),
-            QStringLiteral("validationWindow"), kResultWindowSize});
+        tr("Validation"), windowHost_, {QStringLiteral("workspaceWindows"),
+            QStringLiteral("validationWindow"), kValidationWindowSize});
     validationWorkspace_ = new QTabWidget(validationPanel_);
     validationWorkspace_->setObjectName(QStringLiteral("validationWorkspace"));
     validationWorkspace_->setDocumentMode(true);
@@ -1302,90 +1293,6 @@ void MainWindow::createResultWindows()
         controlPanel_->setStudyStatus(ControlPanel::Study::Convergence,
             ControlPanel::StudyState::Complete, summary);
     });
-
-    auto* impedanceContent = new QWidget(windowHost_);
-    auto* impedanceLayout = new QVBoxLayout(impedanceContent);
-    impedanceLayout->setContentsMargins(0, 0, 0, 0);
-    impedanceLayout->setSpacing(2);
-    impedanceOverlayControl_ = new HistoricalOverlayControl(
-        QStringLiteral("impedance"), impedanceContent);
-    auto* impedanceTabs = new QTabWidget(impedanceContent);
-    impedanceTabs->setDocumentMode(true);
-    analysisResultsView_ = new ImpedanceResultsView(impedanceTabs);
-    impedanceTabs->addTab(analysisResultsView_, tr("Table"));
-    visualizePlotsView_ = new SweepPlotsView(impedanceTabs);
-    impedanceTabs->addTab(visualizePlotsView_, tr("Plots"));
-    impedanceTabs->setCurrentWidget(visualizePlotsView_);
-    visualizePlotsView_->setReferenceControlVisible(false);
-    impedanceOverlayControl_->setVisibilityChangedCallback([this](bool visible) {
-        visualizePlotsView_->setReferenceVisible(visible);
-    });
-    impedanceOverlayControl_->setChooseRequestedCallback([this](QWidget* anchor) {
-        chooseResultReference(anchor);
-    });
-    impedanceLayout->addWidget(impedanceOverlayControl_);
-    impedanceLayout->addWidget(impedanceTabs, 1);
-    impedancePanel_ = new DetachablePanel(
-        QStringLiteral("impedance"), tr("Impedance Results"), windowHost_,
-        {QStringLiteral("resultWindows"), {}, kResultWindowSize});
-    impedancePanel_->setContent(impedanceContent);
-
-    currentsPanel_ = new DetachablePanel(
-        QStringLiteral("currents"), tr("Current Distribution"), windowHost_,
-        {QStringLiteral("resultWindows"), {}, kResultWindowSize});
-    currentResultsView_ = new CurrentDistributionView(currentsPanel_);
-    currentsPanel_->setContent(currentResultsView_);
-
-    auto* radiationContent = new QWidget(windowHost_);
-    auto* radiationLayout = new QVBoxLayout(radiationContent);
-    radiationLayout->setContentsMargins(0, 0, 0, 0);
-    radiationLayout->setSpacing(2);
-    radiationOverlayControl_ = new HistoricalOverlayControl(
-        QStringLiteral("radiation"), radiationContent);
-    auto* radiationTabs = new QTabWidget(radiationContent);
-    radiationTabs->setDocumentMode(true);
-    radiationPatternView_ = new RadiationPatternView(radiationTabs);
-    radiationTabs->addTab(radiationPatternView_, tr("2D Pattern"));
-    radiation3DView_ = new Radiation3DView(radiationTabs);
-    radiationTabs->addTab(radiation3DView_, tr("3D Pattern"));
-    radiationPerformanceView_ = new RadiationPerformanceView(radiationTabs);
-    radiationTabs->addTab(radiationPerformanceView_, tr("Performance vs Frequency"));
-    radiationPatternView_->setReferenceControlVisible(false);
-    radiation3DView_->setReferenceControlVisible(false);
-    radiationPerformanceView_->setReferenceControlVisible(false);
-    radiationOverlayControl_->setVisibilityChangedCallback([this](bool visible) {
-        radiationPatternView_->setReferenceVisible(visible);
-        radiation3DView_->setReferenceVisible(visible);
-        radiationPerformanceView_->setReferenceVisible(visible);
-    });
-    radiationOverlayControl_->setChooseRequestedCallback([this](QWidget* anchor) {
-        chooseResultReference(anchor);
-    });
-    radiationLayout->addWidget(radiationOverlayControl_);
-    radiationLayout->addWidget(radiationTabs, 1);
-    radiationPanel_ = new DetachablePanel(
-        QStringLiteral("radiation"), tr("Radiation Results"), windowHost_,
-        {QStringLiteral("resultWindows"), {}, kResultWindowSize});
-    radiationPanel_->setContent(radiationContent);
-    radiationPatternView_->setSettingsChangedCallback([this](const auto& settings) {
-        radiation3DView_->setDisplaySettings(settings);
-        radiationPerformanceView_->setComponent(settings.component);
-    });
-    radiation3DView_->setSettingsChangedCallback([this](const auto& settings) {
-        radiationPatternView_->setDisplaySettings(settings);
-        radiationPerformanceView_->setComponent(settings.component);
-    });
-    radiationPerformanceView_->setComponentChangedCallback([this](auto component) {
-        radiationPatternView_->setComponent(component);
-        radiation3DView_->setComponent(component);
-    });
-    const auto useAsForwardDirection = [this, radiationTabs](double theta, double phi) {
-        radiationPerformanceView_->setForwardDirection(theta, phi);
-        radiationTabs->setCurrentWidget(radiationPerformanceView_);
-    };
-    radiationPatternView_->setForwardDirectionCallback(useAsForwardDirection);
-    radiation3DView_->setForwardDirectionCallback(useAsForwardDirection);
-
 }
 
 void MainWindow::createOptimizationWorkspace()
@@ -1506,25 +1413,6 @@ auto MainWindow::confirmPendingEdits(QWidget* page) -> bool
     return true;
 }
 
-void MainWindow::showPrimaryResultsWindow()
-{
-    if (!resultsAvailable_) {
-        showRunHistory();
-        return;
-    }
-    if (!displayedResults_.feedpoints.empty()) resultWindowCoordinator_->showImpedance();
-    else if (!displayedResults_.radiation.empty()) resultWindowCoordinator_->showRadiation();
-    else if (!displayedResults_.currents.empty()) resultWindowCoordinator_->showCurrents();
-    else showRunHistory();
-}
-
-void MainWindow::setLiveResultStatus(const QString& status)
-{
-    if (impedancePanel_ != nullptr) impedancePanel_->setStatusText(status);
-    if (currentsPanel_ != nullptr) currentsPanel_->setStatusText(status);
-    if (radiationPanel_ != nullptr) radiationPanel_->setStatusText(status);
-}
-
 void MainWindow::showEditor(EditorDestination destination, int geometryTab)
 {
     if (destination == EditorDestination::RawSource) {
@@ -1554,6 +1442,7 @@ void MainWindow::showEditor(EditorDestination destination, int geometryTab)
         modelWorkspace_->setCurrentIndex(modelParametersWorkspaceIndex_);
     } else {
         workbenchLayout_->showModel();
+        workbenchLayout_->showGeometry();
         workspace_->setCurrentIndex(geometryTab);
         workspace_->currentWidget()->setFocus();
         raise();
@@ -1946,34 +1835,12 @@ void MainWindow::createMenusAndToolbar()
     densityMenu->addAction(compactDensityAction_);
     densityMenu->addAction(standardDensityAction_);
     densityMenu->addAction(spaciousDensityAction_);
-    auto* resultWindowsMenu = viewMenu->addMenu(tr("&Result Windows"));
-    resultWindowsMenu->setObjectName(QStringLiteral("resultWindowsMenu"));
-    auto* showImpedanceWindowAction = resultWindowsMenu->addAction(
-        workbenchIcon("frequency-sweep"), tr("Impedance && SWR"));
-    showImpedanceWindowAction->setObjectName(QStringLiteral("showImpedanceWindowAction"));
-    showImpedanceWindowAction->setStatusTip(
-        tr("Open or raise the live impedance and SWR result window"));
-    connect(showImpedanceWindowAction, &QAction::triggered, this,
-        [this] { resultWindowCoordinator_->showImpedance(); });
-    auto* showCurrentsWindowAction = resultWindowsMenu->addAction(
-        workbenchIcon("sources"), tr("Currents"));
-    showCurrentsWindowAction->setObjectName(QStringLiteral("showCurrentsWindowAction"));
-    showCurrentsWindowAction->setStatusTip(
-        tr("Open or raise the live current-distribution window"));
-    connect(showCurrentsWindowAction, &QAction::triggered, this,
-        [this] { resultWindowCoordinator_->showCurrents(); });
-    auto* showRadiationWindowAction = resultWindowsMenu->addAction(
-        workbenchIcon("radiation-pattern"), tr("Radiation"));
-    showRadiationWindowAction->setObjectName(QStringLiteral("showRadiationWindowAction"));
-    showRadiationWindowAction->setStatusTip(
-        tr("Open or raise the live radiation-result window"));
-    connect(showRadiationWindowAction, &QAction::triggered, this,
-        [this] { resultWindowCoordinator_->showRadiation(); });
     viewMenu->addSeparator();
     auto* projectTreeAction =projectDock_->toggleViewAction();
     projectTreeAction->setText(tr("Project Tree"));
     viewMenu->addAction(projectTreeAction);
     viewMenu->addAction(bottomPanel_->toggleAction());
+    viewMenu->addAction(workbenchLayout_->rightColumnAction());
     viewMenu->addAction(problemsAction_);
     viewMenu->addAction(runLogAction_);
     auto* rawOutputAction = viewMenu->addAction(tr("Raw &Output"));
@@ -2233,7 +2100,6 @@ void MainWindow::newModel()
     hasNecModel_ = true;
     modelModuleAction_->setEnabled(true);
     analysisModuleAction_->setEnabled(true);
-    resultsModuleAction_->setEnabled(true);
     workbenchLayout_->showModel();
     analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile({});
@@ -2269,7 +2135,6 @@ void MainWindow::openFileAtPath(const QString& path)
     hasNecModel_ = true;
     modelModuleAction_->setEnabled(true);
     analysisModuleAction_->setEnabled(true);
-    resultsModuleAction_->setEnabled(true);
     workbenchLayout_->showModel();
     analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile(path);
@@ -2577,8 +2442,8 @@ void MainWindow::clearCheckResults()
         applyReferenceImpedance(model::referenceImpedanceOhms(dashboardSetup));
     } else if (resultsAvailable_) {
         controlPanel_->markResultsStale();
+        resultsController_->setStale(true);
         liveResultsStale_ = true;
-        setLiveResultStatus(tr("Stale — model changed; run again"));
     }
     updateAnalysisReadiness();
 }
@@ -3816,7 +3681,6 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
     solverActivityTimer_->start();
     runAction_->setEnabled(false);
     if (currentRunPurpose_ == SolverRunPurpose::Analysis)
-        setLiveResultStatus(tr("Running…"));
     if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
         averageGainResultsView_->setRunning(currentAverageGainFrequencyMHz_,
             currentAverageGainEnvironment_, runContext(*currentRunRecord_));
@@ -3962,15 +3826,7 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
         }
         if (currentRunPurpose_ == SolverRunPurpose::Analysis) {
             const auto context = runContext(*currentRunRecord_);
-            const auto data = ResultData::make(result);
-            analysisResultsView_->setResults(data, context);
-            visualizePlotsView_->setResults(data, context);
-            currentResultsView_->setModel(currentModel_);
-            currentResultsView_->setResults(data, context);
-            radiationPatternView_->setResults(data, context);
-            radiation3DView_->setModel(currentModel_);
-            radiation3DView_->setResults(data, context);
-            radiationPerformanceView_->setResults(data, context);
+            resultsController_->setResults(ResultData::make(result), context, currentModel_);
             if (const auto peak = analysis::radiationMetrics(
                     result.radiation, analysis::RadiationComponent::Total);
                 peak.valid && result.radiation.size() > 1) {
@@ -3988,11 +3844,8 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             resultsAvailable_ = true;
             liveResultsStale_ = false;
             liveResultsDeck_ = pendingRunDeck_;
-            setLiveResultStatus(tr("Current"));
             analysisResultsAvailable = !result.feedpoints.empty() || !result.currents.empty()
                 || !result.radiation.empty();
-            if (analysisResultsAvailable)
-                resultWindowCoordinator_->presentCompletedAnalysis(result);
             if (analysisResultsAvailable && currentRunRecord_)
                 optimizationWorkspace_->setOptimizationBaseline(*currentRunRecord_, result);
         } else if (currentRunPurpose_ == SolverRunPurpose::OptimizationBaseline) {
@@ -4067,12 +3920,6 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
         status = tr("Failed to start");
     } else {
         status = tr("Failed (exit %1)").arg(processResult.exitCode);
-    }
-    if (currentRunPurpose_ == SolverRunPurpose::Analysis
-        && (!runCompleted || !analysisResultsAvailable)) {
-        setLiveResultStatus(!resultsAvailable_ ? tr("No results")
-            : liveResultsStale_ ? tr("Stale — previous results retained")
-                                : tr("Previous results retained"));
     }
     if (currentRunRecord_) currentRunRecord_->durationSeconds = processResult.durationSeconds;
     setCurrentRunStatus(status);
@@ -4210,7 +4057,6 @@ auto MainWindow::loadRunModel(const QString& directory, const QString& modelName
     hasNecModel_ = true;
     modelModuleAction_->setEnabled(true);
     analysisModuleAction_->setEnabled(true);
-    resultsModuleAction_->setEnabled(true);
     workbenchLayout_->showModel();
     analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile({});
@@ -4249,7 +4095,7 @@ void MainWindow::pinSelectedRunReference()
     resultReferenceController_.pin(*record);
     updateResultReference();
     statusBar()->showMessage(tr(
-        "Historical overlay selected: %1. Turn it on in an Impedance or Radiation window.")
+        "Historical overlay selected: %1. Turn it on with Overlay in the results column.")
         .arg(resultReferenceController_.label()), 7000);
 }
 
@@ -4283,7 +4129,7 @@ void MainWindow::chooseResultReference(QWidget* anchor)
             resultReferenceController_.pin(record);
             updateResultReference();
             statusBar()->showMessage(tr(
-                "Historical overlay selected. Use Show Historical Overlay in either result window."),
+                "Historical overlay selected. Turn it on with Overlay in the results column."),
                 6000);
         });
         ++eligibleCount;
@@ -4330,23 +4176,14 @@ void MainWindow::clearResultReference()
 
 void MainWindow::setResultReferenceVisible(bool visible)
 {
-    if (impedanceOverlayControl_ != nullptr) impedanceOverlayControl_->setChecked(visible);
-    else if (visualizePlotsView_ != nullptr) visualizePlotsView_->setReferenceVisible(visible);
-    if (radiationOverlayControl_ != nullptr) radiationOverlayControl_->setChecked(visible);
-    else {
-        radiationPatternView_->setReferenceVisible(visible);
-        radiation3DView_->setReferenceVisible(visible);
-        radiationPerformanceView_->setReferenceVisible(visible);
-    }
+    resultsController_->setReferenceVisible(visible);
 }
 
 void MainWindow::updateResultReference()
 {
-    if (visualizePlotsView_ == nullptr || impedanceOverlayControl_ == nullptr
-        || radiationOverlayControl_ == nullptr) return;
-    const auto* reference = resultReferenceController_.result();
-    const auto hasReference = reference != nullptr;
-    if (hasReference) {
+    if (resultsController_ == nullptr) return;
+    const auto reference = resultReferenceController_.data();
+    if (reference) {
         const auto* record = resultReferenceController_.record();
         const auto modelName = record->sourceFile.isEmpty()
             ? tr("Archived model.nec") : QFileInfo(record->sourceFile).fileName();
@@ -4355,29 +4192,14 @@ void MainWindow::updateResultReference()
             ? tr("%1 — %2").arg(modelName,
                 record->started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")))
             : tr("%1 — “%2”").arg(modelName, note);
-        const auto referenceData = ResultData::make(*reference);
-        visualizePlotsView_->setReferenceResults(referenceData, plotLabel);
-        radiationPatternView_->setReferenceResults(referenceData, plotLabel);
-        radiation3DView_->setReferenceResults(referenceData, plotLabel);
-        radiationPerformanceView_->setReferenceResults(referenceData, plotLabel);
         const auto compatibility = analysis::evaluateHistoricalOverlayCompatibility(
-            displayedResults_, *reference);
-        impedanceOverlayControl_->setSelection(
-            plotLabel, historicalOverlayStatusText(compatibility.impedance));
-        radiationOverlayControl_->setSelection(
-            plotLabel, historicalOverlayStatusText(compatibility.radiation));
-        visualizePlotsView_->setReferenceVisible(impedanceOverlayControl_->isChecked());
-        const auto radiationVisible = radiationOverlayControl_->isChecked();
-        radiationPatternView_->setReferenceVisible(radiationVisible);
-        radiation3DView_->setReferenceVisible(radiationVisible);
-        radiationPerformanceView_->setReferenceVisible(radiationVisible);
+            resultsController_->data()->result(), reference->result());
+        resultsController_->setReference(reference, plotLabel,
+            tr("Impedance: %1 · Pattern: %2").arg(
+                historicalOverlayStatusText(compatibility.impedance),
+                historicalOverlayStatusText(compatibility.radiation)));
     } else {
-        visualizePlotsView_->clearReferenceResults();
-        radiationPatternView_->clearReferenceResults();
-        radiation3DView_->clearReferenceResults();
-        radiationPerformanceView_->clearReferenceResults();
-        impedanceOverlayControl_->clearSelection();
-        radiationOverlayControl_->clearSelection();
+        resultsController_->clearReference();
     }
     updateRunSelectionActions();
 }
@@ -4463,40 +4285,25 @@ void MainWindow::displayRunArtifacts(const QString& directory, const QString& co
         statusBar()->showMessage(message, 7000);
         return;
     }
-    const auto data = ResultData::make(result);
-    analysisResultsView_->setResults(data, context);
-    visualizePlotsView_->setResults(data, context);
-    currentResultsView_->setModel({});
-    currentResultsView_->setResults(data, context);
-    radiationPatternView_->setResults(data, context);
-    radiation3DView_->setModel({});
+    model::AntennaModel runModel;
     QFile inputFile(QDir(directory).filePath(QStringLiteral("model.nec")));
     if (inputFile.open(QIODevice::ReadOnly)) {
         const auto runDocument = nec::NecParser{}.parse(
             QString::fromUtf8(inputFile.readAll()).toStdString());
         const auto conversion = nec::NecModelConverter{}.convert(runDocument);
-        if (!conversion.model.empty()) {
-            currentResultsView_->setModel(conversion.model);
-            radiation3DView_->setModel(conversion.model);
-        }
+        runModel = conversion.model;
     }
-    radiation3DView_->setResults(data, context);
-    radiationPerformanceView_->setResults(data, context);
+    resultsController_->setResults(ResultData::make(result), context, std::move(runModel));
     setDisplayedResults(result);
     displayedRunDirectory_ = directory;
     resultsAvailable_ = true;
     liveResultsStale_ = false;
     liveResultsDeck_.clear();
-    setLiveResultStatus(tr("Current"));
-    if (!result.feedpoints.empty()) resultWindowCoordinator_->showImpedance();
-    else if (!result.radiation.empty()) resultWindowCoordinator_->showRadiation();
-    else if (!result.currents.empty()) resultWindowCoordinator_->showCurrents();
     statusBar()->showMessage(tr("Displaying active model results: %1").arg(directory), 5000);
 }
 
 void MainWindow::setDisplayedResults(const analysis::AnalysisResult& result)
 {
-    displayedResults_ = result;
     std::vector<double> frequencies;
     const auto addFrequency = [&frequencies](double frequencyMHz) {
         if (std::ranges::none_of(frequencies, [frequencyMHz](double existing) {
@@ -4507,7 +4314,6 @@ void MainWindow::setDisplayedResults(const analysis::AnalysisResult& result)
     for (const auto& value : result.currents) addFrequency(value.frequencyMHz);
     for (const auto& value : result.radiation) addFrequency(value.frequencyMHz);
     std::ranges::sort(frequencies);
-    statusBar_->setResultFrequencies(frequencies);
     bottomPanel_->rawOutput()->setFrequencies(frequencies);
     updateResultReference();
 }
@@ -4521,32 +4327,19 @@ void MainWindow::clearDisplayedResults()
     convergenceWorkspace_->clearResults();
     controlPanel_->clearStudy(ControlPanel::Study::AverageGain);
     controlPanel_->clearStudy(ControlPanel::Study::Convergence);
-    const auto& none = ResultData::empty();
-    analysisResultsView_->setResults(none, context);
-    visualizePlotsView_->setResults(none, context);
-    currentResultsView_->setModel({});
-    currentResultsView_->setResults(none, context);
-    radiationPatternView_->setResults(none, context);
-    radiation3DView_->setResults(none, context);
-    radiation3DView_->setModel({});
-    radiationPerformanceView_->setResults(none, context);
+    resultsController_->clear();
     setDisplayedResults(empty);
     controlPanel_->setResults(empty, context, false);
     displayedRunDirectory_.clear();
     resultsAvailable_ = false;
     liveResultsStale_ = false;
     liveResultsDeck_.clear();
-    setLiveResultStatus(tr("No results"));
 }
 
 void MainWindow::applyReferenceImpedance(double ohms)
 {
-    if (nearlyEqual(displayedResults_.referenceImpedanceOhms, ohms)) return;
-    displayedResults_.referenceImpedanceOhms = ohms;
-    analysisResultsView_->setReferenceImpedance(ohms);
-    visualizePlotsView_->setReferenceImpedance(ohms);
-    controlPanel_->updateReferenceImpedance(displayedResults_);
-    updateResultReference();
+    if (nearlyEqual(resultsController_->referenceImpedanceOhms(), ohms)) return;
+    resultsController_->setReferenceImpedance(ohms);
     statusBar()->showMessage(tr("SWR recalculated for Z0 %1 — no new run needed.")
         .arg(formatReferenceImpedance(ohms)), 4000);
 }

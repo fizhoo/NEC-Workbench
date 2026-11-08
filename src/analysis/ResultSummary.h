@@ -59,8 +59,10 @@ struct ResultSummary {
     std::optional<PeakGainSummary> peakGain;
 };
 
+// SWR uses referenceImpedanceOhms when given, for a Z0 changed after the run.
 [[nodiscard]] auto summarizeResults(const AnalysisResult& result,
     double selectedFrequencyMHz,
-    std::optional<FeedpointIdentity> selectedSource = std::nullopt) -> ResultSummary;
+    std::optional<FeedpointIdentity> selectedSource = std::nullopt,
+    std::optional<double> referenceImpedanceOhms = std::nullopt) -> ResultSummary;
 
 }

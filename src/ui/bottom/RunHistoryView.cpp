@@ -112,7 +112,7 @@ RunHistoryView::RunHistoryView(QWidget* parent)
     openSnapshot_ = toolButton(QStringLiteral("openRunSnapshotButton"), tr("Open as New Model"), this);
     openSnapshot_->setToolTip(tr("Replace the active model with an editable copy of this run's input"));
     overlay_ = toolButton(QStringLiteral("pinRunReferenceButton"), tr("Use as Overlay"), this);
-    overlay_->setToolTip(tr("Use this run as the historical overlay in result windows"));
+    overlay_->setToolTip(tr("Use this run as the historical overlay in the results column"));
     editNote_ = toolButton(QStringLiteral("editRunNoteButton"), tr("Note…"), this);
     openFolder_ = toolButton(QStringLiteral("openRunFolderButton"), tr("Folder"), this);
     openFolder_->setToolTip(tr("Open the run folder"));

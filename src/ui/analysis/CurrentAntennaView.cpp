@@ -153,6 +153,8 @@ public:
         updateSpacing();
     }
     void setEnvelopeScale(double scale) { envelopeScale_ = scale; update(); }
+    // A thumbnail cannot be zoomed or panned, so it leaves out the hint.
+    void setNavigationHintVisible(bool visible) { navigationHint_ = visible; update(); }
     void setCycleDegrees(double degrees) { cycleDegrees_ = degrees; update(); }
     [[nodiscard]] auto plane() const -> geometry::ProjectionPlane
     {
@@ -395,7 +397,7 @@ private:
         painter.fillRect(QRectF(0, 0, width(), 24), backing);
         painter.setPen(palette().color(QPalette::Text));
         painter.drawText(QRectF(8, 4, width() - 16, 20), Qt::AlignLeft | Qt::AlignVCenter, header);
-        if (!tracking_) {
+        if (!tracking_ && navigationHint_) {
             painter.setPen(palette().color(QPalette::PlaceholderText));
             painter.drawText(QRectF(8, height() - 26, width() - 16, 20),
                 Qt::AlignLeft | Qt::AlignVCenter,
@@ -473,6 +475,7 @@ private:
     double zoom_{1.0};
     bool dragging_{};
     bool tracking_{};
+    bool navigationHint_{true};
 };
 
 CurrentAntennaView::CurrentAntennaView(QWidget* parent) : QWidget(parent)
@@ -567,6 +570,8 @@ void CurrentAntennaView::setCurrents(analysis::DisplayedCurrents currents,
 void CurrentAntennaView::setCompact(bool compact)
 {
     controls_->setVisible(!compact);
+    canvas_->setMinimumSize(compact ? QSize(80, 80) : QSize(320, 240));
+    canvas_->setNavigationHintVisible(!compact);
     if (compact) {
         mode_->setCurrentIndex(mode_->findData(static_cast<int>(DisplayMode::Magnitude)));
         play_->setChecked(false);
