@@ -62,8 +62,11 @@ duplicating their content. Every other workspace is a separate top-level window:
 - **NEC Deck** owns Raw Source, Structured Cards, and Parameters.
 - **Setup** owns frequency, sources, loads/networks, environment, output requests,
   and solver configuration.
-- **Impedance / SWR**, **Currents**, **Radiation**, **Raw Solver Output**, and
-  **Run History** present current or historical parsed output.
+- **Impedance / SWR**, **Currents**, and **Radiation** present current or historical
+  parsed output.
+- The **bottom panel** (`BottomPanel`) below Home holds Problems, the Run log, Runs,
+  and Raw output; `WorkbenchStatusBar` shows backend, result frequencies, run state,
+  and check counts.
 - **Optimize** owns parameter studies and candidate review.
 
 Work windows are `DetachablePanel`s, and result windows are coordinated by
@@ -85,11 +88,11 @@ syntax, field, ordering, expression, or reference errors prevent analysis and
 optimization. Adequacy findings are warnings because their importance depends on
 the model and engineering purpose.
 
-Validation commands are grouped in the **Validate** menu. Static findings remain
-in a reusable non-modal report, while the focused **Validation** window owns the
+Validation commands are grouped in the **Validate** menu. Static findings are listed
+in the bottom panel's Problems tab, while the focused **Validation** window owns the
 compact overview, Average Gain Test result, and segmentation-convergence workspace.
-The Run Monitor remains execution UI rather than a validation result; durable runs
-are reviewed through Run History and the read-only Run Review window.
+The Run log remains execution UI rather than a validation result; durable runs are
+reviewed through the Runs tab and the read-only Run Review window.
 
 The static checker covers geometry/control-card ordering, segment length,
 thin-wire ratios, source placement, adjoining segmentation, and large junctions.
@@ -132,7 +135,7 @@ the same run store and backend-neutral result model. No solver is bundled.
 Solver execution is asynchronous and supports live output, cancellation, and a
 timeout. Every run receives a unique durable directory containing source,
 generated input, output, logs, and versioned metadata. Startup discovery rebuilds
-Run History from those directories and marks interrupted records appropriately.
+the Runs list from those directories and marks interrupted records appropriately.
 
 Completed runs also index the metadata needed for optimization baselines: a
 normalized solver-model fingerprint, backend, reference impedance, impedance

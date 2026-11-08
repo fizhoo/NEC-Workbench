@@ -1,20 +1,21 @@
 # NEC Workbench User Guide
 
 NEC Workbench uses **Home**, a compact control panel, as its operating base. The
-Geometry Editor, NEC Deck, Setup, and Optimize open as reusable work windows, and the
-result launchers open focused live-result windows and Run History. Controls provide tooltips; this guide focuses on workflow and
-behavior that is not obvious from an individual control.
+Geometry Editor, NEC Deck, Setup, and Optimize open as reusable work windows, the
+result launchers open focused live-result windows, and a bottom panel below Home holds
+Problems, the Run log, Runs, and Raw output. Controls provide tooltips; this guide
+focuses on workflow and behavior that is not obvious from an individual control.
 
 ## Getting Started
 
 1. Create or open a `.nec` model from Home or the File menu.
 2. Edit wires in the **Geometry Editor** and cards in the **NEC Deck** window.
 3. Configure frequency, sources, loads, environment, requests, and solver under Setup.
-4. Run **Check Model** (`F7`) and resolve blocking errors.
+4. Run **Check Model** (`F7`) and resolve the blocking errors listed under **Problems**.
 5. Select **Run Analysis** (`F5`).
 6. Open the Impedance / SWR, Currents, or Radiation windows from Home's RESULTS
-   launchers or **View → Result Windows**. Use Run History and Run Review for archived
-   input and historical raw output.
+   launchers or **View → Result Windows**. Use the **Runs** tab and Run Review for
+   archived input and historical raw output.
 
 NEC Workbench does not include an NEC solver. Configure a separately installed
 `nec2c`, OpenNEC, or 4nec2 NEC2dXS executable under **Setup → Solver**.
@@ -23,9 +24,9 @@ The selected backend also controls compatibility validation. **NEC-2 / nec2c**
 uses strict original NEC-2 card rules, while **OpenNEC** accepts the verified
 4nec2 extensions that it implements. Workbench always resolves `SY` symbols and
 formulas into a numeric generated solver deck while preserving the authored source.
-The Model Check report identifies backend-specific incompatibilities and links back
-to Solver settings; **View Generated Solver Deck** shows the numeric base deck used
-for execution.
+The **Problems** tab identifies backend-specific incompatibilities and links back to
+Solver settings (**Change Solver…**); **Generated Deck…** shows the numeric base deck
+used for execution.
 
 The **4nec2 NEC2dXS** adapter launches the calculator executable directly. Features
 normally preprocessed by the full 4nec2 application, beginning with `LD 6` LC traps,
@@ -37,26 +38,43 @@ only the archived `model.nec` sent directly to NEC2dXS is normalized.
 
 ## Application Layout
 
-The main window is Home, which is fixed to the size of its content. Everything else
-opens in its own window: the Geometry Editor, NEC Deck, Setup, and Optimize work
-windows, plus the Impedance / SWR, Currents, Radiation, and Run History windows that
-can stay visible during edits and reruns. Each window remembers its own size and
+The main window is Home, which is fixed to the size of its content, with the bottom
+panel below it. The Geometry Editor, NEC Deck, Setup, and Optimize work windows, plus
+the Impedance / SWR, Currents, and Radiation windows that can stay visible during edits
+and reruns, open in their own windows. Each window remembers its own size and
 position, and opening one again raises the existing window rather than creating a
 duplicate. Historical Run Review remains a separate read-only window. Inside Setup and
 the NEC Deck window, a compact navigator selects pages; collapse it to icons when
 screen space is limited.
 
+### Bottom Panel and Status Bar
+
+The bottom panel has four tabs: **Problems**, **Run log**, **Runs**, and **Raw
+output**. Collapsed, it is just its tab strip. Click a tab to open it, click the open
+tab to collapse it again, or use **View → Bottom Panel** (`Ctrl+J`). Drag the panel's
+bottom edge to change its height; the window grows by that height but never past the
+bottom of the screen, and returns to its previous size when the panel collapses. The
+panel remembers its tab, height, and collapsed state.
+
+The panel opens by itself when a model check finds errors (Problems) and when a solver
+run starts (Run log). After a successful run it collapses again if it was collapsed
+before the run; after a failure it stays open.
+
+The status bar shows the model file, the solver backend, the frequencies of the loaded
+results, the run state (idle, running with elapsed time, done, or the failure), and the
+model check error and warning counts. Click the counts to open Problems.
+
 The menu bar holds the complete command set. Important actions include:
 
 - **File → Open Recent**
-- **View → Result Windows** — Impedance & SWR, Currents, Radiation, Raw Solver
-  Output, and Run History
+- **View → Result Windows** — Impedance & SWR, Currents, and Radiation
+- **View → Bottom Panel**, **Problems**, **Run Log**, and **Raw Output**
 - **View → Workspace Density**, **Project Tree**, and **Reset Layout**
 - **Model → Geometry Editor**, **NEC Deck**, and **Automatic Segmentation**
 - **Validate → Check Model**, **Average Gain Test**, **Segmentation Convergence**,
   and **Open Validation Results**
 - **Run → Run Analysis**, **Quick Frequency Sweep**, and **Stop**
-- **Run → Review Run History** and **Open Run Folder**
+- **Run → Review Run History** (the Runs tab), **Run Log**, and **Open Run Folder**
 
 Workspace Density offers Compact, Standard, and Spacious spacing without changing
 the application font size. Use Compact on smaller displays.
@@ -85,7 +103,8 @@ With a model open, it becomes a compact control panel:
   each with its own Run button.
 
 The footer shows the last run and whether the displayed results are current or stale.
-Run progress appears in the Run Monitor rather than on Home.
+Run progress appears in the bottom panel's Run log and the status bar rather than on
+Home.
 
 ## Model
 
@@ -162,8 +181,11 @@ identify conditions requiring engineering judgment.
 The **Validate** menu groups the static Model Check, Average Gain Test, and
 segmentation convergence commands. **Validate → Open Validation Results** opens a
 reusable focused window with the compact status overview and both solver-backed
-studies. The full static report remains a separate non-modal window so findings can
-stay visible while the model is edited.
+studies. The static findings are listed in the bottom panel's **Problems** tab, one
+row per finding with its severity, location (`L12` is deck line 12, `W3 · L12` also
+names wire 3), and message; hover a message for its category. Double-click a finding
+to go to its deck line and select its wire, source, load, transmission line, or
+network.
 
 Static checks include card ordering, geometry completeness, field types, references,
 segment length, thin-wire ratios, source placement, adjoining segment consistency,
@@ -195,7 +217,7 @@ number (tag 0), are also blocked for now, as is segmentation convergence testing
 Average Gain Test creates a temporary one-frequency, lossless deck in free space
 or over perfect ground. It does not modify the authored model. Current AGT and
 convergence results share the reusable **Validation** window; completed studies are
-also archived in Run History.
+also archived in the Runs tab.
 
 ### Segmentation Convergence
 
@@ -245,17 +267,16 @@ Select the backend protocol and executable. Each backend remembers its own path.
 The backend selection controls command-line or standard-input behavior; Workbench
 does not infer protocol from the executable filename.
 
-The **Run** menu provides direct access to the reusable Run Monitor and archived
-Run History. **Run → Open Run Folder** opens the folder of the run started in this
-session, or the newest stored run, in the system file browser. The monitor is transient execution feedback; durable inputs, complete
+The **Run** menu opens the Run log and the Runs tab. **Run → Open Run Folder** opens
+the folder of the run started in this session, or the newest stored run, in the system
+file browser. The Run log is transient execution feedback; durable inputs, complete
 raw output, notes, and read-only review remain in Run Review.
 
 ### Model Check
 
-Choosing **Check Model** always opens the complete report, including successful
-automatic conversions such as `SY` expansion. Automatic checks after edits update
-the report silently when there are only informational findings; warnings and errors
-still open the report so they are not missed.
+Choosing **Check Model** always opens Problems, including successful automatic
+conversions such as `SY` expansion. Automatic checks after edits update Problems
+silently unless they find errors; warnings are counted in the status bar.
 
 ### Requests
 
@@ -324,9 +345,9 @@ folder.
 ### Running
 
 Run Analysis validates the current source, generates a numeric solver deck, creates
-a unique run directory, and starts the solver asynchronously. The Run Monitor shows
-the command, output, elapsed time, and final status. Successful automatically opened
-monitors close; failures remain visible.
+a unique run directory, and starts the solver asynchronously. The Run log shows the
+command, output, elapsed time, and final status; **Copy Command**, **Open Run
+Folder**, and **Stop** sit on its header line.
 
 Stopping a run requests process termination. Partial output may remain for diagnosis,
 but an interrupted run is not treated as a completed result.
@@ -471,23 +492,23 @@ away in azimuth; it is not a full rear-hemisphere search.
 
 ### Runs and Historical Review
 
-Run History is discovered from durable run directories and opens as one reusable
-window. Double-clicking a row opens one reusable read-only Run Review window. Neither
-window replaces the active editor.
+The **Runs** tab lists the durable run directories. **Review**, or double-clicking a
+row, opens one reusable read-only Run Review window. Neither replaces the active
+editor.
 
-Use **Use as Historical Overlay** to select a completed analysis or quick sweep for
+Use **Use as Overlay** to select a completed analysis or quick sweep for
 comparison. Then enable it in the Impedance or Radiation result window where it is
 useful. The overlay remains labeled and never becomes the active result or model.
 
 The live result windows compare one historical overlay at a time. Comparing several
 runs belongs in a separate comparison workflow and is not performed implicitly.
 
-Use **Edit Run Note…**, or double-click the Note cell, to record what changed or why
+Use **Note…**, or double-click the Note cell, to record what changed or why
 a run matters. Notes are stored only in run metadata; they do not alter archived NEC
 input or solver output. Overlay labels use the note when one is available.
 
 Run Review can display the authored source and generated solver deck. Use **Open
-Snapshot as New Model** only when you intentionally want an archived deck in the editor.
+as New Model** only when you intentionally want an archived deck in the editor.
 
 Optimization candidates and validation steps are grouped under their parent session
 instead of appearing as unrelated ordinary runs.
