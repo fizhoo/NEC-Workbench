@@ -9,7 +9,8 @@ Workbench remains solver-independent and does not bundle external NEC engines.
 
 - One source-backed document shared by Raw Source, Structured Cards, geometry,
   model setup, parameter editing, validation, and Undo/Redo
-- Separate Geometry Editor and NEC Deck windows, each with its own saved size
+- Geometry editor and NEC Deck in the center of the main window, with a slider for
+  each `SY` variable under the model tree
 - Structured Cards and Wires show long numbers at 6 significant figures while the
   deck keeps full precision
 - Editable straight-wire geometry plus read-only display of supported generated

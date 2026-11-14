@@ -53,6 +53,12 @@ public:
     void setModelValid(bool valid);
     void setExternalRunActive(bool active);
     void setRunsChangedCallback(std::function<void()> callback);
+    // The search range of a variable ticked Use; nothing for one the search leaves alone.
+    [[nodiscard]] auto variableRange(const QString& name) const
+        -> std::optional<std::pair<double, double>>;
+    void setVariableRange(const QString& name, double minimum, double maximum);
+    // Called when a variable's Use, minimum or maximum is edited here.
+    void setVariableRangesChangedCallback(std::function<void()> callback);
     void setRunningChangedCallback(std::function<void()> callback);
     void setReturnToCurrentWorkCallback(std::function<void()> callback);
     void setParameterizationHelpCallback(std::function<void()> callback);
@@ -329,6 +335,7 @@ private:
     CandidateEvaluator* evaluator_{};
     AnalysisRunStore runStore_;
     std::function<void()> runsChangedCallback_;
+    std::function<void()> variableRangesChangedCallback_;
     std::function<void()> runningChangedCallback_;
     std::function<void()> returnToCurrentWorkCallback_;
     std::function<void()> parameterizationHelpCallback_;

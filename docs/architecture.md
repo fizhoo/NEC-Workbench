@@ -57,11 +57,13 @@ The main window is resizable and laid out by `WorkbenchLayout`: with no model, t
 Welcome page; with a model, one splitter with three panes. `WorkbenchToolBar` runs
 across the top. The left column (`ui/modeltree`) is a `ModelColumn`: the `ModelTree`
 (groups with summaries, a row per wire, source, load, line, and network, and the
-model-quality studies) above the `PropertiesPane`, which hosts the existing editors
-for the selection: `WirePropertiesEditor` and the Setup pages. The pane applies valid
-pending edits when the selection changes and asks only about invalid ones. The center
-shows the geometry editor (2D and 3D views) or one full result view; the collapsible
-results column is on the right. The results (`ui/results`) are:
+model-quality studies), the `VariablesSection` (a slider row per `SY` variable, each
+change one `SY` edit), and the `PropertiesPane`, which hosts the existing editors for the
+selection: `WirePropertiesEditor`, the Setup pages, and the Parameters table. The pane
+applies valid pending edits when the selection changes and asks only about invalid ones.
+The center shows the geometry editor (2D and 3D views), one full result view, or the NEC
+Deck (`DeckView`: Raw Source and Structured Cards), each non-geometry view under the same
+`CenterViewHeader`; the collapsible results column is on the right. The results (`ui/results`) are:
 
 - `ResultsController`, which owns the displayed run, the overlay, the stale flag, and
   the one selected frequency (`ResultState`), and brings everything else up to date.
@@ -76,7 +78,6 @@ since it was last updated, and the full view brings only the view on screen up t
 the others catch up when they are shown. The remaining workspaces are separate
 top-level windows:
 
-- **NEC Deck** owns Raw Source, Structured Cards, and Parameters.
 - **Validation** shows the static check, Average Gain Test, and convergence studies.
 - The **bottom panel** (`BottomPanel`) along the bottom of the main window holds Problems, the Run log, Runs,
   and Raw output; `WorkbenchStatusBar` shows backend, the selected and loaded result
@@ -87,8 +88,7 @@ The separate windows are `DetachablePanel`s, parented to a hidden host in the ma
 window. Each window persists its own geometry, so resizing one never resizes another,
 and opening a window again raises the existing instance. They cannot be attached back
 into the main window; each moves in during its own step of the layout rework.
-Menus expose the complete command set; a compact navigator selects pages inside the
-NEC Deck window.
+Menus expose the complete command set.
 
 A detached view is the same live content, not a copied result model. Historical Run
 Review is separate and read-only so opening archived output cannot silently replace

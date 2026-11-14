@@ -8,6 +8,7 @@
 
 class QLabel;
 class QListWidget;
+class QVBoxLayout;
 
 namespace necwb::ui {
 
@@ -44,6 +45,7 @@ private:
     KeyNumberStrip* strip_{};
     HistoricalOverlayControl* overlay_{};
     QLabel* empty_{};
+    QVBoxLayout* layout_{};
     SweepPlotsView* swr_{};
     RadiationPatternView* azimuth_{};
     RadiationPatternView* elevation_{};

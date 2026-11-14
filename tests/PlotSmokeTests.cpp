@@ -3,7 +3,6 @@
 #include "ui/DisplayFormat.h"
 #include "ui/DetachablePanel.h"
 #include "ui/MainWindow.h"
-#include "ui/WorkspaceNavigator.h"
 #include "ui/analysis/SweepPlotsView.h"
 #include "ui/WorkbenchToolBar.h"
 #include "ui/results/ResultFullView.h"
@@ -25,6 +24,7 @@
 #include "ui/modeltree/ModelColumn.h"
 #include "ui/modeltree/ModelTree.h"
 #include "ui/modeltree/PropertiesPane.h"
+#include "ui/modeltree/VariablesSection.h"
 #include "ui/geometry/WirePropertiesEditor.h"
 #include "ui/geometry/AutoSegmentationDialog.h"
 #include "ui/geometry/GeometryView.h"
@@ -44,6 +44,7 @@
 #include <QComboBox>
 #include <QDebug>
 #include <QDoubleSpinBox>
+#include <QEventLoop>
 #include <QDialog>
 #include <QElapsedTimer>
 #include <QDir>
@@ -233,42 +234,6 @@ auto main(int argc, char* argv[]) -> int
             return NECWB_SMOKE_FAILURE("historical overlay visibility persistence");
     }
     QSettings{}.remove(QStringLiteral("smoke/overlayVisible"));
-    QSettings{}.remove(QStringLiteral("workspaceNavigation/smoke/collapsed"));
-    auto* navigationPages = new QTabWidget;
-    navigationPages->addTab(new QWidget(navigationPages), QStringLiteral("First"));
-    navigationPages->addTab(new QWidget(navigationPages),
-        QStringLiteral("Loads && Transmission Lines"));
-    necwb::ui::WorkspaceNavigator workspaceNavigator(
-        navigationPages, QStringLiteral("smoke"));
-    workspaceNavigator.resize(600, 400);
-    workspaceNavigator.show();
-    application.processEvents();
-    auto* workspaceNavigation = workspaceNavigator.findChild<QListWidget*>(
-        QStringLiteral("smokeWorkspaceNavigation"));
-    auto* workspaceCollapse = workspaceNavigator.findChild<QToolButton*>(
-        QStringLiteral("smokeWorkspaceCollapseButton"));
-    const auto navigatorInitialState = workspaceNavigation != nullptr
-        && workspaceCollapse != nullptr && navigationPages->tabBar()->isHidden()
-        && workspaceNavigation->count() == 2 && workspaceNavigation->currentRow() == 0
-        && workspaceNavigation->item(1)->text()
-            == QStringLiteral("Loads & Transmission Lines");
-    if (workspaceNavigation != nullptr) workspaceNavigation->setCurrentRow(1);
-    const auto navigatorSelectsPage = navigationPages->currentIndex() == 1;
-    navigationPages->setCurrentIndex(0);
-    const auto pageSelectsNavigator = workspaceNavigation != nullptr
-        && workspaceNavigation->currentRow() == 0;
-    if (workspaceCollapse != nullptr) workspaceCollapse->click();
-    const auto navigatorCollapses = workspaceNavigator.isCollapsed()
-        && workspaceNavigation != nullptr && workspaceNavigation->item(0)->text().isEmpty();
-    if (workspaceCollapse != nullptr) workspaceCollapse->click();
-    const auto navigatorExpands = !workspaceNavigator.isCollapsed()
-        && workspaceNavigation != nullptr
-        && workspaceNavigation->item(0)->text() == QStringLiteral("First");
-    QSettings{}.remove(QStringLiteral("workspaceNavigation/smoke/collapsed"));
-    if (!navigatorInitialState || !navigatorSelectsPage || !pageSelectsNavigator
-        || !navigatorCollapses || !navigatorExpands) {
-        return NECWB_SMOKE_FAILURE("compact workspace navigation");
-    }
     const auto tabNames = [](const QTabWidget* tabs) {
         QStringList names;
         if (tabs == nullptr) return names;
@@ -281,7 +246,7 @@ auto main(int argc, char* argv[]) -> int
     auto resultsColumnNavigation = false;
     auto bottomPanelNavigation = false;
     auto validationWindowNavigation = false;
-    auto modelWindowNavigation = false;
+    auto deckInCenter = false;
     auto geometryInMainWindow = false;
     auto undoFollowsFocusChanges = false;
     auto setupWindowNavigation = false;
@@ -291,16 +256,14 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("resultsColumn"));
     resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/validation"));
-    resultWindowSettings.remove(QStringLiteral("workspaceWindows/model-editor"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
     resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
     resultWindowSettings.sync();
     {
         necwb::ui::MainWindow mainWindow;
         mainWindow.setProperty("workspaceDensityId", QStringLiteral("density-smoke-sentinel"));
-        auto* modelWorkspace = mainWindow.findChild<QTabWidget*>(QStringLiteral("modelWorkspace"));
-        auto* modelModuleAction = mainWindow.findChild<QAction*>(
-            QStringLiteral("modelModuleAction"));
+        auto* deckWorkspace = mainWindow.findChild<QTabWidget*>(QStringLiteral("necDeckWorkspace"));
+        auto* necDeckAction = mainWindow.findChild<QAction*>(QStringLiteral("necDeckAction"));
         auto* optimizeModuleAction = mainWindow.findChild<QAction*>(
             QStringLiteral("optimizeModuleAction"));
         auto* optimizationWorkspace = mainWindow.findChild<QWidget*>(
@@ -338,12 +301,14 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("showRawOutputAction"));
         const auto overlays = mainWindow.findChildren<QCheckBox*>(
             QStringLiteral("showHistoricalOverlay"));
-        // Setup pages live in the properties pane; only the NEC Deck keeps its window.
+        // Setup pages and Variables live in the properties pane, the deck in the center.
         consolidatedSetupNavigation = mainWindow.findChild<QAction*>(
                 QStringLiteral("setupModuleAction")) == nullptr
             && mainWindow.findChild<QTabWidget*>(QStringLiteral("setupWorkspace")) == nullptr
-            && tabNames(modelWorkspace) == QStringList{QStringLiteral("NEC Deck"),
-                QStringLiteral("Parameters")}
+            && mainWindow.findChild<QTabWidget*>(QStringLiteral("modelWorkspace")) == nullptr
+            && mainWindow.findChild<QAction*>(QStringLiteral("modelModuleAction")) == nullptr
+            && tabNames(deckWorkspace) == QStringList{QStringLiteral("Raw Source"),
+                QStringLiteral("Structured Cards")}
             && tabNames(validationWorkspace) == QStringList{QStringLiteral("Static Check"),
                 QStringLiteral("Average Gain Test"), QStringLiteral("Segmentation Convergence")}
             && compactPrimaryNavigation
@@ -378,37 +343,42 @@ auto main(int argc, char* argv[]) -> int
                 && validationWorkspace->window()->objectName()
                     == QStringLiteral("validationWindow");
         }
-        if (modelWorkspace != nullptr && modelModuleAction != nullptr) {
-            modelModuleAction->setEnabled(true);
-            modelModuleAction->trigger();
+        // The NEC Deck opens in the center in place of the geometry; ← Geometry returns.
+        if (deckWorkspace != nullptr && necDeckAction != nullptr) {
+            mainWindow.show();
+            necDeckAction->setEnabled(true);
+            necDeckAction->trigger();
             application.processEvents();
-            const auto* modelEditorWindow = topLevelDialog(
-                QStringLiteral("modelEditorWindow"));
-            resultWindowSettings.sync();
-            modelWindowNavigation = modelEditorWindow != nullptr
-                && modelEditorWindow->isVisible()
-                && modelWorkspace->window() == modelEditorWindow
-                && resultWindowSettings.value(
-                    QStringLiteral("workspaceWindows/model-editor/detached"), false).toBool();
+            auto* split = mainWindow.findChild<QWidget*>(QStringLiteral("workbenchSplit"));
+            auto* geometryWorkspace = mainWindow.findChild<QTabWidget*>(
+                QStringLiteral("geometryWorkspace"));
+            const auto deckShown = deckWorkspace->window() == &mainWindow && split != nullptr
+                && split->isAncestorOf(deckWorkspace) && deckWorkspace->isVisible()
+                && geometryWorkspace != nullptr && !geometryWorkspace->isVisible()
+                && topLevelDialog(QStringLiteral("modelEditorWindow")) == nullptr;
+            if (auto* back = mainWindow.findChild<QToolButton*>(QStringLiteral("necDeckViewBack")))
+                back->click();
+            application.processEvents();
+            deckInCenter = deckShown && !deckWorkspace->isVisible()
+                && geometryWorkspace->isVisible();
             // Geometry lives in the main window's center, not in a window of its own.
             auto* geometryEditorAction = mainWindow.findChild<QAction*>(
                 QStringLiteral("geometryEditorAction"));
-            auto* geometryWorkspace = mainWindow.findChild<QTabWidget*>(
-                QStringLiteral("geometryWorkspace"));
-            if (geometryEditorAction != nullptr && geometryWorkspace != nullptr
-                && modelEditorWindow != nullptr) {
+            if (geometryEditorAction != nullptr) {
+                necDeckAction->trigger();
                 geometryEditorAction->trigger();
                 application.processEvents();
-                const auto* split = mainWindow.findChild<QWidget*>(QStringLiteral("workbenchSplit"));
                 geometryInMainWindow = geometryEditorAction->isEnabled()
                     && geometryWorkspace->window() == &mainWindow
-                    && split != nullptr && split->isAncestorOf(geometryWorkspace)
+                    && split->isAncestorOf(geometryWorkspace)
                     && geometryWorkspace->isVisibleTo(&mainWindow)
-                    && topLevelDialog(QStringLiteral("geometryEditorWindow")) == nullptr
-                    && !modelEditorWindow->isAncestorOf(geometryWorkspace);
+                    && topLevelDialog(QStringLiteral("geometryEditorWindow")) == nullptr;
             }
-            dialogDensityIsIncremental = modelEditorWindow != nullptr
-                && !modelEditorWindow->property("workspaceDensityId").toString().isEmpty()
+        }
+        // Windows that still float follow the workspace density.
+        if (const auto* validationWindow = topLevelDialog(QStringLiteral("validationWindow"))) {
+            dialogDensityIsIncremental =
+                !validationWindow->property("workspaceDensityId").toString().isEmpty()
                 && mainWindow.property("workspaceDensityId").toString()
                     == QStringLiteral("density-smoke-sentinel");
         }
@@ -563,8 +533,8 @@ auto main(int argc, char* argv[]) -> int
             application.processEvents();
                 linkedParameterDeleted = deckEditor->toPlainText()
                 == QStringLiteral("GW 1 11 -5 0 6 5 0 6 0.001\nGE 0\nEN\n");
-            // Undo and Redo follow the shared source history whether the geometry view in
-            // the main window or the NEC Deck window has focus.
+            // Undo and Redo follow the shared source history whether the geometry view or
+            // the NEC Deck is in the center.
             QAction* undo = nullptr;
             QAction* redo = nullptr;
             QAction* geometryEditor = nullptr;
@@ -574,7 +544,7 @@ auto main(int argc, char* argv[]) -> int
                 if (action->objectName() == QStringLiteral("geometryEditorAction"))
                     geometryEditor = action;
             }
-            auto* modelModule = mainWindow.findChild<QAction*>(QStringLiteral("modelModuleAction"));
+            auto* modelModule = mainWindow.findChild<QAction*>(QStringLiteral("necDeckAction"));
             if (undo != nullptr && redo != nullptr && geometryEditor != nullptr
                 && modelModule != nullptr) {
                 geometryEditor->trigger();
@@ -596,7 +566,6 @@ auto main(int argc, char* argv[]) -> int
     }
     resultWindowSettings.remove(QStringLiteral("resultsColumn"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/validation"));
-    resultWindowSettings.remove(QStringLiteral("workspaceWindows/model-editor"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
     resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
     resultWindowSettings.sync();
@@ -735,6 +704,83 @@ auto main(int argc, char* argv[]) -> int
         resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
         resultWindowSettings.sync();
     }
+    // Dragging a variable's slider rewrites its SY card once, on release, as one undo entry;
+    // selecting Variables shows the Parameters table in the properties pane.
+    auto variableSliderEdits = false;
+    {
+        const auto savedRecentModels = resultWindowSettings.value(
+            QStringLiteral("files/recentModels"));
+        QTemporaryDir modelDirectory;
+        const auto modelPath = modelDirectory.filePath(QStringLiteral("variable-slider.nec"));
+        QFile modelFile(modelPath);
+        if (modelDirectory.isValid() && modelFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            modelFile.write("SY len=0.5\nGW 1 11 0 -len 0 0 len 0 0.001\nGE 0\nEN\n");
+            modelFile.close();
+            resultWindowSettings.setValue(QStringLiteral("files/recentModels"),
+                QStringList{modelPath});
+            resultWindowSettings.sync();
+            necwb::ui::MainWindow mainWindow;
+            mainWindow.resize(1400, 900);
+            mainWindow.show();
+            application.processEvents();
+            if (auto* recentModelsMenu = mainWindow.findChild<QMenu*>(
+                    QStringLiteral("recentModelsMenu"))) {
+                for (auto* action : recentModelsMenu->actions()) {
+                    if (action->data().toString() != modelPath) continue;
+                    action->trigger();
+                    break;
+                }
+            }
+            application.processEvents();
+            auto* deck = mainWindow.findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor"));
+            auto* slider = mainWindow.findChild<QSlider*>(QStringLiteral("variableSlider"));
+            QAction* undo = nullptr;
+            for (auto* action : mainWindow.findChildren<QAction*>())
+                if (action->text().startsWith(QStringLiteral("&Undo"))) undo = action;
+            if (deck != nullptr && slider != nullptr && undo != nullptr) {
+                const auto undoBefore = undo->text();
+                slider->setSliderDown(true);
+                slider->setValue(900);
+                slider->setValue(1000);
+                application.processEvents();
+                const auto unchangedDuringDrag = deck->toPlainText().startsWith(
+                    QStringLiteral("SY len=0.5\n"));
+                slider->setSliderDown(false);
+                application.processEvents();
+                const auto changedOnRelease = deck->toPlainText().startsWith(
+                    QStringLiteral("SY len=0.625\n"));
+                const auto oneUndoEntry = undo->isEnabled()
+                    && undo->text() == QStringLiteral("&Undo Edit parameter len");
+                undo->trigger();
+                application.processEvents();
+                const auto undoRestores = deck->toPlainText().startsWith(
+                    QStringLiteral("SY len=0.5\n")) && undo->text() == undoBefore;
+                auto* tree = mainWindow.findChild<QTreeWidget*>(QStringLiteral("modelTree"));
+                for (auto index = 0; tree != nullptr && index < tree->topLevelItemCount(); ++index) {
+                    if (tree->topLevelItem(index)->text(0) == QStringLiteral("Variables"))
+                        tree->setCurrentItem(tree->topLevelItem(index));
+                }
+                application.processEvents();
+                const auto* parameterTable = mainWindow.findChild<QWidget*>(
+                    QStringLiteral("parameterTable"));
+                const auto* pane = mainWindow.findChild<QWidget*>(QStringLiteral("propertiesPane"));
+                const auto parametersInPane = parameterTable != nullptr && pane != nullptr
+                    && pane->isAncestorOf(parameterTable) && parameterTable->isVisible();
+                variableSliderEdits = unchangedDuringDrag && changedOnRelease && oneUndoEntry
+                    && undoRestores && parametersInPane;
+                if (!variableSliderEdits)
+                    qWarning() << "variable slider" << unchangedDuringDrag << changedOnRelease
+                               << oneUndoEntry << undo->text() << undoRestores << parametersInPane;
+            }
+            if (deck != nullptr) deck->document()->setModified(false);
+            mainWindow.close();
+        }
+        resultWindowSettings.setValue(QStringLiteral("files/recentModels"), savedRecentModels);
+        resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
+        resultWindowSettings.sync();
+    }
+    if (!variableSliderEdits)
+        return NECWB_SMOKE_FAILURE("variable slider edits the SY card");
     if (!wirePaneKeepsSymbols)
         return NECWB_SMOKE_FAILURE("wire pane keeps SY symbols");
     if (!openModelKeepsDeckClosed)
@@ -753,8 +799,8 @@ auto main(int argc, char* argv[]) -> int
         return NECWB_SMOKE_FAILURE("bottom panel navigation");
     if (!validationWindowNavigation)
         return NECWB_SMOKE_FAILURE("validation window navigation");
-    if (!modelWindowNavigation)
-        return NECWB_SMOKE_FAILURE("model window navigation");
+    if (!deckInCenter)
+        return NECWB_SMOKE_FAILURE("NEC Deck in the center");
     if (!geometryInMainWindow)
         return NECWB_SMOKE_FAILURE("geometry editor in main window");
     if (!undoFollowsFocusChanges)
@@ -3232,6 +3278,85 @@ auto main(int argc, char* argv[]) -> int
     const auto untouchedFieldsExact = preciseApplied && preciseApplied->start.x == 0.12345
         && preciseApplied->end.x == 0.12345 && preciseApplied->end.y == 0.0
         && preciseApplied->radius == 0.001 && std::abs(preciseApplied->end.z - 0.6) < 1.0e-9;
+    // The variables: a slider for each plain number and the value of each formula. A drag,
+    // a typed value or a burst of steps is one change.
+    necwb::ui::VariablesSection variablesSection;
+    std::vector<std::pair<std::string, double>> variableChanges;
+    std::vector<std::pair<QString, necwb::ui::VariablesSection::Range>> rangeChanges;
+    std::optional<necwb::ui::VariablesSection::Range> optimizerRange;
+    variablesSection.setValueChangedCallback([&](const necwb::nec::SymbolDefinition& variable,
+                                                 double value) {
+        variableChanges.emplace_back(variable.name, value);
+    });
+    variablesSection.setRangeChangedCallback([&](const QString& name, const auto& range) {
+        rangeChanges.emplace_back(name, range);
+    });
+    variablesSection.setRangeProvider([&](const QString& name) {
+        return name == QStringLiteral("len") ? optimizerRange : std::nullopt;
+    });
+    variablesSection.setVariables({{"len", "0.5", 0.5, 1}, {"twice", "len*2", 1.0, 1},
+        {"offset", "0", 0.0, 2}});
+    variablesSection.resize(460, 200);
+    variablesSection.show();
+    application.processEvents();
+    const auto variableSliders = variablesSection.findChildren<QSlider*>(
+        QStringLiteral("variableSlider"));
+    const auto variableBoxes = variablesSection.findChildren<QDoubleSpinBox*>(
+        QStringLiteral("variableValue"));
+    const auto* formula = variablesSection.findChild<QLabel*>(QStringLiteral("variableFormula"));
+    const auto variablesShown = variableSliders.size() == 2 && variableBoxes.size() == 2
+        && formula != nullptr && formula->text() == QStringLiteral("= len*2 → 1.000")
+        // ±25% around 0.5, and -1 to 1 around zero: both start in the middle.
+        && variableSliders[0]->value() == 500 && variableSliders[1]->value() == 500;
+    auto* lengthSlider = variableSliders.value(0);
+    auto* lengthBox = variableBoxes.value(0);
+    if (lengthSlider == nullptr || lengthBox == nullptr)
+        return NECWB_SMOKE_FAILURE("variable controls");
+    lengthSlider->setSliderDown(true);
+    lengthSlider->setValue(600);
+    lengthSlider->setValue(800);
+    application.processEvents();
+    const auto noChangeDuringDrag = variableChanges.empty()
+        && std::abs(lengthBox->value() - 0.575) < 1.0e-12;
+    lengthSlider->setSliderDown(false);
+    application.processEvents();
+    const auto dragIsOneChange = variableChanges.size() == 1
+        && variableChanges.back() == std::pair{std::string{"len"}, 0.575};
+    lengthBox->setValue(0.55);
+    emit lengthBox->editingFinished();
+    application.processEvents();
+    const auto typedValueChanges = variableChanges.size() == 2
+        && variableChanges.back().second == 0.55;
+    lengthSlider->setValue(510);
+    lengthSlider->setValue(520);
+    application.processEvents();
+    const auto stepsWait = variableChanges.size() == 2;
+    QEventLoop stepPause;
+    QTimer::singleShot(600, &stepPause, &QEventLoop::quit);
+    stepPause.exec();
+    const auto stepsAreOneChange = variableChanges.size() == 3
+        && std::abs(variableChanges.back().second - 0.505) < 1.0e-12;
+    optimizerRange = necwb::ui::VariablesSection::Range{0.4, 0.9};
+    variablesSection.refreshRanges();
+    const auto optimizerRangeUsed = lengthSlider->value() == 200;
+    QTimer::singleShot(0, [] {
+        auto* popup = QApplication::activePopupWidget();
+        if (popup == nullptr) return;
+        auto* minimum = popup->findChild<QDoubleSpinBox*>(QStringLiteral("variableRangeMinimum"));
+        auto* maximum = popup->findChild<QDoubleSpinBox*>(QStringLiteral("variableRangeMaximum"));
+        auto* set = popup->findChild<QPushButton*>(QStringLiteral("variableRangeSet"));
+        if (minimum == nullptr || maximum == nullptr || set == nullptr) return;
+        minimum->setValue(-2.0);
+        maximum->setValue(2.0);
+        set->click();
+    });
+    if (auto* rangeButton = variablesSection.findChildren<QToolButton*>(
+            QStringLiteral("variableRange")).value(1))
+        rangeButton->click();
+    const auto rangeEditReported = rangeChanges.size() == 1
+        && rangeChanges.front().first == QStringLiteral("offset")
+        && rangeChanges.front().second == necwb::ui::VariablesSection::Range{-2.0, 2.0}
+        && variableSliders[1]->value() == 500;
     const auto linkedFieldShown = linkedEndY->isReadOnly()
         && linkedEndY->text().startsWith(QStringLiteral("ƒx "))
         && linkedEndY->toolTip().contains(QStringLiteral("-half"))
@@ -3275,7 +3400,13 @@ auto main(int argc, char* argv[]) -> int
         std::pair{"invalid edit held", invalidEditHeld},
         std::pair{"invalid edit discarded", invalidEditDiscarded},
         std::pair{"enter applies", enterApplies}, std::pair{"escape reverts", escapeReverts},
-        std::pair{"pane hides", paneHides},
+        std::pair{"pane hides", paneHides}, std::pair{"variables shown", variablesShown},
+        std::pair{"no change during drag", noChangeDuringDrag},
+        std::pair{"drag is one change", dragIsOneChange},
+        std::pair{"typed value changes", typedValueChanges}, std::pair{"steps wait", stepsWait},
+        std::pair{"steps are one change", stepsAreOneChange},
+        std::pair{"optimizer range used", optimizerRangeUsed},
+        std::pair{"range edit reported", rangeEditReported},
         std::pair{"untouched fields exact", untouchedFieldsExact},
         std::pair{"linked field shown", linkedFieldShown}, std::pair{"toolbar", toolBarValid}};
     for (const auto& [name, passed] : modelTreeChecks) {
@@ -3316,13 +3447,28 @@ auto main(int argc, char* argv[]) -> int
         auto* currents = column->findChild<QWidget*>(QStringLiteral("currentsThumbnail"));
         if (frequency == nullptr || empty == nullptr || azimuth == nullptr || currents == nullptr)
             return NECWB_SMOKE_FAILURE("results column controls");
-        const auto emptyState = empty->isVisible() && !azimuth->isVisible();
+        // With no results nothing stretches: the strip keeps its own height, the overlay row
+        // is hidden, and the empty line sits right under the strip.
+        const auto* strip = column->findChild<QWidget*>(QStringLiteral("resultsStrip"));
+        const auto* overlayToggle =
+            column->findChild<QWidget*>(QStringLiteral("showHistoricalOverlay"));
+        const auto emptyState = empty->isVisible() && !azimuth->isVisible() && strip != nullptr
+            && overlayToggle != nullptr && !overlayToggle->isVisible()
+            && strip->height() <= strip->sizeHint().height()
+            && empty->y() - (strip->y() + strip->height()) < 12
+            && empty->height() <= empty->sizeHint().height();
+        if (!emptyState) {
+            std::fprintf(stderr, "empty results column: strip %d (hint %d), empty at %d h %d\n",
+                strip == nullptr ? -1 : strip->height(),
+                strip == nullptr ? -1 : strip->sizeHint().height(), empty->y(), empty->height());
+        }
         results.setResults(necwb::ui::ResultData::make(result), QStringLiteral("column-run"), {});
         application.processEvents();
         // A first run selects minimum SWR: 50 Ω at 14.1 MHz.
         const auto minimumSwrSelected = frequency->count() == 3
             && frequency->currentData().toDouble() == 14.1 && statusFrequency == 14.1
-            && !empty->isVisible() && azimuth->isVisible()
+            && !empty->isVisible() && azimuth->isVisible() && overlayToggle->isVisible()
+            && azimuth->height() > 100
             && text("resultsSwr").startsWith(QStringLiteral("1"))
             && text("resultsSwr").contains(QStringLiteral("(Z0 50 Ω)"))
             && text("resultsGain").contains(QStringLiteral("dBi @"))

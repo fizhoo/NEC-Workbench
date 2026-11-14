@@ -98,6 +98,10 @@ ResultsColumn::ResultsColumn(const ResultState& state, QWidget* parent)
     }
     layout->addWidget(viewsHeading_);
     layout->addWidget(views_);
+    // Takes the spare height only while there are no results, so the strip and the empty
+    // line stay at the top instead of spreading down the column.
+    layout->addStretch(0);
+    layout_ = layout;
     connect(views_, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
         const auto view = item->data(Qt::UserRole).toInt();
         if (view != NoView && (item->flags() & Qt::ItemIsEnabled) && openView_)
@@ -128,6 +132,8 @@ void ResultsColumn::refresh()
     const auto hasResults = !result.feedpoints.empty() || !result.currents.empty()
         || !result.radiation.empty();
     empty_->setVisible(!hasResults);
+    overlay_->setVisible(hasResults);
+    layout_->setStretch(layout_->count() - 1, hasResults ? 0 : 1);
     const auto stale = state_.stale ? tr(" · stale") : QString{};
     const auto frequency = state_.frequencyMHz.value_or(0.0);
     const auto atFrequency = [frequency](const auto& values) {

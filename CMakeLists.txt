@@ -105,6 +105,8 @@ if(NECWB_BUILD_GUI)
         src/ui/MainWindow.h
         src/ui/BottomPanel.cpp
         src/ui/BottomPanel.h
+        src/ui/CenterViewHeader.cpp
+        src/ui/CenterViewHeader.h
         src/ui/DetachablePanel.cpp
         src/ui/DetachablePanel.h
         src/ui/WorkbenchLayout.cpp
@@ -119,6 +121,8 @@ if(NECWB_BUILD_GUI)
         src/ui/modeltree/ModelTree.h
         src/ui/modeltree/PropertiesPane.cpp
         src/ui/modeltree/PropertiesPane.h
+        src/ui/modeltree/VariablesSection.cpp
+        src/ui/modeltree/VariablesSection.h
         src/ui/results/KeyNumberStrip.cpp
         src/ui/results/KeyNumberStrip.h
         src/ui/results/ResultFullView.cpp
@@ -134,8 +138,6 @@ if(NECWB_BUILD_GUI)
         src/ui/FileIo.h
         src/ui/ParameterFieldStyle.cpp
         src/ui/ParameterFieldStyle.h
-        src/ui/WorkspaceNavigator.cpp
-        src/ui/WorkspaceNavigator.h
         src/ui/bottom/ProblemsView.cpp
         src/ui/bottom/ProblemsView.h
         src/ui/bottom/RawOutputView.cpp
@@ -182,6 +184,8 @@ if(NECWB_BUILD_GUI)
         src/ui/cards/WireCardEditor.h
         src/ui/cards/StructuredCardEditor.cpp
         src/ui/cards/StructuredCardEditor.h
+        src/ui/editor/DeckView.cpp
+        src/ui/editor/DeckView.h
         src/ui/editor/NecEditor.cpp
         src/ui/editor/NecEditor.h
         src/ui/editor/NecHighlighter.cpp

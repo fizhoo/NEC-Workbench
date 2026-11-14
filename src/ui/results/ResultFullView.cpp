@@ -1,17 +1,14 @@
 #include "ui/results/ResultFullView.h"
 
+#include "ui/CenterViewHeader.h"
 #include "ui/DisplayFormat.h"
-#include "ui/ElidedLabel.h"
 #include "ui/analysis/FieldResultsViews.h"
 #include "ui/analysis/ImpedanceResultsView.h"
 #include "ui/analysis/SweepPlotsView.h"
 
-#include <QHBoxLayout>
 #include <QLabel>
 #include <QScrollArea>
-#include <QShortcut>
 #include <QStackedWidget>
-#include <QToolButton>
 #include <QVBoxLayout>
 
 namespace necwb::ui {
@@ -42,26 +39,12 @@ ResultFullView::ResultFullView(const ResultState& state, QWidget* parent)
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-    auto* header = new QHBoxLayout;
-    header->setContentsMargins(2, 2, 6, 2);
-    auto* back = new QToolButton(this);
-    back->setObjectName(QStringLiteral("resultFullViewBack"));
-    back->setText(tr("← Geometry"));
-    back->setToolTip(tr("Return to the geometry editor (Esc)"));
-    back->setAutoRaise(true);
-    title_ = new ElidedLabel(this);
-    title_->setObjectName(QStringLiteral("resultFullViewTitle"));
-    auto font = title_->font();
-    font.setBold(true);
-    title_->setFont(font);
-    title_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    header_ = new CenterViewHeader(QStringLiteral("resultFullView"), this);
     frequency_ = new QLabel(this);
     frequency_->setObjectName(QStringLiteral("resultFullViewFrequency"));
     frequency_->setToolTip(tr("Selected frequency; change it in the results column"));
-    header->addWidget(back);
-    header->addWidget(title_, 1);
-    header->addWidget(frequency_);
-    layout->addLayout(header);
+    header_->addTrailingWidget(frequency_);
+    layout->addWidget(header_);
 
     pages_ = new QStackedWidget(this);
     sweep_ = new SweepPlotsView(pages_);
@@ -109,13 +92,6 @@ ResultFullView::ResultFullView(const ResultState& state, QWidget* parent)
     };
     pattern_->setForwardDirectionCallback(useAsForwardDirection);
     pattern3D_->setForwardDirectionCallback(useAsForwardDirection);
-
-    connect(back, &QToolButton::clicked, this, [this] { if (back_) back_(); });
-    // Only while the view has focus (showView gives it focus): elsewhere in the window Esc
-    // belongs to the properties pane, where it reverts an edit.
-    auto* escape = new QShortcut(QKeySequence(Qt::Key_Escape), this);
-    escape->setContext(Qt::WidgetWithChildrenShortcut);
-    connect(escape, &QShortcut::activated, this, [this] { if (back_) back_(); });
 }
 
 auto ResultFullView::page(ResultView view) -> Page&
@@ -183,14 +159,14 @@ void ResultFullView::apply()
 
 void ResultFullView::refreshHeader()
 {
-    title_->setText(viewTitle(view_) + (state_.stale ? tr(" · stale") : QString{}));
+    header_->setTitle(viewTitle(view_) + (state_.stale ? tr(" · stale") : QString{}));
     frequency_->setText(state_.frequencyMHz
         ? tr("%1 MHz").arg(formatDecimal(*state_.frequencyMHz)) : QString{});
 }
 
 void ResultFullView::setBackCallback(std::function<void()> callback)
 {
-    back_ = std::move(callback);
+    header_->setBackCallback(std::move(callback));
 }
 
 void ResultFullView::setFrequencyActivatedCallback(std::function<void(double)> callback)

@@ -33,7 +33,7 @@ void styleParameterControlledField(QTableWidgetItem* item,
     painter.drawText(pixmap.rect(), Qt::AlignCenter, QStringLiteral("ƒx"));
     item->setIcon(QIcon(pixmap));
     item->setToolTip(QObject::tr(
-        "ƒx Parameter-controlled field\nExpression: %1\nEdit under Model → Parameters or in raw NEC source.")
+        "ƒx Parameter-controlled field\nExpression: %1\nEdit under Variables in the model tree or in raw NEC source.")
         .arg(expression));
 }
 

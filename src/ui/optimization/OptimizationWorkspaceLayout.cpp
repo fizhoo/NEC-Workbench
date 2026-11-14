@@ -1183,6 +1183,7 @@ void OptimizationWorkspace::connectSearchSignals()
         }
         updateWorkload();
         updateReadiness();
+        if (variableRangesChangedCallback_) variableRangesChangedCallback_();
     });
     connect(runButton_, &QPushButton::clicked, this, [this] { requestOptimizationStart(); });
     connect(cancelButton_, &QPushButton::clicked, this, [this] { cancelSweep(); });

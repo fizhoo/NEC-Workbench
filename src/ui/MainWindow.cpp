@@ -9,7 +9,6 @@
 #include "ui/bottom/RawOutputView.h"
 #include "ui/bottom/RunHistoryView.h"
 #include "ui/bottom/RunLogView.h"
-#include "ui/WorkspaceNavigator.h"
 #include "ui/WorkbenchToolBar.h"
 #include "ui/WorkbenchIcon.h"
 
@@ -33,6 +32,7 @@
 #include "ui/modeltree/ModelColumn.h"
 #include "ui/modeltree/ModelTree.h"
 #include "ui/modeltree/PropertiesPane.h"
+#include "ui/modeltree/VariablesSection.h"
 #include "ui/cards/WireCardEditor.h"
 #include "ui/cards/StructuredCardEditor.h"
 #include "ui/analysis/AnalysisSetupEditor.h"
@@ -42,6 +42,7 @@
 #include "ui/analysis/FieldResultsViews.h"
 #include "ui/analysis/QuickSweepDialog.h"
 #include "ui/analysis/RunReviewWindow.h"
+#include "ui/editor/DeckView.h"
 #include "ui/editor/NecEditor.h"
 #include "ui/editor/NecHighlighter.h"
 #include "ui/geometry/EngineeringSpinBox.h"
@@ -367,19 +368,6 @@ MainWindow::MainWindow()
     connect(editor_->document(), &QTextDocument::undoCommandAdded,
         this, [this] { recordSourceUndoCommand(); });
     connect(workspace_, &QTabWidget::currentChanged, this, [this] { updateUndoActions(); });
-    previousModelWorkspaceIndex_ = modelWorkspace_->currentIndex();
-    connect(modelWorkspace_, &QTabWidget::currentChanged, this, [this](int index) {
-        if (!restoringWorkspaceTab_ && previousModelWorkspaceIndex_ >= 0
-            && index != previousModelWorkspaceIndex_
-            && !confirmPendingEdits(modelWorkspace_->widget(previousModelWorkspaceIndex_))) {
-            restoringWorkspaceTab_ = true;
-            modelWorkspace_->setCurrentIndex(previousModelWorkspaceIndex_);
-            restoringWorkspaceTab_ = false;
-            return;
-        }
-        previousModelWorkspaceIndex_ = index;
-        updateUndoActions();
-    });
     connect(sourceWorkspace_, &QTabWidget::currentChanged, this, [this](int index) {
         if (index == structuredSourceTabIndex_ && !modelChecked_) checkModel();
         updateUndoActions();
@@ -627,17 +615,19 @@ void MainWindow::createActions()
     connect(aboutAction_, &QAction::triggered, this,
         [this] { showAboutDialog(); });
 
-    modelModuleAction_ = new QAction(tr("&Model"), this);
+    necDeckAction_ = new QAction(workbenchIcon("nec-deck"), tr("NEC &Deck"), this);
+    necDeckAction_->setObjectName(QStringLiteral("necDeckAction"));
+    necDeckAction_->setEnabled(false);
+    connect(necDeckAction_, &QAction::triggered,
+        this, [this] { showEditor(EditorDestination::RawSource); });
     optimizeModuleAction_ = new QAction(tr("&Optimize"), this);
-    modelModuleAction_->setObjectName(QStringLiteral("modelModuleAction"));
     optimizeModuleAction_->setObjectName(QStringLiteral("optimizeModuleAction"));
-    modelModuleAction_->setIcon(workbenchIcon("geometry"));
     optimizeModuleAction_->setIcon(workbenchIcon("optimize"));
-    modelModuleAction_->setEnabled(false);
     optimizeModuleAction_->setEnabled(false);
-    connect(modelModuleAction_, &QAction::triggered, this, [this] { showModule(Module::Model); });
-    connect(optimizeModuleAction_, &QAction::triggered,
-        this, [this] { showModule(Module::Optimize); });
+    connect(optimizeModuleAction_, &QAction::triggered, this, [this] {
+        optimizationPanel_->showWindow();
+        updateUndoActions();
+    });
 }
 
 void MainWindow::createWorkspace()
@@ -670,10 +660,7 @@ void MainWindow::createWorkspace()
             statusBar()->showMessage(message, timeoutMs);
         });
 
-    modelWorkspace_ = new QTabWidget(windowHost_);
-    modelWorkspace_->setObjectName(QStringLiteral("modelWorkspace"));
-    modelWorkspace_->setDocumentMode(true);
-    sourceWorkspace_ = new QTabWidget(modelWorkspace_);
+    sourceWorkspace_ = new QTabWidget(windowHost_);
     sourceWorkspace_->setObjectName(QStringLiteral("necDeckWorkspace"));
     sourceWorkspace_->setDocumentMode(true);
     editor_ = new NecEditor(sourceWorkspace_);
@@ -925,7 +912,7 @@ void MainWindow::createWorkspace()
     geometry3DTabIndex_ = workspace_->addTab(geometry3DPage, tr("3D Geometry"));
     workspace_->setTabIcon(geometryTabIndex_, workbenchIcon("geometry"));
     workspace_->setTabIcon(geometry3DTabIndex_, workbenchIcon("3d-view"));
-    parameterEditor_ = new ParameterEditor(modelWorkspace_);
+    parameterEditor_ = new ParameterEditor(windowHost_);
     connect(parameterEditor_, &ParameterEditor::parameterChanged, this,
         [this](std::size_t sourceLine, QString originalName, QString name, QString expression) {
             changeParameter(sourceLine, originalName, name, expression);
@@ -1011,18 +998,9 @@ void MainWindow::createWorkspace()
         [this](std::size_t sourceLine) { deleteSetupCard(tr("Delete network"), sourceLine); });
     connect(loadNetworkEditor_, &LoadNetworkEditor::networkSelected, this,
         [this](std::size_t sourceLine) { selectNetwork(sourceLine); });
-    modelDeckWorkspaceIndex_ = modelWorkspace_->addTab(sourceWorkspace_, tr("NEC Deck"));
-    modelParametersWorkspaceIndex_ = modelWorkspace_->addTab(parameterEditor_, tr("Parameters"));
-    modelWorkspace_->setTabIcon(modelParametersWorkspaceIndex_, workbenchIcon("structured-cards"));
-    modelWorkspace_->setTabIcon(modelDeckWorkspaceIndex_, workbenchIcon("nec-deck"));
-    auto* modelNavigator = new WorkspaceNavigator(
-        modelWorkspace_, QStringLiteral("model"), windowHost_);
-    // Keeps the former Model Editor's settings key so its saved size carries over.
-    modelPanel_ = new DetachablePanel(QStringLiteral("model-editor"),
-        tr("NEC Deck"), windowHost_, {QStringLiteral("workspaceWindows"),
-            QStringLiteral("modelEditorWindow")});
-    modelPanel_->setStatusText(tr("No model loaded"));
-    modelPanel_->setContent(modelNavigator);
+    deckView_ = new DeckView(sourceWorkspace_, windowHost_);
+    deckView_->setBackCallback(
+        [this] { showEditor(EditorDestination::Geometry, workspace_->currentIndex()); });
 
     analysisSetupEditor_ = new AnalysisSetupEditor(windowHost_);
     connect(analysisSetupEditor_, &AnalysisSetupEditor::settingsChanged, this,
@@ -1084,7 +1062,7 @@ void MainWindow::createWorkspace()
     createOptimizationWorkspace();
     createResultsColumn();
     workbenchLayout_ = new WorkbenchLayout({.welcome = welcomePage_, .leftColumn = modelColumn_,
-        .geometry = workspace_, .fullView = resultsController_->fullView(),
+        .geometry = workspace_, .fullView = resultsController_->fullView(), .deck = deckView_,
         .rightColumn = resultsController_->column(), .bottomPanel = bottomPanel_}, this);
     setCentralWidget(workbenchLayout_);
     preserveControlHeights(this);
@@ -1194,8 +1172,7 @@ void MainWindow::createOptimizationWorkspace()
             optimizationWorkspace_->isRunning() ? tr("Running") : tr("Ready")));
     });
     optimizationWorkspace_->setParameterizationHelpCallback([this] {
-        showModule(Module::Model);
-        modelWorkspace_->setCurrentIndex(modelDeckWorkspaceIndex_);
+        showEditor(EditorDestination::RawSource);
         sourceWorkspace_->setCurrentIndex(structuredSourceTabIndex_);
         auto* cardTabs = qobject_cast<QTabWidget*>(wireCardEditor_->parentWidget());
         if (cardTabs != nullptr && cardTabs->currentWidget() == structuredCardEditor_)
@@ -1255,40 +1232,24 @@ void MainWindow::createOptimizationWorkspace()
         [this](double frequencyMHz) {
             return startOptimizationPeakSearch(frequencyMHz);
         });
+    optimizationWorkspace_->setVariableRangesChangedCallback(
+        [this] { modelColumn_->variables()->refreshRanges(); });
     optimizationPanel_->setContent(optimizationWorkspace_);
-}
-
-void MainWindow::showModule(Module module)
-{
-    switch (module) {
-    case Module::Model: modelPanel_->showWindow(); break;
-    case Module::Optimize: optimizationPanel_->showWindow(); break;
-    }
-    updateUndoActions();
-}
-
-auto MainWindow::confirmPendingEdits(QWidget* page) -> bool
-{
-    // In the NEC Deck window only Parameters holds edits until applied.
-    if (page != parameterEditor_ || !parameterEditor_->hasPendingEdits()) return true;
-    const auto answer = QMessageBox::warning(this, tr("Unapplied Changes"), tr(
-        "This page contains changes that have not been applied.\n\n"
-        "Choose Cancel to return and use the highlighted Apply button, or discard the edits."),
-        QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Cancel);
-    if (answer != QMessageBox::Discard) return false;
-    parameterEditor_->discardPendingEdits();
-    return true;
 }
 
 void MainWindow::showEditor(EditorDestination destination, int geometryTab)
 {
     if (destination == EditorDestination::RawSource) {
-        showModule(Module::Model);
-        modelWorkspace_->setCurrentIndex(modelDeckWorkspaceIndex_);
+        workbenchLayout_->showModel();
+        workbenchLayout_->showDeck();
         sourceWorkspace_->setCurrentIndex(0);
+        editor_->setFocus();
+        raise();
+        activateWindow();
     } else if (destination == EditorDestination::Parameters) {
-        showModule(Module::Model);
-        modelWorkspace_->setCurrentIndex(modelParametersWorkspaceIndex_);
+        workbenchLayout_->showModel();
+        selectInModel({ModelNode::Variables});
+        modelColumn_->pane()->focusPage();
     } else if (destination != EditorDestination::Geometry) {
         showSetupPage(destination);
     } else {
@@ -1688,14 +1649,10 @@ void MainWindow::createMenusAndToolbar()
     geometryEditorAction->setObjectName(QStringLiteral("geometryEditorAction"));
     connect(geometryEditorAction, &QAction::triggered,
         this, [this] { showEditor(EditorDestination::Geometry); });
-    auto* necDeckAction = modelMenu->addAction(workbenchIcon("nec-deck"), tr("NEC &Deck"));
-    necDeckAction->setObjectName(QStringLiteral("necDeckAction"));
-    connect(necDeckAction, &QAction::triggered,
-        this, [this] { showEditor(EditorDestination::RawSource); });
-    for (auto* action : {geometryEditorAction, necDeckAction}) {
-        action->setEnabled(modelModuleAction_->isEnabled());
-        connect(modelModuleAction_, &QAction::enabledChanged, action, &QAction::setEnabled);
-    }
+    modelMenu->addAction(necDeckAction_);
+    geometryEditorAction->setEnabled(necDeckAction_->isEnabled());
+    connect(necDeckAction_, &QAction::enabledChanged,
+        geometryEditorAction, &QAction::setEnabled);
     modelMenu->addSeparator();
     modelMenu->addAction(autoSegmentationAction_);
     modelMenu->addSeparator();
@@ -1932,7 +1889,7 @@ void MainWindow::newModel()
     editor_->setPlainText(tr("CM New NEC Workbench model\nCE\nGE 0\nEN\n"));
     resetSourceUndoHistory();
     hasNecModel_ = true;
-    modelModuleAction_->setEnabled(true);
+    necDeckAction_->setEnabled(true);
     workbenchLayout_->showModel();
     analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile({});
@@ -1966,7 +1923,7 @@ void MainWindow::openFileAtPath(const QString& path)
     editor_->setPlainText(QString::fromUtf8(file.readAll()));
     resetSourceUndoHistory();
     hasNecModel_ = true;
-    modelModuleAction_->setEnabled(true);
+    necDeckAction_->setEnabled(true);
     workbenchLayout_->showModel();
     analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile(path);
@@ -2183,6 +2140,7 @@ void MainWindow::checkModel(bool presentReport)
     yzView_->setSharedSegments(sharedSegments);
     geometry3DView_->setSharedSegments(sharedSegments);
     parameterEditor_->setResolution(resolution);
+    modelColumn_->variables()->setVariables(resolution.definitions);
     setupEditor_->setData(currentModel_, currentSetup_);
     loadNetworkEditor_->setData(currentModel_, currentSetup_);
     analysisRequestEditor_->setData(currentSetup_);
@@ -2276,9 +2234,9 @@ void MainWindow::clearCheckResults()
 
 void MainWindow::goToDiagnostic(std::size_t sourceLine)
 {
-    showEditor(EditorDestination::RawSource);
     editor_->goToLine(sourceLine);
-    // A finding on a wire, source, load, or network card also selects that object.
+    // A finding on a wire, source, load, line, or network selects it, keeping the geometry
+    // in view; any other finding opens the deck at its line.
     const auto onLine = [sourceLine](const auto& items, auto member) {
         return std::ranges::find(items, sourceLine, member) != items.end();
     };
@@ -2294,6 +2252,10 @@ void MainWindow::goToDiagnostic(std::size_t sourceLine)
         selectTransmissionLine(sourceLine);
     else if (onLine(currentSetup_.networks, &model::NetworkDefinition::sourceLine))
         selectNetwork(sourceLine);
+    else {
+        showEditor(EditorDestination::RawSource);
+        editor_->goToLine(sourceLine);
+    }
 }
 
 void MainWindow::selectWireInProject(int tag)
@@ -2341,7 +2303,6 @@ void MainWindow::createModelColumn()
     tree->setActivatedCallback([this](const ModelSelection& selection) {
         switch (selection.node) {
         case ModelNode::Deck: showEditor(EditorDestination::RawSource); break;
-        case ModelNode::Variables: showEditor(EditorDestination::Parameters); break;
         case ModelNode::Validation:
         case ModelNode::AverageGainTest:
         case ModelNode::Convergence:
@@ -2360,6 +2321,17 @@ void MainWindow::createModelColumn()
             editWire(original, updated);
         });
     modelColumn_->pane()->setDiscardCallback([this](QWidget* page) { discardPendingEdits(page); });
+    // Slider ranges come from the optimizer for variables it searches, and edits go back.
+    auto* variables = modelColumn_->variables();
+    variables->setRangeProvider(
+        [this](const QString& name) { return optimizationWorkspace_->variableRange(name); });
+    variables->setRangeChangedCallback([this](const QString& name, const auto& range) {
+        optimizationWorkspace_->setVariableRange(name, range.first, range.second);
+    });
+    variables->setValueChangedCallback([this](const nec::SymbolDefinition& variable, double value) {
+        const auto name = QString::fromStdString(variable.name);
+        changeParameter(variable.lineNumber, name, name, QString::number(value, 'g', 12));
+    });
 }
 
 void MainWindow::showModelSelection(const ModelSelection& selection)
@@ -2414,6 +2386,7 @@ auto MainWindow::paneContent(ModelNode node) const -> std::pair<QWidget*, QStrin
     case ModelNode::Network:
         return {loadNetworkEditor_, tr("Loads, transmission lines and networks")};
     case ModelNode::Ground: return {setupEditor_->environmentPage(), tr("Ground")};
+    case ModelNode::Variables: return {parameterEditor_, tr("Variables")};
     case ModelNode::Requests: return {analysisRequestEditor_, tr("Requests")};
     case ModelNode::Solver: return {analysisSetupEditor_, tr("Solver")};
     default: return {nullptr, {}};
@@ -2428,6 +2401,7 @@ auto MainWindow::paneDestination() const -> EditorDestination
     if (page == setupEditor_->environmentPage()) return EditorDestination::Environment;
     if (page == analysisRequestEditor_) return EditorDestination::Requests;
     if (page == analysisSetupEditor_) return EditorDestination::Solver;
+    if (page == parameterEditor_) return EditorDestination::Parameters;
     if (page == setupEditor_->frequencyPage()) return EditorDestination::Frequency;
     return EditorDestination::Geometry;
 }
@@ -3852,7 +3826,7 @@ auto MainWindow::loadRunModel(const QString& directory, const QString& modelName
     editor_->setPlainText(QString::fromUtf8(inputFile.readAll()));
     resetSourceUndoHistory();
     hasNecModel_ = true;
-    modelModuleAction_->setEnabled(true);
+    necDeckAction_->setEnabled(true);
     workbenchLayout_->showModel();
     analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile({});
@@ -4491,11 +4465,8 @@ void MainWindow::pushGeometrySourceEdit(const QString& description, QString upda
     const auto* focus = QApplication::focusWidget();
     if (focus != nullptr && modelColumn_->isAncestorOf(focus)) {
         destination = paneDestination();
-    } else if (modelPanel_ != nullptr && modelPanel_->isWindowActive()) {
-        if (modelWorkspace_->currentIndex() == modelDeckWorkspaceIndex_)
-            destination = EditorDestination::RawSource;
-        else if (modelWorkspace_->currentIndex() == modelParametersWorkspaceIndex_)
-            destination = EditorDestination::Parameters;
+    } else if (focus != nullptr && deckView_->isAncestorOf(focus)) {
+        destination = EditorDestination::RawSource;
     }
     const auto sourceTab = sourceWorkspace_->currentIndex();
     applyGeometrySource(description, updatedSource, destination, geometryTab, sourceTab);
@@ -4659,7 +4630,6 @@ void MainWindow::setCurrentFile(QString path)
     const auto modelName = currentFile_.isEmpty() ? tr("Untitled model.nec") : name;
     statusBar_->setFileStatus(tr("Model: %1").arg(modelName),
         currentFile_.isEmpty() ? tr("This model has not been saved yet.") : currentFile_);
-    if (modelPanel_ != nullptr) modelPanel_->setStatusText(modelName);
     if (optimizationPanel_ != nullptr) optimizationPanel_->setStatusText(
         tr("%1 · %2").arg(modelName,
             optimizationWorkspace_->isRunning() ? tr("Running") : tr("Ready")));
