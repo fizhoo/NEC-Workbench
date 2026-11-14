@@ -32,6 +32,7 @@
 #include "ui/modeltree/ModelColumn.h"
 #include "ui/modeltree/ModelTree.h"
 #include "ui/modeltree/PropertiesPane.h"
+#include "ui/modeltree/VariablesSection.h"
 #include "ui/cards/WireCardEditor.h"
 #include "ui/cards/StructuredCardEditor.h"
 #include "ui/analysis/AnalysisSetupEditor.h"
@@ -1231,6 +1232,8 @@ void MainWindow::createOptimizationWorkspace()
         [this](double frequencyMHz) {
             return startOptimizationPeakSearch(frequencyMHz);
         });
+    optimizationWorkspace_->setVariableRangesChangedCallback(
+        [this] { modelColumn_->variables()->refreshRanges(); });
     optimizationPanel_->setContent(optimizationWorkspace_);
 }
 
@@ -2137,6 +2140,7 @@ void MainWindow::checkModel(bool presentReport)
     yzView_->setSharedSegments(sharedSegments);
     geometry3DView_->setSharedSegments(sharedSegments);
     parameterEditor_->setResolution(resolution);
+    modelColumn_->variables()->setVariables(resolution.definitions);
     setupEditor_->setData(currentModel_, currentSetup_);
     loadNetworkEditor_->setData(currentModel_, currentSetup_);
     analysisRequestEditor_->setData(currentSetup_);
@@ -2317,6 +2321,17 @@ void MainWindow::createModelColumn()
             editWire(original, updated);
         });
     modelColumn_->pane()->setDiscardCallback([this](QWidget* page) { discardPendingEdits(page); });
+    // Slider ranges come from the optimizer for variables it searches, and edits go back.
+    auto* variables = modelColumn_->variables();
+    variables->setRangeProvider(
+        [this](const QString& name) { return optimizationWorkspace_->variableRange(name); });
+    variables->setRangeChangedCallback([this](const QString& name, const auto& range) {
+        optimizationWorkspace_->setVariableRange(name, range.first, range.second);
+    });
+    variables->setValueChangedCallback([this](const nec::SymbolDefinition& variable, double value) {
+        const auto name = QString::fromStdString(variable.name);
+        changeParameter(variable.lineNumber, name, name, QString::number(value, 'g', 12));
+    });
 }
 
 void MainWindow::showModelSelection(const ModelSelection& selection)

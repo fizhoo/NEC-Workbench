@@ -121,6 +121,8 @@ if(NECWB_BUILD_GUI)
         src/ui/modeltree/ModelTree.h
         src/ui/modeltree/PropertiesPane.cpp
         src/ui/modeltree/PropertiesPane.h
+        src/ui/modeltree/VariablesSection.cpp
+        src/ui/modeltree/VariablesSection.h
         src/ui/results/KeyNumberStrip.cpp
         src/ui/results/KeyNumberStrip.h
         src/ui/results/ResultFullView.cpp

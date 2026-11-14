@@ -24,6 +24,7 @@
 #include "ui/modeltree/ModelColumn.h"
 #include "ui/modeltree/ModelTree.h"
 #include "ui/modeltree/PropertiesPane.h"
+#include "ui/modeltree/VariablesSection.h"
 #include "ui/geometry/WirePropertiesEditor.h"
 #include "ui/geometry/AutoSegmentationDialog.h"
 #include "ui/geometry/GeometryView.h"
@@ -43,6 +44,7 @@
 #include <QComboBox>
 #include <QDebug>
 #include <QDoubleSpinBox>
+#include <QEventLoop>
 #include <QDialog>
 #include <QElapsedTimer>
 #include <QDir>
@@ -702,6 +704,83 @@ auto main(int argc, char* argv[]) -> int
         resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
         resultWindowSettings.sync();
     }
+    // Dragging a variable's slider rewrites its SY card once, on release, as one undo entry;
+    // selecting Variables shows the Parameters table in the properties pane.
+    auto variableSliderEdits = false;
+    {
+        const auto savedRecentModels = resultWindowSettings.value(
+            QStringLiteral("files/recentModels"));
+        QTemporaryDir modelDirectory;
+        const auto modelPath = modelDirectory.filePath(QStringLiteral("variable-slider.nec"));
+        QFile modelFile(modelPath);
+        if (modelDirectory.isValid() && modelFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            modelFile.write("SY len=0.5\nGW 1 11 0 -len 0 0 len 0 0.001\nGE 0\nEN\n");
+            modelFile.close();
+            resultWindowSettings.setValue(QStringLiteral("files/recentModels"),
+                QStringList{modelPath});
+            resultWindowSettings.sync();
+            necwb::ui::MainWindow mainWindow;
+            mainWindow.resize(1400, 900);
+            mainWindow.show();
+            application.processEvents();
+            if (auto* recentModelsMenu = mainWindow.findChild<QMenu*>(
+                    QStringLiteral("recentModelsMenu"))) {
+                for (auto* action : recentModelsMenu->actions()) {
+                    if (action->data().toString() != modelPath) continue;
+                    action->trigger();
+                    break;
+                }
+            }
+            application.processEvents();
+            auto* deck = mainWindow.findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor"));
+            auto* slider = mainWindow.findChild<QSlider*>(QStringLiteral("variableSlider"));
+            QAction* undo = nullptr;
+            for (auto* action : mainWindow.findChildren<QAction*>())
+                if (action->text().startsWith(QStringLiteral("&Undo"))) undo = action;
+            if (deck != nullptr && slider != nullptr && undo != nullptr) {
+                const auto undoBefore = undo->text();
+                slider->setSliderDown(true);
+                slider->setValue(900);
+                slider->setValue(1000);
+                application.processEvents();
+                const auto unchangedDuringDrag = deck->toPlainText().startsWith(
+                    QStringLiteral("SY len=0.5\n"));
+                slider->setSliderDown(false);
+                application.processEvents();
+                const auto changedOnRelease = deck->toPlainText().startsWith(
+                    QStringLiteral("SY len=0.625\n"));
+                const auto oneUndoEntry = undo->isEnabled()
+                    && undo->text() == QStringLiteral("&Undo Edit parameter len");
+                undo->trigger();
+                application.processEvents();
+                const auto undoRestores = deck->toPlainText().startsWith(
+                    QStringLiteral("SY len=0.5\n")) && undo->text() == undoBefore;
+                auto* tree = mainWindow.findChild<QTreeWidget*>(QStringLiteral("modelTree"));
+                for (auto index = 0; tree != nullptr && index < tree->topLevelItemCount(); ++index) {
+                    if (tree->topLevelItem(index)->text(0) == QStringLiteral("Variables"))
+                        tree->setCurrentItem(tree->topLevelItem(index));
+                }
+                application.processEvents();
+                const auto* parameterTable = mainWindow.findChild<QWidget*>(
+                    QStringLiteral("parameterTable"));
+                const auto* pane = mainWindow.findChild<QWidget*>(QStringLiteral("propertiesPane"));
+                const auto parametersInPane = parameterTable != nullptr && pane != nullptr
+                    && pane->isAncestorOf(parameterTable) && parameterTable->isVisible();
+                variableSliderEdits = unchangedDuringDrag && changedOnRelease && oneUndoEntry
+                    && undoRestores && parametersInPane;
+                if (!variableSliderEdits)
+                    qWarning() << "variable slider" << unchangedDuringDrag << changedOnRelease
+                               << oneUndoEntry << undo->text() << undoRestores << parametersInPane;
+            }
+            if (deck != nullptr) deck->document()->setModified(false);
+            mainWindow.close();
+        }
+        resultWindowSettings.setValue(QStringLiteral("files/recentModels"), savedRecentModels);
+        resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
+        resultWindowSettings.sync();
+    }
+    if (!variableSliderEdits)
+        return NECWB_SMOKE_FAILURE("variable slider edits the SY card");
     if (!wirePaneKeepsSymbols)
         return NECWB_SMOKE_FAILURE("wire pane keeps SY symbols");
     if (!openModelKeepsDeckClosed)
@@ -3199,6 +3278,85 @@ auto main(int argc, char* argv[]) -> int
     const auto untouchedFieldsExact = preciseApplied && preciseApplied->start.x == 0.12345
         && preciseApplied->end.x == 0.12345 && preciseApplied->end.y == 0.0
         && preciseApplied->radius == 0.001 && std::abs(preciseApplied->end.z - 0.6) < 1.0e-9;
+    // The variables: a slider for each plain number and the value of each formula. A drag,
+    // a typed value or a burst of steps is one change.
+    necwb::ui::VariablesSection variablesSection;
+    std::vector<std::pair<std::string, double>> variableChanges;
+    std::vector<std::pair<QString, necwb::ui::VariablesSection::Range>> rangeChanges;
+    std::optional<necwb::ui::VariablesSection::Range> optimizerRange;
+    variablesSection.setValueChangedCallback([&](const necwb::nec::SymbolDefinition& variable,
+                                                 double value) {
+        variableChanges.emplace_back(variable.name, value);
+    });
+    variablesSection.setRangeChangedCallback([&](const QString& name, const auto& range) {
+        rangeChanges.emplace_back(name, range);
+    });
+    variablesSection.setRangeProvider([&](const QString& name) {
+        return name == QStringLiteral("len") ? optimizerRange : std::nullopt;
+    });
+    variablesSection.setVariables({{"len", "0.5", 0.5, 1}, {"twice", "len*2", 1.0, 1},
+        {"offset", "0", 0.0, 2}});
+    variablesSection.resize(460, 200);
+    variablesSection.show();
+    application.processEvents();
+    const auto variableSliders = variablesSection.findChildren<QSlider*>(
+        QStringLiteral("variableSlider"));
+    const auto variableBoxes = variablesSection.findChildren<QDoubleSpinBox*>(
+        QStringLiteral("variableValue"));
+    const auto* formula = variablesSection.findChild<QLabel*>(QStringLiteral("variableFormula"));
+    const auto variablesShown = variableSliders.size() == 2 && variableBoxes.size() == 2
+        && formula != nullptr && formula->text() == QStringLiteral("= len*2 → 1.000")
+        // ±25% around 0.5, and -1 to 1 around zero: both start in the middle.
+        && variableSliders[0]->value() == 500 && variableSliders[1]->value() == 500;
+    auto* lengthSlider = variableSliders.value(0);
+    auto* lengthBox = variableBoxes.value(0);
+    if (lengthSlider == nullptr || lengthBox == nullptr)
+        return NECWB_SMOKE_FAILURE("variable controls");
+    lengthSlider->setSliderDown(true);
+    lengthSlider->setValue(600);
+    lengthSlider->setValue(800);
+    application.processEvents();
+    const auto noChangeDuringDrag = variableChanges.empty()
+        && std::abs(lengthBox->value() - 0.575) < 1.0e-12;
+    lengthSlider->setSliderDown(false);
+    application.processEvents();
+    const auto dragIsOneChange = variableChanges.size() == 1
+        && variableChanges.back() == std::pair{std::string{"len"}, 0.575};
+    lengthBox->setValue(0.55);
+    emit lengthBox->editingFinished();
+    application.processEvents();
+    const auto typedValueChanges = variableChanges.size() == 2
+        && variableChanges.back().second == 0.55;
+    lengthSlider->setValue(510);
+    lengthSlider->setValue(520);
+    application.processEvents();
+    const auto stepsWait = variableChanges.size() == 2;
+    QEventLoop stepPause;
+    QTimer::singleShot(600, &stepPause, &QEventLoop::quit);
+    stepPause.exec();
+    const auto stepsAreOneChange = variableChanges.size() == 3
+        && std::abs(variableChanges.back().second - 0.505) < 1.0e-12;
+    optimizerRange = necwb::ui::VariablesSection::Range{0.4, 0.9};
+    variablesSection.refreshRanges();
+    const auto optimizerRangeUsed = lengthSlider->value() == 200;
+    QTimer::singleShot(0, [] {
+        auto* popup = QApplication::activePopupWidget();
+        if (popup == nullptr) return;
+        auto* minimum = popup->findChild<QDoubleSpinBox*>(QStringLiteral("variableRangeMinimum"));
+        auto* maximum = popup->findChild<QDoubleSpinBox*>(QStringLiteral("variableRangeMaximum"));
+        auto* set = popup->findChild<QPushButton*>(QStringLiteral("variableRangeSet"));
+        if (minimum == nullptr || maximum == nullptr || set == nullptr) return;
+        minimum->setValue(-2.0);
+        maximum->setValue(2.0);
+        set->click();
+    });
+    if (auto* rangeButton = variablesSection.findChildren<QToolButton*>(
+            QStringLiteral("variableRange")).value(1))
+        rangeButton->click();
+    const auto rangeEditReported = rangeChanges.size() == 1
+        && rangeChanges.front().first == QStringLiteral("offset")
+        && rangeChanges.front().second == necwb::ui::VariablesSection::Range{-2.0, 2.0}
+        && variableSliders[1]->value() == 500;
     const auto linkedFieldShown = linkedEndY->isReadOnly()
         && linkedEndY->text().startsWith(QStringLiteral("ƒx "))
         && linkedEndY->toolTip().contains(QStringLiteral("-half"))
@@ -3242,7 +3400,13 @@ auto main(int argc, char* argv[]) -> int
         std::pair{"invalid edit held", invalidEditHeld},
         std::pair{"invalid edit discarded", invalidEditDiscarded},
         std::pair{"enter applies", enterApplies}, std::pair{"escape reverts", escapeReverts},
-        std::pair{"pane hides", paneHides},
+        std::pair{"pane hides", paneHides}, std::pair{"variables shown", variablesShown},
+        std::pair{"no change during drag", noChangeDuringDrag},
+        std::pair{"drag is one change", dragIsOneChange},
+        std::pair{"typed value changes", typedValueChanges}, std::pair{"steps wait", stepsWait},
+        std::pair{"steps are one change", stepsAreOneChange},
+        std::pair{"optimizer range used", optimizerRangeUsed},
+        std::pair{"range edit reported", rangeEditReported},
         std::pair{"untouched fields exact", untouchedFieldsExact},
         std::pair{"linked field shown", linkedFieldShown}, std::pair{"toolbar", toolBarValid}};
     for (const auto& [name, passed] : modelTreeChecks) {

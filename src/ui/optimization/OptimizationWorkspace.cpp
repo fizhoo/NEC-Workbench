@@ -236,6 +236,44 @@ void OptimizationWorkspace::setRunsChangedCallback(std::function<void()> callbac
     runsChangedCallback_ = std::move(callback);
 }
 
+auto OptimizationWorkspace::variableRange(const QString& name) const
+    -> std::optional<std::pair<double, double>>
+{
+    for (auto row = 0; row < variablesTable_->rowCount(); ++row) {
+        const auto* use = variablesTable_->item(row, 0);
+        const auto* variable = variablesTable_->item(row, 1);
+        if (use == nullptr || variable == nullptr || variable->text() != name
+            || use->checkState() != Qt::Checked) continue;
+        bool minimumValid{};
+        bool maximumValid{};
+        const auto minimum = variablesTable_->item(row, 3)->text().toDouble(&minimumValid);
+        const auto maximum = variablesTable_->item(row, 4)->text().toDouble(&maximumValid);
+        if (minimumValid && maximumValid && minimum < maximum) return std::pair{minimum, maximum};
+    }
+    return std::nullopt;
+}
+
+void OptimizationWorkspace::setVariableRange(const QString& name, double minimum, double maximum)
+{
+    const QSignalBlocker blocker(variablesTable_);
+    for (auto row = 0; row < variablesTable_->rowCount(); ++row) {
+        const auto* variable = variablesTable_->item(row, 1);
+        if (variable == nullptr || variable->text() != name) continue;
+        for (const auto& [column, value] : {std::pair{3, minimum}, std::pair{4, maximum}}) {
+            auto* item = numericItem(value);
+            item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
+            variablesTable_->setItem(row, column, item);
+        }
+    }
+    updateWorkload();
+    updateReadiness();
+}
+
+void OptimizationWorkspace::setVariableRangesChangedCallback(std::function<void()> callback)
+{
+    variableRangesChangedCallback_ = std::move(callback);
+}
+
 void OptimizationWorkspace::setRunningChangedCallback(std::function<void()> callback)
 {
     runningChangedCallback_ = std::move(callback);
