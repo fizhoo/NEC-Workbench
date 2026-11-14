@@ -34,7 +34,11 @@ auto summarizeModel(const AntennaModel& model, const ModelSetup& setup,
     for (const auto& card : document.cards()) {
         if (card.kind == nec::NecCardKind::Blank) continue;
         ++summary.cardCount;
-        if (card.kind == nec::NecCardKind::Symbol) ++summary.symbolCount;
+        if (card.kind != nec::NecCardKind::Symbol) continue;
+        // One SY card can define several variables: "SY a=1, b=2".
+        const auto body = card.sourceText.substr(
+            std::min(card.sourceText.size(), card.sourceText.find_first_of(" \t")));
+        summary.symbolCount += static_cast<std::size_t>(std::ranges::count(body, '='));
     }
     return summary;
 }

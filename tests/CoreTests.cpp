@@ -182,6 +182,10 @@ void testModelSummaries()
             && modelSummary.executionRequestCount == 1
             && modelSummary.cardCount == 12,
         "model summary counts variables, requests, and nonblank deck cards");
+    const auto severalVariables = necwb::model::summarizeModel({}, {},
+        necwb::nec::NecParser{}.parse("SY a=1, b=2\nSY c=a*b\nEN\n"));
+    expect(severalVariables.symbolCount == 3 && severalVariables.cardCount == 3,
+        "model summary counts each variable on a multi-variable SY card");
 
     const auto emptySummary = necwb::analysis::summarizeResults({}, 14.0);
     expect(!emptySummary.selectedFeedpoint && !emptySummary.minimumSwr
