@@ -11,8 +11,8 @@ class QStackedWidget;
 
 namespace necwb::ui {
 
+class CenterViewHeader;
 class CurrentDistributionView;
-class ElidedLabel;
 class ImpedanceResultsView;
 class Radiation3DView;
 class RadiationPatternView;
@@ -44,7 +44,7 @@ private:
 
     const ResultState& state_;
     ResultView view_{ResultView::Swr};
-    ElidedLabel* title_{};
+    CenterViewHeader* header_{};
     QLabel* frequency_{};
     QStackedWidget* pages_{};
     SweepPlotsView* sweep_{};
@@ -59,7 +59,6 @@ private:
     Page impedancePage_;
     Page pattern3DPage_;
     Page performancePage_;
-    std::function<void()> back_;
 };
 
 }
