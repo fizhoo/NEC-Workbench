@@ -1,18 +1,19 @@
 # NEC Workbench User Guide
 
 NEC Workbench runs in one resizable main window. A toolbar runs across the top. With a
-model open, the **model tree** and the **properties pane** for what is selected form the
-left column, the **geometry editor** fills the center, and the **results column** on the
-right shows the key numbers and live result thumbnails. A bottom panel underneath holds
-Problems, the Run log, Runs, and Raw output. The NEC Deck, Optimize, and Validation
-windows still open on their own. Controls provide tooltips; this guide
+model open, the **model tree**, the **variables** with their sliders, and the
+**properties pane** for what is selected form the left column; the **geometry editor**
+fills the center (or the **NEC Deck** or a full result view, in its place); and the
+**results column** on the right shows the key numbers and live result thumbnails. A
+bottom panel underneath holds Problems, the Run log, Runs, and Raw output. Optimize and
+Validation still open in their own windows. Controls provide tooltips; this guide
 focuses on workflow and behavior that is not obvious from an individual control.
 
 ## Getting Started
 
 1. Create or open a `.nec` model from the Welcome page, the toolbar, or the File menu.
 2. Edit wires in the geometry editor or the properties pane, and cards in the **NEC
-   Deck** window.
+   Deck** (Deck in the model tree).
 3. Select Frequency, Sources, Loads, Ground, Requests, and Solver in the model tree to
    set them up in the properties pane.
 4. Run **Check Model** (`F7`) and resolve the blocking errors listed under **Problems**.
@@ -58,11 +59,9 @@ engine, **Run** (`F5`), **Stop**, **Sweep**, **Check** (`F7`), and **Optimize**.
 **Configure…** in the engine list to set the engine's executable. `F5` and `F7` work
 from anywhere in the main window, including the model tree and the properties pane.
 
-The NEC Deck, Optimize, and Validation windows still open on their own. Each remembers
-its own size and position, and opening one again raises the existing window rather than
-creating a duplicate. Historical Run Review remains a separate read-only window. Inside
-the NEC Deck window, a compact navigator selects pages; collapse it to icons when
-screen space is limited.
+Optimize and Validation still open in their own windows. Each remembers its own size and
+position, and opening one again raises the existing window rather than creating a
+duplicate. Historical Run Review remains a separate read-only window.
 
 ### Bottom Panel and Status Bar
 
@@ -98,8 +97,8 @@ the application font size. Use Compact on smaller displays.
 ## Model Tree and Properties
 
 With no model open, the Welcome page provides New, Open, recent files, and
-documentation. With a model open, the left column shows the model tree and, under it,
-the properties pane.
+documentation. With a model open, the left column shows the model tree, the variables,
+and the properties pane.
 
 The tree lists **Frequency**, **Wires**, **Sources**, **Loads**, **Trans. lines**,
 **Networks**, **Ground**, **Variables**, **Requests**, **Solver**, **Deck**, and
@@ -111,25 +110,44 @@ geometry selects the item and moves the keyboard into the properties pane.
 The properties pane shows the editor for the selection: a wire's tag, segments,
 endpoints, and size; the Sources page with the selected source; the Loads, transmission
 lines and networks page with the selected row; and the Frequency, Ground, Requests, and
-Solver pages. The tree takes the rows it shows, up to about 45% of the column, and
-scrolls beyond that; the pane takes the rest and scrolls. Groups with nothing to edit
-here, such as Wires, hide the pane.
+Solver pages; and the Parameters table for **Variables**. The tree takes the rows it
+shows, up to about 40% of the column, and the variables up to about 25%; each scrolls
+beyond that, and the pane takes the rest. Groups with nothing to edit here, such as
+Wires, hide the pane, and the variables fill the column below the tree.
+
+Wire fields written as `SY` symbols or expressions show **ƒx**, are read-only, and name
+the expression in their tooltip: change them through the variable. Applying a wire edit
+rewrites only the fields you changed; the others keep their symbols and exact values.
+
+### Variables
+
+Each `SY` variable written as a plain number has a slider, a number box, and **⋯** to set
+the slider's range; a variable written as a formula shows its value. Dragging a slider
+changes the `SY` card once, when you let go, as one undoable step; so does typing a value
+or a burst of arrow-key or wheel steps. The model is checked again and results are
+marked stale; run again with `F5` to update them.
+
+A slider spans the optimizer's minimum and maximum for a variable ticked **Use** in
+Optimize, and otherwise ±25% around the value it had when first shown (−1 to 1 at zero).
+Setting a range with **⋯** also sets the optimizer's minimum and maximum for that
+variable. Ranges are kept for the session, not saved with the model.
 
 Edits in the pane stay pending, with the Apply button emphasized, until applied. `Enter`
 applies them and `Esc` reverts them. Selecting something else applies valid pending
 edits as one undoable step; only edits that cannot be applied ask whether to discard
 them. Undo returns to the page an edit was made on.
 
-**Deck** and **Variables** open the NEC Deck window. **Validation** shows the Average
-Gain Test and segmentation convergence, each with its result and a **Run** button;
-double-click a row to open the Validation window.
+**Deck** opens the NEC Deck in the center. **Validation** shows the Average Gain Test and
+segmentation convergence, each with its result and a **Run** button; double-click a row
+to open the Validation window.
 
 ## Model
 
-The model is edited in two places: the **geometry editor** (2D and 3D geometry) in
-the center of the main window, and the **NEC Deck** window (Raw Source, Structured
-Cards, and Parameters), which remembers its own size and position. **Model → Geometry
-Editor** brings the main window forward with the geometry view focused.
+The model is edited in the **geometry editor** (2D and 3D geometry) in the center of the
+main window, in the properties pane and variables, and in the **NEC Deck** (Raw Source
+and Structured Cards). **Model → NEC Deck**, or Deck in the model tree, shows the deck in
+the center in place of the geometry; **← Geometry** or `Esc` returns. **Model → Geometry
+Editor** brings the geometry back with the view focused.
 
 ### Geometry
 
@@ -147,8 +165,8 @@ remain separate from display and snap settings.
 
 ### Parameters
 
-Model Parameters manages existing `SY` names and expressions. Resolved Value is
-the evaluated number, not an inferred physical unit.
+Select **Variables** in the model tree to manage `SY` names and expressions in the
+Parameters table. Resolved Value is the evaluated number, not an inferred physical unit.
 
 To parameterize a field:
 
@@ -201,8 +219,8 @@ reusable focused window with the compact status overview and both solver-backed
 studies. The static findings are listed in the bottom panel's **Problems** tab, one
 row per finding with its severity, location (`L12` is deck line 12, `W3 · L12` also
 names wire 3), and message; hover a message for its category. Double-click a finding
-to go to its deck line and select its wire, source, load, transmission line, or
-network.
+on a wire, source, load, transmission line, or network to select it, keeping the
+geometry in view; any other finding opens the NEC Deck at its line.
 
 Static checks include card ordering, geometry completeness, field types, references,
 segment length, thin-wire ratios, source placement, adjoining segment consistency,
