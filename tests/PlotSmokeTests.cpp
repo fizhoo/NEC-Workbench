@@ -3447,13 +3447,28 @@ auto main(int argc, char* argv[]) -> int
         auto* currents = column->findChild<QWidget*>(QStringLiteral("currentsThumbnail"));
         if (frequency == nullptr || empty == nullptr || azimuth == nullptr || currents == nullptr)
             return NECWB_SMOKE_FAILURE("results column controls");
-        const auto emptyState = empty->isVisible() && !azimuth->isVisible();
+        // With no results nothing stretches: the strip keeps its own height, the overlay row
+        // is hidden, and the empty line sits right under the strip.
+        const auto* strip = column->findChild<QWidget*>(QStringLiteral("resultsStrip"));
+        const auto* overlayToggle =
+            column->findChild<QWidget*>(QStringLiteral("showHistoricalOverlay"));
+        const auto emptyState = empty->isVisible() && !azimuth->isVisible() && strip != nullptr
+            && overlayToggle != nullptr && !overlayToggle->isVisible()
+            && strip->height() <= strip->sizeHint().height()
+            && empty->y() - (strip->y() + strip->height()) < 12
+            && empty->height() <= empty->sizeHint().height();
+        if (!emptyState) {
+            std::fprintf(stderr, "empty results column: strip %d (hint %d), empty at %d h %d\n",
+                strip == nullptr ? -1 : strip->height(),
+                strip == nullptr ? -1 : strip->sizeHint().height(), empty->y(), empty->height());
+        }
         results.setResults(necwb::ui::ResultData::make(result), QStringLiteral("column-run"), {});
         application.processEvents();
         // A first run selects minimum SWR: 50 Ω at 14.1 MHz.
         const auto minimumSwrSelected = frequency->count() == 3
             && frequency->currentData().toDouble() == 14.1 && statusFrequency == 14.1
-            && !empty->isVisible() && azimuth->isVisible()
+            && !empty->isVisible() && azimuth->isVisible() && overlayToggle->isVisible()
+            && azimuth->height() > 100
             && text("resultsSwr").startsWith(QStringLiteral("1"))
             && text("resultsSwr").contains(QStringLiteral("(Z0 50 Ω)"))
             && text("resultsGain").contains(QStringLiteral("dBi @"))
