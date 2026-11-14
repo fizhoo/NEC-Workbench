@@ -28,6 +28,7 @@ WorkbenchLayout::WorkbenchLayout(Panes panes, QWidget* parent)
     : QWidget(parent)
     , geometry_(panes.geometry)
     , fullView_(panes.fullView)
+    , deck_(panes.deck)
     , bottomPanel_(panes.bottomPanel)
 {
     setObjectName(QStringLiteral("workbenchLayout"));
@@ -46,6 +47,7 @@ WorkbenchLayout::WorkbenchLayout(Panes panes, QWidget* parent)
     center_->setObjectName(QStringLiteral("workbenchCenter"));
     center_->addWidget(geometry_);
     center_->addWidget(fullView_);
+    center_->addWidget(deck_);
 
     split_ = new QSplitter(Qt::Horizontal, pages_);
     split_->setObjectName(QStringLiteral("workbenchSplit"));
@@ -93,6 +95,11 @@ void WorkbenchLayout::showGeometry()
 void WorkbenchLayout::showFullView()
 {
     center_->setCurrentWidget(fullView_);
+}
+
+void WorkbenchLayout::showDeck()
+{
+    center_->setCurrentWidget(deck_);
 }
 
 auto WorkbenchLayout::fullViewShown() const -> bool

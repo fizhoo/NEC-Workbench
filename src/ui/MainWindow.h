@@ -53,6 +53,7 @@ class LoadNetworkEditor;
 class WireCardEditor;
 class StructuredCardEditor;
 class WelcomePage;
+class DeckView;
 class ModelColumn;
 class WirePropertiesEditor;
 class WorkbenchToolBar;
@@ -85,12 +86,6 @@ private:
         AverageGainTest,
         OptimizationPeakSearch,
         OptimizationBaseline
-    };
-
-    // Work areas that still open in their own windows.
-    enum class Module {
-        Model,
-        Optimize
     };
 
     enum class EditorDestination {
@@ -126,8 +121,6 @@ private:
     void showGettingStarted();
     void openUserGuide();
     void showAboutDialog();
-    void showModule(Module module);
-    [[nodiscard]] auto confirmPendingEdits(QWidget* page) -> bool;
     void showEditor(EditorDestination destination, int geometryTab = 0);
     void setDisplayLengthUnit(model::LengthUnit unit);
     void changeDeckLengthUnit(model::LengthUnit unit);
@@ -295,7 +288,7 @@ private:
     QAction* autoSegmentationAction_{};
     QAction* undoAction_{};
     QAction* redoAction_{};
-    QAction* modelModuleAction_{};
+    QAction* necDeckAction_{};
     QAction* optimizeModuleAction_{};
     QAction* resetLayoutAction_{};
     QAction* problemsAction_{};
@@ -311,13 +304,12 @@ private:
     QComboBox* deckUnitControl_{};
     QLabel* deckScaleLabel_{};
     QDoubleSpinBox* snapSpacingControl_{};
-    QTabWidget* modelWorkspace_{};
     QTabWidget* workspace_{};
     QTabWidget* sourceWorkspace_{};
     QWidget* windowHost_{};
     WorkbenchLayout* workbenchLayout_{};
     DetachablePanel* validationPanel_{};
-    DetachablePanel* modelPanel_{};
+    DeckView* deckView_{};
     DetachablePanel* optimizationPanel_{};
     ModelColumn* modelColumn_{};
     WirePropertiesEditor* wireEditor_{};
@@ -340,8 +332,6 @@ private:
     ConvergenceWorkspace* convergenceWorkspace_{};
     OptimizationWorkspace* optimizationWorkspace_{};
     ParameterEditor* parameterEditor_{};
-    int previousModelWorkspaceIndex_{-1};
-    bool restoringWorkspaceTab_{};
     QTabWidget* validationWorkspace_{};
     QLabel* validationOverviewSummary_{};
     QLabel* validationOverviewScope_{};
@@ -388,8 +378,6 @@ private:
     int geometryTabIndex_{};
     int geometry3DTabIndex_{};
     int structuredSourceTabIndex_{1};
-    int modelParametersWorkspaceIndex_{};
-    int modelDeckWorkspaceIndex_{};
     int validationOverviewTabIndex_{};
     int averageGainValidationTabIndex_{};
     int convergenceValidationTabIndex_{};

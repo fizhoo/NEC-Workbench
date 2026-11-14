@@ -3,7 +3,6 @@
 #include "ui/DisplayFormat.h"
 #include "ui/DetachablePanel.h"
 #include "ui/MainWindow.h"
-#include "ui/WorkspaceNavigator.h"
 #include "ui/analysis/SweepPlotsView.h"
 #include "ui/WorkbenchToolBar.h"
 #include "ui/results/ResultFullView.h"
@@ -233,42 +232,6 @@ auto main(int argc, char* argv[]) -> int
             return NECWB_SMOKE_FAILURE("historical overlay visibility persistence");
     }
     QSettings{}.remove(QStringLiteral("smoke/overlayVisible"));
-    QSettings{}.remove(QStringLiteral("workspaceNavigation/smoke/collapsed"));
-    auto* navigationPages = new QTabWidget;
-    navigationPages->addTab(new QWidget(navigationPages), QStringLiteral("First"));
-    navigationPages->addTab(new QWidget(navigationPages),
-        QStringLiteral("Loads && Transmission Lines"));
-    necwb::ui::WorkspaceNavigator workspaceNavigator(
-        navigationPages, QStringLiteral("smoke"));
-    workspaceNavigator.resize(600, 400);
-    workspaceNavigator.show();
-    application.processEvents();
-    auto* workspaceNavigation = workspaceNavigator.findChild<QListWidget*>(
-        QStringLiteral("smokeWorkspaceNavigation"));
-    auto* workspaceCollapse = workspaceNavigator.findChild<QToolButton*>(
-        QStringLiteral("smokeWorkspaceCollapseButton"));
-    const auto navigatorInitialState = workspaceNavigation != nullptr
-        && workspaceCollapse != nullptr && navigationPages->tabBar()->isHidden()
-        && workspaceNavigation->count() == 2 && workspaceNavigation->currentRow() == 0
-        && workspaceNavigation->item(1)->text()
-            == QStringLiteral("Loads & Transmission Lines");
-    if (workspaceNavigation != nullptr) workspaceNavigation->setCurrentRow(1);
-    const auto navigatorSelectsPage = navigationPages->currentIndex() == 1;
-    navigationPages->setCurrentIndex(0);
-    const auto pageSelectsNavigator = workspaceNavigation != nullptr
-        && workspaceNavigation->currentRow() == 0;
-    if (workspaceCollapse != nullptr) workspaceCollapse->click();
-    const auto navigatorCollapses = workspaceNavigator.isCollapsed()
-        && workspaceNavigation != nullptr && workspaceNavigation->item(0)->text().isEmpty();
-    if (workspaceCollapse != nullptr) workspaceCollapse->click();
-    const auto navigatorExpands = !workspaceNavigator.isCollapsed()
-        && workspaceNavigation != nullptr
-        && workspaceNavigation->item(0)->text() == QStringLiteral("First");
-    QSettings{}.remove(QStringLiteral("workspaceNavigation/smoke/collapsed"));
-    if (!navigatorInitialState || !navigatorSelectsPage || !pageSelectsNavigator
-        || !navigatorCollapses || !navigatorExpands) {
-        return NECWB_SMOKE_FAILURE("compact workspace navigation");
-    }
     const auto tabNames = [](const QTabWidget* tabs) {
         QStringList names;
         if (tabs == nullptr) return names;
@@ -281,7 +244,7 @@ auto main(int argc, char* argv[]) -> int
     auto resultsColumnNavigation = false;
     auto bottomPanelNavigation = false;
     auto validationWindowNavigation = false;
-    auto modelWindowNavigation = false;
+    auto deckInCenter = false;
     auto geometryInMainWindow = false;
     auto undoFollowsFocusChanges = false;
     auto setupWindowNavigation = false;
@@ -291,16 +254,14 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("resultsColumn"));
     resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/validation"));
-    resultWindowSettings.remove(QStringLiteral("workspaceWindows/model-editor"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
     resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
     resultWindowSettings.sync();
     {
         necwb::ui::MainWindow mainWindow;
         mainWindow.setProperty("workspaceDensityId", QStringLiteral("density-smoke-sentinel"));
-        auto* modelWorkspace = mainWindow.findChild<QTabWidget*>(QStringLiteral("modelWorkspace"));
-        auto* modelModuleAction = mainWindow.findChild<QAction*>(
-            QStringLiteral("modelModuleAction"));
+        auto* deckWorkspace = mainWindow.findChild<QTabWidget*>(QStringLiteral("necDeckWorkspace"));
+        auto* necDeckAction = mainWindow.findChild<QAction*>(QStringLiteral("necDeckAction"));
         auto* optimizeModuleAction = mainWindow.findChild<QAction*>(
             QStringLiteral("optimizeModuleAction"));
         auto* optimizationWorkspace = mainWindow.findChild<QWidget*>(
@@ -338,12 +299,14 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("showRawOutputAction"));
         const auto overlays = mainWindow.findChildren<QCheckBox*>(
             QStringLiteral("showHistoricalOverlay"));
-        // Setup pages live in the properties pane; only the NEC Deck keeps its window.
+        // Setup pages and Variables live in the properties pane, the deck in the center.
         consolidatedSetupNavigation = mainWindow.findChild<QAction*>(
                 QStringLiteral("setupModuleAction")) == nullptr
             && mainWindow.findChild<QTabWidget*>(QStringLiteral("setupWorkspace")) == nullptr
-            && tabNames(modelWorkspace) == QStringList{QStringLiteral("NEC Deck"),
-                QStringLiteral("Parameters")}
+            && mainWindow.findChild<QTabWidget*>(QStringLiteral("modelWorkspace")) == nullptr
+            && mainWindow.findChild<QAction*>(QStringLiteral("modelModuleAction")) == nullptr
+            && tabNames(deckWorkspace) == QStringList{QStringLiteral("Raw Source"),
+                QStringLiteral("Structured Cards")}
             && tabNames(validationWorkspace) == QStringList{QStringLiteral("Static Check"),
                 QStringLiteral("Average Gain Test"), QStringLiteral("Segmentation Convergence")}
             && compactPrimaryNavigation
@@ -378,37 +341,42 @@ auto main(int argc, char* argv[]) -> int
                 && validationWorkspace->window()->objectName()
                     == QStringLiteral("validationWindow");
         }
-        if (modelWorkspace != nullptr && modelModuleAction != nullptr) {
-            modelModuleAction->setEnabled(true);
-            modelModuleAction->trigger();
+        // The NEC Deck opens in the center in place of the geometry; ← Geometry returns.
+        if (deckWorkspace != nullptr && necDeckAction != nullptr) {
+            mainWindow.show();
+            necDeckAction->setEnabled(true);
+            necDeckAction->trigger();
             application.processEvents();
-            const auto* modelEditorWindow = topLevelDialog(
-                QStringLiteral("modelEditorWindow"));
-            resultWindowSettings.sync();
-            modelWindowNavigation = modelEditorWindow != nullptr
-                && modelEditorWindow->isVisible()
-                && modelWorkspace->window() == modelEditorWindow
-                && resultWindowSettings.value(
-                    QStringLiteral("workspaceWindows/model-editor/detached"), false).toBool();
+            auto* split = mainWindow.findChild<QWidget*>(QStringLiteral("workbenchSplit"));
+            auto* geometryWorkspace = mainWindow.findChild<QTabWidget*>(
+                QStringLiteral("geometryWorkspace"));
+            const auto deckShown = deckWorkspace->window() == &mainWindow && split != nullptr
+                && split->isAncestorOf(deckWorkspace) && deckWorkspace->isVisible()
+                && geometryWorkspace != nullptr && !geometryWorkspace->isVisible()
+                && topLevelDialog(QStringLiteral("modelEditorWindow")) == nullptr;
+            if (auto* back = mainWindow.findChild<QToolButton*>(QStringLiteral("necDeckViewBack")))
+                back->click();
+            application.processEvents();
+            deckInCenter = deckShown && !deckWorkspace->isVisible()
+                && geometryWorkspace->isVisible();
             // Geometry lives in the main window's center, not in a window of its own.
             auto* geometryEditorAction = mainWindow.findChild<QAction*>(
                 QStringLiteral("geometryEditorAction"));
-            auto* geometryWorkspace = mainWindow.findChild<QTabWidget*>(
-                QStringLiteral("geometryWorkspace"));
-            if (geometryEditorAction != nullptr && geometryWorkspace != nullptr
-                && modelEditorWindow != nullptr) {
+            if (geometryEditorAction != nullptr) {
+                necDeckAction->trigger();
                 geometryEditorAction->trigger();
                 application.processEvents();
-                const auto* split = mainWindow.findChild<QWidget*>(QStringLiteral("workbenchSplit"));
                 geometryInMainWindow = geometryEditorAction->isEnabled()
                     && geometryWorkspace->window() == &mainWindow
-                    && split != nullptr && split->isAncestorOf(geometryWorkspace)
+                    && split->isAncestorOf(geometryWorkspace)
                     && geometryWorkspace->isVisibleTo(&mainWindow)
-                    && topLevelDialog(QStringLiteral("geometryEditorWindow")) == nullptr
-                    && !modelEditorWindow->isAncestorOf(geometryWorkspace);
+                    && topLevelDialog(QStringLiteral("geometryEditorWindow")) == nullptr;
             }
-            dialogDensityIsIncremental = modelEditorWindow != nullptr
-                && !modelEditorWindow->property("workspaceDensityId").toString().isEmpty()
+        }
+        // Windows that still float follow the workspace density.
+        if (const auto* validationWindow = topLevelDialog(QStringLiteral("validationWindow"))) {
+            dialogDensityIsIncremental =
+                !validationWindow->property("workspaceDensityId").toString().isEmpty()
                 && mainWindow.property("workspaceDensityId").toString()
                     == QStringLiteral("density-smoke-sentinel");
         }
@@ -563,8 +531,8 @@ auto main(int argc, char* argv[]) -> int
             application.processEvents();
                 linkedParameterDeleted = deckEditor->toPlainText()
                 == QStringLiteral("GW 1 11 -5 0 6 5 0 6 0.001\nGE 0\nEN\n");
-            // Undo and Redo follow the shared source history whether the geometry view in
-            // the main window or the NEC Deck window has focus.
+            // Undo and Redo follow the shared source history whether the geometry view or
+            // the NEC Deck is in the center.
             QAction* undo = nullptr;
             QAction* redo = nullptr;
             QAction* geometryEditor = nullptr;
@@ -574,7 +542,7 @@ auto main(int argc, char* argv[]) -> int
                 if (action->objectName() == QStringLiteral("geometryEditorAction"))
                     geometryEditor = action;
             }
-            auto* modelModule = mainWindow.findChild<QAction*>(QStringLiteral("modelModuleAction"));
+            auto* modelModule = mainWindow.findChild<QAction*>(QStringLiteral("necDeckAction"));
             if (undo != nullptr && redo != nullptr && geometryEditor != nullptr
                 && modelModule != nullptr) {
                 geometryEditor->trigger();
@@ -596,7 +564,6 @@ auto main(int argc, char* argv[]) -> int
     }
     resultWindowSettings.remove(QStringLiteral("resultsColumn"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/validation"));
-    resultWindowSettings.remove(QStringLiteral("workspaceWindows/model-editor"));
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
     resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
     resultWindowSettings.sync();
@@ -753,8 +720,8 @@ auto main(int argc, char* argv[]) -> int
         return NECWB_SMOKE_FAILURE("bottom panel navigation");
     if (!validationWindowNavigation)
         return NECWB_SMOKE_FAILURE("validation window navigation");
-    if (!modelWindowNavigation)
-        return NECWB_SMOKE_FAILURE("model window navigation");
+    if (!deckInCenter)
+        return NECWB_SMOKE_FAILURE("NEC Deck in the center");
     if (!geometryInMainWindow)
         return NECWB_SMOKE_FAILURE("geometry editor in main window");
     if (!undoFollowsFocusChanges)

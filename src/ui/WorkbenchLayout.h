@@ -11,8 +11,8 @@ namespace necwb::ui {
 class BottomPanel;
 
 // The main window's content. With no model, the Welcome page sits centered at the top; with a
-// model, one splitter holds the model tree on the left, the geometry editor or a full
-// result view in the center, and the results column on the right. The bottom panel spans
+// model, one splitter holds the model tree on the left, the geometry editor, a full result
+// view or the NEC Deck in the center, and the results column on the right. The bottom panel spans
 // the full width underneath.
 class WorkbenchLayout final : public QWidget {
 public:
@@ -21,6 +21,7 @@ public:
         QWidget* leftColumn{};
         QWidget* geometry{};
         QWidget* fullView{};
+        QWidget* deck{};
         QWidget* rightColumn{};
         BottomPanel* bottomPanel{};
     };
@@ -31,6 +32,7 @@ public:
     void showModel();
     void showGeometry();
     void showFullView();
+    void showDeck();
     [[nodiscard]] auto fullViewShown() const -> bool;
     // View › Results Column: shows or collapses the right column.
     [[nodiscard]] auto rightColumnAction() const -> QAction* { return rightColumnAction_; }
@@ -50,6 +52,7 @@ private:
     QStackedWidget* center_{};
     QWidget* geometry_{};
     QWidget* fullView_{};
+    QWidget* deck_{};
     BottomPanel* bottomPanel_{};
     QAction* rightColumnAction_{};
     // The saved widths are applied once the split first has a real width.

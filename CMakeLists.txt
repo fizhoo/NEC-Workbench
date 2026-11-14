@@ -136,8 +136,6 @@ if(NECWB_BUILD_GUI)
         src/ui/FileIo.h
         src/ui/ParameterFieldStyle.cpp
         src/ui/ParameterFieldStyle.h
-        src/ui/WorkspaceNavigator.cpp
-        src/ui/WorkspaceNavigator.h
         src/ui/bottom/ProblemsView.cpp
         src/ui/bottom/ProblemsView.h
         src/ui/bottom/RawOutputView.cpp
@@ -184,6 +182,8 @@ if(NECWB_BUILD_GUI)
         src/ui/cards/WireCardEditor.h
         src/ui/cards/StructuredCardEditor.cpp
         src/ui/cards/StructuredCardEditor.h
+        src/ui/editor/DeckView.cpp
+        src/ui/editor/DeckView.h
         src/ui/editor/NecEditor.cpp
         src/ui/editor/NecEditor.h
         src/ui/editor/NecHighlighter.cpp
