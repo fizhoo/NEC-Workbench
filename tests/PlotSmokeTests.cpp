@@ -601,8 +601,8 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
     resultWindowSettings.sync();
     // Opening an existing model shows it in the main window without raising the NEC Deck
-    // window, the left column never grows wider than the control panel, and at its minimum
-    // size the window still has room to open the bottom panel.
+    // window, the left column stops at its maximum width, and at its minimum size the window
+    // still has room to open the bottom panel.
     auto openModelKeepsDeckClosed = false;
     auto leftColumnCappedAtContent = false;
     auto bottomPanelOpensAtMinimumSize = false;
@@ -674,6 +674,69 @@ auto main(int argc, char* argv[]) -> int
         resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
         resultWindowSettings.sync();
     }
+    // Editing a wire in the properties pane rewrites only the field that changed: SY symbols
+    // in the others stay in the deck, and the pane shows them as linked and read-only.
+    auto wirePaneKeepsSymbols = false;
+    {
+        const auto savedRecentModels = resultWindowSettings.value(
+            QStringLiteral("files/recentModels"));
+        QTemporaryDir modelDirectory;
+        const auto modelPath = modelDirectory.filePath(QStringLiteral("symbolic-wires.nec"));
+        QFile modelFile(modelPath);
+        if (modelDirectory.isValid() && modelFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            modelFile.write("SY half=0.485, x2=0.5\nGW 1 11 0 -half 0 0 half 0 0.003\n"
+                "GW 2 11 x2 half 0 x2 -half 0 0.003\nGE 0\nEN\n");
+            modelFile.close();
+            resultWindowSettings.setValue(QStringLiteral("files/recentModels"),
+                QStringList{modelPath});
+            resultWindowSettings.sync();
+            necwb::ui::MainWindow mainWindow;
+            mainWindow.resize(1400, 900);
+            mainWindow.show();
+            application.processEvents();
+            if (auto* recentModelsMenu = mainWindow.findChild<QMenu*>(
+                    QStringLiteral("recentModelsMenu"))) {
+                for (auto* action : recentModelsMenu->actions()) {
+                    if (action->data().toString() != modelPath) continue;
+                    action->trigger();
+                    break;
+                }
+            }
+            application.processEvents();
+            auto* tree = mainWindow.findChild<QTreeWidget*>(QStringLiteral("modelTree"));
+            auto* deck = mainWindow.findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor"));
+            auto* wires = tree == nullptr ? nullptr : tree->topLevelItem(1);
+            if (deck != nullptr && wires != nullptr && wires->childCount() == 2) {
+                wires->setExpanded(true);
+                tree->setCurrentItem(wires->child(1));
+                application.processEvents();
+                auto* endY = mainWindow.findChild<QDoubleSpinBox*>(
+                    QStringLiteral("wireCoordinateEditor4"));
+                auto* endZ = mainWindow.findChild<QDoubleSpinBox*>(
+                    QStringLiteral("wireCoordinateEditor5"));
+                auto* apply = mainWindow.findChild<QPushButton*>(QStringLiteral("applyWireButton"));
+                if (endY != nullptr && endZ != nullptr && apply != nullptr) {
+                    const auto endYLinked = endY->isReadOnly()
+                        && endY->text().startsWith(QStringLiteral("ƒx "))
+                        && endY->toolTip().contains(QStringLiteral("-half"))
+                        && !endZ->isReadOnly();
+                    endZ->setValue(0.01);
+                    apply->click();
+                    application.processEvents();
+                    wirePaneKeepsSymbols = endYLinked && deck->toPlainText().contains(
+                        QStringLiteral("GW 2 11 x2 half 0 x2 -half 0.01 0.003"));
+                }
+            }
+            // The edit is not saved; closing must not stop to ask.
+            if (deck != nullptr) deck->document()->setModified(false);
+            mainWindow.close();
+        }
+        resultWindowSettings.setValue(QStringLiteral("files/recentModels"), savedRecentModels);
+        resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
+        resultWindowSettings.sync();
+    }
+    if (!wirePaneKeepsSymbols)
+        return NECWB_SMOKE_FAILURE("wire pane keeps SY symbols");
     if (!openModelKeepsDeckClosed)
         return NECWB_SMOKE_FAILURE("open model keeps NEC Deck closed");
     if (!leftColumnCappedAtContent)
@@ -3143,6 +3206,36 @@ auto main(int argc, char* argv[]) -> int
     modelColumn.showPage(nullptr, {});
     application.processEvents();
     const auto paneHides = propertiesPane->isHidden() && propertiesPane->currentPage() == nullptr;
+    // A field shows its value rounded, but one left alone goes back exactly as it was, and a
+    // field written as a symbol is shown linked and cannot be edited here.
+    necwb::model::AntennaModel preciseModel;
+    preciseModel.addWire({4, {0.12345, 0.0, -0.5}, {0.12345, 0.0, 0.5}, 11, 0.001, 1});
+    necwb::ui::WirePropertiesEditor preciseEditor;
+    necwb::ui::WirePropertiesEditor::LinkedFields linkedFields;
+    linkedFields[6] = QStringLiteral("-half");
+    preciseEditor.setWire(preciseModel.wires().front(), preciseModel,
+        necwb::model::LengthUnit::Meter, linkedFields);
+    std::optional<necwb::model::Wire> preciseApplied;
+    preciseEditor.setAppliedCallback(
+        [&preciseApplied](const auto&, const necwb::model::Wire& updated) { preciseApplied = updated; });
+    auto* preciseEndZ = preciseEditor.findChild<QDoubleSpinBox*>(
+        QStringLiteral("wireCoordinateEditor5"));
+    auto* linkedEndY = preciseEditor.findChild<QDoubleSpinBox*>(
+        QStringLiteral("wireCoordinateEditor4"));
+    auto* preciseStartX = preciseEditor.findChild<QDoubleSpinBox*>(
+        QStringLiteral("wireCoordinateEditor0"));
+    if (preciseEndZ == nullptr || linkedEndY == nullptr || preciseStartX == nullptr)
+        return NECWB_SMOKE_FAILURE("precise wire editor controls");
+    preciseEndZ->setValue(0.6);
+    if (auto* apply = preciseEditor.findChild<QPushButton*>(QStringLiteral("applyWireButton")))
+        apply->click();
+    const auto untouchedFieldsExact = preciseApplied && preciseApplied->start.x == 0.12345
+        && preciseApplied->end.x == 0.12345 && preciseApplied->end.y == 0.0
+        && preciseApplied->radius == 0.001 && std::abs(preciseApplied->end.z - 0.6) < 1.0e-9;
+    const auto linkedFieldShown = linkedEndY->isReadOnly()
+        && linkedEndY->text().startsWith(QStringLiteral("ƒx "))
+        && linkedEndY->toolTip().contains(QStringLiteral("-half"))
+        && !preciseStartX->isReadOnly() && !preciseStartX->text().startsWith(QStringLiteral("ƒx"));
     // The toolbar: one row with the engine; Configure… is a command, not an engine.
     QMenu recentModels;
     QAction toolOpen(QStringLiteral("&Open…")), toolSave(QStringLiteral("&Save")),
@@ -3182,7 +3275,9 @@ auto main(int argc, char* argv[]) -> int
         std::pair{"invalid edit held", invalidEditHeld},
         std::pair{"invalid edit discarded", invalidEditDiscarded},
         std::pair{"enter applies", enterApplies}, std::pair{"escape reverts", escapeReverts},
-        std::pair{"pane hides", paneHides}, std::pair{"toolbar", toolBarValid}};
+        std::pair{"pane hides", paneHides},
+        std::pair{"untouched fields exact", untouchedFieldsExact},
+        std::pair{"linked field shown", linkedFieldShown}, std::pair{"toolbar", toolBarValid}};
     for (const auto& [name, passed] : modelTreeChecks) {
         if (passed) continue;
         std::fprintf(stderr, "model tree %s failed: groups \"%s\", wires \"%s\"\n", name,

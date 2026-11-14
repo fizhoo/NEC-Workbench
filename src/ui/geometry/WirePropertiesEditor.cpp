@@ -4,6 +4,7 @@
 #include "ui/DisplayFormat.h"
 #include "ui/PendingEditIndicator.h"
 
+#include <QAbstractSpinBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QGridLayout>
@@ -96,6 +97,9 @@ WirePropertiesEditor::WirePropertiesEditor(QWidget* parent) : QWidget(parent)
     grid->addWidget(radiusControl_, 4, 3);
     grid->addWidget(diameterLabel_, 5, 1, 1, 3);
     for (const auto column : {1, 2, 3}) grid->setColumnStretch(column, 1);
+    fields_ = {tagControl_, segmentsControl_, coordinateControls_[0], coordinateControls_[1],
+        coordinateControls_[2], coordinateControls_[3], coordinateControls_[4],
+        coordinateControls_[5], radiusControl_};
 
     validationLabel_ = new QLabel(this);
     validationLabel_->setObjectName(QStringLiteral("wireValidationLabel"));
@@ -121,10 +125,17 @@ WirePropertiesEditor::WirePropertiesEditor(QWidget* parent) : QWidget(parent)
     layout->addStretch();
 
     const auto markPending = [this] { if (!updating_) setPending(true); };
-    connect(tagControl_, &QSpinBox::valueChanged, this, markPending);
-    connect(segmentsControl_, &QSpinBox::valueChanged, this, markPending);
-    for (auto* control : coordinateControls_)
-        connect(control, &QDoubleSpinBox::valueChanged, this, markPending);
+    for (auto field = std::size_t{0}; field < FieldCount; ++field) {
+        const auto markEdited = [this, field, markPending] {
+            if (!updating_) edited_[field] = true;
+            markPending();
+        };
+        if (auto* count = qobject_cast<QSpinBox*>(fields_[field]))
+            connect(count, &QSpinBox::valueChanged, this, markEdited);
+        else if (field != FieldCount - 1)
+            connect(static_cast<QDoubleSpinBox*>(fields_[field]), &QDoubleSpinBox::valueChanged,
+                this, markEdited);
+    }
     connect(gaugeControl_, &QComboBox::currentIndexChanged, this, [this](int index) {
         selectGauge(index);
     });
@@ -135,6 +146,7 @@ WirePropertiesEditor::WirePropertiesEditor(QWidget* parent) : QWidget(parent)
             gaugeControl_->setCurrentIndex(0);
         }
         updateDiameterLabel();
+        if (!updating_) edited_[FieldCount - 1] = true;
         markPending();
     });
     connect(applyButton_, &QPushButton::clicked, this, [this] { apply(); });
@@ -143,15 +155,14 @@ WirePropertiesEditor::WirePropertiesEditor(QWidget* parent) : QWidget(parent)
 }
 
 void WirePropertiesEditor::setWire(const model::Wire& wire, const model::AntennaModel& model,
-    model::LengthUnit lengthUnit)
+    model::LengthUnit lengthUnit, const LinkedFields& linked)
 {
     original_ = wire;
     model_ = model;
     lengthUnit_ = lengthUnit;
+    linked_ = linked;
+    edited_ = {};
     updating_ = true;
-    // The pane names the wire; this line only explains a wire it cannot edit.
-    title_->setText(tr("Arcs and helices are edited in the NEC Deck."));
-    title_->setVisible(!wire.editable);
     tagControl_->setValue(wire.tag);
     segmentsControl_->setValue(wire.segments);
     const std::array<double, 6> coordinates{wire.start.x, wire.start.y, wire.start.z,
@@ -169,6 +180,7 @@ void WirePropertiesEditor::setWire(const model::Wire& wire, const model::Antenna
     for (auto* control : findChildren<QWidget*>()) {
         if (control != title_) control->setEnabled(wire.editable);
     }
+    showLinkedFields();
     validationLabel_->hide();
     updateDiameterLabel();
     setPending(false);
@@ -176,16 +188,46 @@ void WirePropertiesEditor::setWire(const model::Wire& wire, const model::Antenna
 
 auto WirePropertiesEditor::wire() const -> model::Wire
 {
-    const model::Point3D start{
-        model::toMeters(coordinateControls_[0]->value(), lengthUnit_),
-        model::toMeters(coordinateControls_[1]->value(), lengthUnit_),
-        model::toMeters(coordinateControls_[2]->value(), lengthUnit_)};
-    const model::Point3D end{
-        model::toMeters(coordinateControls_[3]->value(), lengthUnit_),
-        model::toMeters(coordinateControls_[4]->value(), lengthUnit_),
-        model::toMeters(coordinateControls_[5]->value(), lengthUnit_)};
-    return {tagControl_->value(), start, end, segmentsControl_->value(),
-        model::toMeters(radiusControl_->value(), lengthUnit_), original_.sourceLine};
+    // A field shows its value rounded; one left alone must go back exactly as it was.
+    const auto length = [this](std::size_t field, const QDoubleSpinBox* control, double original) {
+        return edited_[field] ? model::toMeters(control->value(), lengthUnit_) : original;
+    };
+    const model::Point3D start{length(2, coordinateControls_[0], original_.start.x),
+        length(3, coordinateControls_[1], original_.start.y),
+        length(4, coordinateControls_[2], original_.start.z)};
+    const model::Point3D end{length(5, coordinateControls_[3], original_.end.x),
+        length(6, coordinateControls_[4], original_.end.y),
+        length(7, coordinateControls_[5], original_.end.z)};
+    return {edited_[0] ? tagControl_->value() : original_.tag, start, end,
+        edited_[1] ? segmentsControl_->value() : original_.segments,
+        length(8, radiusControl_, original_.radius), original_.sourceLine};
+}
+
+void WirePropertiesEditor::showLinkedFields()
+{
+    auto anyLinked = false;
+    for (auto field = std::size_t{0}; field < FieldCount; ++field) {
+        auto* control = fields_[field];
+        const auto& expression = linked_[field];
+        const auto linked = !expression.isEmpty();
+        anyLinked = anyLinked || linked;
+        control->setReadOnly(linked);
+        control->setButtonSymbols(linked ? QAbstractSpinBox::NoButtons
+                                         : QAbstractSpinBox::UpDownArrows);
+        const auto prefix = linked ? QStringLiteral("ƒx ") : QString{};
+        if (auto* count = qobject_cast<QSpinBox*>(control)) count->setPrefix(prefix);
+        else static_cast<QDoubleSpinBox*>(control)->setPrefix(prefix);
+        auto font = control->font();
+        font.setItalic(linked);
+        control->setFont(font);
+        control->setToolTip(linked ? tr("ƒx Linked to %1\nChange it under Variables, or unlink "
+            "the field in the NEC Deck's Structured Cards.").arg(expression) : QString{});
+    }
+    gaugeControl_->setEnabled(original_.editable && linked_[FieldCount - 1].isEmpty());
+    // The pane names the wire; this line explains what it cannot edit here.
+    title_->setText(!original_.editable ? tr("Arcs and helices are edited in the NEC Deck.")
+        : tr("ƒx fields are set by variables; change those under Variables."));
+    title_->setVisible(!original_.editable || anyLinked);
 }
 
 void WirePropertiesEditor::discardPendingEdits()

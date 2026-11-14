@@ -2456,8 +2456,18 @@ void MainWindow::refreshWireEditor()
         if (modelColumn_->pane()->currentPage() == wireEditor_) modelColumn_->showPage(nullptr, {});
         return;
     }
-    if (!wireEditor_->hasPendingEdits()) wireEditor_->setWire(*wire, currentModel_,
-        geometrySettings_.lengthUnit);
+    if (!wireEditor_->hasPendingEdits()) {
+        // Fields written as SY symbols or expressions stay linked; the pane only shows them.
+        WirePropertiesEditor::LinkedFields linked;
+        const auto block = editor_->document()->findBlockByNumber(
+            static_cast<int>(wire->sourceLine) - 1);
+        const auto card = block.isValid() ? block.text().toStdString() : std::string{};
+        for (auto field = std::size_t{0}; field < linked.size(); ++field) {
+            if (!card.empty() && !nec::necCardFieldIsNumeric(card, field))
+                linked[field] = QString::fromStdString(nec::necCardFieldText(card, field));
+        }
+        wireEditor_->setWire(*wire, currentModel_, geometrySettings_.lengthUnit, linked);
+    }
     modelColumn_->showPage(wireEditor_, tr("Wire %1").arg(wire->tag));
 }
 
@@ -4163,6 +4173,7 @@ void MainWindow::editWire(const model::Wire& original, const model::Wire& update
     if (!editable) {
         showSymbolicGeometryEditBlocked();
         updateWireCardEditor();
+        refreshWireEditor();
         return;
     }
     if (replacements.empty()) return;
