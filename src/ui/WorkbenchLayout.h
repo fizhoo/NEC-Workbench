@@ -11,7 +11,7 @@ namespace necwb::ui {
 class BottomPanel;
 
 // The main window's content. With no model, the Welcome page sits centered at the top; with a
-// model, one splitter holds the control panel on the left, the geometry editor or a full
+// model, one splitter holds the model tree on the left, the geometry editor or a full
 // result view in the center, and the results column on the right. The bottom panel spans
 // the full width underneath.
 class WorkbenchLayout final : public QWidget {

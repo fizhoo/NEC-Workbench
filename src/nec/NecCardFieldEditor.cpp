@@ -59,6 +59,14 @@ auto replaceNecCardFields(std::string_view source,
     return result;
 }
 
+auto necCardFieldText(std::string_view source, std::size_t fieldIndex) -> std::string
+{
+    const auto fields = dataFields(source);
+    if (fieldIndex >= fields.size()) return {};
+    return std::string(source.substr(fields[fieldIndex].begin,
+        fields[fieldIndex].end - fields[fieldIndex].begin));
+}
+
 auto necCardFieldIsNumeric(std::string_view source, std::size_t fieldIndex) -> bool
 {
     const auto fields = dataFields(source);

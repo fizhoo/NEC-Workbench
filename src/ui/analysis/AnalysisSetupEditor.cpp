@@ -35,9 +35,7 @@ AnalysisSetupEditor::AnalysisSetupEditor(QWidget* parent)
     backendLayout->setRowWrapPolicy(QFormLayout::WrapLongRows);
     backendControl_ = new QComboBox(backendGroup);
     backendControl_->setObjectName(QStringLiteral("analysisBackendControl"));
-    backendControl_->addItem(tr("NEC-2 / nec2c"), QStringLiteral("nec2"));
-    backendControl_->addItem(tr("OpenNEC"), QStringLiteral("opennec"));
-    backendControl_->addItem(tr("4nec2 NEC2dXS"), QStringLiteral("nec2dxs"));
+    for (const auto& [name, id] : backends()) backendControl_->addItem(name, id);
     auto* executableRow = new QWidget(backendGroup);
     auto* executableLayout = new QHBoxLayout(executableRow);
     executableLayout->setContentsMargins(0, 0, 0, 0);
@@ -98,6 +96,19 @@ AnalysisSetupEditor::AnalysisSetupEditor(QWidget* parent)
         }
     });
     updateDescription();
+}
+
+auto AnalysisSetupEditor::backends() -> std::vector<std::pair<QString, QString>>
+{
+    return {{tr("NEC-2 / nec2c"), QStringLiteral("nec2")},
+        {tr("OpenNEC"), QStringLiteral("opennec")},
+        {tr("4nec2 NEC2dXS"), QStringLiteral("nec2dxs")}};
+}
+
+void AnalysisSetupEditor::selectBackend(const QString& backendId)
+{
+    const auto index = backendControl_->findData(backendId);
+    if (index >= 0) backendControl_->setCurrentIndex(index);
 }
 
 void AnalysisSetupEditor::setSettings(const QString& backendId,

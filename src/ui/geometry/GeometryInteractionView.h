@@ -17,7 +17,6 @@ namespace necwb::ui {
 enum class GeometryContextAction {
     None,
     Properties,
-    EditInSetup,
     Delete,
     AddExcitation,
     AddLoad,
@@ -63,7 +62,6 @@ signals:
     void excitationSelected(std::size_t sourceLine);
     void addExcitationRequested(int wireTag, int segment);
     void editExcitationRequested(std::size_t sourceLine);
-    void openExcitationSetupRequested(std::size_t sourceLine);
     void deleteExcitationRequested(std::size_t sourceLine);
     void loadSelected(std::size_t sourceLine);
     void transmissionLineSelected(std::size_t sourceLine);

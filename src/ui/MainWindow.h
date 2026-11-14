@@ -10,6 +10,7 @@
 #include "ui/analysis/AnalysisRunStore.h"
 #include "ui/analysis/ResultReferenceController.h"
 #include "ui/analysis/SolverProcessRunner.h"
+#include "ui/modeltree/ModelTree.h"
 #include "analysis/AnalysisResult.h"
 #include "analysis/AverageGainTest.h"
 #include "analysis/SolverCommand.h"
@@ -27,15 +28,12 @@
 
 class QAction;
 class QCloseEvent;
-class QDockWidget;
 class QComboBox;
 class QDoubleSpinBox;
 class QEvent;
 class QLabel;
 class QMenu;
 class QTabWidget;
-class QTreeWidget;
-class QTreeWidgetItem;
 class QTimer;
 class QVBoxLayout;
 class QWidget;
@@ -54,8 +52,10 @@ class SetupEditor;
 class LoadNetworkEditor;
 class WireCardEditor;
 class StructuredCardEditor;
-class ControlPanel;
 class WelcomePage;
+class ModelColumn;
+class WirePropertiesEditor;
+class WorkbenchToolBar;
 class OptimizationWorkspace;
 class ParameterEditor;
 class DetachablePanel;
@@ -90,7 +90,6 @@ private:
     // Work areas that still open in their own windows.
     enum class Module {
         Model,
-        Setup,
         Optimize
     };
 
@@ -110,16 +109,15 @@ private:
         QString description;
         EditorDestination destination{EditorDestination::RawSource};
         int geometryTab{};
-        int analysisTab{};
         int sourceTab{};
     };
 
     void createActions();
+    void createModelColumn();
     void createWorkspace();
     void createResultsColumn();
     void createValidationWindow();
     void createOptimizationWorkspace();
-    void createDocks();
     void createMenusAndToolbar();
     void resetWorkspaceLayout();
     void setWorkspaceDensity(WorkspaceDensity density);
@@ -155,12 +153,23 @@ private:
     void showGeneratedSolverDeck();
     void clearCheckResults();
     void goToDiagnostic(std::size_t sourceLine);
-    void activateProjectItem(QTreeWidgetItem* item);
     void selectWireInProject(int tag);
     void selectExcitation(std::size_t sourceLine);
     void selectLoad(std::size_t sourceLine);
     void selectTransmissionLine(std::size_t sourceLine);
     void selectNetwork(std::size_t sourceLine);
+    // Selects a row of the model tree, applying the open page's edits first.
+    void selectInModel(const ModelSelection& selection);
+    void showModelSelection(const ModelSelection& selection);
+    [[nodiscard]] auto paneContent(ModelNode node) const -> std::pair<QWidget*, QString>;
+    // Where an edit made in the properties pane returns to on undo.
+    [[nodiscard]] auto paneDestination() const -> EditorDestination;
+    void showSetupPage(EditorDestination destination);
+    void showProperties(const ModelSelection& selection);
+    void refreshWireEditor();
+    // Shows the engine in the toolbar and on the model tree's Solver row.
+    void refreshEngine();
+    void discardPendingEdits(QWidget* page);
     void synchronizeGeometrySelection(int tag);
     void fitAllGeometryViews();
     void previewEndpointMove(int tag, model::WireEndpoint endpoint, const model::Point3D& position);
@@ -173,7 +182,6 @@ private:
     void splitWire(int tag, const model::Point3D& position);
     void deleteWire(int tag);
     void duplicateWire(int tag);
-    void showWireProperties(int tag);
     void editWire(const model::Wire& original, const model::Wire& updated);
     void editStructuredCard(std::size_t sourceLine, const QString& cardText);
     void makeFieldOptimizable(std::size_t sourceLine,
@@ -194,15 +202,10 @@ private:
     void deleteReferenceImpedance(std::size_t sourceLine);
     void changeExcitation(const model::Excitation& excitation);
     void addExcitationAt(int wireTag, int segment);
-    void showExcitationEditor(std::size_t sourceLine);
-    void showExcitationInSetup(std::size_t sourceLine);
     void deleteExcitation(std::size_t sourceLine);
     void addLoadAt(int wireTag, int segment);
     void chooseTransmissionLineEndpoint(int wireTag, int segment);
     void setPendingTransmissionLineEndpoint(std::optional<std::pair<int, int>> endpoint);
-    void showLoadInEditor(std::size_t sourceLine);
-    void showTransmissionLineInEditor(std::size_t sourceLine);
-    void showNetworkInEditor(std::size_t sourceLine);
     // Adds new NT and TL cards to the existing NT/TL group; NEC-2 would discard the earlier
     // networks if other cards came between them.
     void upsertNetworkCard(const QString& description, std::size_t sourceLine,
@@ -233,7 +236,7 @@ private:
     void finishAnalysis(SolverProcessResult result);
     void setCurrentRunStatus(const QString& status);
     void showRunHistory();
-    void refreshDashboardRuns();
+    void refreshLatestRun();
     void loadSelectedRun();
     void inspectSelectedRunInput();
     void openSelectedRunSnapshot();
@@ -254,7 +257,7 @@ private:
     void applyReferenceImpedance(double ohms);
     void pushGeometrySourceEdit(const QString& description, QString updatedSource);
     void applyGeometrySource(const QString& description, const QString& source,
-        EditorDestination destination, int geometryTab, int analysisTab, int sourceTab);
+        EditorDestination destination, int geometryTab, int sourceTab);
     [[nodiscard]] auto nextWireTag() const -> int;
     [[nodiscard]] auto wireHasSymbolicGeometry(std::size_t sourceLine) const -> bool;
     void showSymbolicGeometryEditBlocked();
@@ -267,8 +270,6 @@ private:
     void navigateToSourceHistoryEntry(const SourceHistoryEntry& entry);
     void updateUndoActions();
     [[nodiscard]] auto activeSource() const -> const nec::NecSourceCache&;
-    void updateProjectTree(const model::AntennaModel& model, const nec::NecDocument& document);
-    void synchronizeProjectItemSelection(QTreeWidgetItem* item);
     void setCurrentFile(QString path);
     void restoreWorkspaceLayout();
     void saveWorkspaceLayout();
@@ -295,7 +296,6 @@ private:
     QAction* undoAction_{};
     QAction* redoAction_{};
     QAction* modelModuleAction_{};
-    QAction* analysisModuleAction_{};
     QAction* optimizeModuleAction_{};
     QAction* resetLayoutAction_{};
     QAction* problemsAction_{};
@@ -318,9 +318,10 @@ private:
     WorkbenchLayout* workbenchLayout_{};
     DetachablePanel* validationPanel_{};
     DetachablePanel* modelPanel_{};
-    DetachablePanel* setupPanel_{};
     DetachablePanel* optimizationPanel_{};
-    ControlPanel* controlPanel_{};
+    ModelColumn* modelColumn_{};
+    WirePropertiesEditor* wireEditor_{};
+    WorkbenchToolBar* toolBar_{};
     WelcomePage* welcomePage_{};
     WireCardEditor* wireCardEditor_{};
     StructuredCardEditor* structuredCardEditor_{};
@@ -339,13 +340,9 @@ private:
     ConvergenceWorkspace* convergenceWorkspace_{};
     OptimizationWorkspace* optimizationWorkspace_{};
     ParameterEditor* parameterEditor_{};
-    QTabWidget* analysisWorkspace_{};
     int previousModelWorkspaceIndex_{-1};
-    int previousAnalysisWorkspaceIndex_{-1};
     bool restoringWorkspaceTab_{};
     QTabWidget* validationWorkspace_{};
-    QTreeWidget* projectTree_{};
-    QDockWidget* projectDock_{};
     QLabel* validationOverviewSummary_{};
     QLabel* validationOverviewScope_{};
     WorkbenchStatusBar* statusBar_{};
@@ -391,14 +388,8 @@ private:
     int geometryTabIndex_{};
     int geometry3DTabIndex_{};
     int structuredSourceTabIndex_{1};
-    int loadNetworkTabIndex_{};
     int modelParametersWorkspaceIndex_{};
-    int modelSourcesWorkspaceIndex_{};
-    int modelEnvironmentWorkspaceIndex_{};
     int modelDeckWorkspaceIndex_{};
-    int analysisSolverTabIndex_{};
-    int analysisFrequencyTabIndex_{};
-    int analysisRequestsTabIndex_{};
     int validationOverviewTabIndex_{};
     int averageGainValidationTabIndex_{};
     int convergenceValidationTabIndex_{};

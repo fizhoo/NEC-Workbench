@@ -10,6 +10,7 @@
 #include "ui/bottom/RunHistoryView.h"
 #include "ui/bottom/RunLogView.h"
 #include "ui/WorkspaceNavigator.h"
+#include "ui/WorkbenchToolBar.h"
 #include "ui/WorkbenchIcon.h"
 
 #include "analysis/FrequencyComparison.h"
@@ -29,7 +30,9 @@
 #include "nec/NecSymbolEditor.h"
 #include "nec/NecSymbolResolver.h"
 #include "nec/NecWriter.h"
-#include "ui/controlpanel/ControlPanel.h"
+#include "ui/modeltree/ModelColumn.h"
+#include "ui/modeltree/ModelTree.h"
+#include "ui/modeltree/PropertiesPane.h"
 #include "ui/cards/WireCardEditor.h"
 #include "ui/cards/StructuredCardEditor.h"
 #include "ui/analysis/AnalysisSetupEditor.h"
@@ -46,7 +49,7 @@
 #include "ui/geometry/Geometry3DView.h"
 #include "ui/geometry/GeometryView.h"
 #include "ui/geometry/GeometrySettingsDialog.h"
-#include "ui/geometry/WirePropertiesDialog.h"
+#include "ui/geometry/WirePropertiesEditor.h"
 #include "ui/optimization/OptimizationWorkspace.h"
 #include "ui/model/ParameterEditor.h"
 #include "ui/results/ResultFullView.h"
@@ -54,7 +57,6 @@
 #include "ui/results/ResultsController.h"
 #include "ui/setup/SetupEditor.h"
 #include "ui/setup/LoadNetworkEditor.h"
-#include "ui/setup/ExcitationPropertiesDialog.h"
 #include "ui/welcome/WelcomePage.h"
 
 #include <QAction>
@@ -66,7 +68,6 @@
 #include <QCommandLinkButton>
 #include <QCoreApplication>
 #include <QDateTime>
-#include <QDockWidget>
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -96,7 +97,6 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRegularExpression>
-#include <QScrollArea>
 #include <QScreen>
 #include <QSettings>
 #include <QSignalBlocker>
@@ -115,9 +115,6 @@
 #include <QVariant>
 #include <QToolBar>
 #include <QToolButton>
-#include <QTreeWidget>
-#include <QTreeWidgetItem>
-#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -138,10 +135,6 @@ namespace necwb::ui {
 namespace {
 
 constexpr QSize kValidationWindowSize{520, 380};
-
-constexpr auto ItemKindRole = Qt::UserRole;
-constexpr auto WireTagRole = Qt::UserRole + 1;
-constexpr auto SourceLineRole = Qt::UserRole + 2;
 
 auto modelSegmentCount(const model::AntennaModel& model) -> int
 {
@@ -187,7 +180,6 @@ void invokeFocusedEditCommand(const char* command)
     }
 }
 
-constexpr auto CardMnemonicRole = Qt::UserRole + 5;
 
 auto workspaceDensityFromId(const QString& id) -> MainWindow::WorkspaceDensity
 {
@@ -290,19 +282,6 @@ auto writeAverageGainMetadata(const QString& directory, double frequencyMHz,
     return file.write(contents) == contents.size();
 }
 
-auto findProjectItem(QTreeWidget* tree, const QString& kind, int role,
-    const QVariant& value) -> QTreeWidgetItem*
-{
-    QTreeWidgetItemIterator iterator(tree);
-    while (*iterator != nullptr) {
-        auto* item = *iterator;
-        if (item->data(0, ItemKindRole).toString() == kind
-            && item->data(0, role) == value) return item;
-        ++iterator;
-    }
-    return nullptr;
-}
-
 auto createGeometryPane(const QString& title, GeometryView* view, QWidget* parent) -> QWidget*
 {
     auto* pane = new QWidget(parent);
@@ -328,15 +307,6 @@ auto createGeometryPane(const QString& title, GeometryView* view, QWidget* paren
     layout->addWidget(header);
     layout->addWidget(view, 1);
     return pane;
-}
-
-auto scrollableEditor(QWidget* editor, QWidget* parent) -> QScrollArea*
-{
-    auto* scroll = new QScrollArea(parent);
-    scroll->setFrameShape(QFrame::NoFrame);
-    scroll->setWidgetResizable(true);
-    scroll->setWidget(editor);
-    return scroll;
 }
 
 void preserveControlHeights(QWidget* root)
@@ -365,7 +335,6 @@ MainWindow::MainWindow()
     setStatusBar(statusBar_);
     createActions();
     createWorkspace();
-    createDocks();
     createMenusAndToolbar();
     qApp->installEventFilter(this);
     setWorkspaceDensity(workspaceDensityFromId(QSettings{}.value(
@@ -392,9 +361,6 @@ MainWindow::MainWindow()
         saveAction_->setEnabled(modified);
         setWindowModified(modified);
         sourceWorkspace_->setTabText(0, modified ? tr("Raw Source *") : tr("Raw Source"));
-        if (controlPanel_ != nullptr)
-            controlPanel_->setDocumentState(currentFile_.isEmpty()
-                    ? QString{} : QFileInfo(currentFile_).fileName(), modified);
     });
     connect(editor_->document(), &QTextDocument::undoAvailable, this, [this] { updateUndoActions(); });
     connect(editor_->document(), &QTextDocument::redoAvailable, this, [this] { updateUndoActions(); });
@@ -402,7 +368,6 @@ MainWindow::MainWindow()
         this, [this] { recordSourceUndoCommand(); });
     connect(workspace_, &QTabWidget::currentChanged, this, [this] { updateUndoActions(); });
     previousModelWorkspaceIndex_ = modelWorkspace_->currentIndex();
-    previousAnalysisWorkspaceIndex_ = analysisWorkspace_->currentIndex();
     connect(modelWorkspace_, &QTabWidget::currentChanged, this, [this](int index) {
         if (!restoringWorkspaceTab_ && previousModelWorkspaceIndex_ >= 0
             && index != previousModelWorkspaceIndex_
@@ -413,18 +378,6 @@ MainWindow::MainWindow()
             return;
         }
         previousModelWorkspaceIndex_ = index;
-        updateUndoActions();
-    });
-    connect(analysisWorkspace_, &QTabWidget::currentChanged, this, [this](int index) {
-        if (!restoringWorkspaceTab_ && previousAnalysisWorkspaceIndex_ >= 0
-            && index != previousAnalysisWorkspaceIndex_
-            && !confirmPendingEdits(analysisWorkspace_->widget(previousAnalysisWorkspaceIndex_))) {
-            restoringWorkspaceTab_ = true;
-            analysisWorkspace_->setCurrentIndex(previousAnalysisWorkspaceIndex_);
-            restoringWorkspaceTab_ = false;
-            return;
-        }
-        previousAnalysisWorkspaceIndex_ = index;
         updateUndoActions();
     });
     connect(sourceWorkspace_, &QTabWidget::currentChanged, this, [this](int index) {
@@ -675,19 +628,14 @@ void MainWindow::createActions()
         [this] { showAboutDialog(); });
 
     modelModuleAction_ = new QAction(tr("&Model"), this);
-    analysisModuleAction_ = new QAction(tr("&Setup"), this);
     optimizeModuleAction_ = new QAction(tr("&Optimize"), this);
     modelModuleAction_->setObjectName(QStringLiteral("modelModuleAction"));
-    analysisModuleAction_->setObjectName(QStringLiteral("setupModuleAction"));
     optimizeModuleAction_->setObjectName(QStringLiteral("optimizeModuleAction"));
     modelModuleAction_->setIcon(workbenchIcon("geometry"));
-    analysisModuleAction_->setIcon(workbenchIcon("settings"));
     optimizeModuleAction_->setIcon(workbenchIcon("optimize"));
     modelModuleAction_->setEnabled(false);
-    analysisModuleAction_->setEnabled(false);
     optimizeModuleAction_->setEnabled(false);
     connect(modelModuleAction_, &QAction::triggered, this, [this] { showModule(Module::Model); });
-    connect(analysisModuleAction_, &QAction::triggered, this, [this] { showModule(Module::Setup); });
     connect(optimizeModuleAction_, &QAction::triggered,
         this, [this] { showModule(Module::Optimize); });
 }
@@ -736,46 +684,8 @@ void MainWindow::createWorkspace()
     welcomePage_ = new WelcomePage(newAction_, openAction_,
         [this](const QString& path) { openFileAtPath(path); },
         [this] { openExample(); }, [this] { clearRecentFiles(); }, this);
-    controlPanel_ = new ControlPanel(this);
-    controlPanel_->setFileActions(openAction_, saveAction_);
-    refreshRecentFileViews(recentFiles());
-    controlPanel_->setQuickActions(
-        checkAction_, runAction_, quickSweepAction_, stopAction_);
-    controlPanel_->setAverageGainAction(averageGainAction_);
-    controlPanel_->setConvergenceAction(convergenceAction_);
-    controlPanel_->setOpenWorkspaceCallback([this](ControlPanel::Workspace destination) {
-        switch (destination) {
-        case ControlPanel::Workspace::Solver:
-            showEditor(EditorDestination::Solver);
-            break;
-        case ControlPanel::Workspace::Runs:
-            showRunHistory();
-            break;
-        case ControlPanel::Workspace::Optimize:
-            showModule(Module::Optimize);
-            break;
-        }
-    });
-    controlPanel_->setOpenEditorCallback([this](ControlPanel::Editor destination) {
-        switch (destination) {
-        case ControlPanel::Editor::Frequency: showEditor(EditorDestination::Frequency); break;
-        case ControlPanel::Editor::Wires: showEditor(EditorDestination::Geometry); break;
-        case ControlPanel::Editor::Sources: showEditor(EditorDestination::Sources); break;
-        case ControlPanel::Editor::Loads:
-        case ControlPanel::Editor::TransmissionLines:
-            showEditor(EditorDestination::Loads);
-            break;
-        case ControlPanel::Editor::Networks:
-            showEditor(EditorDestination::Loads);
-            loadNetworkEditor_->focusNetworks();
-            break;
-        case ControlPanel::Editor::Ground: showEditor(EditorDestination::Environment); break;
-        case ControlPanel::Editor::Variables: showEditor(EditorDestination::Parameters); break;
-        case ControlPanel::Editor::Requests: showEditor(EditorDestination::Requests); break;
-        case ControlPanel::Editor::Deck: showEditor(EditorDestination::RawSource); break;
-        }
-    });
-    QTimer::singleShot(0, this, [this] { refreshDashboardRuns(); });
+    createModelColumn();
+    QTimer::singleShot(0, this, [this] { refreshLatestRun(); });
 
 
     auto* structuredContainer = new QWidget(sourceWorkspace_);
@@ -923,15 +833,13 @@ void MainWindow::createWorkspace()
         connect(view, &View::wireSelected, this,
             [this](int tag) { selectWireInProject(tag); });
         connect(view, &View::wirePropertiesRequested, this,
-            [this](int tag) { showWireProperties(tag); });
+            [this](int tag) { showProperties({ModelNode::Wire, tag}); });
         connect(view, &View::excitationSelected, this,
             [this](std::size_t line) { selectExcitation(line); });
         connect(view, &View::addExcitationRequested, this,
             [this](int tag, int segment) { addExcitationAt(tag, segment); });
         connect(view, &View::editExcitationRequested, this,
-            [this](std::size_t line) { showExcitationEditor(line); });
-        connect(view, &View::openExcitationSetupRequested, this,
-            [this](std::size_t line) { showExcitationInSetup(line); });
+            [this](std::size_t line) { showProperties({ModelNode::Source, -1, line}); });
         connect(view, &View::deleteExcitationRequested, this,
             [this](std::size_t line) { deleteExcitation(line); });
         connect(view, &View::loadSelected, this,
@@ -945,9 +853,11 @@ void MainWindow::createWorkspace()
         connect(view, &View::cancelTransmissionLineRequested, this,
             [this] { setPendingTransmissionLineEndpoint(std::nullopt); });
         connect(view, &View::editLoadRequested, this,
-            [this](std::size_t line) { showLoadInEditor(line); });
+            [this](std::size_t line) { showProperties({ModelNode::Load, -1, line}); });
         connect(view, &View::editTransmissionLineRequested, this,
-            [this](std::size_t line) { showTransmissionLineInEditor(line); });
+            [this](std::size_t line) {
+                showProperties({ModelNode::TransmissionLine, -1, line});
+            });
         connect(view, &View::deleteLoadRequested, this,
             [this](std::size_t line) { deleteSetupCard(tr("Delete load"), line); });
         connect(view, &View::deleteTransmissionLineRequested, this,
@@ -955,7 +865,7 @@ void MainWindow::createWorkspace()
         connect(view, &View::networkSelected, this,
             [this](std::size_t line) { selectNetwork(line); });
         connect(view, &View::editNetworkRequested, this,
-            [this](std::size_t line) { showNetworkInEditor(line); });
+            [this](std::size_t line) { showProperties({ModelNode::Network, -1, line}); });
         connect(view, &View::deleteNetworkRequested, this,
             [this](std::size_t line) { deleteSetupCard(tr("Delete network"), line); });
     };
@@ -1025,11 +935,7 @@ void MainWindow::createWorkspace()
     connect(parameterEditor_, &ParameterEditor::parameterSelected, this,
         [this](std::size_t sourceLine) { editor_->goToLine(sourceLine); });
 
-    analysisWorkspace_ = new QTabWidget(windowHost_);
-    analysisWorkspace_->setObjectName(QStringLiteral("setupWorkspace"));
-    analysisWorkspace_->setDocumentMode(true);
-
-    setupEditor_ = new SetupEditor(analysisWorkspace_);
+    setupEditor_ = new SetupEditor(windowHost_);
     connect(setupEditor_, &SetupEditor::frequencyChanged, this,
         [this](model::FrequencyDefinition frequency) { changeFrequency(frequency); });
     connect(setupEditor_, &SetupEditor::frequencyDeleteRequested, this,
@@ -1048,7 +954,7 @@ void MainWindow::createWorkspace()
         [this](std::size_t sourceLine) { deleteExcitation(sourceLine); });
     connect(setupEditor_, &SetupEditor::excitationSelected, this,
         [this](std::size_t sourceLine) { selectExcitation(sourceLine); });
-    loadNetworkEditor_ = new LoadNetworkEditor(analysisWorkspace_);
+    loadNetworkEditor_ = new LoadNetworkEditor(windowHost_);
     loadNetworkEditor_->setLengthUnit(geometrySettings_.lengthUnit);
     connect(loadNetworkEditor_, &LoadNetworkEditor::loadChanged, this,
         [this](model::LoadDefinition load) {
@@ -1118,7 +1024,7 @@ void MainWindow::createWorkspace()
     modelPanel_->setStatusText(tr("No model loaded"));
     modelPanel_->setContent(modelNavigator);
 
-    analysisSetupEditor_ = new AnalysisSetupEditor(analysisWorkspace_);
+    analysisSetupEditor_ = new AnalysisSetupEditor(windowHost_);
     connect(analysisSetupEditor_, &AnalysisSetupEditor::settingsChanged, this,
         [this](QString backendId, QString executablePath, int timeoutSeconds) {
             const auto backendChanged = solverBackendId_ != backendId;
@@ -1133,8 +1039,7 @@ void MainWindow::createWorkspace()
             convergenceWorkspace_->setContext(editor_->toPlainText(), currentFile_,
                 solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_,
                 modelChecked_ && modelErrorCount_ == 0);
-            controlPanel_->setModel(currentModel_, currentSetup_, activeSource().document(),
-                solverBackendId_, modelChecked_, modelErrorCount_, modelWarningCount_);
+            refreshEngine();
             runAction_->setStatusTip(solverExecutablePath_.isEmpty()
                     ? tr("Select a NEC engine executable under Setup → Solver")
                     : tr("Run the checked model with the selected NEC engine"));
@@ -1148,15 +1053,7 @@ void MainWindow::createWorkspace()
             QSettings{}.setValue(
                 QStringLiteral("analysis/executables/%1").arg(backendId), executablePath);
         });
-    analysisFrequencyTabIndex_ = analysisWorkspace_->addTab(
-        setupEditor_->frequencyPage(), tr("Frequency"));
-    modelSourcesWorkspaceIndex_ = analysisWorkspace_->addTab(
-        setupEditor_->sourcesPage(), tr("Sources"));
-    loadNetworkTabIndex_ = analysisWorkspace_->addTab(
-        loadNetworkEditor_, tr("Loads && Transmission Lines"));
-    modelEnvironmentWorkspaceIndex_ = analysisWorkspace_->addTab(
-        setupEditor_->environmentPage(), tr("Environment"));
-    analysisRequestEditor_ = new AnalysisRequestEditor(analysisWorkspace_);
+    analysisRequestEditor_ = new AnalysisRequestEditor(windowHost_);
     connect(analysisRequestEditor_, &AnalysisRequestEditor::executionChanged, this,
         [this](bool enabled, model::ExecutionRequest execution) {
             changeExecutionRequest(enabled, execution);
@@ -1182,29 +1079,11 @@ void MainWindow::createWorkspace()
         [this](std::size_t sourceLine) {
             deleteSetupCard(tr("Delete radiation pattern"), sourceLine);
         });
-    analysisRequestsTabIndex_ = analysisWorkspace_->addTab(
-        scrollableEditor(analysisRequestEditor_, analysisWorkspace_), tr("Requests"));
-    analysisSolverTabIndex_ = analysisWorkspace_->addTab(
-        scrollableEditor(analysisSetupEditor_, analysisWorkspace_), tr("Solver"));
-    analysisWorkspace_->setTabIcon(modelSourcesWorkspaceIndex_, workbenchIcon("sources"));
-    analysisWorkspace_->setTabIcon(loadNetworkTabIndex_, workbenchIcon("loads"));
-    analysisWorkspace_->setTabIcon(modelEnvironmentWorkspaceIndex_, workbenchIcon("environment"));
-    analysisWorkspace_->setTabIcon(analysisSolverTabIndex_, workbenchIcon("settings"));
-    analysisWorkspace_->setTabIcon(analysisFrequencyTabIndex_, workbenchIcon("frequency-sweep"));
-    analysisWorkspace_->setTabIcon(analysisRequestsTabIndex_, workbenchIcon("radiation-pattern"));
-
-    auto* analysisNavigator = new WorkspaceNavigator(
-        analysisWorkspace_, QStringLiteral("analysis"), windowHost_);
-    setupPanel_ = new DetachablePanel(QStringLiteral("analysis-setup"),
-        tr("Analysis Setup"), windowHost_, {QStringLiteral("workspaceWindows"),
-            QStringLiteral("analysisSetupWindow")});
-    setupPanel_->setStatusText(tr("No model loaded"));
-    setupPanel_->setContent(analysisNavigator);
 
     createValidationWindow();
     createOptimizationWorkspace();
     createResultsColumn();
-    workbenchLayout_ = new WorkbenchLayout({.welcome = welcomePage_, .leftColumn = controlPanel_,
+    workbenchLayout_ = new WorkbenchLayout({.welcome = welcomePage_, .leftColumn = modelColumn_,
         .geometry = workspace_, .fullView = resultsController_->fullView(),
         .rightColumn = resultsController_->column(), .bottomPanel = bottomPanel_}, this);
     setCentralWidget(workbenchLayout_);
@@ -1285,13 +1164,13 @@ void MainWindow::createValidationWindow()
     validationPanel_->setContent(validationWorkspace_);
     convergenceWorkspace_->setRunsChangedCallback([this] {
         bottomPanel_->runs()->reload();
-        refreshDashboardRuns();
+        refreshLatestRun();
     });
     convergenceWorkspace_->setRunningChangedCallback([this] { synchronizeRunnerState(); });
     convergenceWorkspace_->setSummaryChangedCallback([this](const QString& summary) {
         validationPanel_->setStatusText(summary);
-        controlPanel_->setStudyStatus(ControlPanel::Study::Convergence,
-            ControlPanel::StudyState::Complete, summary);
+        modelColumn_->tree()->setStudyStatus(ModelTree::Study::Convergence,
+            ModelTree::StudyState::Complete, summary);
     });
 }
 
@@ -1305,7 +1184,7 @@ void MainWindow::createOptimizationWorkspace()
     optimizationWorkspace_->setObjectName(QStringLiteral("optimizationWorkspace"));
     optimizationWorkspace_->setRunsChangedCallback([this] {
         bottomPanel_->runs()->reload();
-        refreshDashboardRuns();
+        refreshLatestRun();
     });
     optimizationWorkspace_->setRunningChangedCallback([this] {
         synchronizeRunnerState();
@@ -1383,7 +1262,6 @@ void MainWindow::showModule(Module module)
 {
     switch (module) {
     case Module::Model: modelPanel_->showWindow(); break;
-    case Module::Setup: setupPanel_->showWindow(); break;
     case Module::Optimize: optimizationPanel_->showWindow(); break;
     }
     updateUndoActions();
@@ -1391,25 +1269,14 @@ void MainWindow::showModule(Module module)
 
 auto MainWindow::confirmPendingEdits(QWidget* page) -> bool
 {
-    const auto setupPending = setupEditor_ != nullptr && setupEditor_->hasPendingEdits(page);
-    const auto networkPending = loadNetworkEditor_ != nullptr
-        && page == loadNetworkEditor_ && loadNetworkEditor_->hasPendingEdits();
-    const auto parameterPending = parameterEditor_ != nullptr
-        && page == parameterEditor_ && parameterEditor_->hasPendingEdits();
-    const auto requestPending = analysisRequestEditor_ != nullptr && page != nullptr
-        && (page == analysisRequestEditor_ || page->isAncestorOf(analysisRequestEditor_))
-        && analysisRequestEditor_->hasPendingEdits();
-    if (!setupPending && !networkPending && !parameterPending && !requestPending) return true;
-
+    // In the NEC Deck window only Parameters holds edits until applied.
+    if (page != parameterEditor_ || !parameterEditor_->hasPendingEdits()) return true;
     const auto answer = QMessageBox::warning(this, tr("Unapplied Changes"), tr(
         "This page contains changes that have not been applied.\n\n"
         "Choose Cancel to return and use the highlighted Apply button, or discard the edits."),
         QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Cancel);
     if (answer != QMessageBox::Discard) return false;
-    if (setupPending) setupEditor_->discardPendingEdits(page);
-    if (networkPending) loadNetworkEditor_->discardPendingEdits();
-    if (parameterPending) parameterEditor_->discardPendingEdits();
-    if (requestPending) analysisRequestEditor_->discardPendingEdits();
+    parameterEditor_->discardPendingEdits();
     return true;
 }
 
@@ -1419,27 +1286,11 @@ void MainWindow::showEditor(EditorDestination destination, int geometryTab)
         showModule(Module::Model);
         modelWorkspace_->setCurrentIndex(modelDeckWorkspaceIndex_);
         sourceWorkspace_->setCurrentIndex(0);
-    } else if (destination == EditorDestination::Frequency) {
-        showModule(Module::Setup);
-        analysisWorkspace_->setCurrentIndex(analysisFrequencyTabIndex_);
-    } else if (destination == EditorDestination::Sources) {
-        showModule(Module::Setup);
-        analysisWorkspace_->setCurrentIndex(modelSourcesWorkspaceIndex_);
-    } else if (destination == EditorDestination::Loads) {
-        showModule(Module::Setup);
-        analysisWorkspace_->setCurrentIndex(loadNetworkTabIndex_);
-    } else if (destination == EditorDestination::Environment) {
-        showModule(Module::Setup);
-        analysisWorkspace_->setCurrentIndex(modelEnvironmentWorkspaceIndex_);
-    } else if (destination == EditorDestination::Requests) {
-        showModule(Module::Setup);
-        analysisWorkspace_->setCurrentIndex(analysisRequestsTabIndex_);
-    } else if (destination == EditorDestination::Solver) {
-        showModule(Module::Setup);
-        analysisWorkspace_->setCurrentIndex(analysisSolverTabIndex_);
     } else if (destination == EditorDestination::Parameters) {
         showModule(Module::Model);
         modelWorkspace_->setCurrentIndex(modelParametersWorkspaceIndex_);
+    } else if (destination != EditorDestination::Geometry) {
+        showSetupPage(destination);
     } else {
         workbenchLayout_->showModel();
         workbenchLayout_->showGeometry();
@@ -1784,26 +1635,6 @@ void MainWindow::showAutoSegmentation()
     }
 }
 
-void MainWindow::createDocks()
-{
-    projectDock_ = new QDockWidget(tr("Project Tree"), this);
-    projectDock_->setObjectName(QStringLiteral("projectDock"));
-    projectTree_ = new QTreeWidget(projectDock_);
-    projectTree_->setObjectName(QStringLiteral("projectTree"));
-    projectTree_->setHeaderHidden(true);
-    projectTree_->setAlternatingRowColors(true);
-    projectDock_->setWidget(projectTree_);
-    addDockWidget(Qt::LeftDockWidgetArea, projectDock_);
-    projectDock_->hide();
-
-    connect(projectTree_, &QTreeWidget::itemClicked, this,
-        [this](QTreeWidgetItem* item) { synchronizeProjectItemSelection(item); });
-    connect(projectTree_, &QTreeWidget::itemDoubleClicked, this,
-        [this](QTreeWidgetItem* item) { activateProjectItem(item); });
-
-    updateProjectTree({}, nec::NecDocument{});
-}
-
 void MainWindow::createMenusAndToolbar()
 {
     auto* fileMenu = menuBar()->addMenu(tr("&File"));
@@ -1836,9 +1667,6 @@ void MainWindow::createMenusAndToolbar()
     densityMenu->addAction(standardDensityAction_);
     densityMenu->addAction(spaciousDensityAction_);
     viewMenu->addSeparator();
-    auto* projectTreeAction =projectDock_->toggleViewAction();
-    projectTreeAction->setText(tr("Project Tree"));
-    viewMenu->addAction(projectTreeAction);
     viewMenu->addAction(bottomPanel_->toggleAction());
     viewMenu->addAction(workbenchLayout_->rightColumnAction());
     viewMenu->addAction(problemsAction_);
@@ -1922,11 +1750,18 @@ void MainWindow::createMenusAndToolbar()
     helpMenu->addSeparator();
     helpMenu->addAction(aboutAction_);
 
+    toolBar_ = new WorkbenchToolBar({.open = openAction_, .recentModels = recentModelsMenu_,
+        .save = saveAction_, .run = runAction_, .stop = stopAction_, .sweep = quickSweepAction_,
+        .check = checkAction_, .optimize = optimizeModuleAction_}, this);
+    refreshEngine();
+    toolBar_->setBackendSelectedCallback(
+        [this](const QString& backendId) { analysisSetupEditor_->selectBackend(backendId); });
+    toolBar_->setConfigureCallback([this] { showEditor(EditorDestination::Solver); });
+    addToolBar(Qt::TopToolBarArea, toolBar_);
 }
 
 void MainWindow::resetWorkspaceLayout()
 {
-    projectDock_->hide();
     workbenchLayout_->resetLayout();
     bottomPanel_->resetLayout();
     statusBar()->showMessage(tr("Workspace layout reset."), 4000);
@@ -1974,7 +1809,6 @@ void MainWindow::applyWorkspaceDensity()
         "QTabBar::tab { padding: %4px %5px; }"
         "QHeaderView::section { padding: 2px %2px; }"
         "QTableView::item, QTreeView::item, QListView::item { padding: 1px %2px; }"
-        "QDockWidget::title { padding: 2px %2px; }"
         "QStatusBar { min-height: %3px; }"
     ).arg(toolbarHeight).arg(horizontalPadding).arg(controlHeight).arg(tabPadding).arg(tabPadding + 4));
 }
@@ -2099,7 +1933,6 @@ void MainWindow::newModel()
     resetSourceUndoHistory();
     hasNecModel_ = true;
     modelModuleAction_->setEnabled(true);
-    analysisModuleAction_->setEnabled(true);
     workbenchLayout_->showModel();
     analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile({});
@@ -2134,7 +1967,6 @@ void MainWindow::openFileAtPath(const QString& path)
     resetSourceUndoHistory();
     hasNecModel_ = true;
     modelModuleAction_->setEnabled(true);
-    analysisModuleAction_->setEnabled(true);
     workbenchLayout_->showModel();
     analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile(path);
@@ -2173,9 +2005,6 @@ auto MainWindow::recentFiles() const -> QStringList
 void MainWindow::refreshRecentFileViews(const QStringList& files)
 {
     if (welcomePage_ != nullptr) welcomePage_->setRecentFiles(files);
-    if (controlPanel_ != nullptr) controlPanel_->setRecentModels(files,
-        [this](const QString& path) { openFileAtPath(path); },
-        [this] { clearRecentFiles(); });
     if (recentModelsMenu_ == nullptr) return;
     recentModelsMenu_->clear();
     if (files.isEmpty()) {
@@ -2359,9 +2188,8 @@ void MainWindow::checkModel(bool presentReport)
     analysisRequestEditor_->setData(currentSetup_);
     structuredCardEditor_->setParameterControlledFields(parameterFields);
     structuredCardEditor_->setDocument(document);
-    controlPanel_->setModel(currentModel_, currentSetup_, document, solverBackendId_, true,
-        modelErrorCount_, modelWarningCount_);
-    updateProjectTree(currentModel_, document);
+    modelColumn_->tree()->setModel(currentModel_, currentSetup_, document);
+    refreshWireEditor();
     optimizationWorkspace_->setContext(editor_->toPlainText(), currentFile_,
         solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_,
         modelErrorCount_ == 0);
@@ -2427,21 +2255,19 @@ void MainWindow::clearCheckResults()
         dashboardModel = nec::NecModelConverter{}.convert(*resolved).model;
         dashboardSetup = nec::NecSetupConverter{}.convert(*resolved);
     }
-    controlPanel_->setModel(dashboardModel, dashboardSetup, cache.document(),
-        solverBackendId_, false, modelErrorCount_, modelWarningCount_);
+    modelColumn_->tree()->setModel(dashboardModel, dashboardSetup, cache.document());
     averageGainResultsView_->markStale();
     convergenceWorkspace_->markStale();
-    controlPanel_->setStudyStatus(ControlPanel::Study::AverageGain,
-        ControlPanel::StudyState::Stale);
-    controlPanel_->setStudyStatus(ControlPanel::Study::Convergence,
-        ControlPanel::StudyState::Stale);
+    modelColumn_->tree()->setStudyStatus(ModelTree::Study::AverageGain,
+        ModelTree::StudyState::Stale);
+    modelColumn_->tree()->setStudyStatus(ModelTree::Study::Convergence,
+        ModelTree::StudyState::Stale);
     const auto solverDeckUnchanged = resultsAvailable_ && !liveResultsStale_
         && !liveResultsDeck_.empty() && cache.resolution().ok()
         && analysis::solverDeckIdentity(cache.resolution().generatedDeck) == liveResultsDeck_;
     if (solverDeckUnchanged) {
         applyReferenceImpedance(model::referenceImpedanceOhms(dashboardSetup));
     } else if (resultsAvailable_) {
-        controlPanel_->markResultsStale();
         resultsController_->setStale(true);
         liveResultsStale_ = true;
     }
@@ -2470,174 +2296,196 @@ void MainWindow::goToDiagnostic(std::size_t sourceLine)
         selectNetwork(sourceLine);
 }
 
-void MainWindow::activateProjectItem(QTreeWidgetItem* item)
-{
-    const auto kind = item->data(0, ItemKindRole).toString();
-    const auto sourceLine = item->data(0, SourceLineRole).toULongLong();
-    if (kind == QStringLiteral("geometry")) {
-        showEditor(EditorDestination::Geometry, geometryTabIndex_);
-        return;
-    }
-    if (kind == QStringLiteral("parameters")) {
-        showEditor(EditorDestination::Parameters);
-        return;
-    }
-    if (kind == QStringLiteral("excitation")) {
-        showEditor(EditorDestination::Sources);
-        setupEditor_->selectExcitation(item->data(0, SourceLineRole).toULongLong());
-        return;
-    }
-    if (kind == QStringLiteral("load")) {
-        showLoadInEditor(item->data(0, SourceLineRole).toULongLong());
-        return;
-    }
-    if (kind == QStringLiteral("transmissionLine")) {
-        showTransmissionLineInEditor(item->data(0, SourceLineRole).toULongLong());
-        return;
-    }
-    if (kind == QStringLiteral("network")) {
-        showNetworkInEditor(item->data(0, SourceLineRole).toULongLong());
-        return;
-    }
-    if (kind == QStringLiteral("source") || kind == QStringLiteral("wire")) {
-        if (kind == QStringLiteral("wire")) {
-            showEditor(EditorDestination::RawSource);
-            sourceWorkspace_->setCurrentIndex(structuredSourceTabIndex_);
-            if (auto* tabs = qobject_cast<QTabWidget*>(wireCardEditor_->parentWidget()))
-                tabs->setCurrentWidget(wireCardEditor_);
-            wireCardEditor_->selectWire(item->data(0, WireTagRole).toInt());
-        } else {
-            showEditor(EditorDestination::RawSource);
-        }
-        if (sourceLine != 0) editor_->goToLine(static_cast<std::size_t>(sourceLine));
-        return;
-    }
-    if (kind != QStringLiteral("card") || sourceLine == 0) return;
-
-    const auto mnemonic = item->data(0, CardMnemonicRole).toString();
-    if (mnemonic == QStringLiteral("FR")) {
-        showEditor(EditorDestination::Frequency);
-        return;
-    }
-    if (mnemonic == QStringLiteral("SY")) {
-        showEditor(EditorDestination::Parameters);
-        parameterEditor_->selectParameter(sourceLine);
-        return;
-    }
-    if (mnemonic == QStringLiteral("GN") || mnemonic == QStringLiteral("GE")) {
-        showEditor(EditorDestination::Environment);
-        return;
-    }
-    if (mnemonic == QStringLiteral("EX")) {
-        showEditor(EditorDestination::Sources);
-        setupEditor_->selectExcitation(sourceLine);
-        return;
-    }
-    if (mnemonic == QStringLiteral("LD")) {
-        showLoadInEditor(sourceLine);
-        return;
-    }
-    if (mnemonic == QStringLiteral("TL")) {
-        showTransmissionLineInEditor(sourceLine);
-        return;
-    }
-    if (mnemonic == QStringLiteral("RP") || mnemonic == QStringLiteral("XQ")) {
-        showModule(Module::Setup);
-        analysisWorkspace_->setCurrentIndex(analysisRequestsTabIndex_);
-        return;
-    }
-    if (mnemonic == QStringLiteral("GW")) {
-        showEditor(EditorDestination::RawSource);
-        sourceWorkspace_->setCurrentIndex(structuredSourceTabIndex_);
-        if (auto* tabs = qobject_cast<QTabWidget*>(wireCardEditor_->parentWidget()))
-            tabs->setCurrentWidget(wireCardEditor_);
-        wireCardEditor_->selectWire(item->data(0, WireTagRole).toInt());
-        return;
-    }
-    if (structuredCardEditor_->selectCard(sourceLine)) {
-        showEditor(EditorDestination::RawSource);
-        sourceWorkspace_->setCurrentIndex(structuredSourceTabIndex_);
-        if (auto* tabs = qobject_cast<QTabWidget*>(structuredCardEditor_->parentWidget()))
-            tabs->setCurrentWidget(structuredCardEditor_);
-        return;
-    }
-    showEditor(EditorDestination::RawSource);
-    editor_->goToLine(sourceLine);
-}
-
 void MainWindow::selectWireInProject(int tag)
 {
-    synchronizeGeometrySelection(tag);
-    wireCardEditor_->selectWire(tag);
-    setupEditor_->selectExcitation(0);
     if (tag < 0) {
-        projectTree_->clearSelection();
+        synchronizeGeometrySelection(-1);
+        wireCardEditor_->selectWire(-1);
+        setupEditor_->selectExcitation(0);
+        modelColumn_->tree()->clearSelection();
         return;
     }
-
-    if (auto* item = findProjectItem(projectTree_, QStringLiteral("wire"),
-            WireTagRole, tag)) {
-        projectTree_->setCurrentItem(item);
-        synchronizeProjectItemSelection(item);
-    }
+    selectInModel({ModelNode::Wire, tag});
 }
 
 void MainWindow::selectExcitation(std::size_t sourceLine)
 {
-    xyView_->selectExcitation(sourceLine);
-    xzView_->selectExcitation(sourceLine);
-    yzView_->selectExcitation(sourceLine);
-    geometry3DView_->selectExcitation(sourceLine);
-    wireCardEditor_->selectWire(-1);
-    setupEditor_->selectExcitation(sourceLine);
-
-    if (auto* item = findProjectItem(projectTree_, QStringLiteral("excitation"),
-            SourceLineRole, QVariant::fromValue(static_cast<qulonglong>(sourceLine)))) {
-        projectTree_->setCurrentItem(item);
-        synchronizeProjectItemSelection(item);
-    }
+    selectInModel({ModelNode::Source, -1, sourceLine});
 }
 
 void MainWindow::selectLoad(std::size_t sourceLine)
 {
-    xyView_->selectLoad(sourceLine);
-    xzView_->selectLoad(sourceLine);
-    yzView_->selectLoad(sourceLine);
-    geometry3DView_->selectLoad(sourceLine);
-    wireCardEditor_->selectWire(-1);
-    setupEditor_->selectExcitation(0);
-    loadNetworkEditor_->selectLoad(sourceLine);
-    if (auto* item = findProjectItem(projectTree_, QStringLiteral("load"),
-            SourceLineRole, QVariant::fromValue(static_cast<qulonglong>(sourceLine))))
-        projectTree_->setCurrentItem(item);
+    selectInModel({ModelNode::Load, -1, sourceLine});
 }
 
 void MainWindow::selectTransmissionLine(std::size_t sourceLine)
 {
-    xyView_->selectTransmissionLine(sourceLine);
-    xzView_->selectTransmissionLine(sourceLine);
-    yzView_->selectTransmissionLine(sourceLine);
-    geometry3DView_->selectTransmissionLine(sourceLine);
-    wireCardEditor_->selectWire(-1);
-    setupEditor_->selectExcitation(0);
-    loadNetworkEditor_->selectTransmissionLine(sourceLine);
-    if (auto* item = findProjectItem(projectTree_, QStringLiteral("transmissionLine"),
-            SourceLineRole, QVariant::fromValue(static_cast<qulonglong>(sourceLine))))
-        projectTree_->setCurrentItem(item);
+    selectInModel({ModelNode::TransmissionLine, -1, sourceLine});
 }
 
 void MainWindow::selectNetwork(std::size_t sourceLine)
 {
-    xyView_->selectNetwork(sourceLine);
-    xzView_->selectNetwork(sourceLine);
-    yzView_->selectNetwork(sourceLine);
-    geometry3DView_->selectNetwork(sourceLine);
-    wireCardEditor_->selectWire(-1);
-    setupEditor_->selectExcitation(0);
-    loadNetworkEditor_->selectNetwork(sourceLine);
-    if (auto* item = findProjectItem(projectTree_, QStringLiteral("network"),
-            SourceLineRole, QVariant::fromValue(static_cast<qulonglong>(sourceLine))))
-        projectTree_->setCurrentItem(item);
+    selectInModel({ModelNode::Network, -1, sourceLine});
+}
+
+void MainWindow::createModelColumn()
+{
+    modelColumn_ = new ModelColumn(this);
+    auto* tree = modelColumn_->tree();
+    tree->setStudyAction(ModelTree::Study::AverageGain, averageGainAction_);
+    tree->setStudyAction(ModelTree::Study::Convergence, convergenceAction_);
+    tree->setSelectionChangingCallback(
+        [this](const ModelSelection&) { return modelColumn_->pane()->commitPendingEdits(); });
+    tree->setSelectionChangedCallback(
+        [this](const ModelSelection& selection) { showModelSelection(selection); });
+    tree->setActivatedCallback([this](const ModelSelection& selection) {
+        switch (selection.node) {
+        case ModelNode::Deck: showEditor(EditorDestination::RawSource); break;
+        case ModelNode::Variables: showEditor(EditorDestination::Parameters); break;
+        case ModelNode::Validation:
+        case ModelNode::AverageGainTest:
+        case ModelNode::Convergence:
+            validationWorkspace_->setCurrentIndex(selection.node == ModelNode::Validation
+                ? validationOverviewTabIndex_
+                : selection.node == ModelNode::AverageGainTest ? averageGainValidationTabIndex_
+                                                               : convergenceValidationTabIndex_);
+            validationPanel_->showWindow();
+            break;
+        default: break;
+        }
+    });
+    wireEditor_ = new WirePropertiesEditor(windowHost_);
+    wireEditor_->setAppliedCallback(
+        [this](const model::Wire& original, const model::Wire& updated) {
+            editWire(original, updated);
+        });
+    modelColumn_->pane()->setDiscardCallback([this](QWidget* page) { discardPendingEdits(page); });
+}
+
+void MainWindow::showModelSelection(const ModelSelection& selection)
+{
+    const auto line = selection.sourceLine;
+    const std::array<GeometryInteractionView*, 4> views{xyView_, xzView_, yzView_, geometry3DView_};
+    if (selection.node != ModelNode::Wire) {
+        synchronizeGeometrySelection(-1);
+        wireCardEditor_->selectWire(-1);
+    }
+    setupEditor_->selectExcitation(selection.node == ModelNode::Source ? line : 0);
+    switch (selection.node) {
+    case ModelNode::Wire:
+        synchronizeGeometrySelection(selection.wireTag);
+        wireCardEditor_->selectWire(selection.wireTag);
+        refreshWireEditor();
+        return;
+    case ModelNode::Source:
+        for (auto* view : views) view->selectExcitation(line);
+        break;
+    case ModelNode::Load:
+        for (auto* view : views) view->selectLoad(line);
+        loadNetworkEditor_->selectLoad(line);
+        break;
+    case ModelNode::TransmissionLine:
+        for (auto* view : views) view->selectTransmissionLine(line);
+        loadNetworkEditor_->selectTransmissionLine(line);
+        break;
+    case ModelNode::Network:
+        for (auto* view : views) view->selectNetwork(line);
+        loadNetworkEditor_->selectNetwork(line);
+        break;
+    case ModelNode::Networks: loadNetworkEditor_->focusNetworks(); break;
+    default: break;
+    }
+    const auto [page, title] = paneContent(selection.node);
+    modelColumn_->showPage(page, title);
+}
+
+auto MainWindow::paneContent(ModelNode node) const -> std::pair<QWidget*, QString>
+{
+    switch (node) {
+    case ModelNode::Frequency: return {setupEditor_->frequencyPage(), tr("Frequency")};
+    case ModelNode::Wire: return {wireEditor_, tr("Wire")};
+    case ModelNode::Sources:
+    case ModelNode::Source: return {setupEditor_->sourcesPage(), tr("Sources")};
+    case ModelNode::Loads:
+    case ModelNode::Load:
+    case ModelNode::TransmissionLines:
+    case ModelNode::TransmissionLine:
+    case ModelNode::Networks:
+    case ModelNode::Network:
+        return {loadNetworkEditor_, tr("Loads, transmission lines and networks")};
+    case ModelNode::Ground: return {setupEditor_->environmentPage(), tr("Ground")};
+    case ModelNode::Requests: return {analysisRequestEditor_, tr("Requests")};
+    case ModelNode::Solver: return {analysisSetupEditor_, tr("Solver")};
+    default: return {nullptr, {}};
+    }
+}
+
+auto MainWindow::paneDestination() const -> EditorDestination
+{
+    const auto* page = modelColumn_->pane()->currentPage();
+    if (page == setupEditor_->sourcesPage()) return EditorDestination::Sources;
+    if (page == loadNetworkEditor_) return EditorDestination::Loads;
+    if (page == setupEditor_->environmentPage()) return EditorDestination::Environment;
+    if (page == analysisRequestEditor_) return EditorDestination::Requests;
+    if (page == analysisSetupEditor_) return EditorDestination::Solver;
+    if (page == setupEditor_->frequencyPage()) return EditorDestination::Frequency;
+    return EditorDestination::Geometry;
+}
+
+void MainWindow::showSetupPage(EditorDestination destination)
+{
+    const auto node = destination == EditorDestination::Frequency ? ModelNode::Frequency
+        : destination == EditorDestination::Sources ? ModelNode::Sources
+        : destination == EditorDestination::Loads ? ModelNode::Loads
+        : destination == EditorDestination::Environment ? ModelNode::Ground
+        : destination == EditorDestination::Requests ? ModelNode::Requests
+                                                     : ModelNode::Solver;
+    workbenchLayout_->showModel();
+    // Already on that page (an item in the group, say): leave the selection alone.
+    if (modelColumn_->pane()->currentPage() != paneContent(node).first) selectInModel({node});
+    raise();
+    activateWindow();
+}
+
+void MainWindow::refreshWireEditor()
+{
+    const auto selection = modelColumn_->tree()->currentSelection();
+    const auto* wire = selection && selection->node == ModelNode::Wire
+        ? currentModel_.wireByTag(selection->wireTag) : nullptr;
+    if (wire == nullptr) {
+        if (modelColumn_->pane()->currentPage() == wireEditor_) modelColumn_->showPage(nullptr, {});
+        return;
+    }
+    if (!wireEditor_->hasPendingEdits()) {
+        // Fields written as SY symbols or expressions stay linked; the pane only shows them.
+        WirePropertiesEditor::LinkedFields linked;
+        const auto block = editor_->document()->findBlockByNumber(
+            static_cast<int>(wire->sourceLine) - 1);
+        const auto card = block.isValid() ? block.text().toStdString() : std::string{};
+        for (auto field = std::size_t{0}; field < linked.size(); ++field) {
+            if (!card.empty() && !nec::necCardFieldIsNumeric(card, field))
+                linked[field] = QString::fromStdString(nec::necCardFieldText(card, field));
+        }
+        wireEditor_->setWire(*wire, currentModel_, geometrySettings_.lengthUnit, linked);
+    }
+    modelColumn_->showPage(wireEditor_, tr("Wire %1").arg(wire->tag));
+}
+
+void MainWindow::discardPendingEdits(QWidget* page)
+{
+    if (setupEditor_->hasPendingEdits(page)) setupEditor_->discardPendingEdits(page);
+    if (page == loadNetworkEditor_) loadNetworkEditor_->discardPendingEdits();
+    if (page == analysisRequestEditor_) analysisRequestEditor_->discardPendingEdits();
+    if (page == parameterEditor_) parameterEditor_->discardPendingEdits();
+    if (page == wireEditor_) wireEditor_->discardPendingEdits();
+}
+
+void MainWindow::selectInModel(const ModelSelection& selection)
+{
+    // Moving away from a page applies its edits first.
+    if (!modelColumn_->pane()->commitPendingEdits()) return;
+    modelColumn_->tree()->select(selection);
+    showModelSelection(selection);
 }
 
 void MainWindow::synchronizeGeometrySelection(int tag)
@@ -2869,19 +2717,6 @@ void MainWindow::duplicateWire(int tag)
     selectWireInProject(duplicate.tag);
 }
 
-void MainWindow::showWireProperties(int tag)
-{
-    const auto* selectedWire = currentModel_.wireByTag(tag);
-    if (selectedWire == nullptr || !selectedWire->editable) {
-        return;
-    }
-    const auto original = *selectedWire;
-    WirePropertiesDialog dialog(original, currentModel_, geometrySettings_.lengthUnit, this);
-    if (dialog.exec() == QDialog::Accepted) {
-        editWire(original, dialog.wire());
-    }
-}
-
 void MainWindow::changeFrequency(const model::FrequencyDefinition& frequency)
 {
     const auto description = frequency.count <= 1
@@ -3096,27 +2931,11 @@ void MainWindow::addExcitationAt(int wireTag, int segment)
     }
 }
 
-void MainWindow::showExcitationEditor(std::size_t sourceLine)
+void MainWindow::showProperties(const ModelSelection& selection)
 {
-    const auto found = std::ranges::find(currentSetup_.excitations, sourceLine,
-        &model::Excitation::sourceLine);
-    if (found == currentSetup_.excitations.end()) {
-        return;
-    }
-    ExcitationPropertiesDialog dialog(*found, currentModel_, this);
-    if (dialog.exec() == QDialog::Accepted) {
-        const auto updated = dialog.excitation();
-        if (updated != *found) {
-            changeExcitation(updated);
-        }
-        selectExcitation(sourceLine);
-    }
-}
-
-void MainWindow::showExcitationInSetup(std::size_t sourceLine)
-{
-    showEditor(EditorDestination::Sources);
-    selectExcitation(sourceLine);
+    selectInModel(selection);
+    workbenchLayout_->showModel();
+    modelColumn_->pane()->focusPage();
 }
 
 void MainWindow::deleteExcitation(std::size_t sourceLine)
@@ -3171,24 +2990,6 @@ void MainWindow::setPendingTransmissionLineEndpoint(
     xzView_->setPendingTransmissionLineEndpoint(endpoint);
     yzView_->setPendingTransmissionLineEndpoint(endpoint);
     geometry3DView_->setPendingTransmissionLineEndpoint(endpoint);
-}
-
-void MainWindow::showLoadInEditor(std::size_t sourceLine)
-{
-    showEditor(EditorDestination::Loads);
-    selectLoad(sourceLine);
-}
-
-void MainWindow::showTransmissionLineInEditor(std::size_t sourceLine)
-{
-    showEditor(EditorDestination::Loads);
-    selectTransmissionLine(sourceLine);
-}
-
-void MainWindow::showNetworkInEditor(std::size_t sourceLine)
-{
-    showEditor(EditorDestination::Loads);
-    selectNetwork(sourceLine);
 }
 
 void MainWindow::upsertSetupCard(const QString& description, std::size_t sourceLine,
@@ -3644,7 +3445,7 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
 {
     if (!currentRunRecord_) return;
     bottomPanel_->runs()->addActiveRun(*currentRunRecord_);
-    refreshDashboardRuns();
+    refreshLatestRun();
     bottomPanel_->rawOutput()->clear();
     const auto program = QString::fromStdString(command.executable);
     QStringList arguments;
@@ -3684,8 +3485,8 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
     if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
         averageGainResultsView_->setRunning(currentAverageGainFrequencyMHz_,
             currentAverageGainEnvironment_, runContext(*currentRunRecord_));
-        controlPanel_->setStudyStatus(ControlPanel::Study::AverageGain,
-            ControlPanel::StudyState::Running,
+        modelColumn_->tree()->setStudyStatus(ModelTree::Study::AverageGain,
+            ModelTree::StudyState::Running,
             tr("running @ %1 MHz").arg(formatDecimal(currentAverageGainFrequencyMHz_)));
         validationWorkspace_->setCurrentIndex(averageGainValidationTabIndex_);
         validationPanel_->showWindow();
@@ -3793,8 +3594,8 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
                     .arg(averageGainClassificationName(assessment.classification));
                 averageGainResultsView_->setResult(assessment, currentAverageGainFrequencyMHz_,
                     currentAverageGainEnvironment_, result.averagingSolidAnglePi, context);
-                controlPanel_->setStudyStatus(ControlPanel::Study::AverageGain,
-                    ControlPanel::StudyState::Complete,
+                modelColumn_->tree()->setStudyStatus(ModelTree::Study::AverageGain,
+                    ModelTree::StudyState::Complete,
                     tr("%1 @ %2 MHz").arg(formatDecimal(assessment.normalizedGain),
                         formatDecimal(currentAverageGainFrequencyMHz_)));
                 writeAverageGainMetadata(currentRunDirectory_, currentAverageGainFrequencyMHz_,
@@ -3815,8 +3616,8 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             } else {
                 averageGainResultsView_->setFailure(
                     tr("The solver output contains no AVERAGE POWER GAIN value."), context);
-                controlPanel_->setStudyStatus(ControlPanel::Study::AverageGain,
-                    ControlPanel::StudyState::Failed, {},
+                modelColumn_->tree()->setStudyStatus(ModelTree::Study::AverageGain,
+                    ModelTree::StudyState::Failed, {},
                     tr("No average power gain was reported."));
             }
             bottomPanel_->runs()->updateRun(*currentRunRecord_);
@@ -3838,9 +3639,6 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
             displayedRunDirectory_ = currentRunDirectory_;
             activeModelResultsDirectory_ = currentRunDirectory_;
             activeModelResultsContext_ = context;
-            controlPanel_->setResults(result, context, false);
-            controlPanel_->setModel(currentModel_, currentSetup_, activeSource().document(),
-                solverBackendId_, true, modelErrorCount_, modelWarningCount_);
             resultsAvailable_ = true;
             liveResultsStale_ = false;
             liveResultsDeck_ = pendingRunDeck_;
@@ -3876,16 +3674,16 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
     } else if (processSucceeded && currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
         const auto message = tr("The solver did not produce a readable model.out file.");
         averageGainResultsView_->setFailure(message, runContext(*currentRunRecord_));
-        controlPanel_->setStudyStatus(ControlPanel::Study::AverageGain,
-            ControlPanel::StudyState::Failed, {}, message);
+        modelColumn_->tree()->setStudyStatus(ModelTree::Study::AverageGain,
+            ModelTree::StudyState::Failed, {}, message);
     } else if (currentRunRecord_) {
         if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
             const auto message = processResult.detail.isEmpty()
                 ? tr("The solver did not complete the Average Gain Test.")
                 : processResult.detail;
             averageGainResultsView_->setFailure(message, runContext(*currentRunRecord_));
-            controlPanel_->setStudyStatus(ControlPanel::Study::AverageGain,
-                ControlPanel::StudyState::Failed, {}, message);
+            modelColumn_->tree()->setStudyStatus(ModelTree::Study::AverageGain,
+                ModelTree::StudyState::Failed, {}, message);
         }
         currentRunRecord_->outputBytes = QFileInfo(currentRunOutputPath_).size();
         bottomPanel_->runs()->updateRun(*currentRunRecord_);
@@ -3950,7 +3748,7 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
         bottomPanel_->showTab(BottomPanel::Tab::RunLog);
     synchronizeRunnerState();
     updateAnalysisReadiness();
-    refreshDashboardRuns();
+    refreshLatestRun();
 }
 
 void MainWindow::setCurrentRunStatus(const QString& status)
@@ -3966,11 +3764,10 @@ void MainWindow::showRunHistory()
     bottomPanel_->showTab(BottomPanel::Tab::Runs);
 }
 
-void MainWindow::refreshDashboardRuns()
+void MainWindow::refreshLatestRun()
 {
     const auto recentRuns = runStore_.loadRecent(100);
     latestStoredRunDirectory_ = recentRuns.empty() ? QString{} : recentRuns.front().directory;
-    if (controlPanel_ != nullptr) controlPanel_->setRecentRuns(recentRuns);
 }
 
 void MainWindow::loadSelectedRun()
@@ -4056,7 +3853,6 @@ auto MainWindow::loadRunModel(const QString& directory, const QString& modelName
     resetSourceUndoHistory();
     hasNecModel_ = true;
     modelModuleAction_->setEnabled(true);
-    analysisModuleAction_->setEnabled(true);
     workbenchLayout_->showModel();
     analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile({});
@@ -4067,7 +3863,6 @@ auto MainWindow::loadRunModel(const QString& directory, const QString& modelName
         .arg(runContext, inputFile.fileName()));
     editor_->document()->setModified(false);
     checkModel();
-    controlPanel_->setDocumentState(displayName, false);
     return true;
 }
 
@@ -4164,7 +3959,7 @@ void MainWindow::editSelectedRunNote()
     bottomPanel_->runs()->updateRun(*record);
     resultReferenceController_.refreshMetadata(*record);
     updateResultReference();
-    refreshDashboardRuns();
+    refreshLatestRun();
 }
 
 void MainWindow::clearResultReference()
@@ -4241,7 +4036,7 @@ void MainWindow::deleteSelectedRun()
     }
     if (displayedRunDirectory_ == directory) clearDisplayedResults();
     updateRunSelectionActions();
-    refreshDashboardRuns();
+    refreshLatestRun();
 }
 
 void MainWindow::displayRunArtifacts(const QString& directory, const QString& context)
@@ -4325,11 +4120,10 @@ void MainWindow::clearDisplayedResults()
     const auto context = tr("No analysis run");
     averageGainResultsView_->clear();
     convergenceWorkspace_->clearResults();
-    controlPanel_->clearStudy(ControlPanel::Study::AverageGain);
-    controlPanel_->clearStudy(ControlPanel::Study::Convergence);
+    modelColumn_->tree()->clearStudy(ModelTree::Study::AverageGain);
+    modelColumn_->tree()->clearStudy(ModelTree::Study::Convergence);
     resultsController_->clear();
     setDisplayedResults(empty);
-    controlPanel_->setResults(empty, context, false);
     displayedRunDirectory_.clear();
     resultsAvailable_ = false;
     liveResultsStale_ = false;
@@ -4379,6 +4173,7 @@ void MainWindow::editWire(const model::Wire& original, const model::Wire& update
     if (!editable) {
         showSymbolicGeometryEditBlocked();
         updateWireCardEditor();
+        refreshWireEditor();
         return;
     }
     if (replacements.empty()) return;
@@ -4693,41 +4488,29 @@ void MainWindow::pushGeometrySourceEdit(const QString& description, QString upda
     }
     auto destination = EditorDestination::Geometry;
     const auto geometryTab = workspace_->currentIndex();
-    if (setupPanel_ != nullptr && setupPanel_->isWindowActive()) {
-        if (analysisWorkspace_->currentIndex() == modelSourcesWorkspaceIndex_)
-            destination = EditorDestination::Sources;
-        else if (analysisWorkspace_->currentIndex() == loadNetworkTabIndex_)
-            destination = EditorDestination::Loads;
-        else if (analysisWorkspace_->currentIndex() == modelEnvironmentWorkspaceIndex_)
-            destination = EditorDestination::Environment;
-        else
-            destination = EditorDestination::Frequency;
+    const auto* focus = QApplication::focusWidget();
+    if (focus != nullptr && modelColumn_->isAncestorOf(focus)) {
+        destination = paneDestination();
     } else if (modelPanel_ != nullptr && modelPanel_->isWindowActive()) {
         if (modelWorkspace_->currentIndex() == modelDeckWorkspaceIndex_)
             destination = EditorDestination::RawSource;
         else if (modelWorkspace_->currentIndex() == modelParametersWorkspaceIndex_)
             destination = EditorDestination::Parameters;
     }
-    const auto analysisTab = analysisWorkspace_->currentIndex();
     const auto sourceTab = sourceWorkspace_->currentIndex();
-    applyGeometrySource(description, updatedSource, destination, geometryTab, analysisTab, sourceTab);
+    applyGeometrySource(description, updatedSource, destination, geometryTab, sourceTab);
 }
 
 void MainWindow::applyGeometrySource(const QString& description, const QString& source,
-    EditorDestination destination, int geometryTab, int analysisTab, int sourceTab)
+    EditorDestination destination, int geometryTab, int sourceTab)
 {
     pendingSourceHistoryEntry_ = SourceHistoryEntry{
-        description, destination, geometryTab, analysisTab, sourceTab};
+        description, destination, geometryTab, sourceTab};
     editor_->replaceTextAsSingleEdit(source);
     pendingSourceHistoryEntry_.reset();
     editor_->document()->setModified(true);
     checkModel();
-    if (destination == EditorDestination::Frequency) {
-        showModule(Module::Setup);
-        analysisWorkspace_->setCurrentIndex(analysisTab);
-    } else {
-        showEditor(destination, geometryTab);
-    }
+    showEditor(destination, geometryTab);
     if (destination == EditorDestination::RawSource) {
         sourceWorkspace_->setCurrentIndex(structuredSourceTabIndex_);
     }
@@ -4823,7 +4606,7 @@ void MainWindow::recordSourceUndoCommand()
 {
     if (suppressSourceHistoryRecording_) return;
     auto entry = pendingSourceHistoryEntry_.value_or(SourceHistoryEntry{
-        tr("Raw Source Edit"), EditorDestination::RawSource, 0, 0, 0});
+        tr("Raw Source Edit"), EditorDestination::RawSource, 0, 0});
     sourceUndoHistory_.push_back(std::move(entry));
     sourceRedoHistory_.clear();
     updateUndoActions();
@@ -4842,8 +4625,6 @@ void MainWindow::navigateToSourceHistoryEntry(const SourceHistoryEntry& entry)
     showEditor(entry.destination, entry.geometryTab);
     if (entry.destination == EditorDestination::RawSource)
         sourceWorkspace_->setCurrentIndex(entry.sourceTab);
-    else if (entry.destination == EditorDestination::Frequency)
-        analysisWorkspace_->setCurrentIndex(entry.analysisTab);
 }
 
 void MainWindow::updateUndoActions()
@@ -4867,182 +4648,6 @@ auto MainWindow::activeSource() const -> const nec::NecSourceCache&
     return activeSourceCache_;
 }
 
-void MainWindow::updateProjectTree(const model::AntennaModel& antennaModel, const nec::NecDocument& document)
-{
-    projectTree_->clear();
-    const auto projectName = currentFile_.isEmpty() ? tr("Untitled NEC Model") : QFileInfo(currentFile_).fileName();
-    auto* root = new QTreeWidgetItem(projectTree_, {projectName});
-    root->setIcon(0, style()->standardIcon(QStyle::SP_FileIcon));
-    root->setData(0, ItemKindRole, QStringLiteral("model"));
-
-    auto* geometry = new QTreeWidgetItem(root, {tr("Geometry")});
-    geometry->setData(0, ItemKindRole, QStringLiteral("geometry"));
-    auto* parameters = new QTreeWidgetItem(root, {tr("Parameters")});
-    parameters->setData(0, ItemKindRole, QStringLiteral("parameters"));
-    auto* environment = new QTreeWidgetItem(root, {tr("Environment")});
-    auto* frequencySources = new QTreeWidgetItem(root, {tr("Frequency & Sources")});
-    auto* attachments = new QTreeWidgetItem(root, {tr("Loads & Networks")});
-    auto* requests = new QTreeWidgetItem(root, {tr("Requests & Execution")});
-    auto* comments = new QTreeWidgetItem(root, {tr("Comments")});
-    auto* other = new QTreeWidgetItem(root, {tr("Other Cards")});
-    auto* allCards = new QTreeWidgetItem(root, {tr("All Cards")});
-    for (auto* category : {environment, frequencySources, attachments, requests, comments, other, allCards})
-        category->setData(0, ItemKindRole, QStringLiteral("category"));
-
-    const auto categoryFor = [&](const nec::NecCard& card) -> QTreeWidgetItem* {
-        const auto* spec = nec::findNecCardSpec(card.mnemonic);
-        if (spec == nullptr) return other;
-        switch (spec->area) {
-        case nec::NecCardArea::Comments: return comments;
-        case nec::NecCardArea::Parameters: return parameters;
-        case nec::NecCardArea::Geometry: return geometry;
-        case nec::NecCardArea::Environment: return environment;
-        case nec::NecCardArea::FrequencySources: return frequencySources;
-        case nec::NecCardArea::LoadsNetworks: return attachments;
-        case nec::NecCardArea::RequestsExecution: return requests;
-        case nec::NecCardArea::Extensions: return other;
-        }
-        return other;
-    };
-    const auto addCard = [&](QTreeWidgetItem* parent, const nec::NecCard& card, bool generic) {
-        const auto mnemonic = QString::fromStdString(card.mnemonic).toUpper();
-        auto label = tr("Line %1 · %2").arg(card.lineNumber).arg(
-            mnemonic.isEmpty() ? tr("Blank") : QString::fromStdString(card.sourceText).trimmed());
-        auto kind = QStringLiteral("card");
-        auto wireTag = 0;
-        if (card.kind == nec::NecCardKind::GeometryWire) {
-            const auto wire = std::ranges::find(antennaModel.wires(), card.lineNumber, &model::Wire::sourceLine);
-            if (wire != antennaModel.wires().end()) {
-                wireTag = wire->tag;
-                if (!generic) {
-                    label = tr("GW · Wire %1 (%2 segments) · line %3")
-                        .arg(wire->tag).arg(wire->segments).arg(card.lineNumber);
-                    kind = QStringLiteral("wire");
-                }
-            }
-        } else if (!generic && card.kind == nec::NecCardKind::Excitation) {
-            const auto value = std::ranges::find(currentSetup_.excitations, card.lineNumber,
-                &model::Excitation::sourceLine);
-            if (value != currentSetup_.excitations.end()) {
-                label = tr("EX · Wire %1, segment %2 · line %3")
-                    .arg(value->wireTag).arg(value->segment).arg(card.lineNumber);
-                kind = QStringLiteral("excitation");
-                wireTag = value->wireTag;
-            }
-        } else if (!generic && card.kind == nec::NecCardKind::Load) {
-            const auto value = std::ranges::find(currentSetup_.loads, card.lineNumber,
-                &model::LoadDefinition::sourceLine);
-            if (value != currentSetup_.loads.end()) {
-                label = tr("LD · Wire %1, segments %2–%3 · line %4")
-                    .arg(value->wireTag).arg(value->firstSegment).arg(value->lastSegment).arg(card.lineNumber);
-                kind = QStringLiteral("load");
-                wireTag = value->wireTag;
-            }
-        } else if (!generic && card.kind == nec::NecCardKind::TransmissionLine) {
-            const auto value = std::ranges::find(currentSetup_.transmissionLines, card.lineNumber,
-                &model::TransmissionLineDefinition::sourceLine);
-            if (value != currentSetup_.transmissionLines.end()) {
-                label = tr("TL · W%1/S%2 → W%3/S%4 · line %5")
-                    .arg(value->wireTag1).arg(value->segment1).arg(value->wireTag2)
-                    .arg(value->segment2).arg(card.lineNumber);
-                kind = QStringLiteral("transmissionLine");
-            }
-        } else if (!generic && card.kind == nec::NecCardKind::Network) {
-            const auto value = std::ranges::find(currentSetup_.networks, card.lineNumber,
-                &model::NetworkDefinition::sourceLine);
-            if (value != currentSetup_.networks.end()) {
-                label = tr("NT · W%1/S%2 ↔ W%3/S%4 · line %5")
-                    .arg(value->wireTag1).arg(value->segment1).arg(value->wireTag2)
-                    .arg(value->segment2).arg(card.lineNumber);
-                kind = QStringLiteral("network");
-            }
-        }
-        auto* item = new QTreeWidgetItem(parent, {label});
-        item->setData(0, ItemKindRole, kind);
-        item->setData(0, SourceLineRole, static_cast<qulonglong>(card.lineNumber));
-        item->setData(0, CardMnemonicRole, mnemonic);
-        item->setData(0, WireTagRole, wireTag);
-        item->setToolTip(0, QString::fromStdString(card.sourceText));
-    };
-
-    auto cardCount = 0;
-    for (const auto& card : document.cards()) {
-        if (card.kind == nec::NecCardKind::Blank) continue;
-        addCard(categoryFor(card), card, false);
-        addCard(allCards, card, true);
-        ++cardCount;
-    }
-    const auto labelCategory = [](QTreeWidgetItem* item, const QString& title) {
-        item->setText(0, QStringLiteral("%1 (%2)").arg(title).arg(item->childCount()));
-    };
-    labelCategory(geometry, tr("Geometry"));
-    labelCategory(parameters, tr("Parameters"));
-    labelCategory(environment, tr("Environment"));
-    labelCategory(frequencySources, tr("Frequency & Sources"));
-    labelCategory(attachments, tr("Loads & Networks"));
-    labelCategory(requests, tr("Requests & Execution"));
-    labelCategory(comments, tr("Comments"));
-    labelCategory(other, tr("Other Cards"));
-    allCards->setText(0, tr("All Cards (%1)").arg(cardCount));
-    projectTree_->expandItem(root);
-    projectTree_->expandItem(geometry);
-    projectTree_->expandItem(parameters);
-    projectTree_->expandItem(environment);
-    projectTree_->expandItem(frequencySources);
-    projectTree_->expandItem(attachments);
-    projectTree_->expandItem(requests);
-}
-
-void MainWindow::synchronizeProjectItemSelection(QTreeWidgetItem* item)
-{
-    if (item == nullptr) return;
-    const auto kind = item->data(0, ItemKindRole).toString();
-    if (kind == QStringLiteral("wire")) {
-        const auto tag = item->data(0, WireTagRole).toInt();
-        synchronizeGeometrySelection(tag);
-        setupEditor_->selectExcitation(0);
-    } else if (kind == QStringLiteral("excitation")) {
-        const auto sourceLine = item->data(0, SourceLineRole).toULongLong();
-        const auto found = std::ranges::find(currentSetup_.excitations, sourceLine,
-            &model::Excitation::sourceLine);
-        if (found != currentSetup_.excitations.end()) {
-            xyView_->selectExcitation(sourceLine);
-            xzView_->selectExcitation(sourceLine);
-            yzView_->selectExcitation(sourceLine);
-            geometry3DView_->selectExcitation(sourceLine);
-            wireCardEditor_->selectWire(-1);
-            setupEditor_->selectExcitation(sourceLine);
-        }
-    } else if (kind == QStringLiteral("load")) {
-        const auto sourceLine = item->data(0, SourceLineRole).toULongLong();
-        const auto found = std::ranges::find(currentSetup_.loads, sourceLine,
-            &model::LoadDefinition::sourceLine);
-        if (found != currentSetup_.loads.end()) {
-            xyView_->selectLoad(sourceLine); xzView_->selectLoad(sourceLine);
-            yzView_->selectLoad(sourceLine); geometry3DView_->selectLoad(sourceLine);
-            loadNetworkEditor_->selectLoad(sourceLine);
-        }
-    } else if (kind == QStringLiteral("transmissionLine")) {
-        const auto sourceLine = item->data(0, SourceLineRole).toULongLong();
-        const auto found = std::ranges::find(currentSetup_.transmissionLines, sourceLine,
-            &model::TransmissionLineDefinition::sourceLine);
-        if (found != currentSetup_.transmissionLines.end()) {
-            xyView_->selectTransmissionLine(sourceLine); xzView_->selectTransmissionLine(sourceLine);
-            yzView_->selectTransmissionLine(sourceLine); geometry3DView_->selectTransmissionLine(sourceLine);
-            loadNetworkEditor_->selectTransmissionLine(sourceLine);
-        }
-    } else if (kind == QStringLiteral("network")) {
-        const auto sourceLine = item->data(0, SourceLineRole).toULongLong();
-        const auto found = std::ranges::find(currentSetup_.networks, sourceLine,
-            &model::NetworkDefinition::sourceLine);
-        if (found != currentSetup_.networks.end()) {
-            xyView_->selectNetwork(sourceLine); xzView_->selectNetwork(sourceLine);
-            yzView_->selectNetwork(sourceLine); geometry3DView_->selectNetwork(sourceLine);
-            loadNetworkEditor_->selectNetwork(sourceLine);
-        }
-    }
-}
-
 void MainWindow::setCurrentFile(QString path)
 {
     const auto modelChanged = currentFile_ != path;
@@ -5054,11 +4659,7 @@ void MainWindow::setCurrentFile(QString path)
     const auto modelName = currentFile_.isEmpty() ? tr("Untitled model.nec") : name;
     statusBar_->setFileStatus(tr("Model: %1").arg(modelName),
         currentFile_.isEmpty() ? tr("This model has not been saved yet.") : currentFile_);
-    if (controlPanel_ != nullptr)
-        controlPanel_->setDocumentState(currentFile_.isEmpty() ? QString{} : name,
-            editor_->document()->isModified());
     if (modelPanel_ != nullptr) modelPanel_->setStatusText(modelName);
-    if (setupPanel_ != nullptr) setupPanel_->setStatusText(modelName);
     if (optimizationPanel_ != nullptr) optimizationPanel_->setStatusText(
         tr("%1 · %2").arg(modelName,
             optimizationWorkspace_->isRunning() ? tr("Running") : tr("Ready")));
@@ -5129,7 +4730,21 @@ void MainWindow::restoreWorkspaceLayout()
     solverExecutablePath_ = solverExecutablePaths_.value(solverBackendId_);
     analysisSetupEditor_->setSettings(
         solverBackendId_, solverExecutablePaths_, solverTimeoutSeconds_);
+    refreshEngine();
     updateAnalysisReadiness();
+}
+
+void MainWindow::refreshEngine()
+{
+    // Settings load before the toolbar and the model column exist.
+    if (toolBar_ == nullptr || modelColumn_ == nullptr) return;
+    toolBar_->setBackend(solverBackendId_);
+    const auto backends = AnalysisSetupEditor::backends();
+    const auto backend = std::ranges::find(backends, solverBackendId_,
+        &std::pair<QString, QString>::second);
+    const auto name = backend == backends.end() ? solverBackendId_ : backend->first;
+    modelColumn_->tree()->setSolver(solverExecutablePath_.isEmpty()
+        ? tr("%1 · no executable").arg(name) : name);
 }
 
 void MainWindow::saveWorkspaceLayout()

@@ -5,8 +5,6 @@
 #include <QAction>
 #include <QEvent>
 #include <QHBoxLayout>
-#include <QScrollArea>
-#include <QScrollBar>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSplitter>
@@ -23,32 +21,6 @@ const auto RightColumnWidthKey = QStringLiteral("mainWindow/v2/rightColumnWidth"
 const auto RightColumnCollapsedKey = QStringLiteral("mainWindow/v2/rightColumnCollapsed");
 constexpr auto LeftPane = 0;
 constexpr auto RightPane = 2;
-
-// Never narrower than its content (which changes with density), so the column scrolls
-// vertically but never clips sideways.
-class LeftColumnScroll final : public QScrollArea {
-public:
-    using QScrollArea::QScrollArea;
-
-    [[nodiscard]] auto minimumSizeHint() const -> QSize override
-    {
-        return {widget()->minimumSizeHint().width() + verticalScrollBar()->sizeHint().width(),
-            QScrollArea::minimumSizeHint().height()};
-    }
-    [[nodiscard]] auto sizeHint() const -> QSize override
-    {
-        return {minimumSizeHint().width(), QScrollArea::sizeHint().height()};
-    }
-
-protected:
-    // Never wider than its content either, so widening the split adds no empty strip.
-    auto eventFilter(QObject* watched, QEvent* event) -> bool override
-    {
-        if (watched == widget() && event->type() == QEvent::LayoutRequest)
-            setMaximumWidth(widget()->sizeHint().width() + verticalScrollBar()->sizeHint().width());
-        return QScrollArea::eventFilter(watched, event);
-    }
-};
 
 }
 
@@ -70,20 +42,6 @@ WorkbenchLayout::WorkbenchLayout(Panes panes, QWidget* parent)
     welcomeLayout->addWidget(panes.welcome, 0, Qt::AlignHCenter | Qt::AlignTop);
     pages_->addWidget(welcomePage);
 
-    // The left column keeps its content at the top and scrolls when the window is shorter.
-    auto* leftScroll = new LeftColumnScroll;
-    leftScroll->setObjectName(QStringLiteral("workbenchLeftColumn"));
-    leftScroll->setFrameShape(QFrame::NoFrame);
-    leftScroll->setWidgetResizable(true);
-    leftScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    auto* leftContent = new QWidget(leftScroll);
-    auto* leftLayout = new QVBoxLayout(leftContent);
-    leftLayout->setContentsMargins(0, 0, 0, 0);
-    leftLayout->setSpacing(0);
-    leftLayout->addWidget(panes.leftColumn);
-    leftLayout->addStretch();
-    leftScroll->setWidget(leftContent);
-
     center_ = new QStackedWidget;
     center_->setObjectName(QStringLiteral("workbenchCenter"));
     center_->addWidget(geometry_);
@@ -92,7 +50,7 @@ WorkbenchLayout::WorkbenchLayout(Panes panes, QWidget* parent)
     split_ = new QSplitter(Qt::Horizontal, pages_);
     split_->setObjectName(QStringLiteral("workbenchSplit"));
     split_->setHandleWidth(3);
-    split_->addWidget(leftScroll);
+    split_->addWidget(panes.leftColumn);
     split_->addWidget(center_);
     split_->addWidget(panes.rightColumn);
     split_->setCollapsible(LeftPane, false);

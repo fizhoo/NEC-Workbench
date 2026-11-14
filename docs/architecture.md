@@ -54,11 +54,14 @@ same definitions.
 ## Workspaces
 
 The main window is resizable and laid out by `WorkbenchLayout`: with no model, the
-Welcome page; with a model, one splitter with three panes. Home — a compact control
-panel (`ui/controlpanel`) — is a top-aligned left column; the center shows the
-geometry editor (2D and 3D views) or one full result view; the collapsible results
-column is on the right. Home summarizes the active model, model quality, and the
-latest run. The results (`ui/results`) are:
+Welcome page; with a model, one splitter with three panes. `WorkbenchToolBar` runs
+across the top. The left column (`ui/modeltree`) is a `ModelColumn`: the `ModelTree`
+(groups with summaries, a row per wire, source, load, line, and network, and the
+model-quality studies) above the `PropertiesPane`, which hosts the existing editors
+for the selection: `WirePropertiesEditor` and the Setup pages. The pane applies valid
+pending edits when the selection changes and asks only about invalid ones. The center
+shows the geometry editor (2D and 3D views) or one full result view; the collapsible
+results column is on the right. The results (`ui/results`) are:
 
 - `ResultsController`, which owns the displayed run, the overlay, the stale flag, and
   the one selected frequency (`ResultState`), and brings everything else up to date.
@@ -74,8 +77,6 @@ the others catch up when they are shown. The remaining workspaces are separate
 top-level windows:
 
 - **NEC Deck** owns Raw Source, Structured Cards, and Parameters.
-- **Setup** owns frequency, sources, loads/networks, environment, output requests,
-  and solver configuration.
 - **Validation** shows the static check, Average Gain Test, and convergence studies.
 - The **bottom panel** (`BottomPanel`) along the bottom of the main window holds Problems, the Run log, Runs,
   and Raw output; `WorkbenchStatusBar` shows backend, the selected and loaded result
@@ -86,8 +87,8 @@ The separate windows are `DetachablePanel`s, parented to a hidden host in the ma
 window. Each window persists its own geometry, so resizing one never resizes another,
 and opening a window again raises the existing instance. They cannot be attached back
 into the main window; each moves in during its own step of the layout rework.
-Menus expose the complete command set; a compact navigator selects pages inside
-Setup and the NEC Deck window.
+Menus expose the complete command set; a compact navigator selects pages inside the
+NEC Deck window.
 
 A detached view is the same live content, not a copied result model. Historical Run
 Review is separate and read-only so opening archived output cannot silently replace
