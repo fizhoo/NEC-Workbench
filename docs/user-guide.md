@@ -122,10 +122,26 @@ rewrites only the fields you changed; the others keep their symbols and exact va
 ### Variables
 
 Each `SY` variable written as a plain number has a slider, a number box, and **⋯** to set
-the slider's range; a variable written as a formula shows its value. Dragging a slider
-changes the `SY` card once, when you let go, as one undoable step; so does typing a value
-or a burst of arrow-key or wheel steps. The model is checked again and results are
-marked stale; run again with `F5` to update them.
+the slider's range; a variable written as a formula shows its value. While you drag a
+slider, type a value, or step with the arrow keys, the wires in every geometry view follow
+the new value; the deck is not changed until you let go or commit the value, and then the
+`SY` card changes once, as one undoable step. The model is checked again and results are
+marked stale. The geometry keeps its zoom; only opening a model, New, Revert to Saved and
+**Fit** fit it.
+
+**Live** (on by default, remembered) also solves each committed value at the selected
+frequency, or at the sweep point nearest the band centre before any run. The key numbers
+and the pattern and current thumbnails for that frequency update; the SWR sweep, the band
+minimum and peak, and other frequencies stay as the last full run and are marked stale.
+Picking a stale frequency in the strip with Live on solves that one too. A live solve works
+on a temporary copy of the deck with one frequency and the RP cards kept: it never changes
+your deck, never appears in Runs, and is display-only, so the full result views, their CSV
+and image exports, Run Review and overlays always use the last full run. A new value
+cancels a live solve still running; one taking over 2 s shows in the status bar. `F5`
+always runs the whole sweep. With Live off, a committed value is only written and checked.
+
+**Reset** puts every variable back to its value when the model was opened or last saved,
+as one undoable step; its tooltip lists what would change.
 
 A slider spans the optimizer's minimum and maximum for a variable ticked **Use** in
 Optimize, and otherwise ±25% around the value it had when first shown (−1 to 1 at zero).
@@ -201,11 +217,19 @@ card has a dedicated editor or graphical representation; see
 For the exact backend profiles, card checks, severity rules, and current audit
 boundaries, see the [NEC Validation Reference](nec-validation-reference.md).
 
-### Undo and Redo
+### Undo, Redo and Revert to Saved
 
-Source-backed model changes share one history. Undo may reverse a change made in
-another workspace and may navigate to that context. Solver runs, result selection,
-window layout, and historical review are not model edits.
+Source-backed model changes share one history. The toolbar's Undo and Redo say what they
+would undo or redo. `Ctrl+Z`, and `Ctrl+Y` or `Ctrl+Shift+Z`, work anywhere in the main
+window, including the variables' number boxes and the model tree; in a box with a value
+typed but not applied, the first `Ctrl+Z` puts the value back. While typing in Raw Source
+the editor keeps its own undo. Undo may reverse a change made in another workspace and may
+navigate to that context. Solver runs, result selection, window layout, and historical
+review are not model edits.
+
+**File → Revert to Saved** (also on the toolbar) reloads the model's file after asking,
+discarding every change since the last save. It is one undoable step, so Undo brings the
+changes back. It is unavailable when nothing has changed or the model was never saved.
 
 ## Model Checking and Adequacy
 

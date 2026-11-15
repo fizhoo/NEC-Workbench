@@ -42,9 +42,10 @@ history. Raw typing, structured-card changes, geometry operations, setup changes
 parameter application, and analysis-request edits all pass through the same
 source transaction and refresh path.
 
-Human-readable operation metadata supplements Qt's text undo stack. Undo and Redo
-may navigate back to the workspace that originated an edit, but never maintain a
-second model state.
+Human-readable operation metadata supplements Qt's text undo stack (`SourceHistory`,
+which also routes `Ctrl+Z` and `Ctrl+Y` to it from any field outside Raw Source). Undo
+and Redo may navigate back to the workspace that originated an edit, but never maintain
+a second model state.
 
 Symbolic geometry is protected from operations that would replace expressions
 with resolved numbers. Field parameterization occurs through Structured Cards;
@@ -58,7 +59,8 @@ Welcome page; with a model, one splitter with three panes. `WorkbenchToolBar` ru
 across the top. The left column (`ui/modeltree`) is a `ModelColumn`: the `ModelTree`
 (groups with summaries, a row per wire, source, load, line, and network, and the
 model-quality studies), the `VariablesSection` (a slider row per `SY` variable, each
-change one `SY` edit), and the `PropertiesPane`, which hosts the existing editors for the
+committed change one `SY` edit; while dragging, `GeometryPreview` redraws the wires from
+the resolved symbols at most once a frame, without touching the deck), and the `PropertiesPane`, which hosts the existing editors for the
 selection: `WirePropertiesEditor`, the Setup pages, and the Parameters table. The pane
 applies valid pending edits when the selection changes and asks only about invalid ones.
 The center shows the geometry editor (2D and 3D views), one full result view, or the NEC
@@ -70,6 +72,10 @@ Deck (`DeckView`: Raw Source and Structured Cards), each non-geometry view under
 - `ResultsColumn`: `KeyNumberStrip` (the frequency selector and key numbers), the
   overlay control, four `ResultThumbnail`s, and the More Views list.
 - `ResultFullView`: one existing result view with all its controls in the center.
+- `LiveSolve`, which solves a one-frequency copy of the deck in a temporary folder after a
+  variable changes. Its result reaches the column only (`ResultsController::setLivePoint`):
+  the column's state merges it into the run, while `data()`, the full view, exports,
+  overlays and the run store keep the last full run.
 
 Thumbnails are compact instances of the existing views (`setCompact`). Every view
 receives the same `ResultData`, which groups the radiation samples by frequency once,
