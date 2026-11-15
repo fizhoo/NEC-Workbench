@@ -53,6 +53,8 @@ class LoadNetworkEditor;
 class WireCardEditor;
 class StructuredCardEditor;
 class WelcomePage;
+class SourceHistory;
+class GeometryPreview;
 class DeckView;
 class ModelColumn;
 class WirePropertiesEditor;
@@ -98,13 +100,6 @@ private:
         Environment,
         Requests,
         Solver
-    };
-
-    struct SourceHistoryEntry {
-        QString description;
-        EditorDestination destination{EditorDestination::RawSource};
-        int geometryTab{};
-        int sourceTab{};
     };
 
     void createActions();
@@ -255,13 +250,12 @@ private:
     [[nodiscard]] auto wireHasSymbolicGeometry(std::size_t sourceLine) const -> bool;
     void showSymbolicGeometryEditBlocked();
     void refreshGeometryViews();
+    // Fits the views to the model and clears their selection, for a model just opened.
+    void resetGeometryViews();
+    void revertToSaved();
+    // Model opened, created or reverted: fits the geometry and sets the variables Reset goes to.
+    void startModelSession();
     void updateWireCardEditor();
-    void performUndo();
-    void performRedo();
-    void recordSourceUndoCommand();
-    void resetSourceUndoHistory();
-    void navigateToSourceHistoryEntry(const SourceHistoryEntry& entry);
-    void updateUndoActions();
     [[nodiscard]] auto activeSource() const -> const nec::NecSourceCache&;
     void setCurrentFile(QString path);
     void restoreWorkspaceLayout();
@@ -286,8 +280,6 @@ private:
     QAction* snapEndpointsAction_{};
     QAction* geometrySettingsAction_{};
     QAction* autoSegmentationAction_{};
-    QAction* undoAction_{};
-    QAction* redoAction_{};
     QAction* necDeckAction_{};
     QAction* optimizeModuleAction_{};
     QAction* resetLayoutAction_{};
@@ -319,6 +311,9 @@ private:
     StructuredCardEditor* structuredCardEditor_{};
     QLabel* structuredParameterizationHint_{};
     NecEditor* editor_{};
+    SourceHistory* history_{};
+    GeometryPreview* geometryPreview_{};
+    QAction* revertAction_{};
     GeometryView* xyView_{};
     GeometryView* xzView_{};
     GeometryView* yzView_{};
@@ -387,10 +382,6 @@ private:
     bool hasNecModel_{};
     bool resultsAvailable_{};
     bool liveResultsStale_{};
-    bool suppressSourceHistoryRecording_{};
-    std::optional<SourceHistoryEntry> pendingSourceHistoryEntry_;
-    std::vector<SourceHistoryEntry> sourceUndoHistory_;
-    std::vector<SourceHistoryEntry> sourceRedoHistory_;
     std::optional<std::pair<int, int>> pendingTransmissionLineEndpoint_;
 };
 

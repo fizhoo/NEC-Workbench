@@ -3,10 +3,13 @@
 #include "ui/DisplayFormat.h"
 #include "ui/ElidedLabel.h"
 
+#include <QCheckBox>
 #include <QDoubleSpinBox>
+#include <QSettings>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
@@ -42,7 +45,13 @@ public:
         setFixedWidth(72);
     }
 
-protected:
+    // Shows the value again in place of text typed but not yet applied.
+    void showValue(double value)
+    {
+        setValue(value);
+        lineEdit()->setText(textFromValue(value));
+    }
+
     [[nodiscard]] auto textFromValue(double value) const -> QString override
     {
         return QString::number(value, 'g', 6);
@@ -73,7 +82,7 @@ struct VariablesSection::Row {
     Range range;
     QWidget* widget{};
     QSlider* slider{};
-    QDoubleSpinBox* value{};
+    ValueBox* value{};
     ElidedLabel* formula{};
     bool updating{};
 };
@@ -84,16 +93,38 @@ VariablesSection::VariablesSection(QWidget* parent) : QWidget(parent)
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 2, 0, 0);
     layout->setSpacing(0);
-    auto* heading = new QLabel(tr("VARIABLES"), this);
+    auto* header = new QWidget(this);
+    header->setBackgroundRole(QPalette::AlternateBase);
+    header->setAutoFillBackground(true);
+    auto* headerLayout = new QHBoxLayout(header);
+    headerLayout->setContentsMargins(6, 0, 4, 0);
+    headerLayout->setSpacing(6);
+    auto* heading = new QLabel(tr("VARIABLES"), header);
     auto font = heading->font();
     font.setBold(true);
     font.setPointSizeF(font.pointSizeF() * 0.85);
     heading->setFont(font);
-    heading->setContentsMargins(6, 3, 6, 3);
-    heading->setBackgroundRole(QPalette::AlternateBase);
-    heading->setAutoFillBackground(true);
-    heading->setToolTip(tr("Drag a slider or type a value to change the SY card. Results go "
-        "stale; press F5 to run again."));
+    heading->setToolTip(tr("Drag a slider or type a value to change the SY card. With Live on, "
+        "the change is solved at the selected frequency; press F5 for the whole sweep."));
+    live_ = new QCheckBox(tr("Live"), header);
+    live_->setObjectName(QStringLiteral("variablesLive"));
+    live_->setFont(font);
+    live_->setToolTip(tr("Solve each committed value at the selected frequency"));
+    live_->setChecked(QSettings{}.value(QStringLiteral("variables/live"), true).toBool());
+    connect(live_, &QCheckBox::toggled, this,
+        [](bool on) { QSettings{}.setValue(QStringLiteral("variables/live"), on); });
+    reset_ = new QToolButton(header);
+    reset_->setObjectName(QStringLiteral("variablesReset"));
+    reset_->setText(tr("Reset"));
+    reset_->setFont(font);
+    reset_->setAutoRaise(true);
+    connect(reset_, &QToolButton::clicked, this, [this] {
+        const auto changes = changesFromBaseline();
+        if (!changes.empty() && resetRequested_) resetRequested_(changes);
+    });
+    headerLayout->addWidget(heading, 1);
+    headerLayout->addWidget(live_);
+    headerLayout->addWidget(reset_);
     empty_ = new QLabel(tr("No SY variables. Select Variables above to add one."), this);
     empty_->setForegroundRole(QPalette::PlaceholderText);
     empty_->setContentsMargins(6, 3, 6, 3);
@@ -106,7 +137,7 @@ VariablesSection::VariablesSection(QWidget* parent) : QWidget(parent)
     scroll->setWidgetResizable(true);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scroll->setWidget(rowsWidget_);
-    layout->addWidget(heading);
+    layout->addWidget(header);
     layout->addWidget(empty_);
     layout->addWidget(scroll, 1);
     stepTimer_ = new QTimer(this);
@@ -130,6 +161,7 @@ void VariablesSection::setVariables(const std::vector<nec::SymbolDefinition>& va
     });
     if (!variables_.empty() && !shared) ranges_.clear();
     variables_ = variables;
+    updateReset();
     if (!sameNames) {
         rebuild();
         return;
@@ -157,6 +189,68 @@ void VariablesSection::setValueChangedCallback(
     std::function<void(const nec::SymbolDefinition&, double)> callback)
 {
     valueChanged_ = std::move(callback);
+}
+
+void VariablesSection::setPreviewCallback(
+    std::function<void(const nec::SymbolDefinition&, double)> callback)
+{
+    preview_ = std::move(callback);
+}
+
+auto VariablesSection::revertTyping() -> bool
+{
+    for (auto& row : rows_) {
+        if (row->value == nullptr || !row->value->hasFocus()) continue;
+        if (row->value->text() == row->value->textFromValue(row->variable.value)) return false;
+        row->updating = true;
+        row->value->showValue(row->variable.value);
+        row->updating = false;
+        preview(*row, row->variable.value);
+        return true;
+    }
+    return false;
+}
+
+void VariablesSection::markBaseline()
+{
+    baseline_.clear();
+    for (const auto& variable : variables_) baseline_.emplace(variable.name, variable.expression);
+    updateReset();
+}
+
+void VariablesSection::setResetCallback(std::function<void(const Reset&)> callback)
+{
+    resetRequested_ = std::move(callback);
+}
+
+auto VariablesSection::isLive() const -> bool
+{
+    return live_->isChecked();
+}
+
+auto VariablesSection::changesFromBaseline() const -> Reset
+{
+    Reset changes;
+    for (const auto& variable : variables_) {
+        const auto found = baseline_.find(variable.name);
+        if (found != baseline_.end() && found->second != variable.expression)
+            changes.emplace_back(variable, found->second);
+    }
+    return changes;
+}
+
+void VariablesSection::updateReset()
+{
+    const auto changes = changesFromBaseline();
+    reset_->setEnabled(!changes.empty());
+    QStringList lines;
+    for (const auto& [variable, expression] : changes) {
+        lines.append(tr("%1 %2 → %3").arg(QString::fromStdString(variable.name),
+            QString::fromStdString(variable.expression), QString::fromStdString(expression)));
+    }
+    reset_->setToolTip(changes.empty()
+            ? tr("Put the variables back as opened or saved; none have changed")
+            : tr("Put the variables back as opened or saved:\n%1").arg(lines.join(QLatin1Char('\n'))));
 }
 
 void VariablesSection::refreshRanges()
@@ -225,6 +319,7 @@ void VariablesSection::rebuild()
                 if (raw->updating) return;
                 const QSignalBlocker blocker(raw->value);
                 raw->value->setValue(sliderValue(raw->range, position));
+                preview(*raw, raw->value->value());
                 // A drag commits on release; arrow keys and the wheel once they pause.
                 if (raw->slider->isSliderDown()) return;
                 steppingRow_ = raw;
@@ -234,6 +329,13 @@ void VariablesSection::rebuild()
                 [this, raw] { commit(*raw, raw->value->value()); });
             connect(row->value, &QDoubleSpinBox::editingFinished, this,
                 [this, raw] { commit(*raw, raw->value->value()); });
+            connect(row->value, &QDoubleSpinBox::textChanged, this, [this, raw] {
+                if (raw->updating || !raw->value->hasFocus()) return;
+                auto text = raw->value->text();
+                auto position = 0;
+                if (raw->value->validate(text, position) == QValidator::Acceptable)
+                    preview(*raw, raw->value->valueFromText(text));
+            });
             connect(rangeButton, &QToolButton::clicked, this, [this, raw] { editRange(*raw); });
         } else {
             row->formula = new ElidedLabel(row->widget);
@@ -300,6 +402,11 @@ void VariablesSection::editRange(Row& row)
         menu.close();
     });
     menu.exec(row.widget->mapToGlobal(QPoint(row.widget->width(), row.widget->height())));
+}
+
+void VariablesSection::preview(const Row& row, double value)
+{
+    if (preview_) preview_(row.variable, value);
 }
 
 void VariablesSection::commit(Row& row, double value)

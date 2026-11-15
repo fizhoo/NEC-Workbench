@@ -12,8 +12,10 @@
 #include <utility>
 #include <vector>
 
+class QCheckBox;
 class QLabel;
 class QTimer;
+class QToolButton;
 class QVBoxLayout;
 
 namespace necwb::ui {
@@ -36,6 +38,18 @@ public:
     // Called once per drag, typed value or burst of steps, with the variable's new value.
     void setValueChangedCallback(
         std::function<void(const nec::SymbolDefinition&, double)> callback);
+    // Called on every move of a slider and every keystroke in a value, before the change.
+    void setPreviewCallback(std::function<void(const nec::SymbolDefinition&, double)> callback);
+    // Puts back a value typed but not yet applied; false when there is none.
+    auto revertTyping() -> bool;
+
+    // The variables as opened or saved, which Reset goes back to.
+    void markBaseline();
+    // Each variable whose SY expression differs from the baseline, with the baseline's.
+    using Reset = std::vector<std::pair<nec::SymbolDefinition, std::string>>;
+    void setResetCallback(std::function<void(const Reset&)> callback);
+    // Whether a committed value is also solved at the selected frequency.
+    [[nodiscard]] auto isLive() const -> bool;
     // Reads the ranges again, after the optimizer's change.
     void refreshRanges();
 
@@ -48,6 +62,9 @@ private:
     [[nodiscard]] auto rangeOf(const nec::SymbolDefinition& variable) const -> Range;
     void editRange(Row& row);
     void commit(Row& row, double value);
+    void preview(const Row& row, double value);
+    [[nodiscard]] auto changesFromBaseline() const -> Reset;
+    void updateReset();
 
     std::vector<nec::SymbolDefinition> variables_;
     // Ranges set here or first seen, for the session; other variables start afresh.
@@ -56,11 +73,16 @@ private:
     QWidget* rowsWidget_{};
     QVBoxLayout* rowsLayout_{};
     QLabel* empty_{};
+    QCheckBox* live_{};
+    QToolButton* reset_{};
+    std::unordered_map<std::string, std::string> baseline_;
     QTimer* stepTimer_{};
     Row* steppingRow_{};
     std::function<std::optional<Range>(const QString&)> rangeProvider_;
     std::function<void(const QString&, const Range&)> rangeChanged_;
     std::function<void(const nec::SymbolDefinition&, double)> valueChanged_;
+    std::function<void(const nec::SymbolDefinition&, double)> preview_;
+    std::function<void(const Reset&)> resetRequested_;
 };
 
 }

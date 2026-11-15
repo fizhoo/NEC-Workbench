@@ -190,10 +190,14 @@ if(NECWB_BUILD_GUI)
         src/ui/editor/NecEditor.h
         src/ui/editor/NecHighlighter.cpp
         src/ui/editor/NecHighlighter.h
+        src/ui/editor/SourceHistory.cpp
+        src/ui/editor/SourceHistory.h
         src/ui/geometry/GeometryView.cpp
         src/ui/geometry/GeometryView.h
         src/ui/geometry/GeometryInteractionView.cpp
         src/ui/geometry/GeometryInteractionView.h
+        src/ui/geometry/GeometryPreview.cpp
+        src/ui/geometry/GeometryPreview.h
         src/ui/geometry/GeometrySettings.h
         src/ui/geometry/EngineeringSpinBox.cpp
         src/ui/geometry/EngineeringSpinBox.h
@@ -268,6 +272,7 @@ if(NECWB_BUILD_GUI)
             resources/icons/structured-cards.svg
             resources/icons/transmission-lines.svg
             resources/icons/undo.svg
+            resources/icons/revert.svg
             resources/icons/validate.svg
             resources/icons/variables.svg
     )
