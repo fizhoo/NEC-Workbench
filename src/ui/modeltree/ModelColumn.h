@@ -28,6 +28,7 @@ protected:
 
 private:
     void limitHeights();
+    void applyPolicies();
 
     ModelTree* tree_{};
     VariablesSection* variables_{};

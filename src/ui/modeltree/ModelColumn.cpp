@@ -17,6 +17,7 @@ constexpr auto MaximumWidth = 600;
 // With the pane open, the tree and the variables get at most these shares of the column.
 constexpr auto TreeShare = 0.40;
 constexpr auto VariablesShare = 0.25;
+constexpr auto PaneTitleHeight = 28;
 
 }
 
@@ -35,6 +36,7 @@ ModelColumn::ModelColumn(QWidget* parent) : QWidget(parent)
     layout->addWidget(tree_);
     layout->addWidget(variables_);
     layout->addWidget(pane_, 1);
+    variables_->setFoldChangedCallback([this] { applyPolicies(); });
     limitHeights();
 }
 
@@ -55,18 +57,31 @@ void ModelColumn::resizeEvent(QResizeEvent* event)
     limitHeights();
 }
 
+void ModelColumn::applyPolicies()
+{
+    // With the pane open the variables take their rows, up to a share, and scroll beyond
+    // that; with it hidden they fill the rest of the column, unless folded to their header.
+    variables_->setSizePolicy(QSizePolicy::Preferred,
+        !pane_->isHidden() || variables_->isFolded() ? QSizePolicy::Maximum
+                                                     : QSizePolicy::Expanding);
+}
+
 void ModelColumn::limitHeights()
 {
     const auto paneOpen = !pane_->isHidden();
     const auto rowHeight = tree_->sizeHintForRow(0);
     tree_->setMaximumHeight(paneOpen
         ? std::max(rowHeight * 4, static_cast<int>(height() * TreeShare)) : QWIDGETSIZE_MAX);
-    // With the pane open the variables take their rows, up to a share, and scroll beyond
-    // that; with it hidden they fill the rest of the column.
-    variables_->setSizePolicy(QSizePolicy::Preferred,
-        paneOpen ? QSizePolicy::Maximum : QSizePolicy::Expanding);
-    variables_->setMaximumHeight(paneOpen
-        ? std::max(rowHeight * 3, static_cast<int>(height() * VariablesShare)) : QWIDGETSIZE_MAX);
+    applyPolicies();
+    const auto variablesHeight = std::max(rowHeight * 3, static_cast<int>(height() * VariablesShare));
+    variables_->setMaximumHeight(paneOpen ? variablesHeight : QWIDGETSIZE_MAX);
+    // A form that would not fit below the tree and the variables folds the variables away.
+    const auto treeHeight = std::min(tree_->sizeHint().height(), tree_->maximumHeight());
+    const auto room = height() - treeHeight - std::min(variables_->unfoldedHeight(), variablesHeight);
+    // The pane scrolls its page, so ask the page how tall it is; the title adds a line.
+    const auto* page = pane_->currentPage();
+    const auto needed = page == nullptr ? 0 : page->sizeHint().height() + PaneTitleHeight;
+    variables_->setAutoFolded(paneOpen && height() > 0 && room < needed);
 }
 
 }
