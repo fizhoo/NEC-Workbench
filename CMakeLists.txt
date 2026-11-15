@@ -140,8 +140,6 @@ if(NECWB_BUILD_GUI)
         src/ui/FileIo.h
         src/ui/ParameterFieldStyle.cpp
         src/ui/ParameterFieldStyle.h
-        src/ui/bottom/CardsPanel.cpp
-        src/ui/bottom/CardsPanel.h
         src/ui/bottom/ProblemsView.cpp
         src/ui/bottom/ProblemsView.h
         src/ui/bottom/RawOutputView.cpp
@@ -183,6 +181,8 @@ if(NECWB_BUILD_GUI)
         src/ui/analysis/FieldResultsViews.cpp
         src/ui/analysis/FieldResultsViews.h
         src/ui/cards/CardFields.cpp
+        src/ui/cards/CardTables.cpp
+        src/ui/cards/CardTables.h
         src/ui/cards/CardFields.h
         src/ui/cards/CompactNumberDelegate.cpp
         src/ui/cards/CompactNumberDelegate.h

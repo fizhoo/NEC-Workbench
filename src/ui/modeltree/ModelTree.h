@@ -31,6 +31,8 @@ enum class ModelNode {
     TransmissionLine,
     Networks,
     Network,
+    // Cards with no group of their own: arcs, helices, patches, GS, GN, FR, RP and the rest.
+    OtherCards,
     Ground,
     Variables,
     Requests,

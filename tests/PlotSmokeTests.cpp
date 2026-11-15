@@ -33,7 +33,6 @@
 #include "ui/optimization/OptimizationComparePanel.h"
 #include "ui/model/ParameterEditor.h"
 #include "ui/setup/CardFieldForm.h"
-#include "ui/bottom/CardsPanel.h"
 #include "ui/setup/SetupEditor.h"
 #include "ui/welcome/WelcomePage.h"
 #include "nec/NecParser.h"
@@ -311,12 +310,9 @@ auto main(int argc, char* argv[]) -> int
             && mainWindow.findChild<QTabWidget*>(QStringLiteral("setupWorkspace")) == nullptr
             && mainWindow.findChild<QTabWidget*>(QStringLiteral("modelWorkspace")) == nullptr
             && mainWindow.findChild<QAction*>(QStringLiteral("modelModuleAction")) == nullptr
-            // The deck is raw source only; its cards are tables in the bottom panel.
+            // The deck is raw source only; its cards are tables in the properties pane.
             && mainWindow.findChild<QTabWidget*>(QStringLiteral("necDeckWorkspace")) == nullptr
-            && tabNames(mainWindow.findChild<QTabWidget*>(QStringLiteral("cardsTabs")))
-                == QStringList{QStringLiteral("Wires"), QStringLiteral("Sources"),
-                    QStringLiteral("Loads"), QStringLiteral("Transmission lines"),
-                    QStringLiteral("Networks"), QStringLiteral("Other")}
+            && mainWindow.findChild<QWidget*>(QStringLiteral("cardsPanel")) == nullptr
             && tabNames(validationWorkspace) == QStringList{QStringLiteral("Static Check"),
                 QStringLiteral("Average Gain Test"), QStringLiteral("Segmentation Convergence")}
             && compactPrimaryNavigation
@@ -953,22 +949,25 @@ auto main(int argc, char* argv[]) -> int
     }
     if (!variablesLive)
         return NECWB_SMOKE_FAILURE("variables live, undo, reset and revert");
-    // Cards: a group opens its table in the bottom panel; table edits keep SY symbols in the
-    // other fields; rows and geometry select each other; a right-clicked load and a TL picked
-    // by its two ends show in the pane; the Variables header folds them to one line.
-    auto cardsPanel = false;
+    // Card tables in the properties pane: a group shows its table and folds the variables; ⇔
+    // widens the column to the whole table, at most 65% of the window, and anything else narrows
+    // it again; a row's click selects its item and keeps the table, and its Line cell opens the
+    // form; edits keep SY symbols; new cards land before FR and RP; a right-clicked load and a
+    // TL picked by two ends show their forms; the Variables header folds them.
+    auto cardTables = false;
     {
         QSettings settings;
         const auto savedRecent = settings.value(QStringLiteral("files/recentModels"));
         settings.remove(QStringLiteral("ui/bottomPanel"));
         settings.remove(QStringLiteral("variables/folded"));
+        settings.remove(QStringLiteral("mainWindow/v2"));
         QTemporaryDir directory;
         const auto modelPath = directory.filePath(QStringLiteral("cards.nec"));
         QFile modelFile(modelPath);
         if (directory.isValid() && modelFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
             modelFile.write("SY r=50, v=1\nGW 1 11 0 -0.5 0 0 0.5 0 0.001\n"
                 "GW 2 11 0.3 -0.5 0 0.3 0.5 0 0.001\nGE 0\nEX 0 1 6 0 v 0\n"
-                "LD 4 1 3 3 r 0 0\nFR 0 1 0 0 146 0\nEN\n");
+                "LD 4 1 3 3 r 0 0\nFR 0 1 0 0 146 0\nRP 0 37 73 1000 0 0 5 5\nEN\n");
             modelFile.close();
             settings.setValue(QStringLiteral("files/recentModels"), QStringList{modelPath});
             settings.sync();
@@ -985,13 +984,17 @@ auto main(int argc, char* argv[]) -> int
             application.processEvents();
             auto* deck = mainWindow.findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor"));
             auto* tree = mainWindow.findChild<QTreeWidget*>(QStringLiteral("modelTree"));
-            auto* cardTabs = mainWindow.findChild<QTabWidget*>(QStringLiteral("cardsTabs"));
             auto* bottomTabs = mainWindow.findChild<QTabBar*>(QStringLiteral("bottomPanelTabs"));
+            auto* split = mainWindow.findChild<QSplitter*>(QStringLiteral("workbenchSplit"));
             auto* loads = mainWindow.findChild<QWidget*>(QStringLiteral("cardsLD"));
             auto* sources = mainWindow.findChild<QWidget*>(QStringLiteral("cardsEX"));
+            auto* lines = mainWindow.findChild<QWidget*>(QStringLiteral("cardsTL"));
+            auto* networks = mainWindow.findChild<QWidget*>(QStringLiteral("cardsNT"));
             auto* form = mainWindow.findChild<QWidget*>(QStringLiteral("cardFieldForm"));
+            auto* expand = mainWindow.findChild<QToolButton*>(QStringLiteral("paneExpandButton"));
             auto* header = mainWindow.findChild<QWidget*>(QStringLiteral("variablesHeader"));
             auto* live = mainWindow.findChild<QCheckBox*>(QStringLiteral("variablesLive"));
+            auto* section = mainWindow.findChild<QWidget*>(QStringLiteral("variablesSection"));
             necwb::ui::GeometryView* view = nullptr;
             for (auto* candidate : mainWindow.findChildren<necwb::ui::GeometryView*>())
                 if (view == nullptr && candidate->isVisible()) view = candidate;
@@ -1006,14 +1009,34 @@ auto main(int argc, char* argv[]) -> int
                 const auto* title = mainWindow.findChild<QLabel*>(QStringLiteral("propertiesPaneTitle"));
                 return title == nullptr ? QString{} : title->text();
             };
-            if (deck != nullptr && tree != nullptr && cardTabs != nullptr && bottomTabs != nullptr
-                && loads != nullptr && sources != nullptr && form != nullptr && header != nullptr
-                && live != nullptr && view != nullptr) {
+            const auto beforeRun = [&](const QString& card) {
+                const auto at = text().indexOf(card);
+                return at >= 0 && at < text().indexOf(QStringLiteral("FR 0 1"))
+                    && at < text().indexOf(QStringLiteral("RP 0"));
+            };
+            if (deck != nullptr && tree != nullptr && bottomTabs != nullptr && split != nullptr
+                && loads != nullptr && sources != nullptr && lines != nullptr && networks != nullptr
+                && form != nullptr && expand != nullptr && header != nullptr && live != nullptr
+                && section != nullptr && view != nullptr) {
                 auto* loadTable = loads->findChild<QTableWidget*>(QStringLiteral("structuredCardTable"));
                 auto* sourceTable = sources->findChild<QTableWidget*>(QStringLiteral("structuredCardTable"));
+                const auto bottomPanelPlain = bottomTabs->count() == 4;
                 selectGroup(QStringLiteral("Loads"));
-                const auto groupOpens = bottomTabs->currentIndex() == 0 && cardTabs->currentWidget() == loads
-                    && loadTable->isVisible() && loadTable->rowCount() == 1;
+                const auto narrowWidth = split->sizes().value(0);
+                const auto groupShows = loadTable->isVisible() && loadTable->rowCount() == 1
+                    && expand->isVisible() && !expand->isChecked()
+                    && section->height() <= header->height() + 2;
+                // ⇔ widens the column to show every column; Ground narrows it again.
+                expand->click();
+                application.processEvents();
+                const auto wideWidth = split->sizes().value(0);
+                const auto widened = wideWidth > narrowWidth
+                    && wideWidth <= static_cast<int>(mainWindow.width() * 0.65) + 1
+                    && !loadTable->horizontalScrollBar()->isVisible();
+                selectGroup(QStringLiteral("Ground"));
+                const auto narrowedAgain = split->sizes().value(0) == narrowWidth
+                    && !expand->isVisible() && !expand->isChecked();
+                selectGroup(QStringLiteral("Loads"));
                 // Edit X of the load and the segment of the source: the r and v symbols stay.
                 loadTable->item(0, 7)->setText(QStringLiteral("10"));
                 application.processEvents();
@@ -1021,50 +1044,76 @@ auto main(int argc, char* argv[]) -> int
                 application.processEvents();
                 const auto symbolsKept = text().contains(QStringLiteral("LD 4 1 3 3 r 10 0"))
                     && text().contains(QStringLiteral("EX 0 1 5 0 v 0"));
-                // A row selects the load in the tree and shows its form; geometry selects the row.
+                // A click selects the load in the tree and keeps the table; Line opens the form.
+                selectGroup(QStringLiteral("Loads"));
                 loadTable->selectRow(0);
                 application.processEvents();
-                const auto selection = tree->currentItem() == nullptr ? QString{}
-                    : tree->currentItem()->parent() == nullptr ? QString{}
-                    : tree->currentItem()->parent()->text(0);
-                const auto rowSelects = selection == QStringLiteral("Loads") && form->isVisible();
-                loadTable->clearSelection();
+                const auto selection = tree->currentItem() == nullptr
+                        || tree->currentItem()->parent() == nullptr
+                    ? QString{} : tree->currentItem()->parent()->text(0);
+                const auto rowSelects = selection == QStringLiteral("Loads") && loadTable->isVisible()
+                    && !form->isVisible();
+                emit loadTable->itemActivated(loadTable->item(0, 0));
+                application.processEvents();
+                const auto lineOpensForm = form->isVisible() && pageTitle() == QStringLiteral("Load");
                 emit view->excitationSelected(5);
                 application.processEvents();
                 const auto geometrySelects = sourceTable->currentRow() == 0
-                    && sourceTable->selectionModel()->isRowSelected(0);
-                // Right-click Add Load, then a TL picked by two wire ends, with Cards open.
+                    && pageTitle() == QStringLiteral("Source");
+                // New cards from every table land with the others, before FR and RP.
+                for (const auto& [group, table] : std::initializer_list<std::pair<QString, QWidget*>>{
+                         {QStringLiteral("Sources"), sources}, {QStringLiteral("Loads"), loads},
+                         {QStringLiteral("Trans. lines"), lines}, {QStringLiteral("Networks"), networks}}) {
+                    selectGroup(group);
+                    table->findChild<QPushButton*>(QStringLiteral("structuredAddCardButton"))->click();
+                    application.processEvents();
+                }
+                const auto tableAddsPlaced = beforeRun(QStringLiteral("EX 0 1 6 0 1 0"))
+                    && beforeRun(QStringLiteral("LD 0 1 1 11 0 0 0"))
+                    && beforeRun(QStringLiteral("TL 1 6 2 6 50"))
+                    && beforeRun(QStringLiteral("NT 1 6 2 6 0.02"));
+                // With the table widened, a right-clicked load and a TL picked by its two ends
+                // land before FR, show their forms and narrow the column.
+                selectGroup(QStringLiteral("Loads"));
+                expand->click();
+                application.processEvents();
                 emit view->addLoadRequested(2, 6);
                 application.processEvents();
-                const auto loadAdded = text().contains(QStringLiteral("LD 4 2 6 6 50 0 0"))
-                    && form->isVisible() && pageTitle().contains(QStringLiteral("Load"));
-                emit view->transmissionLineEndpointRequested(1, 6);
-                emit view->transmissionLineEndpointRequested(2, 6);
+                const auto loadAdded = beforeRun(QStringLiteral("LD 4 2 6 6 50 0 0"))
+                    && form->isVisible() && pageTitle() == QStringLiteral("Load")
+                    && split->sizes().value(0) == narrowWidth;
+                selectGroup(QStringLiteral("Trans. lines"));
+                expand->click();
                 application.processEvents();
-                const auto linePicked = text().contains(QStringLiteral("TL 1 6 2 6 50"))
-                    && form->isVisible() && pageTitle().contains(QStringLiteral("Transmission line"))
-                    && bottomTabs->currentIndex() == 0;
+                emit view->transmissionLineEndpointRequested(1, 4);
+                emit view->transmissionLineEndpointRequested(2, 4);
+                application.processEvents();
+                const auto linePicked = beforeRun(QStringLiteral("TL 1 4 2 4 50"))
+                    && form->isVisible() && pageTitle() == QStringLiteral("Transmission line")
+                    && split->sizes().value(0) == narrowWidth;
                 // With nothing in the pane, the header folds the variables to one line with Live
                 // still there, and back.
-                selectGroup(QStringLiteral("Loads"));
+                selectGroup(QStringLiteral("Ground"));
+                selectGroup(QStringLiteral("Deck"));
                 QMouseEvent click(QEvent::MouseButtonRelease, QPointF(5, 5), header->mapToGlobal(QPointF(5, 5)),
                     Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
                 QApplication::sendEvent(header, &click);
                 application.processEvents();
-                auto* section = mainWindow.findChild<QWidget*>(QStringLiteral("variablesSection"));
                 const auto folded = section->height() <= header->height() + 2 && live->isVisible()
                     && settings.value(QStringLiteral("variables/folded")).toBool();
                 QApplication::sendEvent(header, &click);
                 application.processEvents();
                 const auto unfolded = section->height() > header->height() + 2
                     && !settings.value(QStringLiteral("variables/folded")).toBool();
-                cardsPanel = groupOpens && symbolsKept && rowSelects && geometrySelects
-                    && loadAdded && linePicked && folded && unfolded;
-                if (!cardsPanel) {
-                    qWarning() << "cards panel" << groupOpens << bottomTabs->currentIndex()
-                               << symbolsKept << rowSelects << selection << geometrySelects
-                               << loadAdded << linePicked << pageTitle() << folded << unfolded
-                               << text();
+                cardTables = bottomPanelPlain && groupShows && widened && narrowedAgain
+                    && symbolsKept && rowSelects && lineOpensForm && geometrySelects
+                    && tableAddsPlaced && loadAdded && linePicked && folded && unfolded;
+                if (!cardTables) {
+                    qWarning() << "card tables" << bottomPanelPlain << groupShows << widened
+                               << narrowWidth << wideWidth << narrowedAgain << symbolsKept
+                               << rowSelects << selection << lineOpensForm << geometrySelects
+                               << pageTitle() << tableAddsPlaced << loadAdded << linePicked
+                               << folded << unfolded << text();
                 }
             }
             if (deck != nullptr) deck->document()->setModified(false);
@@ -1076,8 +1125,8 @@ auto main(int argc, char* argv[]) -> int
         settings.remove(QStringLiteral("mainWindow/v2"));
         settings.sync();
     }
-    if (!cardsPanel)
-        return NECWB_SMOKE_FAILURE("cards panel, pane forms and folding variables");
+    if (!cardTables)
+        return NECWB_SMOKE_FAILURE("card tables in the pane, expand, placement and folding");
     if (!variableSliderEdits)
         return NECWB_SMOKE_FAILURE("variable slider edits the SY card");
     if (!wirePaneKeepsSymbols)
@@ -3437,7 +3486,8 @@ auto main(int argc, char* argv[]) -> int
         groupNames.append(modelTree->topLevelItem(index)->text(0));
     const auto modelTreeGroups = groupNames == QStringList{QStringLiteral("Frequency"),
         QStringLiteral("Wires"), QStringLiteral("Sources"), QStringLiteral("Loads"),
-        QStringLiteral("Trans. lines"), QStringLiteral("Networks"), QStringLiteral("Ground"),
+        QStringLiteral("Trans. lines"), QStringLiteral("Networks"), QStringLiteral("Other"),
+        QStringLiteral("Ground"),
         QStringLiteral("Variables"), QStringLiteral("Requests"), QStringLiteral("Solver"),
         QStringLiteral("Deck"), QStringLiteral("Validation")};
     const auto modelTreeSummaries = summary(QStringLiteral("Frequency"))

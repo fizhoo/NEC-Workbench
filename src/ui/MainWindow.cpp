@@ -34,7 +34,7 @@
 #include "ui/modeltree/PropertiesPane.h"
 #include "ui/modeltree/VariablesSection.h"
 #include "ui/cards/WireCardEditor.h"
-#include "ui/bottom/CardsPanel.h"
+#include "ui/cards/CardTables.h"
 #include "ui/analysis/AnalysisSetupEditor.h"
 #include "ui/analysis/AnalysisRequestEditor.h"
 #include "ui/analysis/AverageGainResultsView.h"
@@ -101,6 +101,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScreen>
+#include <QScopedValueRollback>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSizePolicy>
@@ -670,53 +671,6 @@ void MainWindow::createWorkspace()
     QTimer::singleShot(0, this, [this] { refreshLatestRun(); });
 
 
-    cards_ = bottomPanel_->cards();
-    wireCardEditor_ = cards_->wires();
-    connect(cards_->deckUnits(), &QComboBox::currentIndexChanged, this, [this] {
-        const auto unit = cards_->deckUnits()->currentData().toInt();
-        if (!updatingDeckUnitControl_ && unit >= 0)
-            changeDeckLengthUnit(static_cast<model::LengthUnit>(unit));
-    });
-    connect(wireCardEditor_, &WireCardEditor::wireSelected, this,
-        [this](int tag) {
-            selectWireInProject(tag);
-            if (const auto* wire = currentModel_.wireByTag(tag)) editor_->goToLine(wire->sourceLine);
-        });
-    connect(wireCardEditor_, &WireCardEditor::wireEdited, this,
-        [this](model::Wire original, model::Wire updated) { editWire(original, updated); });
-    connect(wireCardEditor_, &WireCardEditor::addWireRequested, this,
-        [this] { addWire({0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}); });
-    connect(wireCardEditor_, &WireCardEditor::duplicateWireRequested, this,
-        [this](int tag) { duplicateWire(tag); });
-    connect(wireCardEditor_, &WireCardEditor::deleteWireRequested, this,
-        [this](int tag) { deleteWire(tag); });
-    connect(wireCardEditor_, &WireCardEditor::fieldParameterizationRequested, this,
-        [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
-            makeFieldOptimizable(sourceLine, fieldIndex, fieldLabel);
-        });
-    connect(wireCardEditor_, &WireCardEditor::fieldDetachmentRequested, this,
-        [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
-            detachFieldParameter(sourceLine, fieldIndex, fieldLabel);
-        });
-    connect(cards_, &CardsPanel::cardSelected, this,
-        [this](std::size_t sourceLine) { selectCardInModel(sourceLine); });
-    connect(cards_, &CardsPanel::cardEdited, this,
-        [this](std::size_t sourceLine, const QString& cardText) {
-            editStructuredCard(sourceLine, cardText);
-        });
-    connect(cards_, &CardsPanel::cardAddRequested, this,
-        [this](const QString& cardText) { addStructuredCard(cardText); });
-    connect(cards_, &CardsPanel::cardDeleteRequested, this,
-        [this](std::size_t sourceLine) { deleteStructuredCard(sourceLine); });
-    connect(cards_, &CardsPanel::fieldParameterizationRequested, this,
-        [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
-            makeFieldOptimizable(sourceLine, fieldIndex, fieldLabel);
-        });
-    connect(cards_, &CardsPanel::fieldDetachmentRequested, this,
-        [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
-            detachFieldParameter(sourceLine, fieldIndex, fieldLabel);
-        });
-
     workspace_ = new QTabWidget(windowHost_);
     workspace_->setObjectName(QStringLiteral("geometryWorkspace"));
     workspace_->setDocumentMode(true);
@@ -894,13 +848,66 @@ void MainWindow::createWorkspace()
         });
     connect(setupEditor_, &SetupEditor::referenceImpedanceDeleteRequested, this,
         [this](std::size_t sourceLine) { deleteReferenceImpedance(sourceLine); });
+    cardTables_ = new CardTables(setupEditor_->sourcesPage(), windowHost_);
+    wireCardEditor_ = cardTables_->wires();
+    connect(cardTables_->deckUnits(), &QComboBox::currentIndexChanged, this, [this] {
+        const auto unit = cardTables_->deckUnits()->currentData().toInt();
+        if (!updatingDeckUnitControl_ && unit >= 0)
+            changeDeckLengthUnit(static_cast<model::LengthUnit>(unit));
+    });
+    // A row's click selects its item and keeps the table; activating it opens its form.
+    connect(wireCardEditor_, &WireCardEditor::wireSelected, this, [this](int tag) {
+        const QScopedValueRollback keep(keepTable_, true);
+        selectWireInProject(tag);
+    });
+    connect(wireCardEditor_, &WireCardEditor::wireActivated, this,
+        [this](int tag) { selectWireInProject(tag); });
+    connect(wireCardEditor_, &WireCardEditor::wireEdited, this,
+        [this](model::Wire original, model::Wire updated) { editWire(original, updated); });
+    connect(wireCardEditor_, &WireCardEditor::addWireRequested, this,
+        [this] { addWire({0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}); });
+    connect(wireCardEditor_, &WireCardEditor::duplicateWireRequested, this,
+        [this](int tag) { duplicateWire(tag); });
+    connect(wireCardEditor_, &WireCardEditor::deleteWireRequested, this,
+        [this](int tag) { deleteWire(tag); });
+    connect(wireCardEditor_, &WireCardEditor::fieldParameterizationRequested, this,
+        [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
+            makeFieldOptimizable(sourceLine, fieldIndex, fieldLabel);
+        });
+    connect(wireCardEditor_, &WireCardEditor::fieldDetachmentRequested, this,
+        [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
+            detachFieldParameter(sourceLine, fieldIndex, fieldLabel);
+        });
+    connect(cardTables_, &CardTables::cardSelected, this, [this](std::size_t sourceLine) {
+        const QScopedValueRollback keep(keepTable_, true);
+        selectCardInModel(sourceLine);
+    });
+    connect(cardTables_, &CardTables::cardActivated, this,
+        [this](std::size_t sourceLine) { selectCardInModel(sourceLine); });
+    connect(cardTables_, &CardTables::cardEdited, this,
+        [this](std::size_t sourceLine, const QString& cardText) {
+            editStructuredCard(sourceLine, cardText);
+        });
+    connect(cardTables_, &CardTables::cardAddRequested, this,
+        [this](const QString& cardText) { addStructuredCard(cardText); });
+    connect(cardTables_, &CardTables::cardDeleteRequested, this,
+        [this](std::size_t sourceLine) { deleteStructuredCard(sourceLine); });
+    connect(cardTables_, &CardTables::fieldParameterizationRequested, this,
+        [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
+            makeFieldOptimizable(sourceLine, fieldIndex, fieldLabel);
+        });
+    connect(cardTables_, &CardTables::fieldDetachmentRequested, this,
+        [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
+            detachFieldParameter(sourceLine, fieldIndex, fieldLabel);
+        });
+
     cardForm_ = new CardFieldForm(windowHost_);
     cardForm_->setAppliedCallback([this](std::size_t sourceLine, const QString& cardText) {
         editStructuredCard(sourceLine, cardText);
     });
     cardForm_->setDeleteCallback([this](std::size_t sourceLine) {
         deleteStructuredCard(sourceLine);
-        modelColumn_->showPage(nullptr, {});
+        showPanePage(nullptr, {});
     });
     deckView_ = new DeckView(editor_, windowHost_);
     deckView_->setBackCallback(
@@ -1082,8 +1089,8 @@ void MainWindow::createOptimizationWorkspace()
             optimizationWorkspace_->isRunning() ? tr("Running") : tr("Ready")));
     });
     optimizationWorkspace_->setParameterizationHelpCallback([this] {
-        bottomPanel_->showTab(BottomPanel::Tab::Cards);
-        cards_->focusParameterizableField();
+        selectInModel({ModelNode::Wires});
+        cardTables_->focusParameterizableField(CardTables::Table::Wires);
         statusBar()->showMessage(tr(
             "Right-click a numeric field and choose Parameterize Field or Change Parameter Link."),
             6000);
@@ -1174,9 +1181,9 @@ void MainWindow::updateDeckUnitControls(const nec::DeckGeometryUnitInfo& info)
     deckScaleToMeters_ = info.uniform ? info.scaleToMeters : 1.0;
     updatingDeckUnitControl_ = true;
     const auto unitIndex = info.uniform && info.standardUnit
-        ? cards_->deckUnits()->findData(static_cast<int>(*info.standardUnit))
-        : cards_->deckUnits()->findData(-1);
-    cards_->deckUnits()->setCurrentIndex(std::max(0, unitIndex));
+        ? cardTables_->deckUnits()->findData(static_cast<int>(*info.standardUnit))
+        : cardTables_->deckUnits()->findData(-1);
+    cardTables_->deckUnits()->setCurrentIndex(std::max(0, unitIndex));
     updatingDeckUnitControl_ = false;
 
     QString unitLabel;
@@ -1186,17 +1193,17 @@ void MainWindow::updateDeckUnitControls(const nec::DeckGeometryUnitInfo& info)
     } else {
         unitLabel = info.uniform ? tr("custom") : tr("mixed");
     }
-    cards_->deckScale()->setText(!info.uniform
+    cardTables_->deckScale()->setText(!info.uniform
         ? tr("Different GS scales apply to different wires")
         : !info.hasScaleCard && info.standardUnit == model::LengthUnit::Meter
             ? tr("Native meters · no GS card")
             : tr("GS scale ×%1 to meters").arg(formatDecimal(info.scaleToMeters)));
-    cards_->deckUnits()->setToolTip(tr(
+    cardTables_->deckUnits()->setToolTip(tr(
         "These are the coordinate and radius units written in NEC geometry cards. "
         "This setting is independent of Geometry display units."));
     wireCardEditor_->setDeckScale(
         info.uniform ? info.scaleToMeters : 1.0, unitLabel);
-    cards_->setDeckUnitLabel(unitLabel);
+    cardTables_->setDeckUnitLabel(unitLabel);
 }
 
 auto MainWindow::deckScaleForSourceLine(std::size_t sourceLine) const -> double
@@ -2074,7 +2081,7 @@ void MainWindow::checkModel(bool presentReport)
     modelColumn_->variables()->setVariables(resolution.definitions);
     setupEditor_->setData(currentModel_, currentSetup_);
     analysisRequestEditor_->setData(currentSetup_);
-    cards_->setDocument(document, parameterFields);
+    cardTables_->setDocument(document, parameterFields);
     modelColumn_->tree()->setModel(currentModel_, currentSetup_, document);
     refreshWireEditor();
     if (modelColumn_->pane()->currentPage() == cardForm_) refreshCardForm(cardForm_->sourceLine());
@@ -2250,6 +2257,11 @@ void MainWindow::createModelColumn()
             editWire(original, updated);
         });
     modelColumn_->pane()->setDiscardCallback([this](QWidget* page) { discardPendingEdits(page); });
+    modelColumn_->pane()->setExpandCallback([this](bool expand) {
+        const auto table = cardTables_->tableOf(modelColumn_->pane()->currentPage());
+        if (expand && table) widenForTable(*table);
+        else workbenchLayout_->restoreLeftColumn();
+    });
     // Slider ranges come from the optimizer for variables it searches, and edits go back.
     auto* variables = modelColumn_->variables();
     variables->setRangeProvider(
@@ -2297,7 +2309,7 @@ void MainWindow::showModelSelection(const ModelSelection& selection)
     case ModelNode::Wire:
         synchronizeGeometrySelection(selection.wireTag);
         wireCardEditor_->selectWire(selection.wireTag);
-        refreshWireEditor();
+        if (!keepTable_) refreshWireEditor();
         return;
     case ModelNode::Source: for (auto* view : views) view->selectExcitation(line); break;
     case ModelNode::Load: for (auto* view : views) view->selectLoad(line); break;
@@ -2307,23 +2319,35 @@ void MainWindow::showModelSelection(const ModelSelection& selection)
     case ModelNode::Network: for (auto* view : views) view->selectNetwork(line); break;
     default: break;
     }
-    // A group's cards open in the Cards tab; one card shows in the pane with its row selected.
-    using Page = CardsPanel::Page;
-    const auto group = selection.node == ModelNode::Wires ? std::optional{Page::Wires}
-        : selection.node == ModelNode::Sources ? std::optional{Page::Sources}
-        : selection.node == ModelNode::Loads ? std::optional{Page::Loads}
-        : selection.node == ModelNode::TransmissionLines ? std::optional{Page::TransmissionLines}
-        : selection.node == ModelNode::Networks ? std::optional{Page::Networks} : std::nullopt;
-    if (group) {
-        cards_->showPage(*group);
-        bottomPanel_->showTab(BottomPanel::Tab::Cards);
-    }
+    // A row clicked in a table selects its item and leaves the table showing.
+    if (keepTable_) return;
     const auto [page, title] = paneContent(selection.node);
     if (page == cardForm_) {
-        cards_->selectCard(line);
+        cardTables_->selectCard(line);
         refreshCardForm(line);
     }
-    modelColumn_->showPage(page, title);
+    showPanePage(page, title);
+}
+
+void MainWindow::showPanePage(QWidget* page, const QString& title)
+{
+    // ⇔ widens the column for a table; anything else puts it back.
+    const auto table = cardTables_->tableOf(page);
+    auto* pane = modelColumn_->pane();
+    pane->setExpandable(table.has_value());
+    if (!table && pane->isExpanded()) {
+        pane->setExpanded(false);
+        workbenchLayout_->restoreLeftColumn();
+    }
+    modelColumn_->showPage(page, title, table.has_value());
+    if (table && pane->isExpanded()) widenForTable(*table);
+}
+
+void MainWindow::widenForTable(CardTables::Table table)
+{
+    constexpr auto MaximumShare = 0.65;
+    workbenchLayout_->expandLeftColumn(std::min(cardTables_->fullWidth(table),
+        static_cast<int>(width() * MaximumShare)));
 }
 
 void MainWindow::refreshCardForm(std::size_t sourceLine)
@@ -2353,7 +2377,13 @@ auto MainWindow::paneContent(ModelNode node) const -> std::pair<QWidget*, QStrin
     switch (node) {
     case ModelNode::Frequency: return {setupEditor_->frequencyPage(), tr("Frequency")};
     case ModelNode::Wire: return {wireEditor_, tr("Wire")};
-    case ModelNode::Sources: return {setupEditor_->sourcesPage(), tr("Feed system")};
+    case ModelNode::Wires: return {cardTables_->page(CardTables::Table::Wires), tr("Wires")};
+    case ModelNode::Sources: return {cardTables_->page(CardTables::Table::Sources), tr("Sources")};
+    case ModelNode::Loads: return {cardTables_->page(CardTables::Table::Loads), tr("Loads")};
+    case ModelNode::TransmissionLines:
+        return {cardTables_->page(CardTables::Table::TransmissionLines), tr("Transmission lines")};
+    case ModelNode::Networks: return {cardTables_->page(CardTables::Table::Networks), tr("Networks")};
+    case ModelNode::OtherCards: return {cardTables_->page(CardTables::Table::Other), tr("Other cards")};
     case ModelNode::Source: return {cardForm_, tr("Source")};
     case ModelNode::Load: return {cardForm_, tr("Load")};
     case ModelNode::TransmissionLine: return {cardForm_, tr("Transmission line")};
@@ -2369,7 +2399,7 @@ auto MainWindow::paneContent(ModelNode node) const -> std::pair<QWidget*, QStrin
 auto MainWindow::paneDestination() const -> EditorDestination
 {
     const auto* page = modelColumn_->pane()->currentPage();
-    if (page == setupEditor_->sourcesPage()) return EditorDestination::Sources;
+    if (page == cardTables_->page(CardTables::Table::Sources)) return EditorDestination::Sources;
     if (page == setupEditor_->environmentPage()) return EditorDestination::Environment;
     if (page == analysisRequestEditor_) return EditorDestination::Requests;
     if (page == analysisSetupEditor_) return EditorDestination::Solver;
@@ -2399,7 +2429,7 @@ void MainWindow::refreshWireEditor()
     const auto* wire = selection && selection->node == ModelNode::Wire
         ? currentModel_.wireByTag(selection->wireTag) : nullptr;
     if (wire == nullptr) {
-        if (modelColumn_->pane()->currentPage() == wireEditor_) modelColumn_->showPage(nullptr, {});
+        if (modelColumn_->pane()->currentPage() == wireEditor_) showPanePage(nullptr, {});
         return;
     }
     if (!wireEditor_->hasPendingEdits()) {
@@ -2414,12 +2444,15 @@ void MainWindow::refreshWireEditor()
         }
         wireEditor_->setWire(*wire, currentModel_, geometrySettings_.lengthUnit, linked);
     }
-    modelColumn_->showPage(wireEditor_, tr("Wire %1").arg(wire->tag));
+    showPanePage(wireEditor_, tr("Wire %1").arg(wire->tag));
 }
 
 void MainWindow::discardPendingEdits(QWidget* page)
 {
     if (setupEditor_->hasPendingEdits(page)) setupEditor_->discardPendingEdits(page);
+    // The sources table carries the reference-impedance line.
+    if (page == cardTables_->page(CardTables::Table::Sources))
+        setupEditor_->discardPendingEdits(setupEditor_->sourcesPage());
     if (page == cardForm_) cardForm_->discardPendingEdits();
     if (page == analysisRequestEditor_) analysisRequestEditor_->discardPendingEdits();
     if (page == parameterEditor_) parameterEditor_->discardPendingEdits();

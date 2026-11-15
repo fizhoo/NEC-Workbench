@@ -1,11 +1,14 @@
 #include "ui/modeltree/PropertiesPane.h"
 
+#include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSignalBlocker>
 #include <QStackedWidget>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -25,14 +28,32 @@ PropertiesPane::PropertiesPane(QWidget* parent) : QWidget(parent)
     font.setPointSizeF(font.pointSizeF() * 0.9);
     title_->setFont(font);
     title_->setContentsMargins(6, 3, 6, 3);
-    title_->setBackgroundRole(QPalette::AlternateBase);
-    title_->setAutoFillBackground(true);
+    auto* header = new QWidget(this);
+    header->setBackgroundRole(QPalette::AlternateBase);
+    header->setAutoFillBackground(true);
+    auto* headerLayout = new QHBoxLayout(header);
+    headerLayout->setContentsMargins(0, 0, 2, 0);
+    headerLayout->setSpacing(0);
+    expand_ = new QToolButton(header);
+    expand_->setObjectName(QStringLiteral("paneExpandButton"));
+    expand_->setText(QStringLiteral("⇔"));
+    expand_->setCheckable(true);
+    expand_->setAutoRaise(true);
+    expand_->setToolTip(tr("Widen the column to show the whole table"));
+    expand_->hide();
+    headerLayout->addWidget(title_, 1);
+    headerLayout->addWidget(expand_);
+    connect(expand_, &QToolButton::toggled, this, [this](bool expanded) {
+        expand_->setToolTip(expanded ? tr("Narrow the column again")
+                                     : tr("Widen the column to show the whole table"));
+        if (expanded_) expanded_(expanded);
+    });
     pages_ = new QStackedWidget;
     scroll_ = new QScrollArea(this);
     scroll_->setFrameShape(QFrame::NoFrame);
     scroll_->setWidgetResizable(true);
     scroll_->setWidget(pages_);
-    layout->addWidget(title_);
+    layout->addWidget(header);
     layout->addWidget(scroll_, 1);
     hide();
 }
@@ -123,6 +144,27 @@ auto PropertiesPane::revertPendingEdits() -> bool
     if (pendingButtons().isEmpty()) return false;
     if (discard_) discard_(pages_->currentWidget());
     return true;
+}
+
+void PropertiesPane::setExpandable(bool expandable)
+{
+    expand_->setVisible(expandable);
+}
+
+void PropertiesPane::setExpanded(bool expanded)
+{
+    const QSignalBlocker blocker(expand_);
+    expand_->setChecked(expanded);
+}
+
+auto PropertiesPane::isExpanded() const -> bool
+{
+    return expand_->isChecked();
+}
+
+void PropertiesPane::setExpandCallback(std::function<void(bool)> callback)
+{
+    expanded_ = std::move(callback);
 }
 
 void PropertiesPane::keyPressEvent(QKeyEvent* event)

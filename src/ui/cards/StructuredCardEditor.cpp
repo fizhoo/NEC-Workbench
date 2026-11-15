@@ -453,6 +453,12 @@ StructuredCardEditor::StructuredCardEditor(Families families, QWidget* parent)
         emit cardSelected(table_->item(table_->currentRow(), 0)->data(SourceLineRole).toULongLong());
         updateActions();
     });
+    // Editable cells take a double-click for editing; the read-only Line cell and Enter
+    // activate the row.
+    connect(table_, &QTableWidget::itemActivated, this, [this](QTableWidgetItem* item) {
+        if (const auto* line = table_->item(item->row(), 0))
+            emit cardActivated(line->data(SourceLineRole).toULongLong());
+    });
     connect(table_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
         if (!updating_) commitCell(item);
     });

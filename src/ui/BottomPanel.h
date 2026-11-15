@@ -8,7 +8,6 @@ class QTabBar;
 
 namespace necwb::ui {
 
-class CardsPanel;
 class ProblemsView;
 class RawOutputView;
 class RunHistoryView;
@@ -21,11 +20,10 @@ class BottomPanel final : public QWidget {
     Q_OBJECT
 
 public:
-    enum class Tab { Cards, Problems, RunLog, Runs, RawOutput };
+    enum class Tab { Problems, RunLog, Runs, RawOutput };
 
     explicit BottomPanel(QWidget* parent = nullptr);
 
-    [[nodiscard]] auto cards() const -> CardsPanel* { return cards_; }
     [[nodiscard]] auto problems() const -> ProblemsView* { return problems_; }
     [[nodiscard]] auto runLog() const -> RunLogView* { return runLog_; }
     [[nodiscard]] auto runs() const -> RunHistoryView* { return runs_; }
@@ -54,7 +52,6 @@ private:
     QStackedWidget* pages_{};
     QWidget* resizeGrip_{};
     QAction* toggleAction_{};
-    CardsPanel* cards_{};
     ProblemsView* problems_{};
     RunLogView* runLog_{};
     RunHistoryView* runs_{};

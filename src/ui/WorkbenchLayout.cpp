@@ -151,11 +151,40 @@ void WorkbenchLayout::applyColumnWidths(int left, int right)
     split_->setSizes({left, std::max(0, center), right});
 }
 
+void WorkbenchLayout::expandLeftColumn(int width)
+{
+    auto* left = split_->widget(LeftPane);
+    const auto sizes = split_->sizes();
+    if (!expandedFrom_)
+        expandedFrom_ = Widths{sizes.value(LeftPane), sizes.value(RightPane), left->maximumWidth()};
+    left->setMaximumWidth(QWIDGETSIZE_MAX);
+    // The results column gives way to its minimum before the geometry does.
+    const auto available = split_->width() - 2 * split_->handleWidth();
+    const auto center = center_->minimumSizeHint().width();
+    auto right = expandedFrom_->right;
+    if (right > 0) {
+        right = std::clamp(available - width - center,
+            split_->widget(RightPane)->minimumSizeHint().width(), right);
+    }
+    applyColumnWidths(std::min(std::max(width, expandedFrom_->left), available - center - right),
+        right);
+}
+
+void WorkbenchLayout::restoreLeftColumn()
+{
+    if (!expandedFrom_) return;
+    const auto widths = *expandedFrom_;
+    expandedFrom_.reset();
+    split_->widget(LeftPane)->setMaximumWidth(widths.maximum);
+    applyColumnWidths(widths.left, widths.right);
+}
+
 void WorkbenchLayout::saveColumnWidths()
 {
     const auto sizes = split_->sizes();
     QSettings settings;
-    settings.setValue(LeftColumnWidthKey, sizes.value(LeftPane));
+    // A column widened for a table goes back to the saved width.
+    if (!expandedFrom_) settings.setValue(LeftColumnWidthKey, sizes.value(LeftPane));
     // Dragging the right column shut collapses it; its width is kept for when it comes back.
     const auto right = sizes.value(RightPane);
     if (right > 0) settings.setValue(RightColumnWidthKey, right);

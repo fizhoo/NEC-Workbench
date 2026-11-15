@@ -10,6 +10,7 @@
 #include "ui/analysis/AnalysisRunStore.h"
 #include "ui/analysis/ResultReferenceController.h"
 #include "ui/analysis/SolverProcessRunner.h"
+#include "ui/cards/CardTables.h"
 #include "ui/modeltree/ModelTree.h"
 #include "analysis/AnalysisResult.h"
 #include "analysis/AverageGainTest.h"
@@ -52,7 +53,6 @@ class AverageGainResultsView;
 class ConvergenceWorkspace;
 class SetupEditor;
 class WireCardEditor;
-class CardsPanel;
 class CardFieldForm;
 class WelcomePage;
 class SourceHistory;
@@ -159,6 +159,9 @@ private:
     void refreshWireEditor();
     // Shows the card on that line in the pane's form.
     void refreshCardForm(std::size_t sourceLine);
+    // Shows a page in the properties pane, widening the column for a table on ⇔.
+    void showPanePage(QWidget* page, const QString& title);
+    void widenForTable(CardTables::Table table);
     // Selects the source, load, line or network a Cards row is, or its deck line.
     void selectCardInModel(std::size_t sourceLine);
     // Shows the engine in the toolbar and on the model tree's Solver row.
@@ -314,7 +317,9 @@ private:
     WorkbenchToolBar* toolBar_{};
     WelcomePage* welcomePage_{};
     WireCardEditor* wireCardEditor_{};
-    CardsPanel* cards_{};
+    CardTables* cardTables_{};
+    // Set while a table row selects its item, which keeps the table in the pane.
+    bool keepTable_{};
     NecEditor* editor_{};
     SourceHistory* history_{};
     GeometryPreview* geometryPreview_{};

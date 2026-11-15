@@ -81,6 +81,9 @@ WireCardEditor::WireCardEditor(QWidget* parent)
     layout->addLayout(actions);
     layout->addWidget(table_, 1);
 
+    connect(table_, &QTableWidget::itemActivated, this, [this] {
+        if (selectedTag() >= 0) emit wireActivated(selectedTag());
+    });
     connect(addButton, &QPushButton::clicked, this, [this] { emit addWireRequested(); });
     connect(duplicateButton_, &QPushButton::clicked, this, [this] {
         if (const auto tag = selectedTag(); tag >= 0) {

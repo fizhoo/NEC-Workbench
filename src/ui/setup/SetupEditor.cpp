@@ -147,13 +147,12 @@ SetupEditor::SetupEditor(QWidget* parent)
     groundLayout->addRow({}, connectGroundEndsControl_);
     groundLayout->addRow(applyGroundButton_);
 
+    // One line above the sources table: the reference impedance SWR is measured against.
     sourcesPage_ = new QWidget(this);
     sourcesPage_->setObjectName(QStringLiteral("sourcesEditorPage"));
-    auto* sourcesPageLayout = new QVBoxLayout(sourcesPage_);
-    sourcesPageLayout->setContentsMargins(8, 8, 8, 8);
-    auto* feedGroup = new QGroupBox(tr("Feed System"), sourcesPage_);
-    auto* feedLayout = new QFormLayout(feedGroup);
-    referenceImpedanceControl_ = createDecimalControl(feedGroup);
+    auto* feedLayout = new QHBoxLayout(sourcesPage_);
+    feedLayout->setContentsMargins(4, 0, 4, 0);
+    referenceImpedanceControl_ = createDecimalControl(sourcesPage_);
     referenceImpedanceControl_->setObjectName(QStringLiteral("sourceReferenceImpedance"));
     referenceImpedanceControl_->setDecimals(DisplayDecimalPlaces);
     referenceImpedanceControl_->setRange(0.001, 1000000.0);
@@ -162,24 +161,21 @@ SetupEditor::SetupEditor(QWidget* parent)
     referenceImpedanceControl_->setToolTip(tr(
         "Reference impedance used for Workbench SWR, matching results, and optimizer defaults. "
         "It is stored as the Z0 compatibility card and does not change the NEC field solution."));
-    auto* referenceButtons = new QHBoxLayout;
-    applyReferenceImpedanceButton_ = new QPushButton(tr("Apply Reference Impedance"), feedGroup);
+    applyReferenceImpedanceButton_ = new QPushButton(tr("Apply"), sourcesPage_);
     applyReferenceImpedanceButton_->setObjectName(
         QStringLiteral("applyReferenceImpedanceButton"));
-    removeReferenceImpedanceButton_ = new QPushButton(tr("Use Default 50 Ω"), feedGroup);
+    removeReferenceImpedanceButton_ = new QPushButton(tr("50 Ω"), sourcesPage_);
     removeReferenceImpedanceButton_->setObjectName(
         QStringLiteral("removeReferenceImpedanceButton"));
-    referenceButtons->addWidget(applyReferenceImpedanceButton_);
-    referenceButtons->addWidget(removeReferenceImpedanceButton_);
-    referenceButtons->addStretch();
-    feedLayout->addRow(tr("Reference impedance"), referenceImpedanceControl_);
-    feedLayout->addRow(referenceButtons);
+    removeReferenceImpedanceButton_->setToolTip(tr("Remove the Z0 card and use the default 50 Ω"));
+    feedLayout->addWidget(new QLabel(tr("Reference Z0"), sourcesPage_));
+    feedLayout->addWidget(referenceImpedanceControl_, 1);
+    feedLayout->addWidget(applyReferenceImpedanceButton_);
+    feedLayout->addWidget(removeReferenceImpedanceButton_);
     frequencyPageLayout->addWidget(frequencyGroup);
     frequencyPageLayout->addStretch();
     environmentPageLayout->addWidget(groundGroup);
     environmentPageLayout->addStretch();
-    sourcesPageLayout->addWidget(feedGroup);
-    sourcesPageLayout->addStretch();
 
     connect(frequencySweepControl_, &QCheckBox::toggled, this, [this] {
         updateFrequencyControls(); if (!updating_) setFrequencyPending(true);

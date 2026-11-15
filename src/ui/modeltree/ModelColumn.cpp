@@ -42,8 +42,9 @@ ModelColumn::ModelColumn(QWidget* parent) : QWidget(parent)
     limitHeights();
 }
 
-void ModelColumn::showPage(QWidget* page, const QString& title)
+void ModelColumn::showPage(QWidget* page, const QString& title, bool table)
 {
+    table_ = page != nullptr && table;
     pane_->showPage(page, title);
     limitHeights();
 }
@@ -86,7 +87,7 @@ void ModelColumn::limitHeights()
     // The pane scrolls its page, so ask the page how tall it is; the title adds a line.
     const auto* page = pane_->currentPage();
     const auto needed = page == nullptr ? 0 : page->sizeHint().height() + PaneTitleHeight;
-    variables_->setAutoFolded(paneOpen && height() > 0 && room < needed);
+    variables_->setAutoFolded(paneOpen && (table_ || (height() > 0 && room < needed)));
 }
 
 }

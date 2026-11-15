@@ -37,6 +37,8 @@ public:
 
 signals:
     void cardSelected(std::size_t sourceLine);
+    // A double-click on the row's Line cell, or Enter: open the card's own editor.
+    void cardActivated(std::size_t sourceLine);
     void cardEdited(std::size_t sourceLine, QString cardText);
     void cardAddRequested(QString cardText);
     void cardDeleteRequested(std::size_t sourceLine);

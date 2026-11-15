@@ -32,6 +32,8 @@ public:
 
 signals:
     void wireSelected(int tag);
+    // A double-click on a read-only cell, or Enter: open the wire's own editor.
+    void wireActivated(int tag);
     void wireEdited(model::Wire original, model::Wire updated);
     void addWireRequested();
     void duplicateWireRequested(int tag);

@@ -3,44 +3,53 @@
 #include "nec/NecCardFieldEditor.h"
 #include "nec/NecDocument.h"
 
-#include <QWidget>
+#include <QObject>
 
 #include <array>
+#include <optional>
 
 class QComboBox;
 class QLabel;
-class QTabWidget;
+class QWidget;
 
 namespace necwb::ui {
 
 class StructuredCardEditor;
 class WireCardEditor;
 
-// The Cards tab of the bottom panel: a table per card type across the window's width, under
-// the geometry. Wires use the wire table; sources, loads, transmission lines, networks and the
-// remaining cards use the field tables, which keep SY symbols and parameterize fields.
-class CardsPanel final : public QWidget {
+// The card tables shown in the properties pane when a group is selected: wires in the wire
+// table; sources, loads, transmission lines, networks and the remaining cards in the field
+// tables, which keep SY symbols and parameterize fields. A row's click selects its item;
+// a double-click on its Line cell, or Enter, opens its form.
+class CardTables final : public QObject {
     Q_OBJECT
 
 public:
-    enum class Page { Wires, Sources, Loads, TransmissionLines, Networks, Other };
+    enum class Table { Wires, Sources, Loads, TransmissionLines, Networks, Other };
 
-    explicit CardsPanel(QWidget* parent = nullptr);
+    // sourcesBar: the reference-impedance line shown above the sources table.
+    CardTables(QWidget* sourcesBar, QWidget* host);
 
+    [[nodiscard]] auto page(Table table) const -> QWidget*
+    {
+        return pages_[static_cast<std::size_t>(table)];
+    }
+    [[nodiscard]] auto tableOf(const QWidget* page) const -> std::optional<Table>;
     [[nodiscard]] auto wires() const -> WireCardEditor* { return wires_; }
-    // The deck's geometry unit, and the scale a GS card gives it.
+    // The deck's geometry unit, and the scale a GS card gives it, above the wire table.
     [[nodiscard]] auto deckUnits() const -> QComboBox* { return deckUnits_; }
     [[nodiscard]] auto deckScale() const -> QLabel* { return deckScale_; }
     void setDocument(const nec::NecDocument& document, const nec::NecParameterFieldMap& fields);
     void setDeckUnitLabel(const QString& unitLabel);
-    void showPage(Page page);
-    [[nodiscard]] auto currentPage() const -> Page;
-    // Selects the card's row in whichever table has it, without changing the page.
+    // Selects the card's row in whichever table has it.
     void selectCard(std::size_t sourceLine);
-    void focusParameterizableField();
+    void focusParameterizableField(Table table);
+    // The width of the page that shows every column without scrolling sideways.
+    [[nodiscard]] auto fullWidth(Table table) const -> int;
 
 signals:
     void cardSelected(std::size_t sourceLine);
+    void cardActivated(std::size_t sourceLine);
     void cardEdited(std::size_t sourceLine, QString cardText);
     void cardAddRequested(QString cardText);
     void cardDeleteRequested(std::size_t sourceLine);
@@ -50,7 +59,8 @@ signals:
         std::size_t fieldIndex, QString fieldLabel);
 
 private:
-    QTabWidget* tabs_{};
+
+    std::array<QWidget*, 6> pages_{};
     WireCardEditor* wires_{};
     // Sources, loads, transmission lines, networks, other.
     std::array<StructuredCardEditor*, 5> cards_{};

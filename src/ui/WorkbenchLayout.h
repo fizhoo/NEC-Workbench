@@ -2,6 +2,8 @@
 
 #include <QWidget>
 
+#include <optional>
+
 class QAction;
 class QSplitter;
 class QStackedWidget;
@@ -37,6 +39,9 @@ public:
     // View › Results Column: shows or collapses the right column.
     [[nodiscard]] auto rightColumnAction() const -> QAction* { return rightColumnAction_; }
     void resetLayout();
+    // Widens the left column to width for a table, and puts it back as it was.
+    void expandLeftColumn(int width);
+    void restoreLeftColumn();
     [[nodiscard]] auto minimumSizeHint() const -> QSize override;
 
 protected:
@@ -55,6 +60,13 @@ private:
     QWidget* deck_{};
     BottomPanel* bottomPanel_{};
     QAction* rightColumnAction_{};
+    // The column widths, and the left one's maximum, before it was widened for a table.
+    struct Widths {
+        int left{};
+        int right{};
+        int maximum{};
+    };
+    std::optional<Widths> expandedFrom_;
     // The saved widths are applied once the split first has a real width.
     bool columnWidthsApplied_{};
 };

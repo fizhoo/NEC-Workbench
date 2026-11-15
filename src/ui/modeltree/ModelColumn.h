@@ -18,8 +18,9 @@ public:
     [[nodiscard]] auto tree() const -> ModelTree* { return tree_; }
     [[nodiscard]] auto variables() const -> VariablesSection* { return variables_; }
     [[nodiscard]] auto pane() const -> PropertiesPane* { return pane_; }
-    // Null hides the pane and gives the column to the tree.
-    void showPage(QWidget* page, const QString& title);
+    // Null hides the pane and gives the column to the tree. A table folds the variables
+    // while it shows, as a form too tall for the column does.
+    void showPage(QWidget* page, const QString& title, bool table = false);
 
     [[nodiscard]] auto sizeHint() const -> QSize override;
 
@@ -33,6 +34,7 @@ private:
     ModelTree* tree_{};
     VariablesSection* variables_{};
     PropertiesPane* pane_{};
+    bool table_{};
 };
 
 }

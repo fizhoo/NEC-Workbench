@@ -1,6 +1,5 @@
 #include "ui/BottomPanel.h"
 
-#include "ui/bottom/CardsPanel.h"
 #include "ui/bottom/ProblemsView.h"
 #include "ui/bottom/RawOutputView.h"
 #include "ui/bottom/RunHistoryView.h"
@@ -23,9 +22,7 @@ namespace {
 
 constexpr auto MinimumOpenHeight = 80;
 constexpr auto GripHeight = 4;
-constexpr std::array TabIds{"cards", "problems", "runLog", "runs", "rawOutput"};
-// The Cards tables need room for their buttons and a few rows.
-constexpr auto CardsOpenHeight = 200;
+constexpr std::array TabIds{"problems", "runLog", "runs", "rawOutput"};
 
 auto settingsKey(const char* name) -> QString
 {
@@ -75,18 +72,16 @@ BottomPanel::BottomPanel(QWidget* parent)
     tabs_->setDocumentMode(true);
     tabs_->setDrawBase(true);
     tabs_->setExpanding(false);
-    tabs_->addTab(tr("Cards"));
     tabs_->addTab(tr("Problems"));
     tabs_->addTab(tr("Run log"));
     tabs_->addTab(tr("Runs"));
     tabs_->addTab(tr("Raw output"));
     pages_ = new QStackedWidget(this);
-    cards_ = new CardsPanel(pages_);
     problems_ = new ProblemsView(pages_);
     runLog_ = new RunLogView(pages_);
     runs_ = new RunHistoryView(pages_);
     rawOutput_ = new RawOutputView(pages_);
-    for (auto* page : std::initializer_list<QWidget*>{cards_, problems_, runLog_, runs_, rawOutput_})
+    for (auto* page : std::initializer_list<QWidget*>{problems_, runLog_, runs_, rawOutput_})
         pages_->addWidget(page);
     resizeGrip_ = new ResizeGrip(this, [this] { return pages_->height(); }, [this](int height) {
         // Leave the area above at least as tall as the panel's minimum.
@@ -104,7 +99,7 @@ BottomPanel::BottomPanel(QWidget* parent)
     const auto savedTab = settings.value(settingsKey("currentTab")).toString();
     const auto found = std::ranges::find_if(TabIds,
         [&savedTab](const char* id) { return savedTab == QLatin1String(id); });
-    const auto index = found == TabIds.end() ? 1 : static_cast<int>(found - TabIds.begin());
+    const auto index = found == TabIds.end() ? 0 : static_cast<int>(found - TabIds.begin());
     tabs_->setCurrentIndex(index);
     pages_->setCurrentIndex(index);
     openHeight_ = std::max(MinimumOpenHeight,
@@ -140,10 +135,6 @@ auto BottomPanel::currentTab() const -> Tab
 void BottomPanel::showTab(Tab tab)
 {
     tabs_->setCurrentIndex(static_cast<int>(tab));
-    if (tab == Tab::Cards && openHeight_ < CardsOpenHeight) {
-        openHeight_ = CardsOpenHeight;
-        applyHeight();
-    }
     setCollapsed(false);
 }
 
