@@ -330,7 +330,7 @@ if(NECWB_BUILD_TESTS)
         target_link_libraries(necwb_plot_tests PRIVATE necwb_ui Qt6::Test)
         add_test(NAME necwb_plot_tests COMMAND necwb_plot_tests)
         set_tests_properties(necwb_plot_tests PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_FORCE_STDERR_LOGGING=1")
 
         add_executable(necwb_optimization_tests tests/OptimizationEvaluatorTests.cpp)
         target_link_libraries(necwb_optimization_tests PRIVATE necwb_ui)
