@@ -76,6 +76,10 @@ void PropertiesPane::showPage(QWidget* page, const QString& title)
     if (pages_->indexOf(page) < 0) pages_->addWidget(page);
     pages_->setCurrentWidget(page);
     page->show();
+    // A table whose columns change, such as another card family's, can stop fitting or fit.
+    for (const auto* header : page->findChildren<QHeaderView*>())
+        connect(header, &QHeaderView::sectionResized, this, &PropertiesPane::updateExpandButton,
+            Qt::UniqueConnection);
     title_->setText(title);
     show();
     updateExpandButton();

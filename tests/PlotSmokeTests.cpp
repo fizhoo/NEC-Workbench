@@ -1051,6 +1051,17 @@ auto main(int argc, char* argv[]) -> int
                 const auto narrowedAgain = split->sizes().value(0) == narrowWidth
                     && !expand->isVisible() && !expand->isChecked() && pageTitle() == QStringLiteral("Ground")
                     && groundPart->isChecked() && tree->selectedItems().isEmpty();
+                // Picking a narrow card family after a wide one takes ⇔ away.
+                selectGroup(QStringLiteral("Other"));
+                auto* families = mainWindow.findChild<QWidget*>(QStringLiteral("cardsOther"))
+                    ->findChild<QTreeWidget*>(QStringLiteral("structuredCardFamilies"));
+                const auto pickFamily = [&](const QString& prefix) {
+                    for (QTreeWidgetItemIterator item(families); *item; ++item)
+                        if ((*item)->text(0).startsWith(prefix)) families->setCurrentItem(*item);
+                    application.processEvents();
+                    return expand->isVisible();
+                };
+                const auto familyRefits = pickFamily(QStringLiteral("GH")) && !pickFamily(QStringLiteral("XQ"));
                 // Right-click Add on the empty Networks group adds an NT before FR and opens it.
                 QTreeWidgetItem* networksGroup = nullptr;
                 for (auto index = 0; index < tree->topLevelItemCount(); ++index)
@@ -1155,12 +1166,12 @@ auto main(int argc, char* argv[]) -> int
                 const auto unfolded = section->height() > header->height() + 2
                     && !settings.value(QStringLiteral("variables/folded")).toBool();
                 cardTables = bottomPanelPlain && groupShows && widened && narrowedAgain && pageWidening
-                    && treeAddOpensForm
+                    && familyRefits && treeAddOpensForm
                     && symbolsKept && rowSelects && lineOpensForm && geometrySelects
                     && tableAddsPlaced && loadAdded && linePicked && folded && unfolded;
                 if (!cardTables) {
                     qWarning() << "card tables" << bottomPanelPlain << groupShows << widened << pageWidening
-                               << treeAddOpensForm
+                               << familyRefits << treeAddOpensForm
                                << narrowWidth << wideWidth << narrowedAgain << symbolsKept
                                << rowSelects << selection << lineOpensForm << geometrySelects
                                << pageTitle() << tableAddsPlaced << loadAdded << linePicked
