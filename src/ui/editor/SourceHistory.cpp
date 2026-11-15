@@ -64,7 +64,7 @@ void SourceHistory::setRevertTypingCallback(std::function<bool()> callback)
 
 auto SourceHistory::eventFilter(QObject* watched, QEvent* event) -> bool
 {
-    if (event->type() != QEvent::ShortcutOverride) return false;
+    if (event->type() != QEvent::ShortcutOverride && event->type() != QEvent::KeyPress) return false;
     auto* key = static_cast<QKeyEvent*>(event);
     const auto isUndo = key->matches(QKeySequence::Undo);
     const auto isRedo = key->matches(QKeySequence::Redo)
@@ -75,6 +75,8 @@ auto SourceHistory::eventFilter(QObject* watched, QEvent* event) -> bool
         || editor_->isAncestorOf(widget) || widget == editor_) {
         return false;
     }
+    // The key press after a Ctrl+Z that put back a typed value: the field must not undo too.
+    if (event->type() == QEvent::KeyPress) return true;
     // A text field would take these keys for its own typing; here they belong to the model,
     // after a value typed but not yet applied is put back.
     if (isUndo && revertTyping_ && revertTyping_()) {

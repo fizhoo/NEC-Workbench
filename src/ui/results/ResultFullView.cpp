@@ -7,6 +7,7 @@
 #include "ui/analysis/SweepPlotsView.h"
 
 #include <QLabel>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QStackedWidget>
 #include <QVBoxLayout>
@@ -92,6 +93,10 @@ ResultFullView::ResultFullView(const ResultState& state, QWidget* parent)
     };
     pattern_->setForwardDirectionCallback(useAsForwardDirection);
     pattern3D_->setForwardDirectionCallback(useAsForwardDirection);
+    for (auto* button : pages_->findChildren<QPushButton*>()) {
+        if (button->objectName().contains(QStringLiteral("Export")))
+            connect(button, &QPushButton::clicked, this, [this] { if (exported_) exported_(); });
+    }
 }
 
 auto ResultFullView::page(ResultView view) -> Page&
@@ -159,9 +164,16 @@ void ResultFullView::apply()
 
 void ResultFullView::refreshHeader()
 {
-    header_->setTitle(viewTitle(view_) + (state_.stale ? tr(" · stale") : QString{}));
+    // Live solves show only in the results column; this view and its exports keep the full run.
+    header_->setTitle(viewTitle(view_) + (state_.stale ? tr(" · stale") : QString{})
+        + (state_.liveFrequenciesMHz.empty() ? QString{} : tr(" · last full run")));
     frequency_->setText(state_.frequencyMHz
         ? tr("%1 MHz").arg(formatDecimal(*state_.frequencyMHz)) : QString{});
+}
+
+void ResultFullView::setExportedCallback(std::function<void()> callback)
+{
+    exported_ = std::move(callback);
 }
 
 void ResultFullView::setBackCallback(std::function<void()> callback)

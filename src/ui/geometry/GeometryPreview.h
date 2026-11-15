@@ -2,6 +2,7 @@
 
 #include "model/AntennaModel.h"
 
+#include <QElapsedTimer>
 #include <QObject>
 
 #include <functional>
@@ -37,6 +38,7 @@ private:
     std::function<std::string_view()> source_;
     std::function<void(const model::AntennaModel&)> show_;
     std::optional<std::pair<std::string, double>> pending_;
+    QElapsedTimer lastRedraw_;
     double lastMilliseconds_{};
 };
 

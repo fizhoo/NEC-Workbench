@@ -55,6 +55,7 @@ class StructuredCardEditor;
 class WelcomePage;
 class SourceHistory;
 class GeometryPreview;
+class LiveSolve;
 class DeckView;
 class ModelColumn;
 class WirePropertiesEditor;
@@ -253,6 +254,9 @@ private:
     // Fits the views to the model and clears their selection, for a model just opened.
     void resetGeometryViews();
     void revertToSaved();
+    // Solves the model at one frequency for the results column, when Live is on and nothing
+    // else is running: the selected frequency, or the band centre before any run.
+    void startLiveSolve(std::optional<double> frequencyMHz = std::nullopt);
     // Model opened, created or reverted: fits the geometry and sets the variables Reset goes to.
     void startModelSession();
     void updateWireCardEditor();
@@ -313,6 +317,7 @@ private:
     NecEditor* editor_{};
     SourceHistory* history_{};
     GeometryPreview* geometryPreview_{};
+    LiveSolve* liveSolve_{};
     QAction* revertAction_{};
     GeometryView* xyView_{};
     GeometryView* xzView_{};

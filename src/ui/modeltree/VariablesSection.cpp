@@ -84,6 +84,8 @@ struct VariablesSection::Row {
     QSlider* slider{};
     ValueBox* value{};
     ElidedLabel* formula{};
+    // The value last put in the box, to tell typing from a value shown.
+    double shown{};
     bool updating{};
 };
 
@@ -369,7 +371,12 @@ void VariablesSection::updateRow(Row& row)
     const auto fraction = (variable.value - row.range.first) / (row.range.second - row.range.first);
     row.slider->setValue(std::clamp(static_cast<int>(std::lround(fraction * SliderSteps)), 0,
         SliderSteps));
-    if (!row.value->hasFocus()) row.value->setValue(variable.value);
+    // A value being typed stays; otherwise the box follows the model, even with focus, so an
+    // undo made from the box does not leave the old value there to be applied again.
+    const auto typing = row.value->hasFocus()
+        && row.value->text() != row.value->textFromValue(row.shown);
+    if (!typing) row.value->showValue(variable.value);
+    row.shown = variable.value;
     row.updating = false;
 }
 

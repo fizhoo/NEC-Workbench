@@ -125,6 +125,8 @@ if(NECWB_BUILD_GUI)
         src/ui/modeltree/VariablesSection.h
         src/ui/results/KeyNumberStrip.cpp
         src/ui/results/KeyNumberStrip.h
+        src/ui/results/LiveSolve.cpp
+        src/ui/results/LiveSolve.h
         src/ui/results/ResultFullView.cpp
         src/ui/results/ResultFullView.h
         src/ui/results/ResultState.h
@@ -319,8 +321,9 @@ if(NECWB_BUILD_TESTS)
     add_test(NAME necwb_model_lint_tests COMMAND necwb_model_lint_tests)
 
     if(NECWB_BUILD_GUI)
+        find_package(Qt6 6.4 REQUIRED COMPONENTS Test)
         add_executable(necwb_plot_tests tests/PlotSmokeTests.cpp)
-        target_link_libraries(necwb_plot_tests PRIVATE necwb_ui)
+        target_link_libraries(necwb_plot_tests PRIVATE necwb_ui Qt6::Test)
         add_test(NAME necwb_plot_tests COMMAND necwb_plot_tests)
         set_tests_properties(necwb_plot_tests PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

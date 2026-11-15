@@ -28,9 +28,12 @@ void GeometryPreview::request(const std::string& variable, double value)
 {
     pending_ = {variable, value};
     if (frame_->isActive()) return;
+    // Right away after a pause; otherwise a frame after the last redraw.
     const auto* screen = host_->screen();
     const auto rate = screen != nullptr && screen->refreshRate() > 1.0 ? screen->refreshRate() : 60.0;
-    frame_->start(std::max(1, static_cast<int>(std::lround(1000.0 / rate))));
+    const auto frameMs = static_cast<qint64>(std::lround(1000.0 / rate));
+    const auto sinceLast = lastRedraw_.isValid() ? lastRedraw_.elapsed() : frameMs;
+    frame_->start(static_cast<int>(std::max<qint64>(0, frameMs - sinceLast)));
 }
 
 void GeometryPreview::cancel()
@@ -44,6 +47,7 @@ void GeometryPreview::redraw()
     if (!pending_) return;
     QElapsedTimer elapsed;
     elapsed.start();
+    lastRedraw_.start();
     const auto resolution = nec::NecSymbolResolver{}.resolve(source_(),
         {{pending_->first, pending_->second}});
     pending_.reset();

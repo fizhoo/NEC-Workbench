@@ -57,6 +57,7 @@
 #include "ui/model/ParameterEditor.h"
 #include "ui/results/ResultFullView.h"
 #include "ui/results/ResultsColumn.h"
+#include "ui/results/LiveSolve.h"
 #include "ui/results/ResultsController.h"
 #include "ui/setup/SetupEditor.h"
 #include "ui/setup/LoadNetworkEditor.h"
@@ -358,6 +359,9 @@ MainWindow::MainWindow()
 
     connect(editor_, &QPlainTextEdit::textChanged, this, [this] {
         activeSourceCache_.invalidate();
+        // Live points were solved from the deck as it was.
+        liveSolve_->cancel();
+        resultsController_->clearLivePoints();
         clearCheckResults();
     });
     connect(editor_->document(), &QTextDocument::modificationChanged, this, [this](bool modified) {
@@ -1079,6 +1083,20 @@ void MainWindow::createResultsColumn()
         [this](const std::vector<double>& frequencies, std::optional<double> selected) {
             statusBar_->setResultFrequencies(frequencies, selected);
         });
+    resultsController_->setFrequencySelectedCallback([this](double frequency) {
+        if (modelColumn_->variables()->isLive() && resultsController_->isStaleAt(frequency))
+            startLiveSolve(frequency);
+    });
+    resultsController_->setExportedCallback([this] {
+        statusBar()->showMessage(tr("Exported the last full run; live values are display-only."),
+            5000);
+    });
+    liveSolve_ = new LiveSolve(this);
+    liveSolve_->setStatusCallback(
+        [this](const QString& message) { statusBar()->showMessage(message, 5000); });
+    liveSolve_->setFinishedCallback([this](const analysis::AnalysisResult& result, double frequency) {
+        resultsController_->setLivePoint(result, frequency);
+    });
     resultsController_->setShowFullViewCallback([this](bool fullView) {
         if (fullView) workbenchLayout_->showFullView();
         else showEditor(EditorDestination::Geometry, workspace_->currentIndex());
@@ -1902,6 +1920,25 @@ void MainWindow::newModel()
     startModelSession();
 }
 
+void MainWindow::startLiveSolve(std::optional<double> frequencyMHz)
+{
+    const auto& resolution = activeSource().resolution();
+    const QFileInfo executable(solverExecutablePath_);
+    if (modelErrorCount_ != 0 || !resolution.ok() || !currentSetup_.frequency
+        || currentModel_.empty() || currentSetup_.excitations.empty()
+        || solverRunner_->isRunning() || optimizationWorkspace_->isRunning()
+        || convergenceWorkspace_->isRunning()
+        || !analysis::isBackendRunnable(solverBackendId_.toStdString())
+        || !executable.isFile() || !executable.isExecutable()) {
+        return;
+    }
+    const auto frequency = frequencyMHz ? *frequencyMHz
+        : resultsController_->selectedFrequency().value_or(
+              LiveSolve::bandCentreMHz(*currentSetup_.frequency));
+    liveSolve_->start(resolution.generatedDeck, frequency,
+        {solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_});
+}
+
 void MainWindow::startModelSession()
 {
     checkModel();
@@ -2376,6 +2413,7 @@ void MainWindow::createModelColumn()
         geometryPreview_->cancel();
         const auto name = QString::fromStdString(variable.name);
         changeParameter(variable.lineNumber, name, name, QString::number(value, 'g', 12));
+        if (modelColumn_->variables()->isLive()) startLiveSolve();
     });
     variables->setResetCallback([this](const VariablesSection::Reset& changes) {
         std::optional source{editor_->toPlainText().toStdString()};
@@ -3220,6 +3258,7 @@ void MainWindow::startAnalysis()
     if (solverRunner_->isRunning() || !runAction_->isEnabled()) {
         return;
     }
+    liveSolve_->cancel();
 
     checkModel();
     if (modelErrorCount_ != 0 || !runAction_->isEnabled()) {

@@ -36,6 +36,7 @@ WorkbenchToolBar::WorkbenchToolBar(const Actions& actions, QWidget* parent)
     addAction(actions.save);
     // Icons only, with what they would undo or redo in the tooltip.
     for (auto* action : {actions.revert, actions.undo, actions.redo}) {
+        if (action == nullptr) continue;
         addAction(action);
         if (auto* button = qobject_cast<QToolButton*>(widgetForAction(action)))
             button->setToolButtonStyle(Qt::ToolButtonIconOnly);

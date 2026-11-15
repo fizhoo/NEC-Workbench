@@ -39,6 +39,8 @@
 #include "model/WireGauge.h"
 
 #include <QApplication>
+#include <array>
+#include <functional>
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
@@ -86,6 +88,8 @@
 #include <QScreen>
 #include <QSettings>
 #include <QSlider>
+#include <QTest>
+#include <QThread>
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QStatusBar>
@@ -779,6 +783,168 @@ auto main(int argc, char* argv[]) -> int
         resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
         resultWindowSettings.sync();
     }
+    // Variables live: the wires follow a drag with the deck untouched, a release is one undo
+    // step, Ctrl+Z works from a value box and the tree, Reset and Revert are one step each,
+    // and a live solve uses a one-frequency copy of the deck without adding to Runs history.
+    auto variablesLive = false;
+    {
+        QSettings settings;
+        const auto saved = std::array{std::pair{QStringLiteral("files/recentModels"),
+            settings.value(QStringLiteral("files/recentModels"))},
+            std::pair{QStringLiteral("analysis/executables/nec2"),
+                settings.value(QStringLiteral("analysis/executables/nec2"))},
+            std::pair{QStringLiteral("analysis/backendId"),
+                settings.value(QStringLiteral("analysis/backendId"))},
+            std::pair{QStringLiteral("variables/live"), settings.value(QStringLiteral("variables/live"))}};
+        QTemporaryDir directory;
+        const auto modelPath = directory.filePath(QStringLiteral("live.nec"));
+        const auto solverPath = directory.filePath(QStringLiteral("fake-nec2c"));
+        const auto inputsPath = directory.filePath(QStringLiteral("inputs"));
+        QDir().mkpath(inputsPath);
+        const QByteArray modelText = "SY len=0.5\nGW 1 11 0 -len 0 0 len 0 0.001\nGE 0\n"
+            "EX 0 1 6 0 1 0\nFR 0 5 0 0 144 1\nRP 0 1 1 1000 90 0 0 0\nEN\n";
+        QFile modelFile(modelPath);
+        QFile solver(solverPath);
+        if (directory.isValid() && modelFile.open(QIODevice::WriteOnly | QIODevice::Text)
+            && solver.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            modelFile.write(modelText);
+            modelFile.close();
+            // Keeps each input it is given and answers with one feedpoint at its frequency.
+            solver.write(QStringLiteral("#!/bin/sh\nin=\"${1#-i}\"\nout=\"${2#-o}\"\n"
+                "cp \"$in\" \"%1/input-$$.nec\"\n"
+                "awk '$1==\"FR\"{f=$6} END{"
+                "printf \"  --------- FREQUENCY --------\\n   FREQUENCY : %%.4E MHz\\n\\n\", f;"
+                "printf \"  --------- ANTENNA INPUT PARAMETERS ---------\\n  TAG   SEG\\n  No:   No:\\n\";"
+                "printf \"    1     6  1.0000E+00  0.0000E+00  1.2536E-02 -2.9698E-03  "
+                "7.5534E+01  1.7895E+01  1.2536E-02 -2.9698E-03  6.2678E-03\\n\"}' \"$in\" > \"$out\"\n")
+                .arg(inputsPath).toUtf8());
+            solver.close();
+            solver.setPermissions(solver.permissions() | QFileDevice::ExeOwner);
+            settings.setValue(QStringLiteral("files/recentModels"), QStringList{modelPath});
+            settings.setValue(QStringLiteral("analysis/executables/nec2"), solverPath);
+            settings.setValue(QStringLiteral("analysis/backendId"), QStringLiteral("nec2"));
+            settings.setValue(QStringLiteral("variables/live"), true);
+            settings.sync();
+            necwb::ui::MainWindow mainWindow;
+            mainWindow.resize(1400, 900);
+            mainWindow.show();
+            mainWindow.activateWindow();
+            application.processEvents();
+            for (auto* action : mainWindow.findChild<QMenu*>(
+                     QStringLiteral("recentModelsMenu"))->actions()) {
+                if (action->data().toString() == modelPath) action->trigger();
+            }
+            application.processEvents();
+            const auto wait = [&application](int milliseconds, const std::function<bool()>& done) {
+                QElapsedTimer elapsed;
+                elapsed.start();
+                while (!done() && elapsed.elapsed() < milliseconds) {
+                    application.processEvents(QEventLoop::AllEvents, 10);
+                    QThread::msleep(5);
+                }
+                return done();
+            };
+            auto* deck = mainWindow.findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor"));
+            auto* slider = mainWindow.findChild<QSlider*>(QStringLiteral("variableSlider"));
+            auto* valueBox = mainWindow.findChild<QDoubleSpinBox*>(QStringLiteral("variableValue"));
+            auto* undo = mainWindow.findChild<QAction*>(QStringLiteral("undoAction"));
+            auto* revert = mainWindow.findChild<QAction*>(QStringLiteral("revertAction"));
+            auto* reset = mainWindow.findChild<QToolButton*>(QStringLiteral("variablesReset"));
+            auto* tree = mainWindow.findChild<QTreeWidget*>(QStringLiteral("modelTree"));
+            auto* runs = mainWindow.findChild<QAbstractItemView*>(QStringLiteral("analysisRunsTable"));
+            auto* swr = mainWindow.findChild<QLabel*>(QStringLiteral("resultsSwr"));
+            QWidget* xyView = nullptr;
+            for (auto* view : mainWindow.findChildren<necwb::ui::GeometryView*>())
+                if (xyView == nullptr && view->isVisible()) xyView = view;
+            const auto text = [deck] { return deck->toPlainText().toUtf8(); };
+            if (deck != nullptr && slider != nullptr && valueBox != nullptr && undo != nullptr
+                && revert != nullptr && reset != nullptr && tree != nullptr && runs != nullptr
+                && swr != nullptr && xyView != nullptr) {
+                const auto runsBefore = runs->model()->rowCount();
+                const auto revertOffWhenSaved = !revert->isEnabled() && !reset->isEnabled();
+                const auto before = xyView->grab().toImage();
+                slider->setSliderDown(true);
+                slider->setValue(1000);
+                const auto previewed = wait(500, [&] { return xyView->grab().toImage() != before; })
+                    && text() == modelText;
+                slider->setSliderDown(false);
+                application.processEvents();
+                const auto oneStep = text().startsWith("SY len=0.625\n")
+                    && undo->toolTip() == QStringLiteral("Undo: Edit parameter len");
+                // The live solve: band centre before any run, one frequency, RP kept.
+                const auto solved = wait(5000, [&] { return swr->text().startsWith(QStringLiteral("1")); });
+                const auto inputs = QDir(inputsPath).entryList(QDir::Files);
+                QFile input(QDir(inputsPath).filePath(inputs.value(0)));
+                const auto inputText = input.open(QIODevice::ReadOnly) ? input.readAll() : QByteArray{};
+                const auto liveCopy = solved && inputs.size() == 1
+                    && inputText.contains("FR 0 1 0 0 146") && inputText.contains("RP 0")
+                    && text().startsWith("SY len=0.625\n") && text().contains("FR 0 5 0 0 144 1")
+                    && runs->model()->rowCount() == runsBefore;
+                // Typed but not applied: the first Ctrl+Z puts it back, the next undoes the drag.
+                valueBox->setFocus();
+                valueBox->findChild<QLineEdit*>()->setText(QStringLiteral("0.7"));
+                QTest::keyClick(valueBox, Qt::Key_Z, Qt::ControlModifier);
+                const auto typedText = valueBox->text();
+                const auto typingReverted = typedText == QStringLiteral("0.625")
+                    && text().startsWith("SY len=0.625\n");
+                QTest::keyClick(valueBox, Qt::Key_Z, Qt::ControlModifier);
+                application.processEvents();
+                const auto undoneFromBox = text().startsWith("SY len=0.5\n");
+                tree->setFocus();
+                QTest::keyClick(tree, Qt::Key_Y, Qt::ControlModifier);
+                application.processEvents();
+                const auto redoneFromTree = text().startsWith("SY len=0.625\n");
+                // Reset: back to the file's value as one step.
+                const auto resetListed = reset->isEnabled()
+                    && reset->toolTip().contains(QStringLiteral("len 0.625 → 0.5"));
+                reset->click();
+                application.processEvents();
+                const auto resetOneStep = text() == modelText && !reset->isEnabled()
+                    && undo->toolTip() == QStringLiteral("Undo: Reset variables");
+                // Revert: discards the drag after asking, and Undo brings it back.
+                undo->trigger();
+                application.processEvents();
+                QTimer::singleShot(0, [] {
+                    if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))
+                        box->button(QMessageBox::Discard)->click();
+                });
+                const auto revertOn = revert->isEnabled();
+                revert->trigger();
+                application.processEvents();
+                const auto reverted = text() == modelText && !revert->isEnabled()
+                    && undo->toolTip() == QStringLiteral("Undo: Revert to Saved");
+                undo->trigger();
+                application.processEvents();
+                const auto revertUndone = text().startsWith("SY len=0.625\n") && revert->isEnabled();
+                // A model never saved has nothing to revert to.
+                deck->document()->setModified(false);
+                mainWindow.findChild<QAction*>(QStringLiteral("newModelAction"))->trigger();
+                application.processEvents();
+                deck->appendPlainText(QStringLiteral("CM edited"));
+                const auto neverSavedOff = deck->document()->isModified() && !revert->isEnabled();
+                variablesLive = neverSavedOff && revertOffWhenSaved && previewed && oneStep && liveCopy
+                    && typingReverted && undoneFromBox && redoneFromTree && resetListed
+                    && resetOneStep && revertOn && reverted && revertUndone;
+                if (!variablesLive) {
+                    qWarning() << "variables live" << revertOffWhenSaved << previewed << oneStep
+                               << solved << liveCopy << inputs << inputText << typingReverted
+                               << typedText << undoneFromBox << redoneFromTree
+                               << resetListed << reset->toolTip() << resetOneStep
+                               << undo->toolTip() << neverSavedOff << revertOn << reverted << revertUndone;
+                }
+            }
+            if (deck != nullptr) deck->document()->setModified(false);
+            mainWindow.close();
+        }
+        for (const auto& [key, value] : saved) {
+            if (value.isValid()) settings.setValue(key, value);
+            else settings.remove(key);
+        }
+        settings.remove(QStringLiteral("mainWindow/v2"));
+        settings.sync();
+    }
+    if (!variablesLive)
+        return NECWB_SMOKE_FAILURE("variables live, undo, reset and revert");
     if (!variableSliderEdits)
         return NECWB_SMOKE_FAILURE("variable slider edits the SY card");
     if (!wirePaneKeepsSymbols)
@@ -3531,6 +3697,31 @@ auto main(int argc, char* argv[]) -> int
         results.clear();
         results.setResults(necwb::ui::ResultData::make(result), QStringLiteral("next-model"), {});
         const auto clearForgetsFrequency = frequency->currentData().toDouble() == 14.1;
+        // A live point shows in the column only: data(), the full view and its exports keep
+        // the full run, and only the live frequency is up to date.
+        application.processEvents();
+        const auto fullData = results.data();
+        results.setStale(true);
+        necwb::analysis::AnalysisResult point;
+        point.feedpoints = {{14.1, 1, 6, {1.0, 0.0}, {0.01, 0.0}, {100.0, 0.0}, 0.005}};
+        auto exported = false;
+        results.setExportedCallback([&exported] { exported = true; });
+        results.setLivePoint(point, 14.1);
+        results.showView(necwb::ui::ResultView::Azimuth);
+        application.processEvents();
+        QTimer::singleShot(0, [] {
+            if (auto* dialog = QApplication::activeModalWidget()) dialog->close();
+        });
+        if (auto* exportImage = fullView->findChild<QPushButton*>(
+                QStringLiteral("radiation2DExportImage")))
+            exportImage->click();
+        const auto liveDisplayOnly = results.data() == fullData
+            && text("resultsSwr").startsWith(QStringLiteral("2")) && !stale->isVisible()
+            && !results.isStaleAt(14.1) && results.isStaleAt(14.0) && exported
+            && title->text().contains(QStringLiteral("last full run"));
+        results.clearLivePoints();
+        const auto liveCleared = text("resultsSwr").startsWith(QStringLiteral("1"))
+            && stale->isVisible();
         const std::array checks{std::pair{"empty state", emptyState},
             std::pair{"minimum SWR selected", minimumSwrSelected},
             std::pair{"missing data noted", missingDataNoted},
@@ -3539,7 +3730,9 @@ auto main(int argc, char* argv[]) -> int
             std::pair{"escape returned", escapeReturned},
             std::pair{"table sets frequency", tableSetsFrequency},
             std::pair{"no animation", noAnimation},
-            std::pair{"clear forgets frequency", clearForgetsFrequency}};
+            std::pair{"clear forgets frequency", clearForgetsFrequency},
+            std::pair{"live display only", liveDisplayOnly},
+            std::pair{"live cleared", liveCleared}};
         for (const auto& [name, passed] : checks) {
             if (passed) continue;
             std::fprintf(stderr, "results column %s failed: frequency %s, SWR \"%s\", gain \"%s\"\n",
