@@ -66,7 +66,15 @@ ResultsController::ResultsController(QWidget* parent)
         setFrequency(frequency);
     });
     fullView_->setBackCallback([this] { if (showFullView_) showFullView_(false); });
-    fullView_->setExportedCallback([this] { if (hasLivePoints() && exported_) exported_(); });
+    fullView_->setExportedCallback([this] {
+        if (hasLivePoints() && status_)
+            status_(QObject::tr("Exported the last full run; live values are display-only."));
+    });
+    liveSolve_ = new LiveSolve(column_);
+    liveSolve_->setStatusCallback([this](const QString& message) { if (status_) status_(message); });
+    liveSolve_->setFinishedCallback([this](const auto& point, double frequency) {
+        setLivePoint(point, frequency);
+    });
 }
 
 void ResultsController::setResults(ResultData::Pointer data, QString context,
@@ -126,8 +134,15 @@ void ResultsController::setLivePoint(const analysis::AnalysisResult& point, doub
     refresh();
 }
 
+void ResultsController::solveLive(const std::string& generatedDeck, double frequencyMHz,
+    const LiveSolve::Solver& solver)
+{
+    liveSolve_->start(generatedDeck, frequencyMHz, solver);
+}
+
 void ResultsController::clearLivePoints()
 {
+    liveSolve_->cancel();
     if (state_.liveFrequenciesMHz.empty()) return;
     state_.liveFrequenciesMHz.clear();
     state_.liveOnly = false;
@@ -148,9 +163,9 @@ void ResultsController::setFrequencySelectedCallback(std::function<void(double)>
     frequencySelected_ = std::move(callback);
 }
 
-void ResultsController::setExportedCallback(std::function<void()> callback)
+void ResultsController::setStatusCallback(std::function<void(const QString&)> callback)
 {
-    exported_ = std::move(callback);
+    status_ = std::move(callback);
 }
 
 void ResultsController::setReference(ResultData::Pointer data, QString label,

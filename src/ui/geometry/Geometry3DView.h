@@ -21,8 +21,8 @@ class Geometry3DView final : public GeometryInteractionView {
 public:
     explicit Geometry3DView(QWidget* parent = nullptr);
 
-    void setModel(const model::AntennaModel& model);
-    void updateModel(const model::AntennaModel& model);
+    void setModel(const model::AntennaModel& model) override;
+    void updateModel(const model::AntennaModel& model) override;
     void setLengthUnit(model::LengthUnit unit);
     void fitToView() override;
     void setIsometricView();

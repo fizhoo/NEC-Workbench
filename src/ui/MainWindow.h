@@ -21,6 +21,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <string>
@@ -45,6 +46,7 @@ class AnalysisSetupEditor;
 class AnalysisRequestEditor;
 class Geometry3DView;
 class GeometryView;
+class GeometryInteractionView;
 class RunReviewWindow;
 class AverageGainResultsView;
 class ConvergenceWorkspace;
@@ -55,7 +57,6 @@ class StructuredCardEditor;
 class WelcomePage;
 class SourceHistory;
 class GeometryPreview;
-class LiveSolve;
 class DeckView;
 class ModelColumn;
 class WirePropertiesEditor;
@@ -250,6 +251,8 @@ private:
     [[nodiscard]] auto nextWireTag() const -> int;
     [[nodiscard]] auto wireHasSymbolicGeometry(std::size_t sourceLine) const -> bool;
     void showSymbolicGeometryEditBlocked();
+    // The 2D views and the 3D view.
+    [[nodiscard]] auto geometryViews() const -> std::array<GeometryInteractionView*, 4>;
     void refreshGeometryViews();
     // Fits the views to the model and clears their selection, for a model just opened.
     void resetGeometryViews();
@@ -317,7 +320,6 @@ private:
     NecEditor* editor_{};
     SourceHistory* history_{};
     GeometryPreview* geometryPreview_{};
-    LiveSolve* liveSolve_{};
     QAction* revertAction_{};
     GeometryView* xyView_{};
     GeometryView* xzView_{};

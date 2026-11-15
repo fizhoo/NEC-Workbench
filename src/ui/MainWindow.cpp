@@ -57,7 +57,6 @@
 #include "ui/model/ParameterEditor.h"
 #include "ui/results/ResultFullView.h"
 #include "ui/results/ResultsColumn.h"
-#include "ui/results/LiveSolve.h"
 #include "ui/results/ResultsController.h"
 #include "ui/setup/SetupEditor.h"
 #include "ui/setup/LoadNetworkEditor.h"
@@ -360,7 +359,6 @@ MainWindow::MainWindow()
     connect(editor_, &QPlainTextEdit::textChanged, this, [this] {
         activeSourceCache_.invalidate();
         // Live points were solved from the deck as it was.
-        liveSolve_->cancel();
         resultsController_->clearLivePoints();
         clearCheckResults();
     });
@@ -1087,16 +1085,8 @@ void MainWindow::createResultsColumn()
         if (modelColumn_->variables()->isLive() && resultsController_->isStaleAt(frequency))
             startLiveSolve(frequency);
     });
-    resultsController_->setExportedCallback([this] {
-        statusBar()->showMessage(tr("Exported the last full run; live values are display-only."),
-            5000);
-    });
-    liveSolve_ = new LiveSolve(this);
-    liveSolve_->setStatusCallback(
+    resultsController_->setStatusCallback(
         [this](const QString& message) { statusBar()->showMessage(message, 5000); });
-    liveSolve_->setFinishedCallback([this](const analysis::AnalysisResult& result, double frequency) {
-        resultsController_->setLivePoint(result, frequency);
-    });
     resultsController_->setShowFullViewCallback([this](bool fullView) {
         if (fullView) workbenchLayout_->showFullView();
         else showEditor(EditorDestination::Geometry, workspace_->currentIndex());
@@ -1935,7 +1925,7 @@ void MainWindow::startLiveSolve(std::optional<double> frequencyMHz)
     const auto frequency = frequencyMHz ? *frequencyMHz
         : resultsController_->selectedFrequency().value_or(
               LiveSolve::bandCentreMHz(*currentSetup_.frequency));
-    liveSolve_->start(resolution.generatedDeck, frequency,
+    resultsController_->solveLive(resolution.generatedDeck, frequency,
         {solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_});
 }
 
@@ -2189,27 +2179,14 @@ void MainWindow::checkModel(bool presentReport)
     wireCardEditor_->setParameterControlledFields(parameterFields);
     updateWireCardEditor();
     // Edits keep the zoom; opening a model fits it (resetGeometryViews).
-    xyView_->updateModel(currentModel_);
-    xzView_->updateModel(currentModel_);
-    yzView_->updateModel(currentModel_);
-    geometry3DView_->updateModel(currentModel_);
-    xyView_->setExcitations(currentSetup_.excitations);
-    xzView_->setExcitations(currentSetup_.excitations);
-    yzView_->setExcitations(currentSetup_.excitations);
-    geometry3DView_->setExcitations(currentSetup_.excitations);
-    xyView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
-        currentSetup_.networks);
-    xzView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
-        currentSetup_.networks);
-    yzView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
-        currentSetup_.networks);
-    geometry3DView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
-        currentSetup_.networks);
     const auto sharedSegments = model::describeSharedSegments(currentModel_, currentSetup_);
-    xyView_->setSharedSegments(sharedSegments);
-    xzView_->setSharedSegments(sharedSegments);
-    yzView_->setSharedSegments(sharedSegments);
-    geometry3DView_->setSharedSegments(sharedSegments);
+    for (auto* view : geometryViews()) {
+        view->updateModel(currentModel_);
+        view->setExcitations(currentSetup_.excitations);
+        view->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
+            currentSetup_.networks);
+        view->setSharedSegments(sharedSegments);
+    }
     parameterEditor_->setResolution(resolution);
     modelColumn_->variables()->setVariables(resolution.definitions);
     setupEditor_->setData(currentModel_, currentSetup_);
@@ -2401,10 +2378,7 @@ void MainWindow::createModelColumn()
     });
     geometryPreview_ = new GeometryPreview(this, [this] { return activeSource().source(); },
         [this](const model::AntennaModel& model) {
-            xyView_->updateModel(model);
-            xzView_->updateModel(model);
-            yzView_->updateModel(model);
-            geometry3DView_->updateModel(model);
+            for (auto* view : geometryViews()) view->updateModel(model);
         });
     variables->setPreviewCallback([this](const nec::SymbolDefinition& variable, double value) {
         geometryPreview_->request(variable.name, value);
@@ -2433,7 +2407,7 @@ void MainWindow::createModelColumn()
 void MainWindow::showModelSelection(const ModelSelection& selection)
 {
     const auto line = selection.sourceLine;
-    const std::array<GeometryInteractionView*, 4> views{xyView_, xzView_, yzView_, geometry3DView_};
+    const auto views = geometryViews();
     if (selection.node != ModelNode::Wire) {
         synchronizeGeometrySelection(-1);
         wireCardEditor_->selectWire(-1);
@@ -2560,18 +2534,12 @@ void MainWindow::selectInModel(const ModelSelection& selection)
 
 void MainWindow::synchronizeGeometrySelection(int tag)
 {
-    xyView_->selectWire(tag);
-    xzView_->selectWire(tag);
-    yzView_->selectWire(tag);
-    geometry3DView_->selectWire(tag);
+    for (auto* view : geometryViews()) view->selectWire(tag);
 }
 
 void MainWindow::fitAllGeometryViews()
 {
-    xyView_->fitToView();
-    xzView_->fitToView();
-    yzView_->fitToView();
-    geometry3DView_->fitToView();
+    for (auto* view : geometryViews()) view->fitToView();
 }
 
 void MainWindow::previewEndpointMove(int tag, model::WireEndpoint endpoint, const model::Point3D& position)
@@ -3056,10 +3024,7 @@ void MainWindow::setPendingTransmissionLineEndpoint(
     std::optional<std::pair<int, int>> endpoint)
 {
     pendingTransmissionLineEndpoint_ = endpoint;
-    xyView_->setPendingTransmissionLineEndpoint(endpoint);
-    xzView_->setPendingTransmissionLineEndpoint(endpoint);
-    yzView_->setPendingTransmissionLineEndpoint(endpoint);
-    geometry3DView_->setPendingTransmissionLineEndpoint(endpoint);
+    for (auto* view : geometryViews()) view->setPendingTransmissionLineEndpoint(endpoint);
 }
 
 void MainWindow::upsertSetupCard(const QString& description, std::size_t sourceLine,
@@ -3258,7 +3223,7 @@ void MainWindow::startAnalysis()
     if (solverRunner_->isRunning() || !runAction_->isEnabled()) {
         return;
     }
-    liveSolve_->cancel();
+    resultsController_->clearLivePoints();
 
     checkModel();
     if (modelErrorCount_ != 0 || !runAction_->isEnabled()) {
@@ -4608,21 +4573,20 @@ void MainWindow::showSymbolicGeometryEditBlocked()
         "NEC source instead; the graphical edit was canceled to preserve those expressions."));
 }
 
+auto MainWindow::geometryViews() const -> std::array<GeometryInteractionView*, 4>
+{
+    return {xyView_, xzView_, yzView_, geometry3DView_};
+}
+
 void MainWindow::resetGeometryViews()
 {
-    xyView_->setModel(currentModel_);
-    xzView_->setModel(currentModel_);
-    yzView_->setModel(currentModel_);
-    geometry3DView_->setModel(currentModel_);
+    for (auto* view : geometryViews()) view->setModel(currentModel_);
 }
 
 void MainWindow::refreshGeometryViews()
 {
     updateWireCardEditor();
-    xyView_->updateModel(currentModel_);
-    xzView_->updateModel(currentModel_);
-    yzView_->updateModel(currentModel_);
-    geometry3DView_->updateModel(currentModel_);
+    for (auto* view : geometryViews()) view->updateModel(currentModel_);
 }
 
 void MainWindow::updateWireCardEditor()

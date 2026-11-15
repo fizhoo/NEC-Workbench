@@ -3705,7 +3705,9 @@ auto main(int argc, char* argv[]) -> int
         necwb::analysis::AnalysisResult point;
         point.feedpoints = {{14.1, 1, 6, {1.0, 0.0}, {0.01, 0.0}, {100.0, 0.0}, 0.005}};
         auto exported = false;
-        results.setExportedCallback([&exported] { exported = true; });
+        results.setStatusCallback([&exported](const QString& message) {
+            exported = message.startsWith(QStringLiteral("Exported the last full run"));
+        });
         results.setLivePoint(point, 14.1);
         results.showView(necwb::ui::ResultView::Azimuth);
         application.processEvents();
