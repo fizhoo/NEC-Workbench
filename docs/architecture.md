@@ -18,7 +18,7 @@ NEC or optimization behavior in widgets.
 ## Source and Semantic Model
 
 `NecDocument` preserves source lines, comments, whitespace, line endings, and
-unknown extensions. Raw Source and Structured Cards are two views of this same
+unknown extensions. Raw Source and the Cards tables are two views of this same
 document. Structured edits replace only mapped lines and enter the shared
 Undo/Redo history.
 
@@ -48,7 +48,7 @@ and Redo may navigate back to the workspace that originated an edit, but never m
 a second model state.
 
 Symbolic geometry is protected from operations that would replace expressions
-with resolved numbers. Field parameterization occurs through Structured Cards;
+with resolved numbers. Field parameterization occurs through the Cards tables;
 Model Parameters edits the resulting `SY` definitions. Optimize consumes those
 same definitions.
 
@@ -64,7 +64,7 @@ the resolved symbols at most once a frame, without touching the deck), and the `
 selection: `WirePropertiesEditor`, the Setup pages, and the Parameters table. The pane
 applies valid pending edits when the selection changes and asks only about invalid ones.
 The center shows the geometry editor (2D and 3D views), one full result view, or the NEC
-Deck (`DeckView`: Raw Source and Structured Cards), each non-geometry view under the same
+Deck (`DeckView`: raw source), each non-geometry view under the same
 `CenterViewHeader`; the collapsible results column is on the right. The results (`ui/results`) are:
 
 - `ResultsController`, which owns the displayed run, the overlay, the stale flag, and
@@ -273,7 +273,7 @@ then uses the normal analysis pipeline to create an ordinary result.
 paths using the platform's normal user settings location. Run artifacts remain in
 the application's local data directory.
 
-Common numeric presentation is centralized in `ui/DisplayFormat.h`. Structured Cards
+Common numeric presentation is centralized in `ui/DisplayFormat.h`. The Cards tables
 and Wires use `CompactNumberDelegate` to show long numbers at 6 significant figures
 while editing starts from the exact source text. Display rounding never changes
 source text, archived solver output, exports, or internal calculation precision.

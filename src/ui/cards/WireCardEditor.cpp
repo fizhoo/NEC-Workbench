@@ -160,7 +160,7 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
             if (!wire.editable) {
                 item->setFlags(item->flags() & ~Qt::ItemIsEditable);
                 item->setToolTip(tr(
-                    "This GW uses a following GC taper card. Edit the GW/GC cards in Other Supported Cards or Raw Source."));
+                    "This GW uses a following GC taper card. Edit the GC card under Cards → Other or in Raw Source."));
             }
             const auto symbolicLine = symbolicGeometryFields_.find(wire.sourceLine);
             if (symbolicLine != symbolicGeometryFields_.end()

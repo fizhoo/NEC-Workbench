@@ -5,7 +5,7 @@ NEC Workbench distinguishes three levels of card support:
 - **Preserved** — source text survives opening, editing, saving, and run-snapshot archiving.
 - **Understood** — Workbench identifies the card, assigns it to the correct NEC section,
   validates fixed integer/numeric field types, and exposes existing fields through a
-  generic fixed-field table in Structured Cards.
+  generic fixed-field table in the Cards tab (Other).
 - **Structured Editable** — a dedicated editor provides card-specific labels, choices,
   validation, or model behavior.
 
@@ -44,7 +44,7 @@ or transformed paths are read-only so graphical editing cannot silently replace 
 source operations. `SP` arbitrary and shaped patches, `SM` patch grids, and their `SC`
 continuations remain separate surface primitives and appear as translucent polygons in
 2D, 3D, and radiation antenna overlays. Patch geometry is currently
-read-only outside Raw Source and Structured Cards.
+read-only outside Raw Source and the Cards tables.
 
 ## Program Control Cards
 
@@ -56,7 +56,7 @@ read-only outside Raw Source and Structured Cards.
 | `KH` | Interaction approximation range | Understood |
 | `LD` | Structure loading | Structured Editable |
 | `EX` | Excitation | Structured Editable for voltage sources |
-| `NT` | Two-port network | Structured Editable (Loads & Networks table and labelled Structured Cards fields; drawn and selectable in Geometry; ports validated, linted, and remapped like `TL` ends) |
+| `NT` | Two-port network | Structured Editable (Cards → Networks table and the pane form; drawn and selectable in Geometry; ports validated, linted, and remapped like `TL` ends) |
 | `TL` | Transmission line | Structured Editable |
 | `CP` | Coupling calculation | Understood |
 | `EN` | End data | Understood |

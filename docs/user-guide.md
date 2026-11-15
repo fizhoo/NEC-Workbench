@@ -107,17 +107,24 @@ loads, lines, or networks. Selecting a wire in the tree selects it in the geomet
 and selecting one in geometry selects it in the tree. Right-click **Properties…** in
 geometry selects the item and moves the keyboard into the properties pane.
 
-The properties pane shows the editor for the selection: a wire's tag, segments,
-endpoints, and size; the Sources page with the selected source; the Loads, transmission
-lines and networks page with the selected row; and the Frequency, Ground, Requests, and
-Solver pages; and the Parameters table for **Variables**. The tree takes the rows it
-shows, up to about 40% of the column, and the variables up to about 25%; each scrolls
-beyond that, and the pane takes the rest. Groups with nothing to edit here, such as
-Wires, hide the pane, and the variables fill the column below the tree.
+The properties pane holds one item at a time: a wire's tag, segments, endpoints, and size;
+one source, load, transmission line, or network as a short form; the Feed System
+(reference impedance) for **Sources**; the Frequency, Ground, Requests, and Solver pages;
+and the Parameters table for **Variables**. The tree takes the rows it shows, up to about
+40% of the column, and the variables up to about 25%; each scrolls beyond that, and the
+pane takes the rest.
 
-Wire fields written as `SY` symbols or expressions show **ƒx**, are read-only, and name
-the expression in their tooltip: change them through the variable. Applying a wire edit
-rewrites only the fields you changed; the others keep their symbols and exact values.
+Selecting the **Wires**, **Sources**, **Loads**, **Trans. lines**, or **Networks** group
+opens that table in the **Cards** tab of the bottom panel, across the window's width under
+the geometry, opening the panel if it was collapsed. Selecting one source, load, line, or
+network, in the tree, in geometry, or in its Cards row, shows its form in the pane and
+selects it everywhere else. Right-click a wire in geometry to add a source or a load, or
+pick a transmission line's two ends; the new item's form opens in the pane.
+
+Fields written as `SY` symbols or expressions show **ƒx**, are read-only, and name the
+expression in their tooltip: change them through the variable. Applying a wire, source,
+load, line, or network edit rewrites only the fields you changed; the others keep their
+symbols and exact values.
 
 ### Variables
 
@@ -140,6 +147,11 @@ and image exports, Run Review and overlays always use the last full run. A new v
 cancels a live solve still running; one taking over 2 s shows in the status bar. `F5`
 always runs the whole sweep. With Live off, a committed value is only written and checked.
 
+Click the **VARIABLES** header to fold the section to one line, keeping **Live** and
+**Reset**; click it again to unfold. The choice is remembered. When a form in the pane is
+too tall for the column, the variables fold while it shows and unfold when it closes,
+unless you folded them yourself.
+
 **Reset** puts every variable back to its value when the model was opened or last saved,
 as one undoable step; its tooltip lists what would change.
 
@@ -160,21 +172,21 @@ to open the Validation window.
 ## Model
 
 The model is edited in the **geometry editor** (2D and 3D geometry) in the center of the
-main window, in the properties pane and variables, and in the **NEC Deck** (Raw Source
-and Structured Cards). **Model → NEC Deck**, or Deck in the model tree, shows the deck in
+main window, in the properties pane and variables, in the **Cards** tab of the bottom
+panel, and in the **NEC Deck** (raw source). **Model → NEC Deck**, or Deck in the model tree, shows the deck in
 the center in place of the geometry; **← Geometry** or `Esc` returns. **Model → Geometry
 Editor** brings the geometry back with the view focused.
 
 ### Geometry
 
-The XY, XZ, YZ, and 3D views share selection with Structured Cards and the model tree.
+The XY, XZ, YZ, and 3D views share selection with the Cards tables and the model tree.
 Ordinary `GW` wires can be selected and edited. The 2D views support endpoint and
 whole-wire dragging, snapping, fitting, panning, and zooming. Right-click a wire
 for properties, splitting, deletion, source creation, or AWG sizing.
 
 Generated geometry—such as arcs, helices, transformations, and surface patches—is
 displayed when supported but remains graphically read-only. Edit its originating
-card in Structured Cards or Raw Source.
+card under **Cards → Other** or in Raw Source.
 
 Display units do not change model dimensions. Deck units and ordered `GS` scaling
 remain separate from display and snap settings.
@@ -186,7 +198,7 @@ Parameters table. Resolved Value is the evaluated number, not an inferred physic
 
 To parameterize a field:
 
-1. Open **Model → NEC Deck** and choose the **Structured Cards** tab.
+1. Open the **Cards** tab of the bottom panel and the table for the card.
 2. Right-click a continuous numeric cell.
 3. Create a new parameter or link an existing `SY` definition.
 
@@ -197,18 +209,22 @@ sign in the reference. Linking an existing parameter similarly preserves an equa
 opposite current value, which supports symmetric geometry such as `-half_length` and
 `half_length` without changing the model.
 
-### NEC Deck
+### NEC Deck and Cards
 
-Raw Source and Structured Cards operate on the same document.
+The NEC Deck's raw source and the **Cards** tables operate on the same document.
 
 - Use Raw Source for unrestricted deck editing and unsupported extensions.
-- Use Structured Cards for labels, choices, validation, and source mapping.
-- Double-click an editable cell to change it.
+- Use the Cards tables (Wires, Sources, Loads, Transmission lines, Networks, Other) for
+  labels, choices, validation, and source mapping. The `EX` and `LD` type cells are lists
+  such as "0 — Series RLC"; column headers carry units (R Ω, L H, C F, Z0 Ω, Y11 G S).
+- Double-click an editable cell to change it; each cell edit is one undoable step. Fields
+  written as symbols keep their text.
 - Long numbers, such as those written by geometry drags or the optimizer, are shown
   at 6 significant figures to keep columns narrow. The deck keeps the exact value:
   hover a cell to see it, and editing starts from it.
 - Right-click a numeric cell to parameterize it.
-- Selecting a structured row moves the raw-source cursor to the same card.
+- Selecting a row selects its source, load, line, or network everywhere, or moves the
+  raw-source cursor to the card.
 
 Unknown cards and formatting are preserved. Recognition does not imply that every
 card has a dedicated editor or graphical representation; see
@@ -286,20 +302,18 @@ stability between levels, not universal model correctness.
 
 ## Setup
 
-These pages open in the properties pane when Frequency, Sources, Loads, Trans. lines,
-Networks, Ground, Requests, or Solver is selected in the model tree.
+Frequency, Ground, Requests, Solver, and the Sources group's Feed System open in the
+properties pane; sources, loads, transmission lines, and networks are tables in the Cards
+tab and forms in the pane.
 
 ### Sources, Loads, Networks, and Environment
 
-These pages provide structured editing for supported `EX`, `LD`, `TL`, `NT`, `GN`, and
-related model setup. The model tree's **Networks** row opens the `NT` table, where each
-two-port network is given by its ports and its short-circuit admittances Y11, Y12, and
-Y22 in siemens. **Add Network**, and **Add NT** in the card editor, start a draft row with
-its ports on two different segments and the admittances blank. It is written to the deck
-only once at least one admittance is nonzero: an `NT` port whose admittances are all zero
-carries no current, which opens the wire at that segment. New `TL` and `NT` cards are added next to the deck's existing ones, since
-NEC-2 discards earlier networks and lines when other cards separate them. Draft rows do not change the source until Apply is selected.
-An emphasized Apply button indicates pending changes.
+Each two-port network (`NT`) is given by its ports and its short-circuit admittances Y11,
+Y12, and Y22 in siemens. **Add NT Card** writes a 50 Ω series connection between two
+segments, since an `NT` port whose admittances are all zero carries no current and opens
+the wire at that segment. New `TL` and `NT` cards are added next to the deck's existing
+ones, since NEC-2 discards earlier networks and lines when other cards separate them. In a
+pane form, an emphasized Apply button indicates pending changes.
 
 References are validated against available wire tags and segments. Units shown in
 the interface are converted to the NEC values stored in source.
@@ -309,8 +323,8 @@ port, Workbench explains how NEC connects them. NEC-2 puts `EX` sources, `TL` en
 `NT` ports across the segment's gap, in parallel with one another, but an `LD` load sits
 in series inside the segment. A load on a line end therefore acts in series with the
 line, which is rarely what is meant; on a short stub wire it has almost no effect. In
-the Loads & Networks tables, the row number of an affected load, line, or network shows a
-marker and a tooltip, and selecting the row shows the explanation below the tables. Hovering
+the pane form of an affected source, load, line, or network, the explanation shows below
+its fields. Hovering
 the segment in a Geometry view shows the same text. Model Check warns about loads on a
 line end or network port, and suggests the `TL` shunt admittance, an `NT` network, or a
 short parallel wire to put the load across the port instead.
@@ -621,8 +635,8 @@ open model.
 ## Optimize
 
 Optimization consumes existing parameters. It does not decide which NEC fields a
-parameter controls. Use **Choose Parameter Fields…** to jump to Structured Cards
-when another field must be parameterized.
+parameter controls. Use **Choose Parameter Fields…** to jump to the Cards tab when
+another field must be parameterized.
 
 ### Search Methods
 

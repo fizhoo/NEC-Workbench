@@ -46,7 +46,7 @@ ParameterEditor::ParameterEditor(QWidget* parent)
     auto* description = new QLabel(tr(
         "Double-click Name or Expression to edit. Resolved values are calculated after Apply Selected. "
         "To choose which NEC field a symbol controls, right-click that numeric field under "
-        "NEC Deck → Structured Cards and parameterize or link it there."), group);
+        "the Cards tab of the bottom panel and parameterize or link it there."), group);
     description->setWordWrap(true);
     groupLayout->addWidget(description);
 
