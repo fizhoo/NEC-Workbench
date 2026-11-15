@@ -51,9 +51,9 @@ class RunReviewWindow;
 class AverageGainResultsView;
 class ConvergenceWorkspace;
 class SetupEditor;
-class LoadNetworkEditor;
 class WireCardEditor;
-class StructuredCardEditor;
+class CardsPanel;
+class CardFieldForm;
 class WelcomePage;
 class SourceHistory;
 class GeometryPreview;
@@ -157,6 +157,10 @@ private:
     void showSetupPage(EditorDestination destination);
     void showProperties(const ModelSelection& selection);
     void refreshWireEditor();
+    // Shows the card on that line in the pane's form.
+    void refreshCardForm(std::size_t sourceLine);
+    // Selects the source, load, line or network a Cards row is, or its deck line.
+    void selectCardInModel(std::size_t sourceLine);
     // Shows the engine in the toolbar and on the model tree's Solver row.
     void refreshEngine();
     void discardPendingEdits(QWidget* page);
@@ -247,7 +251,7 @@ private:
     void applyReferenceImpedance(double ohms);
     void pushGeometrySourceEdit(const QString& description, QString updatedSource);
     void applyGeometrySource(const QString& description, const QString& source,
-        EditorDestination destination, int geometryTab, int sourceTab);
+        EditorDestination destination, int geometryTab);
     [[nodiscard]] auto nextWireTag() const -> int;
     [[nodiscard]] auto wireHasSymbolicGeometry(std::size_t sourceLine) const -> bool;
     void showSymbolicGeometryEditBlocked();
@@ -300,11 +304,8 @@ private:
     QAction* aboutAction_{};
     QMenu* recentModelsMenu_{};
     QComboBox* lengthUnitControl_{};
-    QComboBox* deckUnitControl_{};
-    QLabel* deckScaleLabel_{};
     QDoubleSpinBox* snapSpacingControl_{};
     QTabWidget* workspace_{};
-    QTabWidget* sourceWorkspace_{};
     QWidget* windowHost_{};
     WorkbenchLayout* workbenchLayout_{};
     DetachablePanel* validationPanel_{};
@@ -315,8 +316,7 @@ private:
     WorkbenchToolBar* toolBar_{};
     WelcomePage* welcomePage_{};
     WireCardEditor* wireCardEditor_{};
-    StructuredCardEditor* structuredCardEditor_{};
-    QLabel* structuredParameterizationHint_{};
+    CardsPanel* cards_{};
     NecEditor* editor_{};
     SourceHistory* history_{};
     GeometryPreview* geometryPreview_{};
@@ -326,7 +326,7 @@ private:
     GeometryView* yzView_{};
     Geometry3DView* geometry3DView_{};
     SetupEditor* setupEditor_{};
-    LoadNetworkEditor* loadNetworkEditor_{};
+    CardFieldForm* cardForm_{};
     AnalysisSetupEditor* analysisSetupEditor_{};
     AnalysisRequestEditor* analysisRequestEditor_{};
     RunReviewWindow* runReviewWindow_{};
@@ -379,7 +379,6 @@ private:
     double currentBaselineReferenceImpedanceOhms_{50.0};
     int geometryTabIndex_{};
     int geometry3DTabIndex_{};
-    int structuredSourceTabIndex_{1};
     int validationOverviewTabIndex_{};
     int averageGainValidationTabIndex_{};
     int convergenceValidationTabIndex_{};

@@ -9,7 +9,6 @@
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QComboBox>
-#include <QLabel>
 #include <QMenu>
 #include <QPalette>
 #include <QPushButton>
@@ -52,21 +51,14 @@ WireCardEditor::WireCardEditor(QWidget* parent)
     : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(6, 6, 6, 6);
-    layout->setSpacing(6);
-
-    auto* heading = new QLabel(tr("Wires (GW)"), this);
-    auto headingFont = heading->font();
-    headingFont.setBold(true);
-    headingFont.setPointSize(headingFont.pointSize() + 2);
-    heading->setFont(headingFont);
-    instructions_ = new QLabel(this);
-    instructions_->setWordWrap(true);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(2);
 
     auto* actions = new QHBoxLayout;
+    actions->setContentsMargins(4, 0, 4, 0);
     auto* addButton = new QPushButton(tr("Add Wire"), this);
-    duplicateButton_ = new QPushButton(tr("Duplicate Wire"), this);
-    deleteButton_ = new QPushButton(tr("Delete Wire"), this);
+    duplicateButton_ = new QPushButton(tr("Duplicate"), this);
+    deleteButton_ = new QPushButton(tr("Delete"), this);
     actions->addWidget(addButton);
     actions->addWidget(duplicateButton_);
     actions->addWidget(deleteButton_);
@@ -86,8 +78,6 @@ WireCardEditor::WireCardEditor(QWidget* parent)
     table_->horizontalHeader()->setStretchLastSection(true);
     table_->verticalHeader()->setVisible(false);
 
-    layout->addWidget(heading);
-    layout->addWidget(instructions_);
     layout->addLayout(actions);
     layout->addWidget(table_, 1);
 
@@ -307,7 +297,7 @@ void WireCardEditor::updateUnitLabels()
         tr("Y1 (%1)").arg(unitLabel_), tr("Z1 (%1)").arg(unitLabel_),
         tr("X2 (%1)").arg(unitLabel_), tr("Y2 (%1)").arg(unitLabel_),
         tr("Z2 (%1)").arg(unitLabel_), tr("Radius (%1)").arg(unitLabel_), tr("Wire Gauge")});
-    instructions_->setText(tr("Double-click a cell to edit it. Values use the NEC deck geometry unit (%1); GS converts them to meters for the solver.")
+    table_->setToolTip(tr("Double-click a cell to edit it. Values use the NEC deck geometry unit (%1); GS converts them to meters for the solver.")
             .arg(unitLabel_));
 }
 

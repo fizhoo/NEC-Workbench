@@ -10,13 +10,9 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
-#include <QHeaderView>
 #include <QLabel>
 #include <QPushButton>
 #include <QSignalBlocker>
-#include <QSpinBox>
-#include <QTableWidget>
-#include <QTableWidgetItem>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -25,7 +21,6 @@
 namespace necwb::ui {
 namespace {
 
-constexpr auto SourceLineRole = Qt::UserRole;
 constexpr auto GroundPermittivityRole = Qt::UserRole + 1;
 constexpr auto GroundConductivityRole = Qt::UserRole + 2;
 
@@ -179,52 +174,12 @@ SetupEditor::SetupEditor(QWidget* parent)
     referenceButtons->addStretch();
     feedLayout->addRow(tr("Reference impedance"), referenceImpedanceControl_);
     feedLayout->addRow(referenceButtons);
-    auto* excitationGroup = new QGroupBox(tr("Voltage Sources (EX 0)"), sourcesPage_);
-    auto* excitationLayout = new QVBoxLayout(excitationGroup);
-    excitationTable_ = new QTableWidget(excitationGroup);
-    excitationTable_->setColumnCount(4);
-    excitationTable_->setHorizontalHeaderLabels({tr("Wire"), tr("Segment"), tr("Magnitude"), tr("Phase (deg)")});
-    excitationTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    excitationTable_->setSelectionMode(QAbstractItemView::SingleSelection);
-    excitationTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    excitationTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    excitationTable_->verticalHeader()->setVisible(false);
-
-    auto* excitationForm = new QFormLayout;
-    wireControl_ = new QComboBox(excitationGroup);
-    segmentControl_ = new QSpinBox(excitationGroup);
-    segmentControl_->setRange(1, 1);
-    magnitudeControl_ = createDecimalControl(excitationGroup);
-    magnitudeControl_->setDecimals(DisplayDecimalPlaces);
-    magnitudeControl_->setRange(0.0, 1.0e12);
-    phaseControl_ = createDecimalControl(excitationGroup);
-    phaseControl_->setDecimals(DisplayDecimalPlaces);
-    phaseControl_->setRange(-360.0, 360.0);
-    phaseControl_->setSuffix(tr("°"));
-    excitationForm->addRow(tr("Wire tag"), wireControl_);
-    excitationForm->addRow(tr("Segment"), segmentControl_);
-    excitationForm->addRow(tr("Magnitude"), magnitudeControl_);
-    excitationForm->addRow(tr("Phase"), phaseControl_);
-
-    auto* excitationButtons = new QHBoxLayout;
-    addExcitationButton_ = new QPushButton(tr("Add Source"), excitationGroup);
-    updateExcitationButton_ = new QPushButton(tr("Update Selected"), excitationGroup);
-    deleteExcitationButton_ = new QPushButton(tr("Delete Selected"), excitationGroup);
-    excitationButtons->addWidget(addExcitationButton_);
-    excitationButtons->addWidget(updateExcitationButton_);
-    excitationButtons->addWidget(deleteExcitationButton_);
-    excitationButtons->addStretch();
-
-    excitationLayout->addWidget(excitationTable_);
-    excitationLayout->addLayout(excitationForm);
-    excitationLayout->addLayout(excitationButtons);
-
     frequencyPageLayout->addWidget(frequencyGroup);
     frequencyPageLayout->addStretch();
     environmentPageLayout->addWidget(groundGroup);
     environmentPageLayout->addStretch();
     sourcesPageLayout->addWidget(feedGroup);
-    sourcesPageLayout->addWidget(excitationGroup, 1);
+    sourcesPageLayout->addStretch();
 
     connect(frequencySweepControl_, &QCheckBox::toggled, this, [this] {
         updateFrequencyControls(); if (!updating_) setFrequencyPending(true);
@@ -313,67 +268,25 @@ SetupEditor::SetupEditor(QWidget* parent)
         if (setup_.referenceImpedance)
             emit referenceImpedanceDeleteRequested(setup_.referenceImpedance->sourceLine);
     });
-    connect(excitationTable_, &QTableWidget::itemSelectionChanged, this, [this] {
-        loadSelectedExcitation();
-        updateExcitationActions();
-        if (!updating_ && excitationTable_->currentRow() >= 0) {
-            emit excitationSelected(excitationTable_->item(
-                excitationTable_->currentRow(), 0)->data(SourceLineRole).toULongLong());
-        }
-    });
-    connect(wireControl_, &QComboBox::currentIndexChanged, this, [this] {
-        const auto* wire = model_.wireByTag(wireControl_->currentData().toInt());
-        segmentControl_->setMaximum(wire == nullptr ? 1 : wire->segments);
-        if (!updating_) setExcitationPending(true);
-    });
-    connect(segmentControl_, &QSpinBox::valueChanged, this,
-        [this] { if (!updating_) setExcitationPending(true); });
-    connect(magnitudeControl_, &QDoubleSpinBox::valueChanged, this,
-        [this] { if (!updating_) setExcitationPending(true); });
-    connect(phaseControl_, &QDoubleSpinBox::valueChanged, this,
-        [this] { if (!updating_) setExcitationPending(true); });
-    connect(addExcitationButton_, &QPushButton::clicked, this, [this] {
-        setExcitationPending(false);
-        emit excitationChanged(editedExcitation(0));
-    });
-    connect(updateExcitationButton_, &QPushButton::clicked, this, [this] {
-        const auto row = excitationTable_->currentRow();
-        if (row >= 0) {
-            setExcitationPending(false);
-            emit excitationChanged(editedExcitation(
-                excitationTable_->item(row, 0)->data(SourceLineRole).toULongLong()));
-        }
-    });
-    connect(deleteExcitationButton_, &QPushButton::clicked, this, [this] {
-        const auto row = excitationTable_->currentRow();
-        if (row >= 0) {
-            emit excitationDeleteRequested(
-                excitationTable_->item(row, 0)->data(SourceLineRole).toULongLong());
-        }
-    });
-
     startFrequencyControl_->setValue(14.175);
     endFrequencyControl_->setValue(30.0);
     frequencyStepControl_->setValue(0.1);
-    magnitudeControl_->setValue(1.0);
     relativePermittivityControl_->setValue(13.0);
     conductivityControl_->setValue(0.005);
     connectGroundEndsControl_->setChecked(true);
     updateGroundPresetSelection();
     updateFrequencyControls();
     updateGroundControls();
-    updateExcitationActions();
     setFrequencyPending(false);
     setGroundPending(false);
     setReferenceImpedancePending(false);
-    setExcitationPending(false);
 }
 
 auto SetupEditor::hasPendingEdits(const QWidget* page) const -> bool
 {
     if (page == frequencyPage_) return frequencyPending_;
     if (page == environmentPage_) return groundPending_;
-    if (page == sourcesPage_) return excitationPending_ || referenceImpedancePending_;
+    if (page == sourcesPage_) return referenceImpedancePending_;
     return false;
 }
 
@@ -398,32 +311,11 @@ auto SetupEditor::environmentPage() const -> QWidget*
     return environmentPage_;
 }
 
-void SetupEditor::selectExcitation(std::size_t sourceLine)
-{
-    updating_ = true;
-    const QSignalBlocker blocker(excitationTable_);
-    excitationTable_->clearSelection();
-    for (auto row = 0; row < excitationTable_->rowCount(); ++row) {
-        if (excitationTable_->item(row, 0)->data(SourceLineRole).toULongLong() == sourceLine) {
-            excitationTable_->selectRow(row);
-            excitationTable_->scrollToItem(excitationTable_->item(row, 0));
-            break;
-        }
-    }
-    updating_ = false;
-    loadSelectedExcitation();
-    updateExcitationActions();
-}
-
 void SetupEditor::setData(const model::AntennaModel& model, const model::ModelSetup& setup)
 {
     updating_ = true;
     model_ = model;
     setup_ = setup;
-    wireControl_->clear();
-    for (const auto& wire : model_.wires()) {
-        wireControl_->addItem(tr("Wire %1").arg(wire.tag), wire.tag);
-    }
     if (setup_.frequency) {
         frequencyModeControl_->setCurrentIndex(frequencyModeControl_->findData(setup_.frequency->steppingMode));
         frequencySweepControl_->setChecked(setup_.frequency->count > 1);
@@ -456,49 +348,12 @@ void SetupEditor::setData(const model::AntennaModel& model, const model::ModelSe
     referenceImpedanceControl_->setValue(model::referenceImpedanceOhms(setup_));
     removeReferenceImpedanceButton_->setEnabled(setup_.referenceImpedance.has_value());
 
-    excitationTable_->setRowCount(static_cast<int>(setup_.excitations.size()));
-    auto row = 0;
-    for (const auto& excitation : setup_.excitations) {
-        const QStringList values{QString::number(excitation.wireTag),
-            QString::number(excitation.segment), formatDecimal(excitation.magnitude),
-            formatDecimal(excitation.phaseDegrees)};
-        for (auto column = 0; column < values.size(); ++column) {
-            auto* item = new QTableWidgetItem(values[column]);
-            item->setData(SourceLineRole, static_cast<qulonglong>(excitation.sourceLine));
-            excitationTable_->setItem(row, column, item);
-        }
-        ++row;
-    }
     updating_ = false;
     setFrequencyPending(false);
     setGroundPending(false);
     setReferenceImpedancePending(false);
-    setExcitationPending(false);
-    addExcitationButton_->setEnabled(!model_.wires().empty());
     updateFrequencyControls();
     updateGroundControls();
-    updateExcitationActions();
-}
-
-void SetupEditor::loadSelectedExcitation()
-{
-    const auto row = excitationTable_->currentRow();
-    if (row < 0) {
-        return;
-    }
-    const auto sourceLine = excitationTable_->item(row, 0)->data(SourceLineRole).toULongLong();
-    const auto found = std::ranges::find(setup_.excitations, sourceLine, &model::Excitation::sourceLine);
-    if (found == setup_.excitations.end()) {
-        return;
-    }
-    updating_ = true;
-    wireControl_->setCurrentIndex(wireControl_->findData(found->wireTag));
-    const auto* wire = model_.wireByTag(found->wireTag);
-    segmentControl_->setMaximum(wire == nullptr ? 1 : wire->segments);
-    segmentControl_->setValue(found->segment);
-    magnitudeControl_->setValue(found->magnitude);
-    phaseControl_->setValue(found->phaseDegrees);
-    updating_ = false;
 }
 
 void SetupEditor::updateFrequencyControls()
@@ -567,16 +422,6 @@ void SetupEditor::updateGroundPresetSelection()
     groundPresetControl_->setCurrentIndex(matchingIndex);
 }
 
-void SetupEditor::updateExcitationActions()
-{
-    const bool selected = excitationTable_->currentRow() >= 0;
-    updateExcitationButton_->setEnabled(selected);
-    deleteExcitationButton_->setEnabled(selected);
-    setPendingEditIndicator(selected ? updateExcitationButton_ : addExcitationButton_,
-        excitationPending_);
-    setPendingEditIndicator(selected ? addExcitationButton_ : updateExcitationButton_, false);
-}
-
 void SetupEditor::setFrequencyPending(bool pending)
 {
     frequencyPending_ = pending;
@@ -593,18 +438,6 @@ void SetupEditor::setReferenceImpedancePending(bool pending)
 {
     referenceImpedancePending_ = pending;
     setPendingEditIndicator(applyReferenceImpedanceButton_, pending);
-}
-
-void SetupEditor::setExcitationPending(bool pending)
-{
-    excitationPending_ = pending;
-    updateExcitationActions();
-}
-
-auto SetupEditor::editedExcitation(std::size_t sourceLine) const -> model::Excitation
-{
-    return {0, wireControl_->currentData().toInt(), segmentControl_->value(),
-        magnitudeControl_->value(), phaseControl_->value(), sourceLine};
 }
 
 }

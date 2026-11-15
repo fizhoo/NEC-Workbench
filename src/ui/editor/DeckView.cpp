@@ -18,6 +18,11 @@ DeckView::DeckView(QWidget* deck, QWidget* parent) : QWidget(parent)
     layout->addWidget(deck, 1);
 }
 
+void DeckView::setModified(bool modified)
+{
+    header_->setTitle(modified ? tr("NEC Deck *") : tr("NEC Deck"));
+}
+
 void DeckView::setBackCallback(std::function<void()> callback)
 {
     header_->setBackCallback(std::move(callback));

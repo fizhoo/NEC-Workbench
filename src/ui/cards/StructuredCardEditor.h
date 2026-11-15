@@ -3,12 +3,12 @@
 #include "nec/NecDocument.h"
 #include "nec/NecCardFieldEditor.h"
 
+#include <QStringList>
 #include <QWidget>
 
 #include <utility>
 #include <vector>
 
-class QLabel;
 class QTableWidget;
 class QTableWidgetItem;
 class QPushButton;
@@ -21,7 +21,14 @@ class StructuredCardEditor final : public QWidget {
     Q_OBJECT
 
 public:
-    explicit StructuredCardEditor(QWidget* parent = nullptr);
+    // The card families shown: those named, or with exclude, all but those named. A single
+    // family shows without the list of families. Names are mnemonics such as "LD".
+    struct Families {
+        QStringList names;
+        bool exclude{};
+    };
+
+    explicit StructuredCardEditor(Families families, QWidget* parent = nullptr);
     void setDocument(const nec::NecDocument& document);
     void setDeckUnitLabel(QString unitLabel);
     void setParameterControlledFields(nec::NecParameterFieldMap sourceFields);
@@ -32,8 +39,6 @@ signals:
     void cardSelected(std::size_t sourceLine);
     void cardEdited(std::size_t sourceLine, QString cardText);
     void cardAddRequested(QString cardText);
-    // A new NT is started in Loads & Networks, which writes it only once it has admittances.
-    void networkDraftRequested();
     void cardDeleteRequested(std::size_t sourceLine);
     void fieldParameterizationRequested(std::size_t sourceLine,
         std::size_t fieldIndex, QString fieldLabel);
@@ -50,12 +55,13 @@ private:
     [[nodiscard]] auto defaultCard(int familyIndex) const -> QString;
     [[nodiscard]] auto currentFamilyIndex() const -> int;
     [[nodiscard]] auto familyItem(int familyIndex) const -> QTreeWidgetItem*;
+    [[nodiscard]] auto shows(int familyIndex) const -> bool;
 
     nec::NecDocument document_;
     nec::NecParameterFieldMap parameterControlledFields_;
     QTreeWidget* families_{};
     QTableWidget* table_{};
-    QLabel* description_{};
+    Families shown_;
     QPushButton* addButton_{};
     QPushButton* deleteButton_{};
     QString deckUnitLabel_{QStringLiteral("m")};

@@ -10,7 +10,6 @@
 #include <unordered_set>
 
 class QPushButton;
-class QLabel;
 class QTableWidget;
 class QTableWidgetItem;
 
@@ -51,7 +50,6 @@ private:
     void applyGauge(int tag, int gauge);
 
     QTableWidget* table_{};
-    QLabel* instructions_{};
     QPushButton* duplicateButton_{};
     QPushButton* deleteButton_{};
     model::AntennaModel model_;
