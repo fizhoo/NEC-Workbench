@@ -118,6 +118,13 @@ void PropertiesPane::focusPage()
     page->setFocus(Qt::OtherFocusReason);
 }
 
+auto PropertiesPane::revertPendingEdits() -> bool
+{
+    if (pendingButtons().isEmpty()) return false;
+    if (discard_) discard_(pages_->currentWidget());
+    return true;
+}
+
 void PropertiesPane::keyPressEvent(QKeyEvent* event)
 {
     // Fields that do not use these keys themselves pass them up to here.
@@ -125,10 +132,7 @@ void PropertiesPane::keyPressEvent(QKeyEvent* event)
         applyPendingEdits();
         return;
     }
-    if (event->key() == Qt::Key_Escape && !pendingButtons().isEmpty()) {
-        if (discard_) discard_(pages_->currentWidget());
-        return;
-    }
+    if (event->key() == Qt::Key_Escape && revertPendingEdits()) return;
     QWidget::keyPressEvent(event);
 }
 

@@ -18,6 +18,9 @@ public:
         // Shown from the arrow beside Open.
         QMenu* recentModels{};
         QAction* save{};
+        QAction* revert{};
+        QAction* undo{};
+        QAction* redo{};
         QAction* run{};
         QAction* stop{};
         QAction* sweep{};

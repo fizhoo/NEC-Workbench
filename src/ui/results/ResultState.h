@@ -6,6 +6,7 @@
 #include <QString>
 
 #include <optional>
+#include <vector>
 
 namespace necwb::ui {
 
@@ -34,6 +35,14 @@ struct ResultState {
     bool referenceVisible{};
     double referenceImpedanceOhms{50.0};
     bool stale{};
+    // Frequencies solved live since the last full run. Only the results column sees them; the
+    // data it is given then holds the live points in place of the full run's.
+    std::vector<double> liveFrequenciesMHz;
+    // No full run yet: the data is live points only.
+    bool liveOnly{};
+    // The last full run, for the sweep curve, which live points never change.
+    ResultData::Pointer fullRunData;
+    int fullRunVersion{};
     int dataVersion{};
     int referenceVersion{};
 };

@@ -24,8 +24,8 @@ class GeometryView final : public GeometryInteractionView {
 public:
     explicit GeometryView(geometry::ProjectionPlane plane, QWidget* parent = nullptr);
 
-    void setModel(const model::AntennaModel& model);
-    void updateModel(const model::AntennaModel& model);
+    void setModel(const model::AntennaModel& model) override;
+    void updateModel(const model::AntennaModel& model) override;
     void fitToView() override;
     void setGridSnappingEnabled(bool enabled);
     void setEndpointSnappingEnabled(bool enabled);

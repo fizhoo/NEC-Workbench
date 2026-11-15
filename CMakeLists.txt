@@ -125,6 +125,8 @@ if(NECWB_BUILD_GUI)
         src/ui/modeltree/VariablesSection.h
         src/ui/results/KeyNumberStrip.cpp
         src/ui/results/KeyNumberStrip.h
+        src/ui/results/LiveSolve.cpp
+        src/ui/results/LiveSolve.h
         src/ui/results/ResultFullView.cpp
         src/ui/results/ResultFullView.h
         src/ui/results/ResultState.h
@@ -190,10 +192,14 @@ if(NECWB_BUILD_GUI)
         src/ui/editor/NecEditor.h
         src/ui/editor/NecHighlighter.cpp
         src/ui/editor/NecHighlighter.h
+        src/ui/editor/SourceHistory.cpp
+        src/ui/editor/SourceHistory.h
         src/ui/geometry/GeometryView.cpp
         src/ui/geometry/GeometryView.h
         src/ui/geometry/GeometryInteractionView.cpp
         src/ui/geometry/GeometryInteractionView.h
+        src/ui/geometry/GeometryPreview.cpp
+        src/ui/geometry/GeometryPreview.h
         src/ui/geometry/GeometrySettings.h
         src/ui/geometry/EngineeringSpinBox.cpp
         src/ui/geometry/EngineeringSpinBox.h
@@ -268,6 +274,7 @@ if(NECWB_BUILD_GUI)
             resources/icons/structured-cards.svg
             resources/icons/transmission-lines.svg
             resources/icons/undo.svg
+            resources/icons/revert.svg
             resources/icons/validate.svg
             resources/icons/variables.svg
     )
@@ -314,8 +321,9 @@ if(NECWB_BUILD_TESTS)
     add_test(NAME necwb_model_lint_tests COMMAND necwb_model_lint_tests)
 
     if(NECWB_BUILD_GUI)
+        find_package(Qt6 6.4 REQUIRED COMPONENTS Test)
         add_executable(necwb_plot_tests tests/PlotSmokeTests.cpp)
-        target_link_libraries(necwb_plot_tests PRIVATE necwb_ui)
+        target_link_libraries(necwb_plot_tests PRIVATE necwb_ui Qt6::Test)
         add_test(NAME necwb_plot_tests COMMAND necwb_plot_tests)
         set_tests_properties(necwb_plot_tests PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

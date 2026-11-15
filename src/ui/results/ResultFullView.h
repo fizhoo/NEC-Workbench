@@ -32,6 +32,8 @@ public:
     void setBackCallback(std::function<void()> callback);
     // Called with a frequency picked on a plot or in a table.
     void setFrequencyActivatedCallback(std::function<void(double)> callback);
+    // Called after any export from these views.
+    void setExportedCallback(std::function<void()> callback);
 
 private:
     struct Page {
@@ -43,6 +45,7 @@ private:
     void refreshHeader();
 
     const ResultState& state_;
+    std::function<void()> exported_;
     ResultView view_{ResultView::Swr};
     CenterViewHeader* header_{};
     QLabel* frequency_{};

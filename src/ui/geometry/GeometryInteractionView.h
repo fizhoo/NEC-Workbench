@@ -41,6 +41,10 @@ class GeometryInteractionView : public QWidget {
 public:
     using QWidget::QWidget;
 
+    // Shows a model just opened: fits the view and clears the selection.
+    virtual void setModel(const model::AntennaModel& model) = 0;
+    // Shows an edited model, keeping the zoom and the selection.
+    virtual void updateModel(const model::AntennaModel& model) = 0;
     virtual void fitToView() = 0;
     void selectWire(int tag);
     void setExcitations(const std::vector<model::Excitation>& excitations);

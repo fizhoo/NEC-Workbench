@@ -44,10 +44,12 @@
 #include "ui/analysis/RunReviewWindow.h"
 #include "ui/editor/DeckView.h"
 #include "ui/editor/NecEditor.h"
+#include "ui/editor/SourceHistory.h"
 #include "ui/editor/NecHighlighter.h"
 #include "ui/geometry/EngineeringSpinBox.h"
 #include "ui/geometry/AutoSegmentationDialog.h"
 #include "ui/geometry/Geometry3DView.h"
+#include "ui/geometry/GeometryPreview.h"
 #include "ui/geometry/GeometryView.h"
 #include "ui/geometry/GeometrySettingsDialog.h"
 #include "ui/geometry/WirePropertiesEditor.h"
@@ -356,25 +358,21 @@ MainWindow::MainWindow()
 
     connect(editor_, &QPlainTextEdit::textChanged, this, [this] {
         activeSourceCache_.invalidate();
+        // Live points were solved from the deck as it was.
+        resultsController_->clearLivePoints();
         clearCheckResults();
     });
     connect(editor_->document(), &QTextDocument::modificationChanged, this, [this](bool modified) {
         saveAction_->setEnabled(modified);
+        revertAction_->setEnabled(modified && !currentFile_.isEmpty());
         setWindowModified(modified);
         sourceWorkspace_->setTabText(0, modified ? tr("Raw Source *") : tr("Raw Source"));
     });
-    connect(editor_->document(), &QTextDocument::undoAvailable, this, [this] { updateUndoActions(); });
-    connect(editor_->document(), &QTextDocument::redoAvailable, this, [this] { updateUndoActions(); });
-    connect(editor_->document(), &QTextDocument::undoCommandAdded,
-        this, [this] { recordSourceUndoCommand(); });
-    connect(workspace_, &QTabWidget::currentChanged, this, [this] { updateUndoActions(); });
     connect(sourceWorkspace_, &QTabWidget::currentChanged, this, [this](int index) {
         if (index == structuredSourceTabIndex_ && !modelChecked_) checkModel();
-        updateUndoActions();
     });
 
     restoreWorkspaceLayout();
-    updateUndoActions();
 }
 
 auto MainWindow::eventFilter(QObject* watched, QEvent* event) -> bool
@@ -436,6 +434,12 @@ void MainWindow::createActions()
     saveAction_->setIcon(workbenchIcon("save"));
     saveAction_->setShortcut(QKeySequence::Save);
     saveAction_->setEnabled(false);
+    revertAction_ = new QAction(tr("Re&vert to Saved"), this);
+    revertAction_->setObjectName(QStringLiteral("revertAction"));
+    revertAction_->setIcon(workbenchIcon("revert"));
+    revertAction_->setToolTip(tr("Revert to Saved: discard all changes since the last save"));
+    revertAction_->setEnabled(false);
+    connect(revertAction_, &QAction::triggered, this, [this] { revertToSaved(); });
     connect(saveAction_, &QAction::triggered, this, [this] { saveFile(); });
 
     saveAsAction_ = new QAction(tr("Save &As…"), this);
@@ -548,16 +552,6 @@ void MainWindow::createActions()
     autoSegmentationAction_->setStatusTip(tr("Preview wavelength-based wire segment counts"));
     connect(autoSegmentationAction_, &QAction::triggered, this, [this] { showAutoSegmentation(); });
 
-    undoAction_ = new QAction(tr("&Undo"), this);
-    undoAction_->setIcon(workbenchIcon("undo"));
-    undoAction_->setShortcut(QKeySequence::Undo);
-    connect(undoAction_, &QAction::triggered, this, [this] { performUndo(); });
-
-    redoAction_ = new QAction(tr("&Redo"), this);
-    redoAction_->setIcon(workbenchIcon("redo"));
-    redoAction_->setShortcut(QKeySequence::Redo);
-    connect(redoAction_, &QAction::triggered, this, [this] { performRedo(); });
-
     resetLayoutAction_ = new QAction(tr("&Reset Layout"), this);
     resetLayoutAction_->setObjectName(QStringLiteral("resetLayoutAction"));
     connect(resetLayoutAction_, &QAction::triggered, this,
@@ -626,7 +620,6 @@ void MainWindow::createActions()
     optimizeModuleAction_->setEnabled(false);
     connect(optimizeModuleAction_, &QAction::triggered, this, [this] {
         optimizationPanel_->showWindow();
-        updateUndoActions();
     });
 }
 
@@ -667,6 +660,17 @@ void MainWindow::createWorkspace()
     editor_->setObjectName(QStringLiteral("necSourceEditor"));
     new NecHighlighter(editor_->document());
     sourceWorkspace_->addTab(editor_, tr("Raw Source"));
+    history_ = new SourceHistory(editor_, this);
+    history_->setStepCallback([this](const SourceHistory::Entry& entry, bool undone) {
+        checkModel();
+        const auto destination = entry.destination < 0 ? EditorDestination::RawSource
+            : static_cast<EditorDestination>(entry.destination);
+        showEditor(destination, entry.geometryTab);
+        if (destination == EditorDestination::RawSource)
+            sourceWorkspace_->setCurrentIndex(entry.sourceTab);
+        statusBar()->showMessage((undone ? tr("Undid: %1") : tr("Redid: %1"))
+            .arg(entry.description), 5000);
+    });
 
     welcomePage_ = new WelcomePage(newAction_, openAction_,
         [this](const QString& path) { openFileAtPath(path); },
@@ -1077,6 +1081,12 @@ void MainWindow::createResultsColumn()
         [this](const std::vector<double>& frequencies, std::optional<double> selected) {
             statusBar_->setResultFrequencies(frequencies, selected);
         });
+    resultsController_->setFrequencySelectedCallback([this](double frequency) {
+        if (modelColumn_->variables()->isLive() && resultsController_->isStaleAt(frequency))
+            startLiveSolve(frequency);
+    });
+    resultsController_->setStatusCallback(
+        [this](const QString& message) { statusBar()->showMessage(message, 5000); });
     resultsController_->setShowFullViewCallback([this](bool fullView) {
         if (fullView) workbenchLayout_->showFullView();
         else showEditor(EditorDestination::Geometry, workspace_->currentIndex());
@@ -1608,13 +1618,14 @@ void MainWindow::createMenusAndToolbar()
     fileMenu->addSeparator();
     fileMenu->addAction(saveAction_);
     fileMenu->addAction(saveAsAction_);
+    fileMenu->addAction(revertAction_);
     fileMenu->addSeparator();
     fileMenu->addAction(exitAction_);
 
     auto* editMenu = menuBar()->addMenu(tr("&Edit"));
     editMenu->setObjectName(QStringLiteral("editMenu"));
-    editMenu->addAction(undoAction_);
-    editMenu->addAction(redoAction_);
+    editMenu->addAction(history_->undoAction());
+    editMenu->addAction(history_->redoAction());
     editMenu->addSeparator();
     editMenu->addAction(cutAction_);
     editMenu->addAction(copyAction_);
@@ -1708,7 +1719,8 @@ void MainWindow::createMenusAndToolbar()
     helpMenu->addAction(aboutAction_);
 
     toolBar_ = new WorkbenchToolBar({.open = openAction_, .recentModels = recentModelsMenu_,
-        .save = saveAction_, .run = runAction_, .stop = stopAction_, .sweep = quickSweepAction_,
+        .save = saveAction_, .revert = revertAction_, .undo = history_->undoAction(),
+        .redo = history_->redoAction(), .run = runAction_, .stop = stopAction_, .sweep = quickSweepAction_,
         .check = checkAction_, .optimize = optimizeModuleAction_}, this);
     refreshEngine();
     toolBar_->setBackendSelectedCallback(
@@ -1887,7 +1899,7 @@ void MainWindow::newModel()
     activeModelResultsDirectory_.clear();
     activeModelResultsContext_.clear();
     editor_->setPlainText(tr("CM New NEC Workbench model\nCE\nGE 0\nEN\n"));
-    resetSourceUndoHistory();
+    history_->clear();
     hasNecModel_ = true;
     necDeckAction_->setEnabled(true);
     workbenchLayout_->showModel();
@@ -1895,7 +1907,54 @@ void MainWindow::newModel()
     setCurrentFile({});
     editor_->document()->setModified(false);
     showEditor(EditorDestination::RawSource);
+    startModelSession();
+}
+
+void MainWindow::startLiveSolve(std::optional<double> frequencyMHz)
+{
+    const auto& resolution = activeSource().resolution();
+    const QFileInfo executable(solverExecutablePath_);
+    if (modelErrorCount_ != 0 || !resolution.ok() || !currentSetup_.frequency
+        || currentModel_.empty() || currentSetup_.excitations.empty()
+        || solverRunner_->isRunning() || optimizationWorkspace_->isRunning()
+        || convergenceWorkspace_->isRunning()
+        || !analysis::isBackendRunnable(solverBackendId_.toStdString())
+        || !executable.isFile() || !executable.isExecutable()) {
+        return;
+    }
+    const auto frequency = frequencyMHz ? *frequencyMHz
+        : resultsController_->selectedFrequency().value_or(
+              LiveSolve::bandCentreMHz(*currentSetup_.frequency));
+    resultsController_->solveLive(resolution.generatedDeck, frequency,
+        {solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_});
+}
+
+void MainWindow::startModelSession()
+{
     checkModel();
+    resetGeometryViews();
+    modelColumn_->variables()->markBaseline();
+}
+
+void MainWindow::revertToSaved()
+{
+    if (currentFile_.isEmpty() || !editor_->document()->isModified()) return;
+    if (QMessageBox::question(this, tr("Revert to Saved"), tr("Discard all changes since last save?"),
+            QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Cancel)
+        != QMessageBox::Discard) {
+        return;
+    }
+    QFile file(currentFile_);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::critical(this, tr("Revert Failed"), file.errorString());
+        return;
+    }
+    // One undo step, so Undo brings the discarded changes back.
+    history_->replaceSource({tr("Revert to Saved"), static_cast<int>(EditorDestination::Geometry),
+        workspace_->currentIndex()}, QString::fromUtf8(file.readAll()));
+    editor_->document()->setModified(false);
+    startModelSession();
+    statusBar()->showMessage(tr("Reverted to %1").arg(QFileInfo(currentFile_).fileName()), 3000);
 }
 
 void MainWindow::openFile()
@@ -1921,14 +1980,14 @@ void MainWindow::openFileAtPath(const QString& path)
     activeModelResultsDirectory_.clear();
     activeModelResultsContext_.clear();
     editor_->setPlainText(QString::fromUtf8(file.readAll()));
-    resetSourceUndoHistory();
+    history_->clear();
     hasNecModel_ = true;
     necDeckAction_->setEnabled(true);
     workbenchLayout_->showModel();
     analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile(path);
     editor_->document()->setModified(false);
-    checkModel();
+    startModelSession();
 }
 
 void MainWindow::openExample()
@@ -2024,6 +2083,7 @@ auto MainWindow::writeFile(const QString& path) -> bool
     file.write(editor_->toPlainText().toUtf8());
     setCurrentFile(path);
     editor_->document()->setModified(false);
+    modelColumn_->variables()->markBaseline();
     statusBar()->showMessage(tr("Saved %1").arg(QFileInfo(path).fileName()), 3000);
     return true;
 }
@@ -2118,27 +2178,15 @@ void MainWindow::checkModel(bool presentReport)
         cache.source(), parameterNames);
     wireCardEditor_->setParameterControlledFields(parameterFields);
     updateWireCardEditor();
-    xyView_->setModel(currentModel_);
-    xzView_->setModel(currentModel_);
-    yzView_->setModel(currentModel_);
-    geometry3DView_->setModel(currentModel_);
-    xyView_->setExcitations(currentSetup_.excitations);
-    xzView_->setExcitations(currentSetup_.excitations);
-    yzView_->setExcitations(currentSetup_.excitations);
-    geometry3DView_->setExcitations(currentSetup_.excitations);
-    xyView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
-        currentSetup_.networks);
-    xzView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
-        currentSetup_.networks);
-    yzView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
-        currentSetup_.networks);
-    geometry3DView_->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
-        currentSetup_.networks);
+    // Edits keep the zoom; opening a model fits it (resetGeometryViews).
     const auto sharedSegments = model::describeSharedSegments(currentModel_, currentSetup_);
-    xyView_->setSharedSegments(sharedSegments);
-    xzView_->setSharedSegments(sharedSegments);
-    yzView_->setSharedSegments(sharedSegments);
-    geometry3DView_->setSharedSegments(sharedSegments);
+    for (auto* view : geometryViews()) {
+        view->updateModel(currentModel_);
+        view->setExcitations(currentSetup_.excitations);
+        view->setAttachments(currentSetup_.loads, currentSetup_.transmissionLines,
+            currentSetup_.networks);
+        view->setSharedSegments(sharedSegments);
+    }
     parameterEditor_->setResolution(resolution);
     modelColumn_->variables()->setVariables(resolution.definitions);
     setupEditor_->setData(currentModel_, currentSetup_);
@@ -2328,16 +2376,38 @@ void MainWindow::createModelColumn()
     variables->setRangeChangedCallback([this](const QString& name, const auto& range) {
         optimizationWorkspace_->setVariableRange(name, range.first, range.second);
     });
+    geometryPreview_ = new GeometryPreview(this, [this] { return activeSource().source(); },
+        [this](const model::AntennaModel& model) {
+            for (auto* view : geometryViews()) view->updateModel(model);
+        });
+    variables->setPreviewCallback([this](const nec::SymbolDefinition& variable, double value) {
+        geometryPreview_->request(variable.name, value);
+    });
     variables->setValueChangedCallback([this](const nec::SymbolDefinition& variable, double value) {
+        geometryPreview_->cancel();
         const auto name = QString::fromStdString(variable.name);
         changeParameter(variable.lineNumber, name, name, QString::number(value, 'g', 12));
+        if (modelColumn_->variables()->isLive()) startLiveSolve();
+    });
+    variables->setResetCallback([this](const VariablesSection::Reset& changes) {
+        std::optional source{editor_->toPlainText().toStdString()};
+        for (const auto& [variable, expression] : changes) {
+            if (source) source = nec::replaceSymbolDefinition(*source, variable.lineNumber,
+                variable.name, variable.name, expression);
+        }
+        if (source) pushGeometrySourceEdit(tr("Reset variables"), QString::fromStdString(*source));
+    });
+    history_->setRevertTypingCallback([this] {
+        const auto* focus = QApplication::focusWidget();
+        if (focus == nullptr || !modelColumn_->isAncestorOf(focus)) return false;
+        return modelColumn_->variables()->revertTyping() || modelColumn_->pane()->revertPendingEdits();
     });
 }
 
 void MainWindow::showModelSelection(const ModelSelection& selection)
 {
     const auto line = selection.sourceLine;
-    const std::array<GeometryInteractionView*, 4> views{xyView_, xzView_, yzView_, geometry3DView_};
+    const auto views = geometryViews();
     if (selection.node != ModelNode::Wire) {
         synchronizeGeometrySelection(-1);
         wireCardEditor_->selectWire(-1);
@@ -2464,18 +2534,12 @@ void MainWindow::selectInModel(const ModelSelection& selection)
 
 void MainWindow::synchronizeGeometrySelection(int tag)
 {
-    xyView_->selectWire(tag);
-    xzView_->selectWire(tag);
-    yzView_->selectWire(tag);
-    geometry3DView_->selectWire(tag);
+    for (auto* view : geometryViews()) view->selectWire(tag);
 }
 
 void MainWindow::fitAllGeometryViews()
 {
-    xyView_->fitToView();
-    xzView_->fitToView();
-    yzView_->fitToView();
-    geometry3DView_->fitToView();
+    for (auto* view : geometryViews()) view->fitToView();
 }
 
 void MainWindow::previewEndpointMove(int tag, model::WireEndpoint endpoint, const model::Point3D& position)
@@ -2960,10 +3024,7 @@ void MainWindow::setPendingTransmissionLineEndpoint(
     std::optional<std::pair<int, int>> endpoint)
 {
     pendingTransmissionLineEndpoint_ = endpoint;
-    xyView_->setPendingTransmissionLineEndpoint(endpoint);
-    xzView_->setPendingTransmissionLineEndpoint(endpoint);
-    yzView_->setPendingTransmissionLineEndpoint(endpoint);
-    geometry3DView_->setPendingTransmissionLineEndpoint(endpoint);
+    for (auto* view : geometryViews()) view->setPendingTransmissionLineEndpoint(endpoint);
 }
 
 void MainWindow::upsertSetupCard(const QString& description, std::size_t sourceLine,
@@ -3162,6 +3223,7 @@ void MainWindow::startAnalysis()
     if (solverRunner_->isRunning() || !runAction_->isEnabled()) {
         return;
     }
+    resultsController_->clearLivePoints();
 
     checkModel();
     if (modelErrorCount_ != 0 || !runAction_->isEnabled()) {
@@ -3824,7 +3886,7 @@ auto MainWindow::loadRunModel(const QString& directory, const QString& modelName
 
     clearDisplayedResults();
     editor_->setPlainText(QString::fromUtf8(inputFile.readAll()));
-    resetSourceUndoHistory();
+    history_->clear();
     hasNecModel_ = true;
     necDeckAction_->setEnabled(true);
     workbenchLayout_->showModel();
@@ -3836,7 +3898,7 @@ auto MainWindow::loadRunModel(const QString& directory, const QString& modelName
         tr("%1\nArchived input: %2\nUse Save As to name this editable copy.")
         .arg(runContext, inputFile.fileName()));
     editor_->document()->setModified(false);
-    checkModel();
+    startModelSession();
     return true;
 }
 
@@ -4475,10 +4537,8 @@ void MainWindow::pushGeometrySourceEdit(const QString& description, QString upda
 void MainWindow::applyGeometrySource(const QString& description, const QString& source,
     EditorDestination destination, int geometryTab, int sourceTab)
 {
-    pendingSourceHistoryEntry_ = SourceHistoryEntry{
-        description, destination, geometryTab, sourceTab};
-    editor_->replaceTextAsSingleEdit(source);
-    pendingSourceHistoryEntry_.reset();
+    history_->replaceSource({description, static_cast<int>(destination), geometryTab, sourceTab},
+        source);
     editor_->document()->setModified(true);
     checkModel();
     showEditor(destination, geometryTab);
@@ -4513,13 +4573,20 @@ void MainWindow::showSymbolicGeometryEditBlocked()
         "NEC source instead; the graphical edit was canceled to preserve those expressions."));
 }
 
+auto MainWindow::geometryViews() const -> std::array<GeometryInteractionView*, 4>
+{
+    return {xyView_, xzView_, yzView_, geometry3DView_};
+}
+
+void MainWindow::resetGeometryViews()
+{
+    for (auto* view : geometryViews()) view->setModel(currentModel_);
+}
+
 void MainWindow::refreshGeometryViews()
 {
     updateWireCardEditor();
-    xyView_->updateModel(currentModel_);
-    xzView_->updateModel(currentModel_);
-    yzView_->updateModel(currentModel_);
-    geometry3DView_->updateModel(currentModel_);
+    for (auto* view : geometryViews()) view->updateModel(currentModel_);
 }
 
 void MainWindow::updateWireCardEditor()
@@ -4539,80 +4606,6 @@ void MainWindow::updateWireCardEditor()
     wireCardEditor_->setModel(currentModel_);
 }
 
-void MainWindow::performUndo()
-{
-    if (!editor_->document()->isUndoAvailable()) return;
-    auto entry = sourceUndoHistory_.empty()
-        ? SourceHistoryEntry{tr("Raw Source Edit"), EditorDestination::RawSource}
-        : sourceUndoHistory_.back();
-    if (!sourceUndoHistory_.empty()) sourceUndoHistory_.pop_back();
-    suppressSourceHistoryRecording_ = true;
-    editor_->undo();
-    suppressSourceHistoryRecording_ = false;
-    sourceRedoHistory_.push_back(entry);
-    checkModel();
-    navigateToSourceHistoryEntry(entry);
-    statusBar()->showMessage(tr("Undid: %1").arg(entry.description), 5000);
-    updateUndoActions();
-}
-
-void MainWindow::performRedo()
-{
-    if (!editor_->document()->isRedoAvailable()) return;
-    auto entry = sourceRedoHistory_.empty()
-        ? SourceHistoryEntry{tr("Raw Source Edit"), EditorDestination::RawSource}
-        : sourceRedoHistory_.back();
-    if (!sourceRedoHistory_.empty()) sourceRedoHistory_.pop_back();
-    suppressSourceHistoryRecording_ = true;
-    editor_->redo();
-    suppressSourceHistoryRecording_ = false;
-    sourceUndoHistory_.push_back(entry);
-    checkModel();
-    navigateToSourceHistoryEntry(entry);
-    statusBar()->showMessage(tr("Redid: %1").arg(entry.description), 5000);
-    updateUndoActions();
-}
-
-void MainWindow::recordSourceUndoCommand()
-{
-    if (suppressSourceHistoryRecording_) return;
-    auto entry = pendingSourceHistoryEntry_.value_or(SourceHistoryEntry{
-        tr("Raw Source Edit"), EditorDestination::RawSource, 0, 0});
-    sourceUndoHistory_.push_back(std::move(entry));
-    sourceRedoHistory_.clear();
-    updateUndoActions();
-}
-
-void MainWindow::resetSourceUndoHistory()
-{
-    pendingSourceHistoryEntry_.reset();
-    sourceUndoHistory_.clear();
-    sourceRedoHistory_.clear();
-    updateUndoActions();
-}
-
-void MainWindow::navigateToSourceHistoryEntry(const SourceHistoryEntry& entry)
-{
-    showEditor(entry.destination, entry.geometryTab);
-    if (entry.destination == EditorDestination::RawSource)
-        sourceWorkspace_->setCurrentIndex(entry.sourceTab);
-}
-
-void MainWindow::updateUndoActions()
-{
-    const auto historyAvailable = editor_ != nullptr && editor_->document() != nullptr;
-    undoAction_->setEnabled(historyAvailable && editor_->document()->isUndoAvailable());
-    redoAction_->setEnabled(historyAvailable && editor_->document()->isRedoAvailable());
-    undoAction_->setText(historyAvailable && editor_->document()->isUndoAvailable()
-            && !sourceUndoHistory_.empty()
-        ? tr("&Undo %1").arg(sourceUndoHistory_.back().description)
-        : tr("&Undo"));
-    redoAction_->setText(historyAvailable && editor_->document()->isRedoAvailable()
-            && !sourceRedoHistory_.empty()
-        ? tr("&Redo %1").arg(sourceRedoHistory_.back().description)
-        : tr("&Redo"));
-}
-
 auto MainWindow::activeSource() const -> const nec::NecSourceCache&
 {
     activeSourceCache_.update(editor_->toPlainText().toStdString());
@@ -4623,6 +4616,7 @@ void MainWindow::setCurrentFile(QString path)
 {
     const auto modelChanged = currentFile_ != path;
     currentFile_ = std::move(path);
+    revertAction_->setEnabled(editor_->document()->isModified() && !currentFile_.isEmpty());
     if (modelChanged && resultReferenceController_.hasReference()) clearResultReference();
     if (!currentFile_.isEmpty()) rememberRecentFile(currentFile_);
     const auto name = currentFile_.isEmpty() ? tr("Untitled") : QFileInfo(currentFile_).fileName();

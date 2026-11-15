@@ -24,6 +24,8 @@ public:
     // to discard them; false means stay on the page.
     [[nodiscard]] auto commitPendingEdits() -> bool;
     void applyPendingEdits();
+    // Puts back edits not yet applied, as Esc does; false when there are none.
+    auto revertPendingEdits() -> bool;
     // Called to throw away a page's unapplied edits.
     void setDiscardCallback(std::function<void(QWidget*)> callback);
     void focusPage();

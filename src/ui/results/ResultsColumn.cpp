@@ -134,23 +134,39 @@ void ResultsColumn::refresh()
     empty_->setVisible(!hasResults);
     overlay_->setVisible(hasResults);
     layout_->setStretch(layout_->count() - 1, hasResults ? 0 : 1);
-    const auto stale = state_.stale ? tr(" · stale") : QString{};
     const auto frequency = state_.frequencyMHz.value_or(0.0);
+    // A live solve brings the selected frequency up to date, but not the rest of the sweep.
+    const auto liveHere = std::ranges::any_of(state_.liveFrequenciesMHz,
+        [frequency](double live) { return nearlyEqual(live, frequency); });
+    const auto staleSweep = state_.stale ? tr(" · stale") : QString{};
+    // The sweep curve stays the last full run's: one live point in it would be a false spike.
+    const ResultState* sweepState = &state_;
+    ResultState fullRunState;
+    if (!state_.liveFrequenciesMHz.empty() && !state_.liveOnly && state_.fullRunData) {
+        fullRunState = state_;
+        fullRunState.data = state_.fullRunData;
+        fullRunState.dataVersion = state_.fullRunVersion;
+        sweepState = &fullRunState;
+    }
+    const auto stale = state_.stale && !liveHere ? tr(" · stale") : QString{};
     const auto atFrequency = [frequency](const auto& values) {
         return std::ranges::any_of(values, [frequency](const auto& value) {
             return nearlyEqual(value.frequencyMHz, frequency);
         });
     };
     const auto update = [&](Thumbnail& thumbnail, auto& view, const QString& title,
-                            bool available, const QString& note) {
+                            bool available, const QString& note, const QString& staleText,
+                            const ResultState& source) {
         thumbnail.frame->setVisible(hasResults);
-        thumbnail.frame->setTitle(title + stale);
-        if (hasResults && available) applyResultState(view, thumbnail.applied, state_);
+        thumbnail.frame->setTitle(title + staleText);
+        if (hasResults && available) applyResultState(view, thumbnail.applied, source);
         thumbnail.frame->setNote(available ? QString{} : note);
     };
     update(swrThumbnail_, *swr_, tr("SWR · Z0 %1").arg(
                formatReferenceImpedance(state_.referenceImpedanceOhms)),
-        !result.feedpoints.empty(), tr("No feedpoint results in this run"));
+        !result.feedpoints.empty() && !state_.liveOnly,
+        state_.liveOnly ? tr("Run (F5) for the sweep") : tr("No feedpoint results in this run"),
+        staleSweep, *sweepState);
     // Whether a cut exists depends on the datasets at this frequency, which the view works out.
     const auto hasRadiation = !state_.data->radiationAt(frequency).empty();
     if (hasResults && hasRadiation) {
@@ -160,13 +176,13 @@ void ResultsColumn::refresh()
     update(azimuthThumbnail_, *azimuth_, tr("Azimuth pattern"),
         hasRadiation && azimuth_->hasCut(RadiationPatternView::Cut::Azimuth),
         hasRadiation ? tr("No azimuth cut at this frequency")
-                     : tr("No radiation pattern at this frequency"));
+                     : tr("No radiation pattern at this frequency"), stale, state_);
     update(elevationThumbnail_, *elevation_, tr("Elevation pattern"),
         hasRadiation && elevation_->hasCut(RadiationPatternView::Cut::Elevation),
         hasRadiation ? tr("No elevation cut at this frequency")
-                     : tr("No radiation pattern at this frequency"));
+                     : tr("No radiation pattern at this frequency"), stale, state_);
     update(currentsThumbnail_, *currents_, tr("Currents"), atFrequency(result.currents),
-        tr("No segment currents at this frequency"));
+        tr("No segment currents at this frequency"), stale, state_);
     viewsHeading_->setVisible(hasResults);
     views_->setVisible(hasResults);
     refreshViewList();
