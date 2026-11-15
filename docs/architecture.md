@@ -57,18 +57,22 @@ same definitions.
 The main window is resizable and laid out by `WorkbenchLayout`: with no model, the
 Welcome page; with a model, one splitter with three panes. `WorkbenchToolBar` runs
 across the top. The left column (`ui/modeltree`) is a `ModelColumn`: the `ModelTree`
-(groups with summaries, a row per wire, source, load, line, and network, and the
-model-quality studies), the `VariablesSection` (a slider row per `SY` variable, each
+(groups with counts, a row per wire, source, load, line, and network, right-click Add
+on the card groups, and the model-quality studies), the `VariablesSection` (a slider row per `SY` variable, each
 committed change one `SY` edit; while dragging, `GeometryPreview` redraws the wires from
 the resolved symbols at most once a frame, without touching the deck), and the
 `PropertiesPane`, which hosts one page for the selection: `WirePropertiesEditor` for a
 wire, `CardFieldForm` for one source, load, line, or network (rewriting only edited
 fields), a group's table from `CardTables` (the wire table and filtered
-`StructuredCardEditor`s), the Setup pages, and the Parameters table. For a table, ⇔ asks
-`WorkbenchLayout` to widen the column to the table and puts it back for any other page.
-The pane applies valid pending edits when the selection changes and asks only about
-invalid ones. New EX, LD, TL and NT cards are placed by `nec::setupCardInsertionIndex`.
-The center shows the geometry editor (2D and 3D views), one full result view, or the NEC
+`StructuredCardEditor`s), the setup pages, and the Parameters table. The pane holds only
+the page on screen, and offers ⇔ whenever that page is wider than the column (every column
+of its table, if it has one); ⇔ asks `WorkbenchLayout` to widen the column to the page and
+puts it back for a page that fits. The pane applies valid pending edits when the selection
+changes and asks only about invalid ones. New EX, LD, TL and NT cards are placed by
+`nec::setupCardInsertionIndex`. The center shows the `SetupLine` (frequency, ground,
+requests, solver and Z0, each part showing its page in the pane, named by the same
+`ModelNode` as the tree's rows) above the geometry editor (2D and 3D views), or one full
+result view, or the NEC
 Deck (`DeckView`: raw source), each non-geometry view under the same
 `CenterViewHeader`; the collapsible results column is on the right. The results (`ui/results`) are:
 

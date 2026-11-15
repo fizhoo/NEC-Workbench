@@ -94,7 +94,7 @@ and manual dispatch. Download artifacts from a successful run on the repository'
 - `NEC-Workbench-Windows-x64`
 
 Artifacts include the required Qt runtime files but not an NEC solver. Configure
-a separately installed solver on the model tree's **Solver** row.
+a separately installed solver by clicking the solver on the setup line above the geometry.
 
 ## Design Boundary
 
