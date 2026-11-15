@@ -129,6 +129,26 @@ auto main(int argc, char* argv[]) -> int
         && QByteArray(argv[2]).startsWith("-o")) {
         QFile output(QString::fromLocal8Bit(argv[2] + 2));
         if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate)) return EXIT_FAILURE;
+        // With an inputs folder set, keep each deck there and answer at its FR frequency.
+        if (const auto inputs = qEnvironmentVariable("NECWB_FAKE_SOLVER_INPUTS");
+            !inputs.isEmpty()) {
+            const auto inputPath = QString::fromLocal8Bit(argv[1] + 2);
+            QFile::copy(inputPath, QStringLiteral("%1/input-%2.nec").arg(inputs)
+                .arg(QCoreApplication::applicationPid()));
+            QFile input(inputPath);
+            auto frequency = QByteArray("0");
+            if (input.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                for (const auto& line : input.readAll().split('\n')) {
+                    const auto fields = line.simplified().split(' ');
+                    if (fields.value(0) == "FR" && fields.size() > 5) frequency = fields[5];
+                }
+            }
+            const auto answer = QByteArray(" FREQUENCY : ") + QByteArray::number(
+                frequency.toDouble(), 'E', 4) + " MHz\n"
+                " --------- ANTENNA INPUT PARAMETERS ---------\n"
+                " 1 6 1.0E+00 0.0E+00 1.2536E-02 -2.9698E-03 7.5534E+01 1.7895E+01 0 0 6.2678E-03\n";
+            return output.write(answer) == answer.size() ? EXIT_SUCCESS : EXIT_FAILURE;
+        }
         const QByteArray solverOutput =
             " FREQUENCY : 7.0000E+00 MHz\n"
             " --------- ANTENNA INPUT PARAMETERS ---------\n"
@@ -799,30 +819,19 @@ auto main(int argc, char* argv[]) -> int
             std::pair{QStringLiteral("variables/live"), settings.value(QStringLiteral("variables/live"))}};
         QTemporaryDir directory;
         const auto modelPath = directory.filePath(QStringLiteral("live.nec"));
-        const auto solverPath = directory.filePath(QStringLiteral("fake-nec2c"));
         const auto inputsPath = directory.filePath(QStringLiteral("inputs"));
         QDir().mkpath(inputsPath);
         const QByteArray modelText = "SY len=0.5\nGW 1 11 0 -len 0 0 len 0 0.001\nGE 0\n"
             "EX 0 1 6 0 1 0\nFR 0 5 0 0 144 1\nRP 0 1 1 1000 90 0 0 0\nEN\n";
         QFile modelFile(modelPath);
-        QFile solver(solverPath);
-        if (directory.isValid() && modelFile.open(QIODevice::WriteOnly | QIODevice::Text)
-            && solver.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        if (directory.isValid() && modelFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
             modelFile.write(modelText);
             modelFile.close();
-            // Keeps each input it is given and answers with one feedpoint at its frequency.
-            solver.write(QStringLiteral("#!/bin/sh\nin=\"${1#-i}\"\nout=\"${2#-o}\"\n"
-                "cp \"$in\" \"%1/input-$$.nec\"\n"
-                "awk '$1==\"FR\"{f=$6} END{"
-                "printf \"  --------- FREQUENCY --------\\n   FREQUENCY : %%.4E MHz\\n\\n\", f;"
-                "printf \"  --------- ANTENNA INPUT PARAMETERS ---------\\n  TAG   SEG\\n  No:   No:\\n\";"
-                "printf \"    1     6  1.0000E+00  0.0000E+00  1.2536E-02 -2.9698E-03  "
-                "7.5534E+01  1.7895E+01  1.2536E-02 -2.9698E-03  6.2678E-03\\n\"}' \"$in\" > \"$out\"\n")
-                .arg(inputsPath).toUtf8());
-            solver.close();
-            solver.setPermissions(solver.permissions() | QFileDevice::ExeOwner);
+            // This binary is the solver: it keeps each input and answers at its frequency.
+            qputenv("NECWB_FAKE_SOLVER_INPUTS", inputsPath.toLocal8Bit());
             settings.setValue(QStringLiteral("files/recentModels"), QStringList{modelPath});
-            settings.setValue(QStringLiteral("analysis/executables/nec2"), solverPath);
+            settings.setValue(QStringLiteral("analysis/executables/nec2"),
+                QCoreApplication::applicationFilePath());
             settings.setValue(QStringLiteral("analysis/backendId"), QStringLiteral("nec2"));
             settings.setValue(QStringLiteral("variables/live"), true);
             settings.sync();
@@ -940,6 +949,7 @@ auto main(int argc, char* argv[]) -> int
             if (deck != nullptr) deck->document()->setModified(false);
             mainWindow.close();
         }
+        qunsetenv("NECWB_FAKE_SOLVER_INPUTS");
         for (const auto& [key, value] : saved) {
             if (value.isValid()) settings.setValue(key, value);
             else settings.remove(key);
