@@ -2849,13 +2849,13 @@ void MainWindow::changeLoad(const model::LoadDefinition& load)
 
 void MainWindow::changeTransmissionLine(const model::TransmissionLineDefinition& line)
 {
-    upsertNetworkCard(line.sourceLine == 0 ? tr("Add transmission line") : tr("Edit transmission line"),
+    upsertSetupCard(line.sourceLine == 0 ? tr("Add transmission line") : tr("Edit transmission line"),
         line.sourceLine, QString::fromStdString(nec::NecWriter{}.writeTransmissionLineCard(line)));
 }
 
 void MainWindow::changeNetwork(const model::NetworkDefinition& network)
 {
-    upsertNetworkCard(network.sourceLine == 0 ? tr("Add network") : tr("Edit network"),
+    upsertSetupCard(network.sourceLine == 0 ? tr("Add network") : tr("Edit network"),
         network.sourceLine, QString::fromStdString(nec::NecWriter{}.writeNetworkCard(network)));
 }
 
@@ -2939,31 +2939,24 @@ void MainWindow::upsertSetupCard(const QString& description, std::size_t sourceL
         return;
     }
     const auto& document = activeSource().document();
+    const auto* spec = nec::findNecCardSpec(cardText.section(QLatin1Char(' '), 0, 0).toUpper().toStdString());
+    const auto kind = spec == nullptr ? nec::NecCardKind::Unknown : spec->kind;
     auto insertionIndex = nec::sourceLineCount(source);
-    for (const auto& card : document.cards()) {
-        const bool insertionBoundary = card.kind == nec::NecCardKind::End
-            || card.kind == nec::NecCardKind::RadiationPattern
-            || (!frequencyCard && card.kind == nec::NecCardKind::Frequency);
-        if (insertionBoundary) {
-            insertionIndex = card.lineNumber - 1;
-            break;
+    if (kind == nec::NecCardKind::Excitation || kind == nec::NecCardKind::Load
+        || kind == nec::NecCardKind::TransmissionLine || kind == nec::NecCardKind::Network) {
+        insertionIndex = nec::setupCardInsertionIndex(document, kind);
+    } else {
+        for (const auto& card : document.cards()) {
+            const bool insertionBoundary = card.kind == nec::NecCardKind::End
+                || card.kind == nec::NecCardKind::RadiationPattern
+                || (!frequencyCard && card.kind == nec::NecCardKind::Frequency);
+            if (insertionBoundary) {
+                insertionIndex = card.lineNumber - 1;
+                break;
+            }
         }
     }
     const auto updated = nec::insertSourceLine(source, insertionIndex, cardText.toStdString());
-    if (updated) pushGeometrySourceEdit(description, QString::fromStdString(*updated));
-}
-
-void MainWindow::upsertNetworkCard(const QString& description, std::size_t sourceLine,
-    const QString& cardText)
-{
-    const auto index = sourceLine == 0
-        ? nec::networkCardInsertionIndex(activeSource().document()) : std::nullopt;
-    if (!index) {
-        upsertSetupCard(description, sourceLine, cardText, false);
-        return;
-    }
-    const auto updated = nec::insertSourceLine(
-        editor_->toPlainText().toStdString(), *index, cardText.toStdString());
     if (updated) pushGeometrySourceEdit(description, QString::fromStdString(*updated));
 }
 
@@ -4374,15 +4367,16 @@ void MainWindow::addStructuredCard(const QString& cardText)
     const auto* cardSpec = nec::findNecCardSpec(mnemonicText);
     const auto addingGeometry = cardSpec != nullptr && nec::isGeometryCard(cardSpec->kind);
     auto insertion = lines.size();
-    // A new TL or NT joins the last NT/TL group; placed before XQ it would start a new group
-    // and discard the existing lines.
-    auto joinsNetworkGroup = false;
-    if (mnemonic == QStringLiteral("TL") || mnemonic == QStringLiteral("NT")) {
-        if (const auto index = nec::networkCardInsertionIndex(document)) {
-            joinsNetworkGroup = true;
-            insertion = static_cast<qsizetype>(*index)
-                + (insertedGeometryEnd && lastGeometryIndex < static_cast<int>(*index) ? 1 : 0);
-        }
+    // Sources, loads, lines and networks go with the others, before FR and RP; a TL or NT
+    // joins the last NT/TL group.
+    const auto setupCard = cardSpec != nullptr && (cardSpec->kind == nec::NecCardKind::Excitation
+        || cardSpec->kind == nec::NecCardKind::Load
+        || cardSpec->kind == nec::NecCardKind::TransmissionLine
+        || cardSpec->kind == nec::NecCardKind::Network);
+    if (setupCard) {
+        const auto index = nec::setupCardInsertionIndex(document, cardSpec->kind);
+        insertion = static_cast<qsizetype>(index)
+            + (insertedGeometryEnd && lastGeometryIndex < static_cast<int>(index) ? 1 : 0);
     }
     if (addingGeometry) {
         for (auto index = 0; index < lines.size(); ++index) {
@@ -4394,7 +4388,7 @@ void MainWindow::addStructuredCard(const QString& cardText)
         }
     }
     for (auto index = 0; index < lines.size(); ++index) {
-        if (joinsNetworkGroup || (addingGeometry && insertion != lines.size())) break;
+        if (setupCard || (addingGeometry && insertion != lines.size())) break;
         const auto lineMnemonic = lines[index].trimmed().section(QLatin1Char(' '), 0, 0).toUpper();
         if (lineMnemonic == QStringLiteral("EN")
             || (mnemonic != QStringLiteral("XQ") && lineMnemonic == QStringLiteral("XQ"))) {

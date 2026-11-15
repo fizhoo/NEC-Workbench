@@ -202,10 +202,8 @@ private:
     void setPendingTransmissionLineEndpoint(std::optional<std::pair<int, int>> endpoint);
     // Adds new NT and TL cards to the existing NT/TL group; NEC-2 would discard the earlier
     // networks if other cards came between them.
-    void upsertNetworkCard(const QString& description, std::size_t sourceLine,
-        const QString& cardText);
     void upsertSetupCard(const QString& description, std::size_t sourceLine,
-        const QString& cardText, bool frequencyCard);
+        const QString& cardText, bool frequencyCard = false);
     void deleteSetupCard(const QString& description, std::size_t sourceLine);
     void changeExecutionRequest(bool enabled, const model::ExecutionRequest& execution);
     void changeRadiationPattern(const model::RadiationPatternRequest& pattern);

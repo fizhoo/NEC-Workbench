@@ -2,6 +2,7 @@
 
 #include "nec/ParseNumber.h"
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 
@@ -37,6 +38,34 @@ auto networkCardInsertionIndex(const NecDocument& document) -> std::optional<std
             index = card.lineNumber;
     }
     return index;
+}
+
+auto setupCardInsertionIndex(const NecDocument& document, NecCardKind kind) -> std::size_t
+{
+    if (kind == NecCardKind::TransmissionLine || kind == NecCardKind::Network) {
+        if (const auto group = networkCardInsertionIndex(document)) return *group;
+    }
+    const auto cards = document.cards();
+    std::optional<std::size_t> after;
+    std::optional<std::size_t> geometryEnd;
+    std::optional<std::size_t> limit;
+    for (const auto& card : cards) {
+        switch (card.kind) {
+        case NecCardKind::Excitation:
+        case NecCardKind::Load:
+        case NecCardKind::TransmissionLine:
+        case NecCardKind::Network: after = card.lineNumber; break;
+        case NecCardKind::GeometryEnd: if (!geometryEnd) geometryEnd = card.lineNumber; break;
+        case NecCardKind::Frequency:
+        case NecCardKind::RadiationPattern:
+        case NecCardKind::Execute:
+        case NecCardKind::End: if (!limit) limit = card.lineNumber - 1; break;
+        default: break;
+        }
+    }
+    const auto end = cards.empty() ? std::size_t{0} : cards.back().lineNumber;
+    const auto index = after.value_or(geometryEnd.value_or(limit.value_or(end)));
+    return limit ? std::min(index, *limit) : index;
 }
 
 auto NecSetupConverter::convert(const NecDocument& document) const -> model::ModelSetup
