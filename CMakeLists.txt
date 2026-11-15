@@ -234,6 +234,8 @@ if(NECWB_BUILD_GUI)
         src/ui/model/ParameterEditor.h
         src/ui/setup/SetupEditor.cpp
         src/ui/setup/SetupEditor.h
+        src/ui/setup/SetupLine.cpp
+        src/ui/setup/SetupLine.h
         src/ui/setup/CardFieldForm.cpp
         src/ui/setup/CardFieldForm.h
         src/ui/welcome/WelcomePage.cpp

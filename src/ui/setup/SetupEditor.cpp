@@ -8,7 +8,6 @@
 #include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
-#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
@@ -24,13 +23,43 @@ namespace {
 constexpr auto GroundPermittivityRole = Qt::UserRole + 1;
 constexpr auto GroundConductivityRole = Qt::UserRole + 2;
 
+// The spin boxes and lists ask for the width of their widest value or item; these take
+// what the column gives them.
+constexpr auto FieldMinimumWidth = 96;
+
 auto createDecimalControl(QWidget* parent) -> QDoubleSpinBox*
 {
     auto* control = new QDoubleSpinBox(parent);
     control->setDecimals(9);
     control->setRange(-1.0e12, 1.0e12);
     control->setKeyboardTracking(false);
+    control->setMinimumWidth(FieldMinimumWidth);
     return control;
+}
+
+auto compactCombo(QWidget* parent) -> QComboBox*
+{
+    auto* combo = new QComboBox(parent);
+    combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    combo->setMinimumContentsLength(8);
+    return combo;
+}
+
+auto compactForm(QWidget* page) -> QFormLayout*
+{
+    auto* layout = new QFormLayout(page);
+    layout->setContentsMargins(6, 6, 6, 6);
+    layout->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    layout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    return layout;
+}
+
+auto buttonRow(std::initializer_list<QPushButton*> buttons) -> QHBoxLayout*
+{
+    auto* row = new QHBoxLayout;
+    for (auto* button : buttons) row->addWidget(button);
+    row->addStretch();
+    return row;
 }
 
 }
@@ -40,35 +69,37 @@ SetupEditor::SetupEditor(QWidget* parent)
 {
     hide();
 
+    // Each page is a short form that fits the left column: labels above their fields when
+    // the column is narrow, short names, and the detail in tooltips.
     frequencyPage_ = new QWidget(this);
     frequencyPage_->setObjectName(QStringLiteral("frequencyEditorPage"));
-    auto* frequencyPageLayout = new QVBoxLayout(frequencyPage_);
-    frequencyPageLayout->setContentsMargins(8, 8, 8, 8);
-    auto* frequencyGroup = new QGroupBox(tr("Frequency (FR)"), frequencyPage_);
-    auto* frequencyLayout = new QFormLayout(frequencyGroup);
-    frequencySweepControl_ = new QCheckBox(tr("Enable frequency sweep"), frequencyGroup);
-    frequencyModeControl_ = new QComboBox(frequencyGroup);
-    frequencyModeControl_->addItem(tr("Linear / additive"), 0);
+    auto* frequencyLayout = compactForm(frequencyPage_);
+    frequencySweepControl_ = new QCheckBox(tr("Sweep"), frequencyPage_);
+    frequencySweepControl_->setToolTip(tr("Solve at a range of frequencies (FR with several points)"));
+    frequencyModeControl_ = compactCombo(frequencyPage_);
+    frequencyModeControl_->addItem(tr("Additive"), 0);
+    frequencyModeControl_->setItemData(0, tr("Each point adds the step"), Qt::ToolTipRole);
     frequencyModeControl_->addItem(tr("Multiplicative"), 1);
-    startFrequencyControl_ = createDecimalControl(frequencyGroup);
+    frequencyModeControl_->setItemData(1, tr("Each point multiplies by the step"), Qt::ToolTipRole);
+    startFrequencyControl_ = createDecimalControl(frequencyPage_);
     startFrequencyControl_->setDecimals(DisplayDecimalPlaces);
     startFrequencyControl_->setRange(0.000001, 1.0e12);
     startFrequencyControl_->setSuffix(tr(" MHz"));
-    endFrequencyControl_ = createDecimalControl(frequencyGroup);
+    endFrequencyControl_ = createDecimalControl(frequencyPage_);
     endFrequencyControl_->setDecimals(DisplayDecimalPlaces);
     endFrequencyControl_->setRange(0.000001, 1.0e12);
     endFrequencyControl_->setSuffix(tr(" MHz"));
-    frequencyStepControl_ = createDecimalControl(frequencyGroup);
+    frequencyStepControl_ = createDecimalControl(frequencyPage_);
     frequencyStepControl_->setDecimals(DisplayDecimalPlaces);
     frequencyStepControl_->setRange(0.0, 1.0e12);
-    startFrequencyLabel_ = new QLabel(tr("Frequency"), frequencyGroup);
-    endFrequencyLabel_ = new QLabel(tr("End frequency"), frequencyGroup);
-    frequencyModeLabel_ = new QLabel(tr("Sweep spacing"), frequencyGroup);
-    frequencyStepLabel_ = new QLabel(tr("Step"), frequencyGroup);
-    frequencySummaryTitleLabel_ = new QLabel(tr("Sweep summary"), frequencyGroup);
-    frequencySummaryLabel_ = new QLabel(frequencyGroup);
+    startFrequencyLabel_ = new QLabel(tr("Frequency"), frequencyPage_);
+    endFrequencyLabel_ = new QLabel(tr("End"), frequencyPage_);
+    frequencyModeLabel_ = new QLabel(tr("Spacing"), frequencyPage_);
+    frequencyStepLabel_ = new QLabel(tr("Step"), frequencyPage_);
+    frequencySummaryTitleLabel_ = new QLabel(tr("Points"), frequencyPage_);
+    frequencySummaryLabel_ = new QLabel(frequencyPage_);
     frequencySummaryLabel_->setWordWrap(true);
-    frequencyValidationLabel_ = new QLabel(frequencyGroup);
+    frequencyValidationLabel_ = new QLabel(frequencyPage_);
     frequencyValidationLabel_->setStyleSheet(QStringLiteral("color: #9a3030;"));
     frequencyValidationLabel_->setWordWrap(true);
     frequencyLayout->addRow({}, frequencySweepControl_);
@@ -77,30 +108,30 @@ SetupEditor::SetupEditor(QWidget* parent)
     frequencyLayout->addRow(frequencyModeLabel_, frequencyModeControl_);
     frequencyLayout->addRow(frequencyStepLabel_, frequencyStepControl_);
     frequencyLayout->addRow(frequencySummaryTitleLabel_, frequencySummaryLabel_);
-    frequencyLayout->addRow({}, frequencyValidationLabel_);
-    auto* frequencyButtons = new QHBoxLayout;
-    applyFrequencyButton_ = new QPushButton(tr("Apply Frequency"), frequencyGroup);
+    frequencyLayout->addRow(frequencyValidationLabel_);
+    applyFrequencyButton_ = new QPushButton(tr("Apply"), frequencyPage_);
     applyFrequencyButton_->setObjectName(QStringLiteral("applyFrequencyButton"));
-    removeFrequencyButton_ = new QPushButton(tr("Remove FR Card"), frequencyGroup);
-    frequencyButtons->addWidget(applyFrequencyButton_);
-    frequencyButtons->addWidget(removeFrequencyButton_);
-    frequencyButtons->addStretch();
-    frequencyLayout->addRow(frequencyButtons);
+    removeFrequencyButton_ = new QPushButton(tr("Remove FR"), frequencyPage_);
+    removeFrequencyButton_->setToolTip(tr("Remove the FR card from the deck"));
+    frequencyLayout->addRow(buttonRow({applyFrequencyButton_, removeFrequencyButton_}));
 
     environmentPage_ = new QWidget(this);
     environmentPage_->setObjectName(QStringLiteral("environmentEditorPage"));
-    auto* environmentPageLayout = new QVBoxLayout(environmentPage_);
-    environmentPageLayout->setContentsMargins(8, 8, 8, 8);
-    auto* groundGroup = new QGroupBox(tr("Ground Environment (GN / GE)"), environmentPage_);
-    auto* groundLayout = new QFormLayout(groundGroup);
-    groundTypeControl_ = new QComboBox(groundGroup);
-    groundTypeControl_->addItem(tr("Free space / no ground"), static_cast<int>(model::GroundType::FreeSpace));
-    groundTypeControl_->addItem(tr("Perfect conducting ground"), static_cast<int>(model::GroundType::Perfect));
-    groundTypeControl_->addItem(tr("Real ground — reflection approximation"),
-        static_cast<int>(model::GroundType::ReflectionApproximation));
-    groundTypeControl_->addItem(tr("Real ground — Sommerfeld/Norton"),
-        static_cast<int>(model::GroundType::SommerfeldNorton));
-    groundPresetControl_ = new QComboBox(groundGroup);
+    auto* groundLayout = compactForm(environmentPage_);
+    groundTypeControl_ = compactCombo(environmentPage_);
+    groundTypeControl_->setToolTip(tr("The ground under the antenna (GN, and the GE flag)"));
+    const auto addGroundType = [this](const QString& label, model::GroundType type,
+                                   const QString& description) {
+        groundTypeControl_->addItem(label, static_cast<int>(type));
+        groundTypeControl_->setItemData(groundTypeControl_->count() - 1, description, Qt::ToolTipRole);
+    };
+    addGroundType(tr("Free space"), model::GroundType::FreeSpace, tr("Free space, no ground"));
+    addGroundType(tr("Perfect"), model::GroundType::Perfect, tr("Perfectly conducting ground"));
+    addGroundType(tr("Reflection"), model::GroundType::ReflectionApproximation,
+        tr("Real ground, reflection-coefficient approximation"));
+    addGroundType(tr("Sommerfeld"), model::GroundType::SommerfeldNorton,
+        tr("Real ground, Sommerfeld/Norton method"));
+    groundPresetControl_ = compactCombo(environmentPage_);
     groundPresetControl_->setObjectName(QStringLiteral("groundPresetControl"));
     groundPresetControl_->addItem(tr("Custom"));
     const auto addGroundPreset = [this](const QString& label, double relativePermittivity,
@@ -109,50 +140,46 @@ SetupEditor::SetupEditor(QWidget* parent)
         groundPresetControl_->addItem(label);
         groundPresetControl_->setItemData(index, relativePermittivity, GroundPermittivityRole);
         groundPresetControl_->setItemData(index, conductivity, GroundConductivityRole);
-        groundPresetControl_->setItemData(index, description, Qt::ToolTipRole);
+        groundPresetControl_->setItemData(index, tr("%1 εr %2, σ %3 S/m").arg(description,
+            formatDecimal(relativePermittivity), formatDecimal(conductivity)), Qt::ToolTipRole);
     };
-    addGroundPreset(tr("Salt water (εr 81, 5 S/m)"), 81.0, 5.0,
-        tr("Salt water; an approximate starting value."));
-    addGroundPreset(tr("Fresh water (εr 80, 0.001 S/m)"), 80.0, 0.001,
+    addGroundPreset(tr("Salt water"), 81.0, 5.0, tr("Salt water; an approximate starting value."));
+    addGroundPreset(tr("Fresh water"), 80.0, 0.001,
         tr("Fresh water; high permittivity but low conductivity."));
-    addGroundPreset(tr("Very good ground (εr 20, 0.0303 S/m)"), 20.0, 0.0303,
-        tr("Pastoral low hills with rich soil."));
-    addGroundPreset(tr("Good ground (εr 14, 0.01 S/m)"), 14.0, 0.01,
-        tr("Pastoral low hills with rich soil."));
-    addGroundPreset(tr("Average ground (εr 13, 0.005 S/m)"), 13.0, 0.005,
-        tr("Typical heavy-clay ground."));
-    addGroundPreset(tr("Poor rocky ground (εr 13, 0.002 S/m)"), 13.0, 0.002,
-        tr("Rocky or mountainous terrain."));
-    addGroundPreset(tr("Sandy / dry ground (εr 10, 0.002 S/m)"), 10.0, 0.002,
-        tr("Sandy, dry, flat, or coastal terrain."));
-    addGroundPreset(tr("Very poor urban ground (εr 5, 0.001 S/m)"), 5.0, 0.001,
-        tr("Cities and industrial areas."));
-    addGroundPreset(tr("Extremely poor urban ground (εr 3, 0.001 S/m)"), 3.0, 0.001,
+    addGroundPreset(tr("Very good"), 20.0, 0.0303, tr("Pastoral low hills with rich soil."));
+    addGroundPreset(tr("Good"), 14.0, 0.01, tr("Pastoral low hills with rich soil."));
+    addGroundPreset(tr("Average"), 13.0, 0.005, tr("Typical heavy-clay ground."));
+    addGroundPreset(tr("Poor, rocky"), 13.0, 0.002, tr("Rocky or mountainous terrain."));
+    addGroundPreset(tr("Sandy, dry"), 10.0, 0.002, tr("Sandy, dry, flat, or coastal terrain."));
+    addGroundPreset(tr("Very poor, urban"), 5.0, 0.001, tr("Cities and industrial areas."));
+    addGroundPreset(tr("Extremely poor"), 3.0, 0.001,
         tr("Dense industrial areas with tall buildings."));
-    relativePermittivityControl_ = createDecimalControl(groundGroup);
+    relativePermittivityControl_ = createDecimalControl(environmentPage_);
     relativePermittivityControl_->setObjectName(QStringLiteral("groundRelativePermittivity"));
     relativePermittivityControl_->setDecimals(DisplayDecimalPlaces);
     relativePermittivityControl_->setRange(0.000001, 1.0e9);
-    conductivityControl_ = createDecimalControl(groundGroup);
+    relativePermittivityControl_->setToolTip(tr("Relative permittivity (dielectric constant)"));
+    conductivityControl_ = createDecimalControl(environmentPage_);
     conductivityControl_->setObjectName(QStringLiteral("groundConductivity"));
     conductivityControl_->setRange(0.0, 1.0e9);
     conductivityControl_->setSuffix(tr(" S/m"));
-    connectGroundEndsControl_ = new QCheckBox(tr("Connect wire ends that terminate on Z = 0"), groundGroup);
-    applyGroundButton_ = new QPushButton(tr("Apply Ground"), groundGroup);
+    connectGroundEndsControl_ = new QCheckBox(tr("Connect ends at Z = 0"), environmentPage_);
+    connectGroundEndsControl_->setToolTip(
+        tr("Connect wire ends that terminate on Z = 0 to the ground (GE 1)"));
+    applyGroundButton_ = new QPushButton(tr("Apply"), environmentPage_);
     applyGroundButton_->setObjectName(QStringLiteral("applyGroundButton"));
-    groundLayout->addRow(tr("Environment"), groundTypeControl_);
-    groundLayout->addRow(tr("Material preset"), groundPresetControl_);
-    groundLayout->addRow(tr("Relative permittivity"), relativePermittivityControl_);
-    groundLayout->addRow(tr("Conductivity"), conductivityControl_);
+    groundLayout->addRow(tr("Type"), groundTypeControl_);
+    groundLayout->addRow(tr("Preset"), groundPresetControl_);
+    groundLayout->addRow(tr("εr"), relativePermittivityControl_);
+    groundLayout->addRow(tr("σ"), conductivityControl_);
     groundLayout->addRow({}, connectGroundEndsControl_);
-    groundLayout->addRow(applyGroundButton_);
+    groundLayout->addRow(buttonRow({applyGroundButton_}));
 
-    // One line above the sources table: the reference impedance SWR is measured against.
-    sourcesPage_ = new QWidget(this);
-    sourcesPage_->setObjectName(QStringLiteral("sourcesEditorPage"));
-    auto* feedLayout = new QHBoxLayout(sourcesPage_);
-    feedLayout->setContentsMargins(4, 0, 4, 0);
-    referenceImpedanceControl_ = createDecimalControl(sourcesPage_);
+    // The reference impedance SWR is measured against.
+    referenceImpedancePage_ = new QWidget(this);
+    referenceImpedancePage_->setObjectName(QStringLiteral("referenceImpedancePage"));
+    auto* referenceLayout = compactForm(referenceImpedancePage_);
+    referenceImpedanceControl_ = createDecimalControl(referenceImpedancePage_);
     referenceImpedanceControl_->setObjectName(QStringLiteral("sourceReferenceImpedance"));
     referenceImpedanceControl_->setDecimals(DisplayDecimalPlaces);
     referenceImpedanceControl_->setRange(0.001, 1000000.0);
@@ -161,21 +188,16 @@ SetupEditor::SetupEditor(QWidget* parent)
     referenceImpedanceControl_->setToolTip(tr(
         "Reference impedance used for Workbench SWR, matching results, and optimizer defaults. "
         "It is stored as the Z0 compatibility card and does not change the NEC field solution."));
-    applyReferenceImpedanceButton_ = new QPushButton(tr("Apply"), sourcesPage_);
+    applyReferenceImpedanceButton_ = new QPushButton(tr("Apply"), referenceImpedancePage_);
     applyReferenceImpedanceButton_->setObjectName(
         QStringLiteral("applyReferenceImpedanceButton"));
-    removeReferenceImpedanceButton_ = new QPushButton(tr("50 Ω"), sourcesPage_);
+    removeReferenceImpedanceButton_ = new QPushButton(tr("50 Ω"), referenceImpedancePage_);
     removeReferenceImpedanceButton_->setObjectName(
         QStringLiteral("removeReferenceImpedanceButton"));
     removeReferenceImpedanceButton_->setToolTip(tr("Remove the Z0 card and use the default 50 Ω"));
-    feedLayout->addWidget(new QLabel(tr("Reference Z0"), sourcesPage_));
-    feedLayout->addWidget(referenceImpedanceControl_, 1);
-    feedLayout->addWidget(applyReferenceImpedanceButton_);
-    feedLayout->addWidget(removeReferenceImpedanceButton_);
-    frequencyPageLayout->addWidget(frequencyGroup);
-    frequencyPageLayout->addStretch();
-    environmentPageLayout->addWidget(groundGroup);
-    environmentPageLayout->addStretch();
+    referenceLayout->addRow(tr("Z0"), referenceImpedanceControl_);
+    referenceLayout->addRow(buttonRow({applyReferenceImpedanceButton_,
+        removeReferenceImpedanceButton_}));
 
     connect(frequencySweepControl_, &QCheckBox::toggled, this, [this] {
         updateFrequencyControls(); if (!updating_) setFrequencyPending(true);
@@ -282,7 +304,7 @@ auto SetupEditor::hasPendingEdits(const QWidget* page) const -> bool
 {
     if (page == frequencyPage_) return frequencyPending_;
     if (page == environmentPage_) return groundPending_;
-    if (page == sourcesPage_) return referenceImpedancePending_;
+    if (page == referenceImpedancePage_) return referenceImpedancePending_;
     return false;
 }
 
@@ -297,9 +319,9 @@ auto SetupEditor::frequencyPage() const -> QWidget*
     return frequencyPage_;
 }
 
-auto SetupEditor::sourcesPage() const -> QWidget*
+auto SetupEditor::referenceImpedancePage() const -> QWidget*
 {
-    return sourcesPage_;
+    return referenceImpedancePage_;
 }
 
 auto SetupEditor::environmentPage() const -> QWidget*
@@ -360,7 +382,7 @@ void SetupEditor::updateFrequencyControls()
         const QSignalBlocker blocker(frequencyStepControl_);
         frequencyStepControl_->setValue(1.1);
     }
-    startFrequencyLabel_->setText(sweepEnabled ? tr("Start frequency") : tr("Frequency"));
+    startFrequencyLabel_->setText(sweepEnabled ? tr("Start") : tr("Frequency"));
     endFrequencyLabel_->setVisible(sweepEnabled);
     endFrequencyControl_->setVisible(sweepEnabled);
     frequencyModeLabel_->setVisible(sweepEnabled);
@@ -384,7 +406,7 @@ void SetupEditor::updateFrequencyControls()
     const model::FrequencyDefinition frequency{frequencyModeControl_->currentData().toInt(), *count,
         startFrequencyControl_->value(), frequencyStepControl_->value(), 0};
     const auto actualEnd = model::frequencyEndMHz(frequency);
-    frequencySummaryLabel_->setText(tr("%1 points; actual final frequency: %2 MHz")
+    frequencySummaryLabel_->setText(tr("%1, ending at %2 MHz")
         .arg(*count).arg(formatDecimal(actualEnd)));
 }
 

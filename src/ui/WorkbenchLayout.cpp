@@ -45,6 +45,13 @@ WorkbenchLayout::WorkbenchLayout(Panes panes, QWidget* parent)
 
     center_ = new QStackedWidget;
     center_->setObjectName(QStringLiteral("workbenchCenter"));
+    auto* geometryPane = new QWidget(center_);
+    auto* geometryLayout = new QVBoxLayout(geometryPane);
+    geometryLayout->setContentsMargins(0, 0, 0, 0);
+    geometryLayout->setSpacing(0);
+    geometryLayout->addWidget(panes.setupLine);
+    geometryLayout->addWidget(geometry_, 1);
+    geometry_ = geometryPane;
     center_->addWidget(geometry_);
     center_->addWidget(fullView_);
     center_->addWidget(deck_);
@@ -181,11 +188,22 @@ void WorkbenchLayout::restoreLeftColumn()
     applyColumnWidths(widths.left, widths.right);
 }
 
+auto WorkbenchLayout::fitLeftColumn(int width) -> bool
+{
+    constexpr auto MaximumShare = 0.65;
+    if (width <= (expandedFrom_ ? expandedFrom_->left : split_->sizes().value(LeftPane))) {
+        restoreLeftColumn();
+        return false;
+    }
+    expandLeftColumn(std::min(width, static_cast<int>(this->width() * MaximumShare)));
+    return true;
+}
+
 void WorkbenchLayout::saveColumnWidths()
 {
     const auto sizes = split_->sizes();
     QSettings settings;
-    // A column widened for a table goes back to the saved width.
+    // A column widened for a page goes back to the saved width.
     if (!expandedFrom_) settings.setValue(LeftColumnWidthKey, sizes.value(LeftPane));
     // Dragging the right column shut collapses it; its width is kept for when it comes back.
     const auto right = sizes.value(RightPane);

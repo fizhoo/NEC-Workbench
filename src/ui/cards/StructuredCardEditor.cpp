@@ -493,9 +493,7 @@ StructuredCardEditor::StructuredCardEditor(Families families, QWidget* parent)
             }
         });
     connect(addButton_, &QPushButton::clicked, this, [this] {
-        const auto familyIndex = currentFamilyIndex();
-        if (familyIndex < 0) return;
-        const auto cardText = defaultCard(familyIndex);
+        const auto cardText = newCard();
         if (cardText.isEmpty()) return;
         QTimer::singleShot(0, this, [this, cardText] { emit cardAddRequested(cardText); });
     });
@@ -803,6 +801,12 @@ auto StructuredCardEditor::wireDefaults() const -> std::vector<std::pair<int, in
         }
     }
     return result;
+}
+
+auto StructuredCardEditor::newCard() const -> QString
+{
+    const auto familyIndex = currentFamilyIndex();
+    return familyIndex < 0 ? QString{} : defaultCard(familyIndex);
 }
 
 auto StructuredCardEditor::defaultCard(int familyIndex) const -> QString

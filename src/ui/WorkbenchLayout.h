@@ -21,6 +21,8 @@ public:
     struct Panes {
         QWidget* welcome{};
         QWidget* leftColumn{};
+        // Shown above the geometry.
+        QWidget* setupLine{};
         QWidget* geometry{};
         QWidget* fullView{};
         QWidget* deck{};
@@ -39,8 +41,9 @@ public:
     // View › Results Column: shows or collapses the right column.
     [[nodiscard]] auto rightColumnAction() const -> QAction* { return rightColumnAction_; }
     void resetLayout();
-    // Widens the left column to width for a table, and puts it back as it was.
-    void expandLeftColumn(int width);
+    // Widens the left column to width for a wide page, at most a share of the window, and
+    // returns true; a width the column had before puts it back and returns false.
+    auto fitLeftColumn(int width) -> bool;
     void restoreLeftColumn();
     [[nodiscard]] auto minimumSizeHint() const -> QSize override;
 
@@ -51,6 +54,7 @@ private:
     void applyColumnWidths(int left, int right);
     void saveColumnWidths();
     void setRightColumnShown(bool shown);
+    void expandLeftColumn(int width);
 
     QStackedWidget* pages_{};
     QSplitter* split_{};

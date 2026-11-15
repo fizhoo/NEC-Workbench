@@ -27,8 +27,7 @@ class CardTables final : public QObject {
 public:
     enum class Table { Wires, Sources, Loads, TransmissionLines, Networks, Other };
 
-    // sourcesBar: the reference-impedance line shown above the sources table.
-    CardTables(QWidget* sourcesBar, QWidget* host);
+    explicit CardTables(QWidget* host);
 
     [[nodiscard]] auto page(Table table) const -> QWidget*
     {
@@ -44,8 +43,8 @@ public:
     // Selects the card's row in whichever table has it.
     void selectCard(std::size_t sourceLine);
     void focusParameterizableField(Table table);
-    // The width of the page that shows every column without scrolling sideways.
-    [[nodiscard]] auto fullWidth(Table table) const -> int;
+    // The card a table's Add would add; empty for the wire table, which adds its own way.
+    [[nodiscard]] auto newCard(Table table) const -> QString;
 
 signals:
     void cardSelected(std::size_t sourceLine);

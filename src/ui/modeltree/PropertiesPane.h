@@ -30,16 +30,20 @@ public:
     // Called to throw away a page's unapplied edits.
     void setDiscardCallback(std::function<void(QWidget*)> callback);
     void focusPage();
-    // Shows ⇔ in the header, which widens the column to the page and back.
-    void setExpandable(bool expandable);
+    // The column width that shows the current page without scrolling sideways: every column
+    // of its table, if it has one. ⇔ shows in the header while the page is wider than the
+    // column, or the column is widened for it; it widens the column to the page and back.
+    [[nodiscard]] auto fullWidth() const -> int;
     void setExpanded(bool expanded);
     [[nodiscard]] auto isExpanded() const -> bool;
     void setExpandCallback(std::function<void(bool)> callback);
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
+    void updateExpandButton();
     [[nodiscard]] auto pendingButtons() const -> QList<QPushButton*>;
 
     QLabel* title_{};

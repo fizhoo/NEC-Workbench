@@ -59,6 +59,7 @@ class SourceHistory;
 class GeometryPreview;
 class DeckView;
 class ModelColumn;
+class SetupLine;
 class WirePropertiesEditor;
 class WorkbenchToolBar;
 class OptimizationWorkspace;
@@ -101,7 +102,8 @@ private:
         Loads,
         Environment,
         Requests,
-        Solver
+        Solver,
+        ReferenceImpedance
     };
 
     void createActions();
@@ -159,12 +161,13 @@ private:
     void refreshWireEditor();
     // Shows the card on that line in the pane's form.
     void refreshCardForm(std::size_t sourceLine);
-    // Shows a page in the properties pane, widening the column for a table on ⇔.
+    // Shows a page in the properties pane, the column widened for it while ⇔ is on.
     void showPanePage(QWidget* page, const QString& title);
-    void widenForTable(CardTables::Table table);
+    void fitPaneWidth();
+    void addToGroup(ModelNode group);
     // Selects the source, load, line or network a Cards row is, or its deck line.
     void selectCardInModel(std::size_t sourceLine);
-    // Shows the engine in the toolbar and on the model tree's Solver row.
+    // Shows the engine in the toolbar and on the setup line.
     void refreshEngine();
     void discardPendingEdits(QWidget* page);
     void synchronizeGeometrySelection(int tag);
@@ -185,7 +188,7 @@ private:
         std::size_t fieldIndex, const QString& fieldLabel);
     void detachFieldParameter(std::size_t sourceLine,
         std::size_t fieldIndex, const QString& fieldLabel);
-    void addStructuredCard(const QString& cardText);
+    auto addStructuredCard(const QString& cardText) -> std::size_t;
     void deleteStructuredCard(std::size_t sourceLine);
     void changeFrequency(const model::FrequencyDefinition& frequency);
     void deleteFrequency(std::size_t sourceLine);
@@ -313,6 +316,7 @@ private:
     DeckView* deckView_{};
     DetachablePanel* optimizationPanel_{};
     ModelColumn* modelColumn_{};
+    SetupLine* setupLine_{};
     WirePropertiesEditor* wireEditor_{};
     WorkbenchToolBar* toolBar_{};
     WelcomePage* welcomePage_{};

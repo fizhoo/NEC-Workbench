@@ -10,6 +10,7 @@
 #include <QAction>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QMenu>
 #include <QSignalBlocker>
 #include <QToolButton>
 
@@ -25,23 +26,23 @@ constexpr auto SourceLineRole = Qt::UserRole + 2;
 constexpr auto NameColumn = 0;
 constexpr auto SummaryColumn = 1;
 
-auto groundName(model::GroundType ground) -> QString
-{
-    switch (ground) {
-    case model::GroundType::FreeSpace: return QObject::tr("Free space");
-    case model::GroundType::Perfect: return QObject::tr("Perfect");
-    case model::GroundType::SommerfeldNorton: return QObject::tr("Sommerfeld/Norton");
-    case model::GroundType::ReflectionApproximation:
-        return QObject::tr("Reflection approximation");
-    }
-    return QObject::tr("Unknown");
-}
-
 auto countText(std::size_t count, const QString& singular, const QString& plural) -> QString
 {
-    return count == 0 ? QObject::tr("none")
-        : count == 1 ? QObject::tr("1 %1").arg(singular)
+    return count == 1 ? QObject::tr("1 %1").arg(singular)
         : QObject::tr("%1 %2").arg(static_cast<qulonglong>(count)).arg(plural);
+}
+
+// The groups a right-click can add to, with the name of what it adds.
+auto addName(ModelNode group) -> QString
+{
+    switch (group) {
+    case ModelNode::Wires: return QObject::tr("wire");
+    case ModelNode::Sources: return QObject::tr("source");
+    case ModelNode::Loads: return QObject::tr("load");
+    case ModelNode::TransmissionLines: return QObject::tr("transmission line");
+    case ModelNode::Networks: return QObject::tr("network");
+    default: return {};
+    }
 }
 
 auto loadTypeName(int type) -> QString
@@ -78,17 +79,13 @@ ModelTree::ModelTree(QWidget* parent) : QTreeWidget(parent)
     header()->setSectionResizeMode(NameColumn, QHeaderView::ResizeToContents);
     header()->setMinimumSectionSize(40);
 
-    addGroup(ModelNode::Frequency, tr("Frequency"), "frequency-sweep");
     addGroup(ModelNode::Wires, tr("Wires"), "geometry");
     addGroup(ModelNode::Sources, tr("Sources"), "sources");
     addGroup(ModelNode::Loads, tr("Loads"), "loads");
     addGroup(ModelNode::TransmissionLines, tr("Trans. lines"), "transmission-lines");
     addGroup(ModelNode::Networks, tr("Networks"), "networks");
     addGroup(ModelNode::OtherCards, tr("Other"), "structured-cards");
-    addGroup(ModelNode::Ground, tr("Ground"), "ground");
     addGroup(ModelNode::Variables, tr("Variables"), "variables");
-    addGroup(ModelNode::Requests, tr("Requests"), "requests");
-    addGroup(ModelNode::Solver, tr("Solver"), "settings");
     addGroup(ModelNode::Deck, tr("Deck"), "nec-deck");
     auto* validation = addGroup(ModelNode::Validation, tr("Validation"), "validate");
     const std::array studies{std::pair{ModelNode::AverageGainTest, tr("Avg gain test")},
@@ -114,7 +111,10 @@ ModelTree::ModelTree(QWidget* parent) : QTreeWidget(parent)
         setItemWidget(item, SummaryColumn, cell);
     }
     validation->setExpanded(true);
-    setSummary(ModelNode::Validation, {});
+    validation->setText(SummaryColumn, {});
+    setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(this, &QWidget::customContextMenuRequested, this,
+        [this](const QPoint& position) { showAddMenu(position); });
 
     connect(this, &QTreeWidget::currentItemChanged, this,
         [this](QTreeWidgetItem* current, QTreeWidgetItem* previous) {
@@ -143,7 +143,7 @@ ModelTree::ModelTree(QWidget* parent) : QTreeWidget(parent)
 auto ModelTree::addGroup(ModelNode node, const QString& name, const char* icon)
     -> QTreeWidgetItem*
 {
-    auto* item = new QTreeWidgetItem(this, {name, QString::fromUtf8("—")});
+    auto* item = new QTreeWidgetItem(this, {name});
     item->setData(NameColumn, NodeRole, static_cast<int>(node));
     item->setIcon(NameColumn, workbenchIcon(icon));
     auto font = item->font(NameColumn);
@@ -188,11 +188,19 @@ auto ModelTree::itemFor(const ModelSelection& selection) const -> QTreeWidgetIte
     return nullptr;
 }
 
-void ModelTree::setSummary(ModelNode node, const QString& summary)
+void ModelTree::setCount(ModelNode node, std::size_t count, const QString& detail)
 {
-    if (auto* item = group(node)) {
-        item->setText(SummaryColumn, summary);
-        item->setToolTip(SummaryColumn, summary);
+    auto* item = group(node);
+    if (item == nullptr) return;
+    // An empty group is one dim line: its name, with what it holds in the tooltip.
+    item->setText(SummaryColumn, count == 0 ? QString{} : QString::number(count));
+    const auto add = addName(node);
+    const auto toolTip = count == 0 && !add.isEmpty()
+        ? tr("%1. Right-click to add a %2.").arg(detail, add) : detail;
+    const auto colour = palette().color(count == 0 ? QPalette::PlaceholderText : QPalette::Text);
+    for (const auto column : {NameColumn, SummaryColumn}) {
+        item->setToolTip(column, toolTip);
+        item->setForeground(column, colour);
     }
 }
 
@@ -200,45 +208,40 @@ void ModelTree::setModel(const model::AntennaModel& model, const model::ModelSet
     const nec::NecDocument& document)
 {
     const auto summary = model::summarizeModel(model, setup, document);
-    setSummary(ModelNode::Frequency, summary.frequency
-        ? summary.frequency->pointCount > 1
-            ? tr("%1–%2 MHz · %3 pts")
-                  .arg(formatDecimal(summary.frequency->startMHz),
-                      formatDecimal(summary.frequency->endMHz))
-                  .arg(summary.frequency->pointCount)
-            : tr("%1 MHz").arg(formatDecimal(summary.frequency->startMHz))
-        : tr("not configured"));
-    setSummary(ModelNode::Wires, tr("%1 · %2")
-        .arg(countText(summary.wireCount, tr("wire"), tr("wires")),
-            countText(summary.segmentCount, tr("segment"), tr("segments"))));
-    setSummary(ModelNode::Sources, summary.sources.empty() ? tr("none")
-        : summary.sources.size() == 1
-            ? tr("1 source · wire %1, seg %2")
-                  .arg(summary.sources[0].wireTag).arg(summary.sources[0].segment)
-            : countText(summary.sources.size(), tr("source"), tr("sources")));
-    setSummary(ModelNode::Loads, countText(summary.loadCount, tr("load"), tr("loads")));
-    setSummary(ModelNode::TransmissionLines,
-        countText(summary.transmissionLineCount, tr("line"), tr("lines")));
-    setSummary(ModelNode::Networks, summary.networkCount == 0 ? tr("none (NT)")
-        : countText(summary.networkCount, tr("network (NT)"), tr("networks (NT)")));
+    setCount(ModelNode::Wires, summary.wireCount, summary.wireCount == 0 ? tr("No wires")
+        : tr("%1 · %2").arg(countText(summary.wireCount, tr("wire"), tr("wires")),
+              countText(summary.segmentCount, tr("segment"), tr("segments"))));
+    setCount(ModelNode::Sources, summary.sources.size(), summary.sources.empty()
+            ? tr("No sources")
+            : countText(summary.sources.size(), tr("source (EX)"), tr("sources (EX)")));
+    setCount(ModelNode::Loads, summary.loadCount, summary.loadCount == 0 ? tr("No loads")
+        : countText(summary.loadCount, tr("load (LD)"), tr("loads (LD)")));
+    setCount(ModelNode::TransmissionLines, summary.transmissionLineCount,
+        summary.transmissionLineCount == 0 ? tr("No transmission lines")
+            : countText(summary.transmissionLineCount, tr("transmission line (TL)"),
+                  tr("transmission lines (TL)")));
+    setCount(ModelNode::Networks, summary.networkCount, summary.networkCount == 0
+            ? tr("No networks")
+            : countText(summary.networkCount, tr("network (NT)"), tr("networks (NT)")));
     using Kind = nec::NecCardKind;
-    const auto others = std::ranges::count_if(document.cards(), [](const auto& card) {
-        constexpr std::array grouped{Kind::Blank, Kind::Comment, Kind::Symbol,
-            Kind::GeometryWire, Kind::Excitation, Kind::Load, Kind::TransmissionLine,
-            Kind::Network, Kind::End, Kind::Unknown};
-        return std::ranges::find(grouped, card.kind) == grouped.end();
-    });
-    setSummary(ModelNode::OtherCards, countText(static_cast<std::size_t>(others), tr("card"), tr("cards")));
-    setSummary(ModelNode::Ground, groundName(summary.groundType));
-    setSummary(ModelNode::Variables, summary.symbolCount == 0 ? tr("none (SY)")
-        : countText(summary.symbolCount, tr("variable (SY)"), tr("variables (SY)")));
-    setSummary(ModelNode::Requests, summary.radiationRequests.empty()
-        ? summary.executionRequestCount == 0 ? tr("none") : tr("execution only")
-        : summary.radiationRequests.size() == 1
-            ? tr("pattern %1×%2").arg(summary.radiationRequests[0].thetaCount)
-                  .arg(summary.radiationRequests[0].phiCount)
-            : countText(summary.radiationRequests.size(), tr("pattern"), tr("patterns")));
-    setSummary(ModelNode::Deck, countText(summary.cardCount, tr("card"), tr("cards")));
+    constexpr std::array grouped{Kind::Blank, Kind::Comment, Kind::Symbol, Kind::GeometryWire,
+        Kind::Excitation, Kind::Load, Kind::TransmissionLine, Kind::Network, Kind::End,
+        Kind::Unknown};
+    auto others = std::size_t{0};
+    QStringList otherKinds;
+    for (const auto& card : document.cards()) {
+        if (std::ranges::find(grouped, card.kind) != grouped.end()) continue;
+        ++others;
+        if (const auto mnemonic = QString::fromStdString(card.mnemonic); !otherKinds.contains(mnemonic))
+            otherKinds.append(mnemonic);
+    }
+    setCount(ModelNode::OtherCards, others, others == 0 ? tr("No other cards")
+        : tr("%1: %2").arg(countText(others, tr("card"), tr("cards")), otherKinds.join(QStringLiteral(", "))));
+    setCount(ModelNode::Variables, summary.symbolCount, summary.symbolCount == 0
+            ? tr("No variables (SY)")
+            : countText(summary.symbolCount, tr("variable (SY)"), tr("variables (SY)")));
+    setCount(ModelNode::Deck, summary.cardCount,
+        tr("%1: click to open the NEC Deck").arg(countText(summary.cardCount, tr("card"), tr("cards"))));
 
     // Rebuild the item rows, keeping what was selected and expanded.
     const auto selected = currentSelection();
@@ -280,11 +283,6 @@ void ModelTree::setModel(const model::AntennaModel& model, const model::ModelSet
     if (restored == nullptr) clearSelection();
     selecting_ = false;
     updateGeometry();
-}
-
-void ModelTree::setSolver(const QString& summary)
-{
-    setSummary(ModelNode::Solver, summary);
 }
 
 void ModelTree::setStudyAction(Study study, QAction* action)
@@ -341,6 +339,15 @@ auto ModelTree::currentSelection() const -> std::optional<ModelSelection>
     return selectionOf(item);
 }
 
+auto ModelTree::selectionOfCard(std::size_t sourceLine) const -> std::optional<ModelSelection>
+{
+    for (QTreeWidgetItemIterator it(const_cast<ModelTree*>(this)); *it != nullptr; ++it) {
+        if (const auto selection = selectionOf(*it); sourceLine > 0 && selection.sourceLine == sourceLine)
+            return selection;
+    }
+    return std::nullopt;
+}
+
 void ModelTree::setSelectionChangingCallback(std::function<bool(const ModelSelection&)> callback)
 {
     selectionChanging_ = std::move(callback);
@@ -354,6 +361,25 @@ void ModelTree::setSelectionChangedCallback(std::function<void(const ModelSelect
 void ModelTree::setActivatedCallback(std::function<void(const ModelSelection&)> callback)
 {
     activated_ = std::move(callback);
+}
+
+void ModelTree::setAddCallback(std::function<void(ModelNode)> callback)
+{
+    add_ = std::move(callback);
+}
+
+void ModelTree::showAddMenu(const QPoint& position)
+{
+    auto* item = itemAt(position);
+    if (item == nullptr || !add_) return;
+    // A row adds to its group.
+    if (item->parent() != nullptr) item = item->parent();
+    const auto node = static_cast<ModelNode>(item->data(NameColumn, NodeRole).toInt());
+    const auto name = addName(node);
+    if (name.isEmpty()) return;
+    QMenu menu(this);
+    menu.addAction(tr("Add %1").arg(name), this, [this, node] { add_(node); });
+    menu.exec(viewport()->mapToGlobal(position));
 }
 
 auto ModelTree::sizeHint() const -> QSize

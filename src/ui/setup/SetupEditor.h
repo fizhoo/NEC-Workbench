@@ -20,7 +20,7 @@ public:
     explicit SetupEditor(QWidget* parent = nullptr);
 
     [[nodiscard]] auto frequencyPage() const -> QWidget*;
-    [[nodiscard]] auto sourcesPage() const -> QWidget*;
+    [[nodiscard]] auto referenceImpedancePage() const -> QWidget*;
     [[nodiscard]] auto environmentPage() const -> QWidget*;
     void setData(const model::AntennaModel& model, const model::ModelSetup& setup);
     [[nodiscard]] auto hasPendingEdits(const QWidget* page) const -> bool;
@@ -44,7 +44,7 @@ private:
     model::AntennaModel model_;
     model::ModelSetup setup_;
     QWidget* frequencyPage_{};
-    QWidget* sourcesPage_{};
+    QWidget* referenceImpedancePage_{};
     QWidget* environmentPage_{};
     QCheckBox* frequencySweepControl_{};
     QComboBox* frequencyModeControl_{};

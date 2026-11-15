@@ -34,6 +34,8 @@ public:
     void setParameterControlledFields(nec::NecParameterFieldMap sourceFields);
     auto selectCard(std::size_t sourceLine) -> bool;
     void focusParameterizableField();
+    // The card Add would add for the selected family.
+    [[nodiscard]] auto newCard() const -> QString;
 
 signals:
     void cardSelected(std::size_t sourceLine);
