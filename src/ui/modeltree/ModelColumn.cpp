@@ -36,6 +36,8 @@ ModelColumn::ModelColumn(QWidget* parent) : QWidget(parent)
     layout->addWidget(tree_);
     layout->addWidget(variables_);
     layout->addWidget(pane_, 1);
+    // Takes the spare height when nothing else may: the variables folded and the pane empty.
+    layout->addStretch(0);
     variables_->setFoldChangedCallback([this] { applyPolicies(); });
     limitHeights();
 }
@@ -61,9 +63,12 @@ void ModelColumn::applyPolicies()
 {
     // With the pane open the variables take their rows, up to a share, and scroll beyond
     // that; with it hidden they fill the rest of the column, unless folded to their header.
+    const auto fills = pane_->isHidden() && !variables_->isFolded();
     variables_->setSizePolicy(QSizePolicy::Preferred,
-        !pane_->isHidden() || variables_->isFolded() ? QSizePolicy::Maximum
-                                                     : QSizePolicy::Expanding);
+        fills ? QSizePolicy::Expanding : QSizePolicy::Maximum);
+    auto* column = static_cast<QVBoxLayout*>(layout());
+    column->setStretchFactor(variables_, fills ? 1 : 0);
+    column->setStretch(column->count() - 1, pane_->isHidden() && !fills ? 1 : 0);
 }
 
 void ModelColumn::limitHeights()

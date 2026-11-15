@@ -207,7 +207,9 @@ void CardFieldForm::relabel()
         const auto label = cardFieldLabel(mnemonic, static_cast<int>(index), currentType);
         fields_[index].label->setText(label.isEmpty() ? tr("F%1").arg(index + 1) : label);
         // Fields the type does not use stay hidden unless the card has a value there.
-        const auto used = static_cast<int>(index) < shown || !fieldText(index).isEmpty();
+        const auto value = fieldText(index);
+        const auto used = static_cast<int>(index) < shown
+            || (!value.isEmpty() && value.toDouble() != 0.0);
         form_->setRowVisible(static_cast<int>(index), used);
     }
     // A voltage source reads more easily as magnitude and phase.
