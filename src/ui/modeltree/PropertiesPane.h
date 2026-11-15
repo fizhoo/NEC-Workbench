@@ -7,6 +7,7 @@
 class QLabel;
 class QPushButton;
 class QScrollArea;
+class QToolButton;
 class QStackedWidget;
 
 namespace necwb::ui {
@@ -29,6 +30,11 @@ public:
     // Called to throw away a page's unapplied edits.
     void setDiscardCallback(std::function<void(QWidget*)> callback);
     void focusPage();
+    // Shows ⇔ in the header, which widens the column to the page and back.
+    void setExpandable(bool expandable);
+    void setExpanded(bool expanded);
+    [[nodiscard]] auto isExpanded() const -> bool;
+    void setExpandCallback(std::function<void(bool)> callback);
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;
@@ -37,9 +43,11 @@ private:
     [[nodiscard]] auto pendingButtons() const -> QList<QPushButton*>;
 
     QLabel* title_{};
+    QToolButton* expand_{};
     QScrollArea* scroll_{};
     QStackedWidget* pages_{};
     std::function<void(QWidget*)> discard_;
+    std::function<void(bool)> expanded_;
 };
 
 }

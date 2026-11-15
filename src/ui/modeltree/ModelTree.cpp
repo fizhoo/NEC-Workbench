@@ -13,6 +13,9 @@
 #include <QSignalBlocker>
 #include <QToolButton>
 
+#include <algorithm>
+#include <array>
+
 namespace necwb::ui {
 namespace {
 
@@ -81,6 +84,7 @@ ModelTree::ModelTree(QWidget* parent) : QTreeWidget(parent)
     addGroup(ModelNode::Loads, tr("Loads"), "loads");
     addGroup(ModelNode::TransmissionLines, tr("Trans. lines"), "transmission-lines");
     addGroup(ModelNode::Networks, tr("Networks"), "networks");
+    addGroup(ModelNode::OtherCards, tr("Other"), "structured-cards");
     addGroup(ModelNode::Ground, tr("Ground"), "ground");
     addGroup(ModelNode::Variables, tr("Variables"), "variables");
     addGroup(ModelNode::Requests, tr("Requests"), "requests");
@@ -217,6 +221,14 @@ void ModelTree::setModel(const model::AntennaModel& model, const model::ModelSet
         countText(summary.transmissionLineCount, tr("line"), tr("lines")));
     setSummary(ModelNode::Networks, summary.networkCount == 0 ? tr("none (NT)")
         : countText(summary.networkCount, tr("network (NT)"), tr("networks (NT)")));
+    using Kind = nec::NecCardKind;
+    const auto others = std::ranges::count_if(document.cards(), [](const auto& card) {
+        constexpr std::array grouped{Kind::Blank, Kind::Comment, Kind::Symbol,
+            Kind::GeometryWire, Kind::Excitation, Kind::Load, Kind::TransmissionLine,
+            Kind::Network, Kind::End, Kind::Unknown};
+        return std::ranges::find(grouped, card.kind) == grouped.end();
+    });
+    setSummary(ModelNode::OtherCards, countText(static_cast<std::size_t>(others), tr("card"), tr("cards")));
     setSummary(ModelNode::Ground, groundName(summary.groundType));
     setSummary(ModelNode::Variables, summary.symbolCount == 0 ? tr("none (SY)")
         : countText(summary.symbolCount, tr("variable (SY)"), tr("variables (SY)")));

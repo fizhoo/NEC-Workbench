@@ -180,6 +180,10 @@ if(NECWB_BUILD_GUI)
         src/ui/analysis/CurrentAntennaView.h
         src/ui/analysis/FieldResultsViews.cpp
         src/ui/analysis/FieldResultsViews.h
+        src/ui/cards/CardFields.cpp
+        src/ui/cards/CardTables.cpp
+        src/ui/cards/CardTables.h
+        src/ui/cards/CardFields.h
         src/ui/cards/CompactNumberDelegate.cpp
         src/ui/cards/CompactNumberDelegate.h
         src/ui/cards/WireCardEditor.cpp
@@ -230,8 +234,8 @@ if(NECWB_BUILD_GUI)
         src/ui/model/ParameterEditor.h
         src/ui/setup/SetupEditor.cpp
         src/ui/setup/SetupEditor.h
-        src/ui/setup/LoadNetworkEditor.cpp
-        src/ui/setup/LoadNetworkEditor.h
+        src/ui/setup/CardFieldForm.cpp
+        src/ui/setup/CardFieldForm.h
         src/ui/welcome/WelcomePage.cpp
         src/ui/welcome/WelcomePage.h
     )

@@ -32,7 +32,7 @@
 #include "ui/optimization/OptimizationWorkspace.h"
 #include "ui/optimization/OptimizationComparePanel.h"
 #include "ui/model/ParameterEditor.h"
-#include "ui/setup/LoadNetworkEditor.h"
+#include "ui/setup/CardFieldForm.h"
 #include "ui/setup/SetupEditor.h"
 #include "ui/welcome/WelcomePage.h"
 #include "nec/NecParser.h"
@@ -266,7 +266,6 @@ auto main(int argc, char* argv[]) -> int
     {
         necwb::ui::MainWindow mainWindow;
         mainWindow.setProperty("workspaceDensityId", QStringLiteral("density-smoke-sentinel"));
-        auto* deckWorkspace = mainWindow.findChild<QTabWidget*>(QStringLiteral("necDeckWorkspace"));
         auto* necDeckAction = mainWindow.findChild<QAction*>(QStringLiteral("necDeckAction"));
         auto* optimizeModuleAction = mainWindow.findChild<QAction*>(
             QStringLiteral("optimizeModuleAction"));
@@ -311,8 +310,9 @@ auto main(int argc, char* argv[]) -> int
             && mainWindow.findChild<QTabWidget*>(QStringLiteral("setupWorkspace")) == nullptr
             && mainWindow.findChild<QTabWidget*>(QStringLiteral("modelWorkspace")) == nullptr
             && mainWindow.findChild<QAction*>(QStringLiteral("modelModuleAction")) == nullptr
-            && tabNames(deckWorkspace) == QStringList{QStringLiteral("Raw Source"),
-                QStringLiteral("Structured Cards")}
+            // The deck is raw source only; its cards are tables in the properties pane.
+            && mainWindow.findChild<QTabWidget*>(QStringLiteral("necDeckWorkspace")) == nullptr
+            && mainWindow.findChild<QWidget*>(QStringLiteral("cardsPanel")) == nullptr
             && tabNames(validationWorkspace) == QStringList{QStringLiteral("Static Check"),
                 QStringLiteral("Average Gain Test"), QStringLiteral("Segmentation Convergence")}
             && compactPrimaryNavigation
@@ -348,6 +348,7 @@ auto main(int argc, char* argv[]) -> int
                     == QStringLiteral("validationWindow");
         }
         // The NEC Deck opens in the center in place of the geometry; ← Geometry returns.
+        auto* deckWorkspace = mainWindow.findChild<QWidget*>(QStringLiteral("necSourceEditor"));
         if (deckWorkspace != nullptr && necDeckAction != nullptr) {
             mainWindow.show();
             necDeckAction->setEnabled(true);
@@ -832,7 +833,10 @@ auto main(int argc, char* argv[]) -> int
             application.processEvents();
             for (auto* action : mainWindow.findChild<QMenu*>(
                      QStringLiteral("recentModelsMenu"))->actions()) {
-                if (action->data().toString() == modelPath) action->trigger();
+                // Opening rebuilds the menu, so stop at the action.
+                if (action->data().toString() != modelPath) continue;
+                action->trigger();
+                break;
             }
             application.processEvents();
             const auto wait = [&application](int milliseconds, const std::function<bool()>& done) {
@@ -945,6 +949,184 @@ auto main(int argc, char* argv[]) -> int
     }
     if (!variablesLive)
         return NECWB_SMOKE_FAILURE("variables live, undo, reset and revert");
+    // Card tables in the properties pane: a group shows its table and folds the variables; ⇔
+    // widens the column to the whole table, at most 65% of the window, and anything else narrows
+    // it again; a row's click selects its item and keeps the table, and its Line cell opens the
+    // form; edits keep SY symbols; new cards land before FR and RP; a right-clicked load and a
+    // TL picked by two ends show their forms; the Variables header folds them.
+    auto cardTables = false;
+    {
+        QSettings settings;
+        const auto savedRecent = settings.value(QStringLiteral("files/recentModels"));
+        settings.remove(QStringLiteral("ui/bottomPanel"));
+        settings.remove(QStringLiteral("variables/folded"));
+        settings.remove(QStringLiteral("mainWindow/v2"));
+        QTemporaryDir directory;
+        const auto modelPath = directory.filePath(QStringLiteral("cards.nec"));
+        QFile modelFile(modelPath);
+        if (directory.isValid() && modelFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            modelFile.write("SY r=50, v=1\nGW 1 11 0 -0.5 0 0 0.5 0 0.001\n"
+                "GW 2 11 0.3 -0.5 0 0.3 0.5 0 0.001\nGE 0\nEX 0 1 6 0 v 0\n"
+                "LD 4 1 3 3 r 0 0\nFR 0 1 0 0 146 0\nRP 0 37 73 1000 0 0 5 5\nEN\n");
+            modelFile.close();
+            settings.setValue(QStringLiteral("files/recentModels"), QStringList{modelPath});
+            settings.sync();
+            necwb::ui::MainWindow mainWindow;
+            mainWindow.resize(1400, 900);
+            mainWindow.show();
+            application.processEvents();
+            for (auto* action : mainWindow.findChild<QMenu*>(
+                     QStringLiteral("recentModelsMenu"))->actions()) {
+                if (action->data().toString() != modelPath) continue;
+                action->trigger();
+                break;
+            }
+            application.processEvents();
+            auto* deck = mainWindow.findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor"));
+            auto* tree = mainWindow.findChild<QTreeWidget*>(QStringLiteral("modelTree"));
+            auto* bottomTabs = mainWindow.findChild<QTabBar*>(QStringLiteral("bottomPanelTabs"));
+            auto* split = mainWindow.findChild<QSplitter*>(QStringLiteral("workbenchSplit"));
+            auto* loads = mainWindow.findChild<QWidget*>(QStringLiteral("cardsLD"));
+            auto* sources = mainWindow.findChild<QWidget*>(QStringLiteral("cardsEX"));
+            auto* lines = mainWindow.findChild<QWidget*>(QStringLiteral("cardsTL"));
+            auto* networks = mainWindow.findChild<QWidget*>(QStringLiteral("cardsNT"));
+            auto* form = mainWindow.findChild<QWidget*>(QStringLiteral("cardFieldForm"));
+            auto* expand = mainWindow.findChild<QToolButton*>(QStringLiteral("paneExpandButton"));
+            auto* header = mainWindow.findChild<QWidget*>(QStringLiteral("variablesHeader"));
+            auto* live = mainWindow.findChild<QCheckBox*>(QStringLiteral("variablesLive"));
+            auto* section = mainWindow.findChild<QWidget*>(QStringLiteral("variablesSection"));
+            necwb::ui::GeometryView* view = nullptr;
+            for (auto* candidate : mainWindow.findChildren<necwb::ui::GeometryView*>())
+                if (view == nullptr && candidate->isVisible()) view = candidate;
+            const auto text = [deck] { return deck->toPlainText(); };
+            const auto selectGroup = [&](const QString& name) {
+                for (auto index = 0; index < tree->topLevelItemCount(); ++index)
+                    if (tree->topLevelItem(index)->text(0) == name)
+                        tree->setCurrentItem(tree->topLevelItem(index));
+                application.processEvents();
+            };
+            const auto pageTitle = [&mainWindow] {
+                const auto* title = mainWindow.findChild<QLabel*>(QStringLiteral("propertiesPaneTitle"));
+                return title == nullptr ? QString{} : title->text();
+            };
+            const auto beforeRun = [&](const QString& card) {
+                const auto at = text().indexOf(card);
+                return at >= 0 && at < text().indexOf(QStringLiteral("FR 0 1"))
+                    && at < text().indexOf(QStringLiteral("RP 0"));
+            };
+            if (deck != nullptr && tree != nullptr && bottomTabs != nullptr && split != nullptr
+                && loads != nullptr && sources != nullptr && lines != nullptr && networks != nullptr
+                && form != nullptr && expand != nullptr && header != nullptr && live != nullptr
+                && section != nullptr && view != nullptr) {
+                auto* loadTable = loads->findChild<QTableWidget*>(QStringLiteral("structuredCardTable"));
+                auto* sourceTable = sources->findChild<QTableWidget*>(QStringLiteral("structuredCardTable"));
+                const auto bottomPanelPlain = bottomTabs->count() == 4;
+                selectGroup(QStringLiteral("Loads"));
+                const auto narrowWidth = split->sizes().value(0);
+                const auto groupShows = loadTable->isVisible() && loadTable->rowCount() == 1
+                    && expand->isVisible() && !expand->isChecked()
+                    && section->height() <= header->height() + 2;
+                // ⇔ widens the column to show every column; Ground narrows it again.
+                expand->click();
+                application.processEvents();
+                const auto wideWidth = split->sizes().value(0);
+                const auto widened = wideWidth > narrowWidth
+                    && wideWidth <= static_cast<int>(mainWindow.width() * 0.65) + 1
+                    && !loadTable->horizontalScrollBar()->isVisible();
+                selectGroup(QStringLiteral("Ground"));
+                const auto narrowedAgain = split->sizes().value(0) == narrowWidth
+                    && !expand->isVisible() && !expand->isChecked();
+                selectGroup(QStringLiteral("Loads"));
+                // Edit X of the load and the segment of the source: the r and v symbols stay.
+                loadTable->item(0, 7)->setText(QStringLiteral("10"));
+                application.processEvents();
+                sourceTable->item(0, 4)->setText(QStringLiteral("5"));
+                application.processEvents();
+                const auto symbolsKept = text().contains(QStringLiteral("LD 4 1 3 3 r 10 0"))
+                    && text().contains(QStringLiteral("EX 0 1 5 0 v 0"));
+                // A click selects the load in the tree and keeps the table; Line opens the form.
+                selectGroup(QStringLiteral("Loads"));
+                loadTable->selectRow(0);
+                application.processEvents();
+                const auto selection = tree->currentItem() == nullptr
+                        || tree->currentItem()->parent() == nullptr
+                    ? QString{} : tree->currentItem()->parent()->text(0);
+                const auto rowSelects = selection == QStringLiteral("Loads") && loadTable->isVisible()
+                    && !form->isVisible();
+                emit loadTable->itemActivated(loadTable->item(0, 0));
+                application.processEvents();
+                const auto lineOpensForm = form->isVisible() && pageTitle() == QStringLiteral("Load");
+                emit view->excitationSelected(5);
+                application.processEvents();
+                const auto geometrySelects = sourceTable->currentRow() == 0
+                    && pageTitle() == QStringLiteral("Source");
+                // New cards from every table land with the others, before FR and RP.
+                for (const auto& [group, table] : std::initializer_list<std::pair<QString, QWidget*>>{
+                         {QStringLiteral("Sources"), sources}, {QStringLiteral("Loads"), loads},
+                         {QStringLiteral("Trans. lines"), lines}, {QStringLiteral("Networks"), networks}}) {
+                    selectGroup(group);
+                    table->findChild<QPushButton*>(QStringLiteral("structuredAddCardButton"))->click();
+                    application.processEvents();
+                }
+                const auto tableAddsPlaced = beforeRun(QStringLiteral("EX 0 1 6 0 1 0"))
+                    && beforeRun(QStringLiteral("LD 0 1 1 11 0 0 0"))
+                    && beforeRun(QStringLiteral("TL 1 6 2 6 50"))
+                    && beforeRun(QStringLiteral("NT 1 6 2 6 0.02"));
+                // With the table widened, a right-clicked load and a TL picked by its two ends
+                // land before FR, show their forms and narrow the column.
+                selectGroup(QStringLiteral("Loads"));
+                expand->click();
+                application.processEvents();
+                emit view->addLoadRequested(2, 6);
+                application.processEvents();
+                const auto loadAdded = beforeRun(QStringLiteral("LD 4 2 6 6 50 0 0"))
+                    && form->isVisible() && pageTitle() == QStringLiteral("Load")
+                    && split->sizes().value(0) == narrowWidth;
+                selectGroup(QStringLiteral("Trans. lines"));
+                expand->click();
+                application.processEvents();
+                emit view->transmissionLineEndpointRequested(1, 4);
+                emit view->transmissionLineEndpointRequested(2, 4);
+                application.processEvents();
+                const auto linePicked = beforeRun(QStringLiteral("TL 1 4 2 4 50"))
+                    && form->isVisible() && pageTitle() == QStringLiteral("Transmission line")
+                    && split->sizes().value(0) == narrowWidth;
+                // With nothing in the pane, the header folds the variables to one line with Live
+                // still there, and back.
+                selectGroup(QStringLiteral("Ground"));
+                selectGroup(QStringLiteral("Deck"));
+                QMouseEvent click(QEvent::MouseButtonRelease, QPointF(5, 5), header->mapToGlobal(QPointF(5, 5)),
+                    Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+                QApplication::sendEvent(header, &click);
+                application.processEvents();
+                const auto folded = section->height() <= header->height() + 2 && live->isVisible()
+                    && settings.value(QStringLiteral("variables/folded")).toBool();
+                QApplication::sendEvent(header, &click);
+                application.processEvents();
+                const auto unfolded = section->height() > header->height() + 2
+                    && !settings.value(QStringLiteral("variables/folded")).toBool();
+                cardTables = bottomPanelPlain && groupShows && widened && narrowedAgain
+                    && symbolsKept && rowSelects && lineOpensForm && geometrySelects
+                    && tableAddsPlaced && loadAdded && linePicked && folded && unfolded;
+                if (!cardTables) {
+                    qWarning() << "card tables" << bottomPanelPlain << groupShows << widened
+                               << narrowWidth << wideWidth << narrowedAgain << symbolsKept
+                               << rowSelects << selection << lineOpensForm << geometrySelects
+                               << pageTitle() << tableAddsPlaced << loadAdded << linePicked
+                               << folded << unfolded << text();
+                }
+            }
+            if (deck != nullptr) deck->document()->setModified(false);
+            mainWindow.close();
+        }
+        settings.setValue(QStringLiteral("files/recentModels"), savedRecent);
+        settings.remove(QStringLiteral("ui/bottomPanel"));
+        settings.remove(QStringLiteral("variables/folded"));
+        settings.remove(QStringLiteral("mainWindow/v2"));
+        settings.sync();
+    }
+    if (!cardTables)
+        return NECWB_SMOKE_FAILURE("card tables in the pane, expand, placement and folding");
     if (!variableSliderEdits)
         return NECWB_SMOKE_FAILURE("variable slider edits the SY card");
     if (!wirePaneKeepsSymbols)
@@ -3304,7 +3486,8 @@ auto main(int argc, char* argv[]) -> int
         groupNames.append(modelTree->topLevelItem(index)->text(0));
     const auto modelTreeGroups = groupNames == QStringList{QStringLiteral("Frequency"),
         QStringLiteral("Wires"), QStringLiteral("Sources"), QStringLiteral("Loads"),
-        QStringLiteral("Trans. lines"), QStringLiteral("Networks"), QStringLiteral("Ground"),
+        QStringLiteral("Trans. lines"), QStringLiteral("Networks"), QStringLiteral("Other"),
+        QStringLiteral("Ground"),
         QStringLiteral("Variables"), QStringLiteral("Requests"), QStringLiteral("Solver"),
         QStringLiteral("Deck"), QStringLiteral("Validation")};
     const auto modelTreeSummaries = summary(QStringLiteral("Frequency"))
@@ -3909,7 +4092,7 @@ auto main(int argc, char* argv[]) -> int
     welcome.render(&welcomePainter); welcomePainter.end();
     const auto welcomeStateValid = recentList->count() == 2
         && recentOpened == QStringLiteral("/tmp/second.nec") && recentCleared;
-    necwb::ui::StructuredCardEditor structuredCards;
+    necwb::ui::StructuredCardEditor structuredCards({{}, true});
     const auto structuredCardsCompact = hasCompactMargins(structuredCards, 6);
     structuredCards.resize(900, 500);
     structuredCards.setDocument(necwb::nec::NecParser{}.parse(
@@ -3970,18 +4153,14 @@ auto main(int argc, char* argv[]) -> int
     structuredCards.show(); application.processEvents();
     structuredTable->item(0, 8)->setText(QStringLiteral("2.5"));
     application.processEvents();
-    // An NT with zero admittances would open the wire at its ports, so Add NT writes no card
-    // and starts a draft in Loads & Networks instead.
-    auto networkDraftRequested = false;
-    QObject::connect(&structuredCards, &necwb::ui::StructuredCardEditor::networkDraftRequested,
-        [&networkDraftRequested] { networkDraftRequested = true; });
+    // An NT with zero admittances would open the wire at its ports, so Add NT writes a 50 Ω
+    // series connection.
     selectStructuredFamily(structuredFamilies, QStringLiteral("NT"));
     application.processEvents();
-    const auto cardBeforeNetwork = addedCard;
     structuredAdd->click();
     application.processEvents();
-    if (!structuredAdd->isEnabled() || !networkDraftRequested || addedCard != cardBeforeNetwork)
-        return NECWB_SMOKE_FAILURE("Add NT starts a Loads & Networks draft without a card");
+    if (!structuredAdd->isEnabled() || addedCard != QStringLiteral("NT 1 6 1 6 0.02 0 -0.02 0 0.02 0"))
+        return NECWB_SMOKE_FAILURE("Add NT writes a 50 ohm series network");
     selectStructuredFamily(structuredFamilies, QStringLiteral("LD"));
     application.processEvents();
     structuredAdd->click();
@@ -4001,7 +4180,7 @@ auto main(int argc, char* argv[]) -> int
     QImage structuredImage(900, 500, QImage::Format_ARGB32_Premultiplied);
     structuredImage.fill(Qt::transparent); QPainter structuredPainter(&structuredImage);
     structuredCards.render(&structuredPainter); structuredPainter.end();
-    necwb::ui::StructuredCardEditor extendedCards;
+    necwb::ui::StructuredCardEditor extendedCards({{}, true});
     extendedCards.setDocument(necwb::nec::NecParser{}.parse(
         "FR 0 101 0 0 3.0 0.05 8.0 0 0 0\n"));
     auto* extendedFamilies = extendedCards.findChild<QTreeWidget*>(
@@ -4016,7 +4195,7 @@ auto main(int argc, char* argv[]) -> int
     application.processEvents();
     const auto trailingFieldsPreserved = extendedFrequency
         == QStringLiteral("FR 0 101 0 0 3.1 0.05 8.0 0 0 0");
-    necwb::ui::StructuredCardEditor generatedGeometryCards;
+    necwb::ui::StructuredCardEditor generatedGeometryCards({{}, true});
     generatedGeometryCards.setDeckUnitLabel(QStringLiteral("m"));
     generatedGeometryCards.setDocument(necwb::nec::NecParser{}.parse(
         "GA 1 9 0.5 0 180 0.001\n"
@@ -4571,28 +4750,6 @@ auto main(int argc, char* argv[]) -> int
     attachmentImage.fill(Qt::transparent); QPainter attachmentPainter(&attachmentImage);
     attachment2D.render(&attachmentPainter); attachment3D.render(&attachmentPainter);
     attachmentPainter.end();
-    // Edits a Loads & Networks cell the way a double-click does, through its column's editor.
-    const auto editCell = [](QTableWidget* table, int row, int column, const QVariant& value) {
-        auto* delegate = table->itemDelegateForColumn(column);
-        const auto index = table->model()->index(row, column);
-        if (delegate == nullptr) return false;
-        std::unique_ptr<QWidget> editor(
-            delegate->createEditor(table->viewport(), QStyleOptionViewItem{}, index));
-        if (editor == nullptr) return false;
-        delegate->setEditorData(editor.get(), index);
-        if (auto* combo = qobject_cast<QComboBox*>(editor.get())) {
-            const auto found = combo->findData(value);
-            if (found < 0) return false;
-            combo->setCurrentIndex(found);
-        } else if (auto* spin = qobject_cast<QSpinBox*>(editor.get())) {
-            spin->setValue(value.toInt());
-            if (spin->value() != value.toInt()) return false;
-        } else {
-            return false;
-        }
-        delegate->setModelData(editor.get(), table->model(), index);
-        return true;
-    };
     {
         auto sharedSetup = attachmentSetup;
         sharedSetup.loads.push_back({4, 1, 3, 3, 300.0, 0.0, 0.0, 9});
@@ -4608,275 +4765,53 @@ auto main(int argc, char* argv[]) -> int
         QPainter networkPainter(&networkImage);
         network2D.render(&networkPainter);
         networkPainter.end();
-        necwb::ui::LoadNetworkEditor sharedEditor;
-        sharedEditor.setData(attachmentModel, sharedSetup);
-        sharedEditor.show();
-        application.processEvents();
-        auto* sharedLoads = sharedEditor.findChild<QTableWidget*>(
-            QStringLiteral("loadNetworkLoadsTable"));
-        auto* sharedNotes = sharedEditor.findChild<QLabel*>(
-            QStringLiteral("loadNetworkSharingNotes"));
-        if (sharedLoads == nullptr || sharedNotes == nullptr || sharedNotes->isVisible()
-            || sharedLoads->verticalHeaderItem(1) == nullptr
-            || sharedLoads->verticalHeaderItem(1)->icon().isNull()
-            || !sharedLoads->verticalHeaderItem(1)->toolTip().contains(
-                QStringLiteral("LD 2 (300 Ω) is in series inside the segment"))
-            || !sharedLoads->verticalHeaderItem(0)->icon().isNull())
-            return NECWB_SMOKE_FAILURE("shared-segment markers in the loads table");
-        sharedEditor.selectLoad(9);
-        application.processEvents();
-        if (!sharedNotes->isVisible()
-            || !sharedNotes->text().contains(QStringLiteral("TL 1 end 1 connects across")))
-            return NECWB_SMOKE_FAILURE("shared-segment note for the selected load");
-        sharedEditor.selectLoad(7);
-        application.processEvents();
-        if (sharedNotes->isVisible())
-            return NECWB_SMOKE_FAILURE("shared-segment note hides for an unshared load");
-        auto* networkTable = sharedEditor.findChild<QTableWidget*>(
-            QStringLiteral("loadNetworkNetworksTable"));
-        auto* addNetwork = sharedEditor.findChild<QPushButton*>(
-            QStringLiteral("addNetworkButton"));
-        auto* applyNetwork = sharedEditor.findChild<QPushButton*>(
-            QStringLiteral("applySelectedNetworkButton"));
-        if (networkTable == nullptr || addNetwork == nullptr || applyNetwork == nullptr
-            || networkTable->rowCount() != 1
-            || networkTable->item(0, 0)->text() != QStringLiteral("1")
-            || networkTable->item(0, 1)->text() != QStringLiteral("9")
-            || networkTable->cellWidget(0, 0) != nullptr)
-            return NECWB_SMOKE_FAILURE("network table controls");
-        std::optional<necwb::model::NetworkDefinition> emittedNetwork;
-        QObject::connect(&sharedEditor, &necwb::ui::LoadNetworkEditor::networkChanged,
-            [&emittedNetwork](necwb::model::NetworkDefinition network) {
-                emittedNetwork = network;
-            });
-        sharedEditor.selectNetwork(10);
-        networkTable->setCurrentCell(0, 4);
-        networkTable->item(0, 4)->setText(QStringLiteral("0.02"));
-        if (!sharedEditor.hasPendingEdits() || !applyNetwork->isEnabled())
-            return NECWB_SMOKE_FAILURE("network edit becomes pending");
-        applyNetwork->click();
-        if (!emittedNetwork || emittedNetwork->sourceLine != 10
-            || emittedNetwork->y11Real != 0.02 || emittedNetwork->wireTag1 != 1
-            || emittedNetwork->segment1 != 9 || emittedNetwork->segment2 != 3
-            || emittedNetwork->y22Real != 1e10)
-            return NECWB_SMOKE_FAILURE("network edit emits the NT definition");
-        networkTable->item(0, 5)->setText(QStringLiteral("abc"));
-        if (applyNetwork->isEnabled())
-            return NECWB_SMOKE_FAILURE("invalid network admittance blocks apply");
-        // A draft NT has its ports on two segments and blank admittances, and is not written
-        // until one admittance is nonzero.
-        addNetwork->click();
-        const auto draftCell = [networkTable](int column) {
-            return networkTable->item(1, column)->text();
-        };
-        if (networkTable->rowCount() != 2 || draftCell(0) != QStringLiteral("1")
-            || draftCell(1) != QStringLiteral("6") || draftCell(2) != QStringLiteral("2")
-            || draftCell(3) != QStringLiteral("6") || !draftCell(4).isEmpty()
-            || !draftCell(9).isEmpty() || applyNetwork->isEnabled()
-            || applyNetwork->toolTip().isEmpty())
-            return NECWB_SMOKE_FAILURE("draft network starts with ports and no admittances");
-        applyNetwork->click();
-        networkTable->item(1, 4)->setText(QStringLiteral("0"));
-        if (applyNetwork->isEnabled() || emittedNetwork->sourceLine != 10)
-            return NECWB_SMOKE_FAILURE("an all-zero draft network is not written");
-        networkTable->item(1, 8)->setText(QStringLiteral("0.02"));
-        if (!applyNetwork->isEnabled())
-            return NECWB_SMOKE_FAILURE("a draft network with an admittance can be applied");
-        applyNetwork->click();
-        if (!emittedNetwork || emittedNetwork->sourceLine != 0 || emittedNetwork->y22Real != 0.02
-            || emittedNetwork->y11Real != 0.0 || emittedNetwork->segment2 != 6)
-            return NECWB_SMOKE_FAILURE("draft network applies as a new NT card");
-        necwb::model::AntennaModel oneWire;
-        oneWire.addWire({1, {-1.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, 11, 0.001, 1});
-        necwb::ui::LoadNetworkEditor oneWireEditor;
-        oneWireEditor.setData(oneWire, {});
-        oneWireEditor.addNetworkDraft();
-        auto* oneWireNetworks = oneWireEditor.findChild<QTableWidget*>(
-            QStringLiteral("loadNetworkNetworksTable"));
-        if (oneWireNetworks->rowCount() != 1
-            || oneWireNetworks->item(0, 1)->text() != QStringLiteral("6")
-            || oneWireNetworks->item(0, 3)->text() != QStringLiteral("1"))
-            return NECWB_SMOKE_FAILURE("a one-wire draft network puts its ports on two segments");
-
-        std::optional<std::size_t> clickedNetwork;
-        QObject::connect(&network2D, &necwb::ui::GeometryView::networkSelected,
-            [&clickedNetwork](std::size_t line) { clickedNetwork = line; });
-        network2D.show();
-        network2D.fitToView();
-        application.processEvents();
-        // The NT line runs from wire 1 segment 9 to wire 2 segment 3 and crosses the view's
-        // centre column between the wires; click down that column until it is hit.
-        for (auto y = 0; y < network2D.height() && !clickedNetwork; y += 3) {
-            const QPointF point(network2D.width() / 2.0, y);
-            QMouseEvent press(QEvent::MouseButtonPress, point, network2D.mapToGlobal(point),
-                Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-            QMouseEvent release(QEvent::MouseButtonRelease, point, network2D.mapToGlobal(point),
-                Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
-            QApplication::sendEvent(&network2D, &press);
-            QApplication::sendEvent(&network2D, &release);
-        }
-        if (clickedNetwork != std::optional<std::size_t>{10})
-            return NECWB_SMOKE_FAILURE("clicking an NT line in Geometry selects it");
     }
+    // The pane form for one card explains what shares its segment, keeps a field's SY symbol,
+    // relabels its fields by type, and holds back a value that is not a number.
+    auto cardFormValid = false;
     {
-        // Imported cards may number segments across wires as NEC does: tag 3 on two 5-segment
-        // wires reaches 10 segments, and tag 0 counts all 32. Applying an untouched row must
-        // keep every digit the card had.
-        auto crossModel = attachmentModel;
-        crossModel.addWire({3, {-1.0, 2.0, 0.0}, {1.0, 2.0, 0.0}, 5, 0.001, 3});
-        crossModel.addWire({3, {-1.0, 3.0, 0.0}, {1.0, 3.0, 0.0}, 5, 0.001, 4});
-        necwb::model::ModelSetup crossSetup;
-        crossSetup.loads.push_back({4, 3, 8, 8, 50.0, 0.0017921, 0.0, 5});
-        crossSetup.transmissionLines.push_back(
-            {3, 8, 0, 30, 558.0, 0.0, 0.0, 0.0, 0.0017921, 0.0, 6});
-        crossSetup.networks.push_back(
-            {0, 30, 3, 8, 0.0017921, -0.0012345678, 0.0, 0.0, 0.0, 0.0, 7});
-        necwb::ui::LoadNetworkEditor crossEditor;
-        crossEditor.setData(crossModel, crossSetup);
-        crossEditor.show();
+        necwb::model::ModelSetup sharedSetup;
+        sharedSetup.excitations.push_back({0, 1, 6, 1.0, 0.0, 3});
+        sharedSetup.loads.push_back({4, 1, 6, 6, 50.0, 0.0, 0.0, 4});
+        const auto cardDocument = necwb::nec::NecParser{}.parse("LD 4 1 6 6 r 0\n");
+        auto card = cardDocument.cards().front();
+        card.lineNumber = 4;
+        necwb::ui::CardFieldForm form;
+        form.show();
+        form.setCard(card, necwb::model::describeSharedSegments(attachmentModel, sharedSetup));
         application.processEvents();
-        auto* crossLoads = crossEditor.findChild<QTableWidget*>(
-            QStringLiteral("loadNetworkLoadsTable"));
-        auto* crossLines = crossEditor.findChild<QTableWidget*>(
-            QStringLiteral("loadNetworkLinesTable"));
-        auto* crossNetworks = crossEditor.findChild<QTableWidget*>(
-            QStringLiteral("loadNetworkNetworksTable"));
-        auto* crossApplyLoad = crossEditor.findChild<QPushButton*>(
-            QStringLiteral("applySelectedLoadButton"));
-        auto* crossApplyLine = crossEditor.findChild<QPushButton*>(
-            QStringLiteral("applySelectedLineButton"));
-        auto* crossApplyNetwork = crossEditor.findChild<QPushButton*>(
-            QStringLiteral("applySelectedNetworkButton"));
-        std::optional<necwb::model::LoadDefinition> crossLoad;
-        std::optional<necwb::model::TransmissionLineDefinition> crossLine;
-        std::optional<necwb::model::NetworkDefinition> crossNetwork;
-        QObject::connect(&crossEditor, &necwb::ui::LoadNetworkEditor::loadChanged,
-            [&crossLoad](necwb::model::LoadDefinition load) { crossLoad = load; });
-        QObject::connect(&crossEditor, &necwb::ui::LoadNetworkEditor::transmissionLineChanged,
-            [&crossLine](necwb::model::TransmissionLineDefinition line) { crossLine = line; });
-        QObject::connect(&crossEditor, &necwb::ui::LoadNetworkEditor::networkChanged,
-            [&crossNetwork](necwb::model::NetworkDefinition network) { crossNetwork = network; });
-        crossLoads->setCurrentCell(0, 1);
-        crossApplyLoad->click();
-        crossLines->setCurrentCell(0, 0);
-        if (!crossApplyLine->isEnabled())
-            return NECWB_SMOKE_FAILURE("TL ends on a shared tag and tag 0 can be applied");
-        crossApplyLine->click();
-        crossNetworks->setCurrentCell(0, 0);
-        if (!crossApplyNetwork->isEnabled())
-            return NECWB_SMOKE_FAILURE("NT ports on tag 0 and a shared tag can be applied");
-        crossApplyNetwork->click();
-        if (!crossLoad || crossLoad->wireTag != 3 || crossLoad->firstSegment != 8
-            || crossLoad->value2 != 0.0017921)
-            return NECWB_SMOKE_FAILURE("load on a shared tag applies with full precision");
-        if (!crossLine || crossLine->wireTag2 != 0 || crossLine->segment2 != 30
-            || crossLine->shuntReal2 != 0.0017921)
-            return NECWB_SMOKE_FAILURE("transmission line applies with full precision");
-        if (!crossNetwork || crossNetwork->wireTag1 != 0 || crossNetwork->segment1 != 30
-            || crossNetwork->y11Real != 0.0017921 || crossNetwork->y11Imaginary != -0.0012345678)
-            return NECWB_SMOKE_FAILURE("network applies with full precision");
-        // Segment editors reach every segment the tag numbers; tag 0 stays offered where used.
-        if (!editCell(crossLines, 0, 1, 10) || editCell(crossLines, 0, 1, 11)
-            || !editCell(crossLines, 0, 3, 32) || editCell(crossLines, 0, 3, 33)
-            || !editCell(crossNetworks, 0, 0, 0) || editCell(crossLoads, 0, 1, 0))
-            return NECWB_SMOKE_FAILURE("segment editors follow NEC segment numbering");
+        QString applied;
+        form.setAppliedCallback([&applied](std::size_t, const QString& text) { applied = text; });
+        auto* notes = form.findChild<QLabel*>(QStringLiteral("cardFieldNotes"));
+        auto* resistance = form.findChild<QLineEdit*>(QStringLiteral("cardField4"));
+        auto* reactance = form.findChild<QLineEdit*>(QStringLiteral("cardField5"));
+        auto* segment = form.findChild<QLineEdit*>(QStringLiteral("cardField2"));
+        auto* type = form.findChild<QComboBox*>();
+        auto* apply = form.findChild<QPushButton*>(QStringLiteral("applyCardButton"));
+        if (notes != nullptr && resistance != nullptr && reactance != nullptr
+            && segment != nullptr && type != nullptr && apply != nullptr) {
+            const auto shared = notes->isVisible() && !notes->text().isEmpty();
+            const auto linked = resistance->isReadOnly()
+                && resistance->text() == QString::fromUtf8("ƒx r");
+            reactance->setText(QStringLiteral("25"));
+            emit reactance->textEdited(reactance->text());
+            apply->click();
+            const auto symbolKept = applied == QStringLiteral("LD 4 1 6 6 r 25");
+            applied.clear();
+            segment->setText(QStringLiteral("x"));
+            emit segment->textEdited(segment->text());
+            apply->click();
+            const auto invalidHeld = applied.isEmpty() && form.hasPendingEdits();
+            type->setCurrentIndex(type->findData(QStringLiteral("5")));
+            const auto relabelled = std::ranges::any_of(form.findChildren<QLabel*>(),
+                [](const QLabel* label) { return label->text() == QString::fromUtf8("σ S/m"); });
+            cardFormValid = shared && linked && symbolKept && invalidHeld && relabelled;
+            if (!cardFormValid)
+                qWarning() << "card form" << shared << notes->text() << linked
+                           << resistance->text() << symbolKept << applied << invalidHeld
+                           << relabelled;
+        }
     }
-    necwb::ui::LoadNetworkEditor loadNetwork;
-    loadNetwork.setData(attachmentModel, attachmentSetup);
-    loadNetwork.setLengthUnit(necwb::model::LengthUnit::Foot);
-    loadNetwork.show(); application.processEvents();
-    auto* loadTable = loadNetwork.findChild<QTableWidget*>(QStringLiteral("loadNetworkLoadsTable"));
-    auto* lineTable = loadNetwork.findChild<QTableWidget*>(QStringLiteral("loadNetworkLinesTable"));
-    auto* addLoad = loadNetwork.findChild<QPushButton*>(QStringLiteral("addLoadButton"));
-    auto* addLine = loadNetwork.findChild<QPushButton*>(QStringLiteral("addTransmissionLineButton"));
-    auto* applyLoad = loadNetwork.findChild<QPushButton*>(QStringLiteral("applySelectedLoadButton"));
-    auto* applyLine = loadNetwork.findChild<QPushButton*>(QStringLiteral("applySelectedLineButton"));
-    auto* loadValidation = loadNetwork.findChild<QLabel*>(QStringLiteral("loadNetworkValidation"));
-    if (loadTable == nullptr || lineTable == nullptr || addLoad == nullptr || addLine == nullptr
-        || applyLoad == nullptr || applyLine == nullptr || loadValidation == nullptr)
-        return NECWB_SMOKE_FAILURE("loads and lines controls");
-    if (loadTable->item(0, 5)->text() != QStringLiteral("50")
-        || lineTable->item(0, 4)->text() != QStringLiteral("50")
-        || lineTable->item(0, 5)->text() != QStringLiteral("10")
-        || lineTable->horizontalHeaderItem(5)->text() != QStringLiteral("Length (ft)"))
-        return NECWB_SMOKE_FAILURE("transmission-line columns");
-    loadTable->selectRow(0);
-    if (loadTable->item(0, 0)->text() != QStringLiteral("4 — Fixed complex impedance")
-        || loadTable->cellWidget(0, 0) != nullptr
-        || loadTable->horizontalHeaderItem(5)->text() != QStringLiteral("Resistance (Ω)")
-        || loadTable->horizontalHeaderItem(6)->text() != QStringLiteral("Reactance (Ω)")
-        || loadTable->item(0, 7)->flags().testFlag(Qt::ItemIsEditable))
-        return NECWB_SMOKE_FAILURE("load type 4 columns");
-    if (!editCell(loadTable, 0, 0, 5)
-        || loadTable->item(0, 0)->text() != QStringLiteral("5 — Wire conductivity")
-        || loadTable->horizontalHeaderItem(5)->text() != QStringLiteral("Conductivity (MS/m)")
-        || loadTable->item(0, 6)->flags().testFlag(Qt::ItemIsEditable))
-        return NECWB_SMOKE_FAILURE("load type 2 columns");
-    if (!editCell(loadTable, 0, 0, 4)) return NECWB_SMOKE_FAILURE("load type editor");
-    auto validLoadEmitted = false;
-    auto emittedLoadType = -1;
-    auto emittedLoadSourceLine = std::size_t{1};
-    auto emittedLoadFirstSegment = -1;
-    auto emittedLoadLastSegment = -1;
-    auto emittedLoadInductance = 0.0;
-    auto emittedLoadCapacitance = 0.0;
-    auto validLineEmitted = false;
-    auto emittedLineSourceLine = std::size_t{1};
-    auto emittedLineLength = 0.0;
-    QObject::connect(&loadNetwork, &necwb::ui::LoadNetworkEditor::loadChanged,
-        [&validLoadEmitted, &emittedLoadType, &emittedLoadSourceLine,
-            &emittedLoadFirstSegment, &emittedLoadLastSegment,
-            &emittedLoadInductance, &emittedLoadCapacitance](const auto& load) {
-            validLoadEmitted = true;
-            emittedLoadType = load.type;
-            emittedLoadSourceLine = load.sourceLine;
-            emittedLoadFirstSegment = load.firstSegment;
-            emittedLoadLastSegment = load.lastSegment;
-            emittedLoadInductance = load.value2;
-            emittedLoadCapacitance = load.value3;
-        });
-    QObject::connect(&loadNetwork, &necwb::ui::LoadNetworkEditor::transmissionLineChanged,
-        [&validLineEmitted, &emittedLineSourceLine, &emittedLineLength](const auto& line) {
-            validLineEmitted = true;
-            emittedLineSourceLine = line.sourceLine;
-            emittedLineLength = line.lengthMeters;
-        });
-    loadTable->item(0, 1)->setText(QStringLiteral("99")); applyLoad->click();
-    const auto invalidLoadBlocked = !validLoadEmitted && loadValidation->isVisibleTo(&loadNetwork);
-    const auto invalidLoadRemainsPending = loadNetwork.hasPendingEdits()
-        && applyLoad->property("pendingChanges").toBool();
-    loadTable->item(0, 1)->setText(QStringLiteral("1")); applyLoad->click();
-    addLoad->click();
-    const auto draftDidNotEmit = emittedLoadType == 4 && loadTable->rowCount() == 2;
-    if (!editCell(loadTable, 1, 0, 2) || !editCell(loadTable, 1, 2, true)
-        || loadTable->item(1, 2)->text() != QStringLiteral("Entire wire")
-        || loadTable->item(1, 3)->flags().testFlag(Qt::ItemIsEditable))
-        return NECWB_SMOKE_FAILURE("draft load editors");
-    loadTable->item(1, 6)->setText(QStringLiteral("4.700"));
-    loadTable->item(1, 7)->setText(QStringLiteral("22.000"));
-    applyLoad->click();
-    const auto selectedDraftTypeEmitted = emittedLoadType == 2 && emittedLoadSourceLine == 0
-        && emittedLoadFirstSegment == 0 && emittedLoadLastSegment == 0
-        && std::abs(emittedLoadInductance - 4.7e-6) < 1.0e-15
-        && std::abs(emittedLoadCapacitance - 22.0e-12) < 1.0e-20;
-    lineTable->selectRow(0); lineTable->item(0, 4)->setText(QStringLiteral("0")); applyLine->click();
-    const auto invalidLineBlocked = !validLineEmitted;
-    const auto invalidLineRemainsPending = loadNetwork.hasPendingEdits()
-        && applyLine->property("pendingChanges").toBool();
-    lineTable->item(0, 4)->setText(QStringLiteral("75")); applyLine->click();
-    const auto lineUnitConverted = std::abs(emittedLineLength - 3.048) < 1.0e-12;
-    addLine->click();
-    const auto lineDraftDidNotEmit = emittedLineSourceLine == 8 && lineTable->rowCount() == 2;
-    // Segment editors stop at the row's wire; both test wires have 11 segments.
-    if (editCell(lineTable, 1, 1, 12) || !editCell(lineTable, 1, 1, 11)
-        || !editCell(lineTable, 1, 2, 1) || editCell(lineTable, 1, 0, 99))
-        return NECWB_SMOKE_FAILURE("draft transmission-line editors");
-    applyLine->click();
-    const auto lineDraftApplied = emittedLineSourceLine == 0
-        && lineTable->item(1, 0)->text() == QStringLiteral("1")
-        && lineTable->item(1, 1)->text() == QStringLiteral("11")
-        && lineTable->item(1, 2)->text() == QStringLiteral("1")
-        && lineTable->item(1, 3)->text() == QStringLiteral("1");
     QTemporaryDir directory;
     necwb::ui::AnalysisRunStore store(directory.path());
     auto run = store.create(QStringLiteral("nec2"), QStringLiteral("/tmp/test-dipole.nec"));
@@ -5051,12 +4986,7 @@ auto main(int argc, char* argv[]) -> int
         && missingRadiationReported
         && missingRadiationDisablesDataExport
         && resultOriginPreserved && semanticResultExtent
-        && !attachmentImage.isNull() && invalidLoadBlocked && invalidLoadRemainsPending
-        && validLoadEmitted
-        && draftDidNotEmit && selectedDraftTypeEmitted
-        && invalidLineBlocked && invalidLineRemainsPending
-        && validLineEmitted && lineUnitConverted
-        && lineDraftDidNotEmit && lineDraftApplied;
+        && !attachmentImage.isNull() && cardFormValid;
     if (!passed) qWarning() << "structured smoke state" << invalidEditBlocked << editedCard
         << addedCard << deletedLine << "wire committed" << wireEditCommitted
         << "segmentation apply" << segmentationApplyAccepted

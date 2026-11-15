@@ -3072,6 +3072,33 @@ void testNetworkDefinitions()
             && !necwb::nec::networkCardInsertionIndex(necwb::nec::NecParser{}.parse(
                 geometry + "EX 0 1 5 0 1 0\nEN\n")),
         "a new NT or TL card goes right after the last NT/TL card, or nowhere special");
+    // New EX, LD, TL and NT cards go with the others, before FR and RP; in a deck with none
+    // they follow GE. Inserted anywhere later, the run ignores them.
+    {
+        const std::string yagi = "CM yagi\nCE\nCM numbers as the solver gets them\nGW 1 31 0 -0.51 0 0 0.51 0 0.003\n"
+            "GW 2 31 0.5 0.485 0 0.5 -0.485 0 0.003\nGW 3 31 0.85 -0.43 0 0.85 0.43 0 0.003\n"
+            "GE 0\nEX 0 2 16 0 1 0\nFR 0 41 0 0 144 0.1\nRP 0 37 73 1000 0 0 5 5\nEN\n";
+        const auto findings = [](const std::string& source) {
+            const auto result = necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(source));
+            return result.errorCount() + result.warningCount();
+        };
+        const auto baseline = findings(yagi);
+        auto placed = true;
+        for (const auto& [kind, card] : std::initializer_list<std::pair<necwb::nec::NecCardKind, std::string>>{
+                 {necwb::nec::NecCardKind::TransmissionLine, "TL 1 16 3 16 50 0 0 0 0 0"},
+                 {necwb::nec::NecCardKind::Load, "LD 4 1 16 16 50 0 0"},
+                 {necwb::nec::NecCardKind::Excitation, "EX 0 3 16 0 1 0"},
+                 {necwb::nec::NecCardKind::Network, "NT 1 10 3 10 0.02 0 -0.02 0 0.02 0"}}) {
+            const auto document = necwb::nec::NecParser{}.parse(yagi);
+            const auto index = necwb::nec::setupCardInsertionIndex(document, kind);
+            const auto updated = necwb::nec::insertSourceLine(yagi, index, card);
+            placed = placed && updated && index == 8 && findings(*updated) == baseline
+                && updated->find(card) < updated->find("FR 0 41");
+        }
+        const auto bare = necwb::nec::NecParser{}.parse("GW 1 11 0 0 0 1 0 0 0.001\nGE 0\nFR 0 1 0 0 14 0\nEN\n");
+        expect(placed && necwb::nec::setupCardInsertionIndex(bare, necwb::nec::NecCardKind::Load) == 2,
+            "new EX, LD, TL and NT cards go after the last of them or GE, before FR and RP");
+    }
     const auto discarded = necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(
         geometry + "TL 1 2 2 2 50\nNT 1 3 2 3 .01\nEX 0 1 5 0 1 0\nTL 1 4 2 4 50\n"
                    "FR 0 1 0 0 14 0\nXQ\nNT 0 -1\nNT 1 6 2 6 .01\nXQ\nEN\n"));

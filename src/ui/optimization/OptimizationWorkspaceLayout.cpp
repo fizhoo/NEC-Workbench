@@ -426,7 +426,7 @@ auto OptimizationWorkspace::buildSearchSection(QWidget* parent) -> QGroupBox*
     parameterizationLayout->setContentsMargins(0, 0, 0, 0);
     parameterizationLayout->setSpacing(4);
     auto* parameterizationHint = new QLabel(tr(
-        "Need another variable? Parameterize a numeric NEC field in Structured Cards."),
+        "Need another variable? Parameterize a numeric NEC field in a card table."),
         parameterizationBar);
     parameterizationHint->setWordWrap(true);
     auto* chooseParameterFields = new QPushButton(
@@ -434,7 +434,7 @@ auto OptimizationWorkspace::buildSearchSection(QWidget* parent) -> QGroupBox*
     chooseParameterFields->setObjectName(
         QStringLiteral("optimizationChooseParameterFields"));
     chooseParameterFields->setToolTip(tr(
-        "Open Model → NEC Deck → Structured Cards. Right-click a numeric field to create "
+        "Open the wire table. Right-click a numeric field to create "
         "or link an SY parameter, then return here to optimize it."));
     parameterizationLayout->addWidget(parameterizationHint);
     parameterizationLayout->addWidget(chooseParameterFields, 0, Qt::AlignRight);

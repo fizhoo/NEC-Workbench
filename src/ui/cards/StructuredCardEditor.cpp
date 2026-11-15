@@ -3,6 +3,7 @@
 #include "nec/NecCardCatalog.h"
 #include "nec/NecCardFieldEditor.h"
 #include "ui/ParameterFieldStyle.h"
+#include "ui/cards/CardFields.h"
 #include "ui/cards/CompactNumberDelegate.h"
 
 #include <QAbstractItemView>
@@ -109,31 +110,32 @@ const auto& families()
         {QObject::tr("Sources"), QObject::tr("EX — Excitation"),
             QObject::tr("Voltage and other excitation cards."),
             {nec::NecCardKind::Excitation},
-            {QObject::tr("Type"), QObject::tr("Wire Tag"), QObject::tr("Segment"), QObject::tr("I4"),
-                QObject::tr("Real"), QObject::tr("Imaginary"), QObject::tr("F7"), QObject::tr("F8"),
-                QObject::tr("F9"), QObject::tr("F10")}, QStringLiteral("EX"), false},
+            {QObject::tr("Type"), QObject::tr("Wire Tag"), QObject::tr("Segment"),
+                QObject::tr("Options"), QObject::tr("Real V"), QObject::tr("Imag V"),
+                QObject::tr("F3"), QObject::tr("F4"), QObject::tr("F5"), QObject::tr("F6")},
+            QStringLiteral("EX"), false},
         {QObject::tr("Loads & Networks"), QObject::tr("LD — Loads"),
             QObject::tr("Segment or wire loading definitions."),
             {nec::NecCardKind::Load},
             {QObject::tr("Type"), QObject::tr("Wire Tag"), QObject::tr("First Segment"),
-                QObject::tr("Last Segment"), QObject::tr("Value 1"), QObject::tr("Value 2"),
-                QObject::tr("Value 3")}, QStringLiteral("LD"), false},
+                QObject::tr("Last Segment"), QObject::tr("R Ω"), QObject::tr("L H"),
+                QObject::tr("C F")}, QStringLiteral("LD"), false},
         {QObject::tr("Loads & Networks"), QObject::tr("TL — Transmission Lines"),
             QObject::tr("Two-port transmission-line connections."),
             {nec::NecCardKind::TransmissionLine},
             {QObject::tr("Wire 1"), QObject::tr("Segment 1"), QObject::tr("Wire 2"),
-                QObject::tr("Segment 2"), QObject::tr("Z0"), QObject::tr("Length"),
-                QObject::tr("Shunt G1 (S)"), QObject::tr("Shunt B1 (S)"),
-                QObject::tr("Shunt G2 (S)"), QObject::tr("Shunt B2 (S)")},
+                QObject::tr("Segment 2"), QObject::tr("Z0 Ω"), QObject::tr("Length m"),
+                QObject::tr("Shunt G1 S"), QObject::tr("Shunt B1 S"),
+                QObject::tr("Shunt G2 S"), QObject::tr("Shunt B2 S")},
             QStringLiteral("TL"), false},
         {QObject::tr("Loads & Networks"), QObject::tr("NT — Two-Port Networks"),
             QObject::tr("Two-port networks given by their short-circuit admittance matrix in "
                         "siemens. Each port connects across its segment's gap; Y21 equals Y12."),
             {nec::NecCardKind::Network},
             {QObject::tr("Wire 1"), QObject::tr("Segment 1"), QObject::tr("Wire 2"),
-                QObject::tr("Segment 2"), QObject::tr("Y11 G"), QObject::tr("Y11 B"),
-                QObject::tr("Y12 G"), QObject::tr("Y12 B"), QObject::tr("Y22 G"),
-                QObject::tr("Y22 B")}, QStringLiteral("NT"), false},
+                QObject::tr("Segment 2"), QObject::tr("Y11 G S"), QObject::tr("Y11 B S"),
+                QObject::tr("Y12 G S"), QObject::tr("Y12 B S"), QObject::tr("Y22 G S"),
+                QObject::tr("Y22 B S")}, QStringLiteral("NT"), false},
         {QObject::tr("Analysis & Requests"), QObject::tr("Other NEC-2 Control Cards"),
             QObject::tr("Recognized NEC-2 option, field-request, and output-control cards using NEC fixed fields."),
             {nec::NecCardKind::ControlOther},
@@ -178,11 +180,6 @@ auto belongsTo(const nec::NecCard& card, const CardFamily& family) -> bool
 
 enum class FieldType { Integer, Number };
 
-struct FieldChoice {
-    QString value;
-    QString label;
-};
-
 auto fieldType(const QString& mnemonic, int fieldIndex) -> FieldType
 {
     if (const auto* spec = nec::findNecCardSpec(mnemonic.toStdString()))
@@ -195,51 +192,6 @@ auto fieldType(const QString& mnemonic, int fieldIndex) -> FieldType
     if (mnemonic == QStringLiteral("GE") || mnemonic == QStringLiteral("XQ"))
         return FieldType::Integer;
     return fieldIndex < 4 ? FieldType::Integer : FieldType::Number;
-}
-
-auto choicesFor(const QString& mnemonic, int fieldIndex) -> std::vector<FieldChoice>
-{
-    if ((mnemonic == QStringLiteral("SP") || mnemonic == QStringLiteral("SC"))
-        && fieldIndex == 1) return {
-        {QStringLiteral("0"), QObject::tr("0 — Arbitrary patch / first continuation")},
-        {QStringLiteral("1"), QObject::tr("1 — Rectangular patch")},
-        {QStringLiteral("2"), QObject::tr("2 — Triangular patch")},
-        {QStringLiteral("3"), QObject::tr("3 — Quadrilateral patch")}};
-    if (fieldIndex != 0) return {};
-    if (mnemonic == QStringLiteral("EX")) return {
-        {QStringLiteral("0"), QObject::tr("0 — Applied voltage source")},
-        {QStringLiteral("1"), QObject::tr("1 — Linear-polarized plane wave")},
-        {QStringLiteral("2"), QObject::tr("2 — Right-hand elliptic plane wave")},
-        {QStringLiteral("3"), QObject::tr("3 — Left-hand elliptic plane wave")},
-        {QStringLiteral("4"), QObject::tr("4 — Elementary current source")},
-        {QStringLiteral("5"), QObject::tr("5 — Current-slope voltage source")}};
-    if (mnemonic == QStringLiteral("FR")) return {
-        {QStringLiteral("0"), QObject::tr("0 — Linear frequency stepping")},
-        {QStringLiteral("1"), QObject::tr("1 — Multiplicative frequency stepping")}};
-    if (mnemonic == QStringLiteral("GN")) return {
-        {QStringLiteral("-1"), QObject::tr("-1 — Free space / no ground")},
-        {QStringLiteral("0"), QObject::tr("0 — Finite ground, reflection approximation")},
-        {QStringLiteral("1"), QObject::tr("1 — Perfect conducting ground")},
-        {QStringLiteral("2"), QObject::tr("2 — Finite ground, Sommerfeld/Norton")}};
-    if (mnemonic == QStringLiteral("GE")) return {
-        {QStringLiteral("0"), QObject::tr("0 — No ground-plane connection")},
-        {QStringLiteral("1"), QObject::tr("1 — Geometry connected to ground")}};
-    if (mnemonic == QStringLiteral("LD")) return {
-        {QStringLiteral("-1"), QObject::tr("-1 — Clear all loads")},
-        {QStringLiteral("0"), QObject::tr("0 — Series RLC")},
-        {QStringLiteral("1"), QObject::tr("1 — Parallel RLC")},
-        {QStringLiteral("2"), QObject::tr("2 — Distributed series RLC")},
-        {QStringLiteral("3"), QObject::tr("3 — Distributed parallel RLC")},
-        {QStringLiteral("4"), QObject::tr("4 — Fixed complex impedance")},
-        {QStringLiteral("5"), QObject::tr("5 — Wire conductivity")}};
-    return {};
-}
-
-auto choiceLabel(const QString& mnemonic, int fieldIndex, const QString& value) -> QString
-{
-    const auto choices = choicesFor(mnemonic, fieldIndex);
-    const auto found = std::ranges::find(choices, value, &FieldChoice::value);
-    return found == choices.end() ? value : found->label;
 }
 
 template<typename Value>
@@ -368,7 +320,7 @@ public:
     {
         if (index.column() < 2) return QStyledItemDelegate::createEditor(parent, option, index);
         const auto mnemonic = index.siblingAtColumn(1).data().toString();
-        const auto choices = choicesFor(mnemonic, index.column()-2);
+        const auto choices = cardFieldChoices(mnemonic, index.column()-2);
         if (!choices.empty()) {
             auto* editor = new QComboBox(parent);
             for (const auto& choice : choices) editor->addItem(choice.label, choice.value);
@@ -413,7 +365,7 @@ public:
             return;
         }
         const auto mnemonic = index.siblingAtColumn(1).data().toString();
-        if (choicesFor(mnemonic, index.column()-2).empty()) {
+        if (cardFieldChoices(mnemonic, index.column()-2).empty()) {
             QStyledItemDelegate::paint(painter, option, index);
             return;
         }
@@ -422,7 +374,7 @@ public:
         combo.state = option.state | QStyle::State_Enabled;
         combo.palette = option.palette;
         combo.fontMetrics = option.fontMetrics;
-        combo.currentText = choiceLabel(mnemonic, index.column()-2, index.data().toString());
+        combo.currentText = cardFieldChoiceLabel(mnemonic, index.column()-2, index.data().toString());
         const auto* style = option.widget == nullptr ? QApplication::style() : option.widget->style();
         style->drawComplexControl(QStyle::CC_ComboBox, &combo, painter, option.widget);
         style->drawControl(QStyle::CE_ComboBoxLabel, &combo, painter, option.widget);
@@ -433,7 +385,7 @@ public:
         auto result = QStyledItemDelegate::sizeHint(option, index);
         if (index.column() < 2) return result;
         const auto mnemonic = index.siblingAtColumn(1).data().toString();
-        const auto choices = choicesFor(mnemonic, index.column()-2);
+        const auto choices = cardFieldChoices(mnemonic, index.column()-2);
         if (choices.empty()) return result;
         auto width = 0;
         for (const auto& choice : choices)
@@ -445,16 +397,17 @@ public:
 
 }
 
-StructuredCardEditor::StructuredCardEditor(QWidget* parent) : QWidget(parent)
+StructuredCardEditor::StructuredCardEditor(Families families, QWidget* parent)
+    : QWidget(parent), shown_(std::move(families))
 {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(6, 6, 6, 6);
-    description_ = new QLabel(this);
-    description_->setWordWrap(true);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(2);
     auto* actions = new QHBoxLayout;
+    actions->setContentsMargins(4, 0, 4, 0);
     addButton_ = new QPushButton(this);
     addButton_->setObjectName(QStringLiteral("structuredAddCardButton"));
-    deleteButton_ = new QPushButton(tr("Delete Selected Card"), this);
+    deleteButton_ = new QPushButton(tr("Delete"), this);
     deleteButton_->setObjectName(QStringLiteral("structuredDeleteCardButton"));
     actions->addWidget(addButton_);
     actions->addWidget(deleteButton_);
@@ -481,9 +434,10 @@ StructuredCardEditor::StructuredCardEditor(QWidget* parent) : QWidget(parent)
     splitter->addWidget(families_);
     splitter->addWidget(table_);
     splitter->setStretchFactor(1, 1);
-    layout->addWidget(description_);
     layout->addLayout(actions);
     layout->addWidget(splitter, 1);
+    const auto single = !shown_.exclude && shown_.names.size() == 1;
+    families_->setVisible(!single);
 
     connect(families_, &QTreeWidget::currentItemChanged, this,
         [this](QTreeWidgetItem* current) {
@@ -499,6 +453,12 @@ StructuredCardEditor::StructuredCardEditor(QWidget* parent) : QWidget(parent)
         emit cardSelected(table_->item(table_->currentRow(), 0)->data(SourceLineRole).toULongLong());
         updateActions();
     });
+    // Editable cells take a double-click for editing; the read-only Line cell and Enter
+    // activate the row.
+    connect(table_, &QTableWidget::itemActivated, this, [this](QTableWidgetItem* item) {
+        if (const auto* line = table_->item(item->row(), 0))
+            emit cardActivated(line->data(SourceLineRole).toULongLong());
+    });
     connect(table_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
         if (!updating_) commitCell(item);
     });
@@ -510,7 +470,7 @@ StructuredCardEditor::StructuredCardEditor(QWidget* parent) : QWidget(parent)
             const auto mnemonic = table_->item(item->row(), 1)->text();
             const auto fieldIndex = item->column() - 2;
             if (fieldType(mnemonic, fieldIndex) != FieldType::Number
-                || !choicesFor(mnemonic, fieldIndex).empty()) return;
+                || !cardFieldChoices(mnemonic, fieldIndex).empty()) return;
             const auto sourceLine = table_->item(item->row(), 0)
                 ->data(SourceLineRole).toULongLong();
             const auto parameterLine = parameterControlledFields_.find(sourceLine);
@@ -535,11 +495,6 @@ StructuredCardEditor::StructuredCardEditor(QWidget* parent) : QWidget(parent)
     connect(addButton_, &QPushButton::clicked, this, [this] {
         const auto familyIndex = currentFamilyIndex();
         if (familyIndex < 0) return;
-        // No NT default: an NT port with zero admittance carries no current and opens its wire.
-        if (families()[static_cast<std::size_t>(familyIndex)].mnemonic == QStringLiteral("NT")) {
-            QTimer::singleShot(0, this, [this] { emit networkDraftRequested(); });
-            return;
-        }
         const auto cardText = defaultCard(familyIndex);
         if (cardText.isEmpty()) return;
         QTimer::singleShot(0, this, [this, cardText] { emit cardAddRequested(cardText); });
@@ -583,7 +538,7 @@ void StructuredCardEditor::focusParameterizableField()
             if (item == nullptr) continue;
             const auto fieldIndex = column-2;
             if (fieldType(mnemonic, fieldIndex) != FieldType::Number
-                || !choicesFor(mnemonic, fieldIndex).empty()) continue;
+                || !cardFieldChoices(mnemonic, fieldIndex).empty()) continue;
             const auto parameterLine = parameterControlledFields_.find(sourceLine);
             const auto parameterControlled = parameterLine != parameterControlledFields_.end()
                 && parameterLine->second.contains(static_cast<std::size_t>(fieldIndex));
@@ -604,7 +559,8 @@ auto StructuredCardEditor::selectCard(std::size_t sourceLine) -> bool
     const auto family = std::ranges::find_if(families(), [&card](const auto& candidate) {
         return belongsTo(*card, candidate);
     });
-    if (family == families().end()) return false;
+    if (family == families().end()
+        || !shows(static_cast<int>(std::distance(families().begin(), family)))) return false;
     families_->setCurrentItem(familyItem(static_cast<int>(std::distance(families().begin(), family))));
     for (auto row = 0; row < table_->rowCount(); ++row) {
         const auto* item = table_->item(row, 0);
@@ -619,10 +575,11 @@ auto StructuredCardEditor::selectCard(std::size_t sourceLine) -> bool
 
 void StructuredCardEditor::refreshFamilies()
 {
-    const auto previous = currentFamilyIndex();
+    auto previous = currentFamilyIndex();
     const QSignalBlocker blocker(families_);
     families_->clear();
     for (std::size_t index = 0; index < families().size(); ++index) {
+        if (!shows(static_cast<int>(index))) continue;
         const auto& family = families()[index];
         const auto count = std::ranges::count_if(document_.cards(), [&family](const auto& card) {
             return belongsTo(card, family);
@@ -638,9 +595,11 @@ void StructuredCardEditor::refreshFamilies()
         auto* item = new QTreeWidgetItem(category,
             {QStringLiteral("%1 (%2)").arg(family.title).arg(count)});
         item->setData(0, FamilyIndexRole, static_cast<int>(index));
+        item->setToolTip(0, family.description);
+        if (previous < 0) previous = static_cast<int>(index);
     }
     families_->expandAll();
-    families_->setCurrentItem(familyItem(previous >= 0 ? previous : 0));
+    families_->setCurrentItem(familyItem(previous));
 }
 
 void StructuredCardEditor::refreshTable()
@@ -649,14 +608,14 @@ void StructuredCardEditor::refreshTable()
     if (familyIndex < 0) {
         table_->clear();
         table_->setRowCount(0);
-        description_->setText(tr("Choose a NEC card type."));
         updateActions();
         return;
     }
     const auto& family = families()[static_cast<std::size_t>(familyIndex)];
     updating_ = true;
     const QSignalBlocker blocker(table_);
-    description_->setText(family.description + tr(" Double-click a field to edit its mapped source card."));
+    table_->setToolTip(family.description + tr(" Double-click a field to edit it; right-click "
+        "a number to parameterize it or link an SY symbol."));
     auto fieldCount = family.fields.size();
     for (const auto& card : document_.cards()) {
         if (belongsTo(card, family))
@@ -672,6 +631,16 @@ void StructuredCardEditor::refreshTable()
     table_->clear();
     table_->setColumnCount(headers.size());
     table_->setHorizontalHeaderLabels(headers);
+    // A field's meaning and unit depend on the card's type; the header names the usual one.
+    const auto typeNote = family.mnemonic == QStringLiteral("LD")
+        ? tr("Series or parallel RLC: R Ω, L H, C F (per metre when distributed). "
+             "Type 4: R Ω, X Ω. Type 5: σ S/m.")
+        : family.mnemonic == QStringLiteral("EX")
+        ? tr("Voltage source: real and imaginary volts. Plane wave: θ, φ, η in degrees. "
+             "Current source: X, Y, Z in metres.")
+        : QString{};
+    for (auto column = 6; column < table_->columnCount() && !typeNote.isEmpty(); ++column)
+        table_->horizontalHeaderItem(column)->setToolTip(typeNote);
     table_->setRowCount(0);
     const auto cards = document_.cards();
     for (std::size_t cardIndex = 0; cardIndex < cards.size(); ++cardIndex) {
@@ -747,11 +716,6 @@ void StructuredCardEditor::updateActions()
             addEnabled = false;
             disabledReason = tr("Use the NEC deck geometry-units selector to add GS while preserving physical dimensions.");
         }
-        if (family.mnemonic == QStringLiteral("NT")) {
-            addButton_->setText(tr("Add NT in Loads && Networks…"));
-            disabledReason = tr("Opens a new network in Loads & Networks. It is added to the "
-                                "deck once you enter its admittances.");
-        }
         if ((family.mnemonic == QStringLiteral("EX") || family.mnemonic == QStringLiteral("LD")
                 || family.mnemonic == QStringLiteral("TL") || family.mnemonic == QStringLiteral("NT"))
             && wireDefaults().empty()) {
@@ -806,17 +770,17 @@ auto StructuredCardEditor::validateRow(int row) -> bool
             && !parsesAs<double>(fields[fieldIndex])) {
             error = tr("Enter a numeric value.");
         } else {
-            const auto choices = choicesFor(mnemonic, fieldIndex);
+            const auto choices = cardFieldChoices(mnemonic, fieldIndex);
             if (!choices.empty()
                 && std::ranges::find(choices, fields[fieldIndex], &FieldChoice::value) == choices.end())
                 error = tr("Choose a supported value from the dropdown.");
             if (error.isEmpty()) error = semanticFieldError(mnemonic, fields, fieldIndex);
         }
         cell->setBackground(error.isEmpty() ? QBrush{} : QBrush{QColor(255, 205, 205)});
-        const auto choices = choicesFor(mnemonic, fieldIndex);
+        const auto choices = cardFieldChoices(mnemonic, fieldIndex);
         cell->setToolTip(error.isEmpty()
                 ? (choices.empty() ? fieldHelp(mnemonic, fieldIndex)
-                                   : choiceLabel(mnemonic, fieldIndex, fields[fieldIndex]))
+                                   : cardFieldChoiceLabel(mnemonic, fieldIndex, fields[fieldIndex]))
                 : error);
         valid = valid && error.isEmpty();
     }
@@ -880,6 +844,14 @@ auto StructuredCardEditor::defaultCard(int familyIndex) const -> QString
             .arg(wires.front().first).arg((wires.front().second+1)/2)
             .arg(second.first).arg((second.second+1)/2);
     }
+    // A 50 Ω series connection between the ports: a network with no admittance would open
+    // its wires.
+    if (family.mnemonic == QStringLiteral("NT") && !wires.empty()) {
+        const auto& second = wires.size() > 1 ? wires[1] : wires.front();
+        return QStringLiteral("NT %1 %2 %3 %4 0.02 0 -0.02 0 0.02 0")
+            .arg(wires.front().first).arg((wires.front().second+1)/2)
+            .arg(second.first).arg((second.second+1)/2);
+    }
     // An elevation cut through Az 0°, front and back.
     if (family.mnemonic == QStringLiteral("RP")) return QStringLiteral("RP 0 37 2 1000 0 0 5 180 0 0");
     if (family.mnemonic == QStringLiteral("XQ")) return QStringLiteral("XQ 0");
@@ -892,6 +864,12 @@ auto StructuredCardEditor::currentFamilyIndex() const -> int
     const auto* item = families_->currentItem();
     return item == nullptr || !item->data(0, FamilyIndexRole).isValid()
         ? -1 : item->data(0, FamilyIndexRole).toInt();
+}
+
+auto StructuredCardEditor::shows(int familyIndex) const -> bool
+{
+    const auto& mnemonic = families()[static_cast<std::size_t>(familyIndex)].mnemonic;
+    return shown_.names.contains(mnemonic) != shown_.exclude;
 }
 
 auto StructuredCardEditor::familyItem(int familyIndex) const -> QTreeWidgetItem*

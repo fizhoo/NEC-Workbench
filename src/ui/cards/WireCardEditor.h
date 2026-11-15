@@ -10,7 +10,6 @@
 #include <unordered_set>
 
 class QPushButton;
-class QLabel;
 class QTableWidget;
 class QTableWidgetItem;
 
@@ -33,6 +32,8 @@ public:
 
 signals:
     void wireSelected(int tag);
+    // A double-click on a read-only cell, or Enter: open the wire's own editor.
+    void wireActivated(int tag);
     void wireEdited(model::Wire original, model::Wire updated);
     void addWireRequested();
     void duplicateWireRequested(int tag);
@@ -51,7 +52,6 @@ private:
     void applyGauge(int tag, int gauge);
 
     QTableWidget* table_{};
-    QLabel* instructions_{};
     QPushButton* duplicateButton_{};
     QPushButton* deleteButton_{};
     model::AntennaModel model_;

@@ -53,7 +53,19 @@ public:
     // Reads the ranges again, after the optimizer's change.
     void refreshRanges();
 
+    // Folded, only the header shows, with Live and Reset. Clicking the header folds or
+    // unfolds it, and that choice is remembered.
+    [[nodiscard]] auto isFolded() const -> bool;
+    // Folds for room while a long form shows in the pane, unless the user unfolds it again.
+    void setAutoFolded(bool folded);
+    [[nodiscard]] auto unfoldedHeight() const -> int;
+    // Called when the section folds or unfolds.
+    void setFoldChangedCallback(std::function<void()> callback);
+
     [[nodiscard]] auto sizeHint() const -> QSize override;
+
+protected:
+    auto eventFilter(QObject* watched, QEvent* event) -> bool override;
 
 private:
     struct Row;
@@ -65,6 +77,7 @@ private:
     void preview(const Row& row, double value);
     [[nodiscard]] auto changesFromBaseline() const -> Reset;
     void updateReset();
+    void applyFold();
 
     std::vector<nec::SymbolDefinition> variables_;
     // Ranges set here or first seen, for the session; other variables start afresh.
@@ -73,6 +86,12 @@ private:
     QWidget* rowsWidget_{};
     QVBoxLayout* rowsLayout_{};
     QLabel* empty_{};
+    QWidget* header_{};
+    QLabel* heading_{};
+    QWidget* scroll_{};
+    bool userFolded_{};
+    bool autoFolded_{};
+    bool keptOpen_{};
     QCheckBox* live_{};
     QToolButton* reset_{};
     std::unordered_map<std::string, std::string> baseline_;
@@ -83,6 +102,7 @@ private:
     std::function<void(const nec::SymbolDefinition&, double)> valueChanged_;
     std::function<void(const nec::SymbolDefinition&, double)> preview_;
     std::function<void(const Reset&)> resetRequested_;
+    std::function<void()> foldChanged_;
 };
 
 }

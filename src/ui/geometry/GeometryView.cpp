@@ -66,7 +66,8 @@ GeometryView::GeometryView(geometry::ProjectionPlane plane, QWidget* parent)
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
     setCursor(Qt::CrossCursor);
-    setMinimumSize(320, 240);
+    // Narrow enough that a widened table column leaves the geometry on screen.
+    setMinimumSize(200, 240);
     setAccessibleName(planeName(plane_) + tr(" geometry view"));
     setToolTip(tr("Drag endpoint to reshape; drag wire to move; middle/Alt+drag to pan; wheel to zoom"));
 }

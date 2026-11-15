@@ -3,8 +3,10 @@
 #include "ui/DisplayFormat.h"
 #include "ui/ElidedLabel.h"
 
+#include <QApplication>
 #include <QCheckBox>
 #include <QDoubleSpinBox>
+#include <QEvent>
 #include <QSettings>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -101,7 +103,12 @@ VariablesSection::VariablesSection(QWidget* parent) : QWidget(parent)
     auto* headerLayout = new QHBoxLayout(header);
     headerLayout->setContentsMargins(6, 0, 4, 0);
     headerLayout->setSpacing(6);
-    auto* heading = new QLabel(tr("VARIABLES"), header);
+    heading_ = new QLabel(header);
+    auto* heading = heading_;
+    header_ = header;
+    header->setObjectName(QStringLiteral("variablesHeader"));
+    header->setCursor(Qt::PointingHandCursor);
+    header->installEventFilter(this);
     auto font = heading->font();
     font.setBold(true);
     font.setPointSizeF(font.pointSizeF() * 0.85);
@@ -135,6 +142,7 @@ VariablesSection::VariablesSection(QWidget* parent) : QWidget(parent)
     rowsLayout_->setContentsMargins(4, 2, 4, 2);
     rowsLayout_->setSpacing(1);
     auto* scroll = new QScrollArea(this);
+    scroll_ = scroll;
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidgetResizable(true);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -142,6 +150,8 @@ VariablesSection::VariablesSection(QWidget* parent) : QWidget(parent)
     layout->addWidget(header);
     layout->addWidget(empty_);
     layout->addWidget(scroll, 1);
+    userFolded_ = QSettings{}.value(QStringLiteral("variables/folded"), false).toBool();
+    applyFold();
     stepTimer_ = new QTimer(this);
     stepTimer_->setSingleShot(true);
     stepTimer_->setInterval(StepPauseMs);
@@ -263,9 +273,62 @@ void VariablesSection::refreshRanges()
 auto VariablesSection::sizeHint() const -> QSize
 {
     // As tall as the rows, so the properties pane gets the rest of the column.
-    return {QWidget::sizeHint().width(), layout()->itemAt(0)->sizeHint().height()
-        + (empty_->isVisible() ? empty_->sizeHint().height() : 0)
-        + rowsWidget_->sizeHint().height() + 2};
+    return {QWidget::sizeHint().width(),
+        isFolded() ? header_->sizeHint().height() : unfoldedHeight()};
+}
+
+auto VariablesSection::unfoldedHeight() const -> int
+{
+    return header_->sizeHint().height()
+        + (variables_.empty() ? empty_->sizeHint().height() : rowsWidget_->sizeHint().height() + 2);
+}
+
+auto VariablesSection::isFolded() const -> bool
+{
+    return userFolded_ || (autoFolded_ && !keptOpen_);
+}
+
+void VariablesSection::setAutoFolded(bool folded)
+{
+    // Never fold away a value being typed or a slider being moved.
+    if (folded && isAncestorOf(QApplication::focusWidget())) return;
+    if (autoFolded_ == folded) return;
+    autoFolded_ = folded;
+    // Unfolding by hand while folded for room holds until the room is back.
+    if (!folded) keptOpen_ = false;
+    applyFold();
+}
+
+auto VariablesSection::eventFilter(QObject* watched, QEvent* event) -> bool
+{
+    if (watched == header_ && event->type() == QEvent::MouseButtonRelease) {
+        if (isFolded()) {
+            userFolded_ = false;
+            keptOpen_ = autoFolded_;
+        } else {
+            userFolded_ = true;
+        }
+        QSettings{}.setValue(QStringLiteral("variables/folded"), userFolded_);
+        applyFold();
+        return true;
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void VariablesSection::applyFold()
+{
+    const auto folded = isFolded();
+    heading_->setText(folded ? tr("▸ VARIABLES") : tr("▾ VARIABLES"));
+    header_->setToolTip(folded ? tr("Show the variables") : tr("Fold the variables to one line"));
+    scroll_->setVisible(!folded);
+    empty_->setVisible(!folded && variables_.empty());
+    updateGeometry();
+    if (foldChanged_) foldChanged_();
+}
+
+void VariablesSection::setFoldChangedCallback(std::function<void()> callback)
+{
+    foldChanged_ = std::move(callback);
 }
 
 auto VariablesSection::rangeOf(const nec::SymbolDefinition& variable) const -> Range
@@ -286,6 +349,11 @@ void VariablesSection::rebuild()
 {
     stepTimer_->stop();
     steppingRow_ = nullptr;
+    // A focused value box finishes editing as it is deleted; its row must not hear of it.
+    for (const auto& row : rows_) row->widget->disconnect(this);
+    for (const auto& row : rows_) {
+        for (auto* child : row->widget->findChildren<QWidget*>()) child->disconnect(this);
+    }
     rows_.clear();
     while (auto* item = rowsLayout_->takeAt(0)) {
         delete item->widget();
@@ -350,7 +418,7 @@ void VariablesSection::rebuild()
         rows_.push_back(std::move(row));
     }
     rowsLayout_->addStretch();
-    empty_->setVisible(variables_.empty());
+    empty_->setVisible(!isFolded() && variables_.empty());
     updateGeometry();
 }
 

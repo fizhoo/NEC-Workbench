@@ -14,6 +14,12 @@ namespace necwb::nec {
 [[nodiscard]] auto continuesNetworkGroup(const NecCard& card) -> bool;
 // Zero-based source index at which a new NT or TL card joins the deck's last NT/TL group, so
 // it adds to the existing networks instead of discarding them. Empty when the deck has none.
+// Zero-based source index for a new EX, LD, TL or NT card: a TL or NT joins the last NT/TL
+// group; otherwise the card goes right after the last EX, LD, TL or NT card, or after GE when
+// there is none, and always before the first FR, RP, XQ or EN, which would otherwise run
+// without it.
+[[nodiscard]] auto setupCardInsertionIndex(const NecDocument& document, NecCardKind kind)
+    -> std::size_t;
 [[nodiscard]] auto networkCardInsertionIndex(const NecDocument& document)
     -> std::optional<std::size_t>;
 

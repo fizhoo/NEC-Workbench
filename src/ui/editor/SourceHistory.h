@@ -25,7 +25,6 @@ public:
         // the raw source.
         int destination{-1};
         int geometryTab{};
-        int sourceTab{};
     };
 
     SourceHistory(NecEditor* editor, QWidget* window);
