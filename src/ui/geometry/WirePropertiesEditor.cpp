@@ -221,7 +221,7 @@ void WirePropertiesEditor::showLinkedFields()
         font.setItalic(linked);
         control->setFont(font);
         control->setToolTip(linked ? tr("ƒx Linked to %1\nChange it under Variables, or unlink "
-            "the field in the Cards tab.").arg(expression) : QString{});
+            "the field in the Wires table.").arg(expression) : QString{});
     }
     gaugeControl_->setEnabled(original_.editable && linked_[FieldCount - 1].isEmpty());
     // The pane names the wire; this line explains what it cannot edit here.

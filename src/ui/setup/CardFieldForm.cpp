@@ -179,7 +179,7 @@ void CardFieldForm::rebuild()
                 font.setItalic(true);
                 field.text->setFont(font);
                 field.text->setToolTip(tr("ƒx Linked to %1\nChange it under Variables, or unlink "
-                    "the field in the Cards table.").arg(value));
+                    "the field in its card table.").arg(value));
             }
             const auto position = fields_.size();
             connect(field.text, &QLineEdit::textEdited, this, [this, position] {

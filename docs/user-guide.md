@@ -114,12 +114,18 @@ and the Parameters table for **Variables**. The tree takes the rows it shows, up
 40% of the column, and the variables up to about 25%; each scrolls beyond that, and the
 pane takes the rest.
 
-Selecting the **Wires**, **Sources**, **Loads**, **Trans. lines**, or **Networks** group
-opens that table in the **Cards** tab of the bottom panel, across the window's width under
-the geometry, opening the panel if it was collapsed. Selecting one source, load, line, or
-network, in the tree, in geometry, or in its Cards row, shows its form in the pane and
-selects it everywhere else. Right-click a wire in geometry to add a source or a load, or
-pick a transmission line's two ends; the new item's form opens in the pane.
+Selecting the **Wires**, **Sources**, **Loads**, **Trans. lines**, **Networks**, or
+**Other** group shows that group's card table in the pane and folds the variables while it
+shows. **⇔** in the pane header widens the column so the whole table fits, up to about 65%
+of the window, narrowing the results column first; the geometry stays on screen. Click
+**⇔** again, or select anything that is not a table, to put the column back. The sources
+table has the reference impedance (Z0) on a line above it.
+
+Clicking a table row selects its item in the tree and geometry and keeps the table;
+double-click the row's Line cell, or press `Enter`, to open its form. Selecting one source,
+load, line, or network in the tree or in geometry shows its short form in the pane. Right-
+click a wire in geometry to add a source or a load, or pick a transmission line's two ends;
+the new item's form opens in the pane.
 
 Fields written as `SY` symbols or expressions show **ƒx**, are read-only, and name the
 expression in their tooltip: change them through the variable. Applying a wire, source,
@@ -172,21 +178,21 @@ to open the Validation window.
 ## Model
 
 The model is edited in the **geometry editor** (2D and 3D geometry) in the center of the
-main window, in the properties pane and variables, in the **Cards** tab of the bottom
-panel, and in the **NEC Deck** (raw source). **Model → NEC Deck**, or Deck in the model tree, shows the deck in
+main window, in the properties pane (forms and card tables) and variables, and in the
+**NEC Deck** (raw source). **Model → NEC Deck**, or Deck in the model tree, shows the deck in
 the center in place of the geometry; **← Geometry** or `Esc` returns. **Model → Geometry
 Editor** brings the geometry back with the view focused.
 
 ### Geometry
 
-The XY, XZ, YZ, and 3D views share selection with the Cards tables and the model tree.
+The XY, XZ, YZ, and 3D views share selection with the card tables and the model tree.
 Ordinary `GW` wires can be selected and edited. The 2D views support endpoint and
 whole-wire dragging, snapping, fitting, panning, and zooming. Right-click a wire
 for properties, splitting, deletion, source creation, or AWG sizing.
 
 Generated geometry—such as arcs, helices, transformations, and surface patches—is
 displayed when supported but remains graphically read-only. Edit its originating
-card under **Cards → Other** or in Raw Source.
+card in the **Other** table or in Raw Source.
 
 Display units do not change model dimensions. Deck units and ordered `GS` scaling
 remain separate from display and snap settings.
@@ -198,7 +204,7 @@ Parameters table. Resolved Value is the evaluated number, not an inferred physic
 
 To parameterize a field:
 
-1. Open the **Cards** tab of the bottom panel and the table for the card.
+1. Select the card's group in the model tree to show its table.
 2. Right-click a continuous numeric cell.
 3. Create a new parameter or link an existing `SY` definition.
 
@@ -211,10 +217,10 @@ opposite current value, which supports symmetric geometry such as `-half_length`
 
 ### NEC Deck and Cards
 
-The NEC Deck's raw source and the **Cards** tables operate on the same document.
+The NEC Deck's raw source and the card tables operate on the same document.
 
 - Use Raw Source for unrestricted deck editing and unsupported extensions.
-- Use the Cards tables (Wires, Sources, Loads, Transmission lines, Networks, Other) for
+- Use the card tables (Wires, Sources, Loads, Transmission lines, Networks, Other) for
   labels, choices, validation, and source mapping. The `EX` and `LD` type cells are lists
   such as "0 — Series RLC"; column headers carry units (R Ω, L H, C F, Z0 Ω, Y11 G S).
 - Double-click an editable cell to change it; each cell edit is one undoable step. Fields
@@ -635,7 +641,7 @@ open model.
 ## Optimize
 
 Optimization consumes existing parameters. It does not decide which NEC fields a
-parameter controls. Use **Choose Parameter Fields…** to jump to the Cards tab when
+parameter controls. Use **Choose Parameter Fields…** to jump to the wire table when
 another field must be parameterized.
 
 ### Search Methods
