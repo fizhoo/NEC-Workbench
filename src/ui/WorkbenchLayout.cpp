@@ -145,7 +145,9 @@ auto WorkbenchLayout::eventFilter(QObject* watched, QEvent* event) -> bool
 void WorkbenchLayout::applyColumnWidths(int left, int right)
 {
     const auto* leftColumn = split_->widget(LeftPane);
-    left = std::clamp(left, leftColumn->minimumSizeHint().width(), leftColumn->maximumWidth());
+    // A minimum above the maximum (large fonts) wins, as it does in Qt's own layouts.
+    const auto minimum = leftColumn->minimumSizeHint().width();
+    left = std::clamp(left, minimum, std::max(minimum, leftColumn->maximumWidth()));
     if (right > 0) right = std::max(right, split_->widget(RightPane)->minimumSizeHint().width());
     const auto center = split_->width() - 2 * split_->handleWidth() - left - right;
     split_->setSizes({left, std::max(0, center), right});
@@ -163,8 +165,8 @@ void WorkbenchLayout::expandLeftColumn(int width)
     const auto center = center_->minimumSizeHint().width();
     auto right = expandedFrom_->right;
     if (right > 0) {
-        right = std::clamp(available - width - center,
-            split_->widget(RightPane)->minimumSizeHint().width(), right);
+        const auto minimum = split_->widget(RightPane)->minimumSizeHint().width();
+        right = std::clamp(available - width - center, minimum, std::max(minimum, right));
     }
     applyColumnWidths(std::min(std::max(width, expandedFrom_->left), available - center - right),
         right);

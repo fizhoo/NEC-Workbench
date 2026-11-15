@@ -329,8 +329,14 @@ if(NECWB_BUILD_TESTS)
         add_executable(necwb_plot_tests tests/PlotSmokeTests.cpp)
         target_link_libraries(necwb_plot_tests PRIVATE necwb_ui Qt6::Test)
         add_test(NAME necwb_plot_tests COMMAND necwb_plot_tests)
+        set(NECWB_PLOT_TEST_ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_FORCE_STDERR_LOGGING=1")
+        # Offscreen Qt on Windows looks for fonts beside Qt, which ships none.
+        if(WIN32)
+            file(TO_CMAKE_PATH "$ENV{WINDIR}/Fonts" NECWB_WINDOWS_FONTS)
+            list(APPEND NECWB_PLOT_TEST_ENVIRONMENT "QT_QPA_FONTDIR=${NECWB_WINDOWS_FONTS}")
+        endif()
         set_tests_properties(necwb_plot_tests PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_FORCE_STDERR_LOGGING=1")
+            ENVIRONMENT "${NECWB_PLOT_TEST_ENVIRONMENT}")
 
         add_executable(necwb_optimization_tests tests/OptimizationEvaluatorTests.cpp)
         target_link_libraries(necwb_optimization_tests PRIVATE necwb_ui)
