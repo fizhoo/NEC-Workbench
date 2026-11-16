@@ -5,6 +5,7 @@
 #include "model/WireGeometry.h"
 #include "ui/DisplayFormat.h"
 #include "ui/analysis/CurrentAntennaView.h"
+#include "ui/analysis/RadiationSurfaceMesh.h"
 #include "ui/analysis/SweepPlotsView.h"
 
 #include <QComboBox>
@@ -24,6 +25,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
+#include <QSettings>
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QStringList>
@@ -878,6 +880,13 @@ public:
     void setLayerVisibility(bool antenna, bool currents, bool radiation)
     { showAntenna_ = antenna; showCurrents_ = currents; showRadiation_ = radiation; update(); }
     void setOverlayVisible(bool visible) { showOverlay_ = visible; update(); }
+    void setSurfaceLook(SurfaceStyle style, bool seeThrough)
+    {
+        style_ = style; seeThrough_ = seeThrough;
+        setProperty("surfaceStyle", static_cast<int>(style));
+        setProperty("seeThrough", seeThrough);
+        update();
+    }
     void setHoverTextCallback(HoverTextCallback callback)
     { hoverTextCallback_ = std::move(callback); }
     void setForwardDirectionCallback(ForwardDirectionCallback callback)
@@ -921,7 +930,7 @@ protected:
         panning_ = event->button() == Qt::MiddleButton
             || event->modifiers().testFlag(Qt::ShiftModifier);
     }
-    void mouseReleaseEvent(QMouseEvent*) override { dragging_ = false; panning_ = false; }
+    void mouseReleaseEvent(QMouseEvent*) override { dragging_ = false; panning_ = false; update(); }
     void mouseMoveEvent(QMouseEvent* event) override
     {
         cursor_ = event->position(); tracking_ = true;
@@ -963,15 +972,33 @@ protected:
         const auto hasRadiation = maximum.has_value();
         const auto maxGain = maximum.value_or(0.0);
         const auto maximumCurrent = showCurrents_ ? currentMaximum() : std::nullopt;
-        if (referenceMaximum)
-            drawRadiation(painter, scale, *referenceMaximum, referenceSamples_, true);
-        if (hasRadiation) drawRadiation(painter, scale, maxGain, samples_, false);
         const auto modelExtent = resultModelExtentFromOrigin(model_);
         const auto antennaScale = hasRadiation ? scale * 0.32 : scale * 1.7;
-        drawAxes(painter, scale * 0.34);
-        if (showAntenna_) drawAntenna(painter, antennaScale, modelExtent);
-        if (maximumCurrent)
-            drawCurrents(painter, antennaScale, modelExtent, *maximumCurrent);
+        const auto drawModel = [&] {
+            drawAxes(painter, scale * 0.34);
+            if (showAntenna_) drawAntenna(painter, antennaScale, modelExtent);
+            return maximumCurrent
+                ? drawCurrents(painter, antennaScale, modelExtent, *maximumCurrent) : QString{};
+        };
+        // A shaded surface hides the antenna inside it unless it is see-through.
+        const auto shaded = hasRadiation && style_ != SurfaceStyle::Wireframe;
+        QString currentReadout;
+        if (shaded) {
+            currentReadout = drawModel();
+            drawShadedRadiation(painter, scale, maxGain);
+        }
+        if (referenceMaximum)
+            drawRadiation(painter, scale, *referenceMaximum, referenceSamples_, true);
+        if (hasRadiation && !shaded) drawRadiation(painter, scale, maxGain, samples_, false);
+        if (!shaded) currentReadout = drawModel();
+        if (!currentReadout.isEmpty()) {
+            const QRectF readout(8, height()-31, width()-16, 23);
+            painter.fillRect(readout, palette().brush(QPalette::AlternateBase));
+            painter.setPen(palette().color(QPalette::Mid)); painter.drawRect(readout);
+            painter.setPen(palette().color(QPalette::Text));
+            painter.drawText(readout.adjusted(7, 0, -7, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                currentReadout);
+        }
         if (hasRadiation && tracking_) {
             if (const auto nearest = nearestProjectedSample(
                     cursor_, scale, gainReference(maxGain))) {
@@ -1059,11 +1086,7 @@ private:
                 / -settings_.floorDb,
             0.0, 1.0);
     }
-    [[nodiscard]] static auto gainColor(double ratio) -> QColor
-    {
-        return QColor::fromHsvF((1.0 - std::clamp(ratio, 0.0, 1.0)) * 0.67,
-            0.9, 0.95);
-    }
+    [[nodiscard]] static auto gainColor(double ratio) -> QColor { return turboColor(ratio); }
     void drawColorLegend(QPainter& painter, double top, const QString& title,
         double minimum, double maximum, const QString& unit)
     {
@@ -1138,14 +1161,23 @@ private:
         return nearest.sample != nullptr
             ? std::optional<ProjectedRadiationSample>{nearest} : std::nullopt;
     }
+    [[nodiscard]] auto surfaceView(double scale) const -> SurfaceView
+    { return {yaw_, pitch_, scale, QPointF(width() / 2.0, height() / 2.0) + pan_}; }
     [[nodiscard]] auto project(const model::Point3D& point, double scale) const -> QPointF
+    { return surfaceView(scale).project(point); }
+    void drawShadedRadiation(QPainter& painter, double scale, double maxGain)
     {
-        const auto cy = std::cos(yaw_), sy = std::sin(yaw_), cp = std::cos(pitch_), sp = std::sin(pitch_);
-        const auto rx = cy * point.x - sy * point.y;
-        const auto ry = sy * point.x + cy * point.y;
-        const auto rz = cp * point.z - sp * ry;
-        return {width() / 2.0 + pan_.x() + rx * scale,
-            height() / 2.0 + pan_.y() - rz * scale};
+        std::vector<SurfaceSample> points;
+        const auto reference = gainReference(maxGain);
+        for (const auto& sample : samples_) {
+            const auto gain = analysis::radiationGainDb(sample, settings_.component);
+            if (!std::isfinite(gain) || gain <= -900.0) continue;
+            points.push_back({sample.thetaDegrees, sample.phiDegrees,
+                samplePoint(sample, gain, reference), gainRatio(gain, reference)});
+        }
+        // A coarser surface while dragging keeps a dense pattern moving smoothly.
+        drawRadiationSurface(painter, points, surfaceView(scale),
+            style_ == SurfaceStyle::ShadedGrid, seeThrough_, dragging_ ? 6000 : 40000);
     }
     static auto normalized(const model::Point3D& point, double extent) -> model::Point3D
     { return {point.x/extent, point.y/extent, point.z/extent}; }
@@ -1231,7 +1263,8 @@ private:
             }
         }
     }
-    void drawCurrents(QPainter& painter, double scale, double extent, double maximum)
+    // Returns the readout for the segment under the pointer, if any.
+    auto drawCurrents(QPainter& painter, double scale, double extent, double maximum) -> QString
     {
         painter.save();
         const analysis::SegmentCurrentResult* hovered{};
@@ -1247,7 +1280,7 @@ private:
             const auto start = project(normalized(endpoints->first, extent), scale);
             const auto end = project(normalized(endpoints->second, extent), scale);
             const auto ratio = current.magnitude / std::max(maximum, 1.0e-30);
-            painter.setPen(QPen(QColor::fromHsvF((1.0-ratio)*0.67, 0.9, 0.95), 3.0 + 4.0*ratio));
+            painter.setPen(QPen(gainColor(ratio), 3.0 + 4.0*ratio));
             painter.drawLine(start, end);
             const auto distance = tracking_ ? pointToSegmentDistance(cursor_, start, end) : 10.0;
             if (distance < hoverDistance) {
@@ -1256,16 +1289,11 @@ private:
         }
         if (hovered != nullptr) {
             painter.setPen(QPen(Qt::white, 2)); painter.drawLine(hoveredStart, hoveredEnd);
-            const QRectF readout(8, height()-31, width()-16, 23);
-            painter.fillRect(readout, palette().brush(QPalette::AlternateBase));
-            painter.setPen(palette().color(QPalette::Mid)); painter.drawRect(readout);
-            painter.setPen(palette().color(QPalette::Text));
-            painter.drawText(readout.adjusted(7, 0, -7, 0), Qt::AlignVCenter | Qt::AlignLeft,
-                tr("Wire %1 · Segment %2 · Current %3 A · Phase %4°")
-                    .arg(hovered->wireTag).arg(hovered->segment)
-                    .arg(formatDecimal(hovered->magnitude), formatDecimal(hovered->phaseDegrees)));
         }
         painter.restore();
+        return hovered == nullptr ? QString{} : tr("Wire %1 · Segment %2 · Current %3 A · Phase %4°")
+            .arg(hovered->wireTag).arg(hovered->segment)
+            .arg(formatDecimal(hovered->magnitude), formatDecimal(hovered->phaseDegrees));
     }
     model::AntennaModel model_;
     std::vector<analysis::RadiationSample> samples_;
@@ -1288,6 +1316,8 @@ private:
     bool showCurrents_{true};
     bool showRadiation_{true};
     bool showOverlay_{true};
+    SurfaceStyle style_{SurfaceStyle::ShadedGrid};
+    bool seeThrough_{true};
 };
 
 CurrentDistributionView::CurrentDistributionView(QWidget* parent) : QWidget(parent)
@@ -1994,12 +2024,25 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
     form->addWidget(scale_, 1, 3);
     form->addWidget(new QLabel(tr("Dynamic range"), this), 2, 0);
     form->addWidget(floor_, 2, 1);
+    surfaceStyle_ = new QComboBox(this);
+    surfaceStyle_->setObjectName(QStringLiteral("radiation3DStyle"));
+    surfaceStyle_->addItem(tr("Shaded + grid"), static_cast<int>(SurfaceStyle::ShadedGrid));
+    surfaceStyle_->addItem(tr("Shaded"), static_cast<int>(SurfaceStyle::Shaded));
+    surfaceStyle_->addItem(tr("Wireframe"), static_cast<int>(SurfaceStyle::Wireframe));
+    surfaceStyle_->setCurrentIndex(std::max(0, surfaceStyle_->findData(
+        QSettings{}.value(QStringLiteral("radiation3D/style"), 0).toInt())));
+    form->addWidget(new QLabel(tr("Surface"), this), 2, 2);
+    form->addWidget(surfaceStyle_, 2, 3);
     form->setColumnStretch(1, 1);
     form->setColumnStretch(3, 1);
     auto* layers = new QHBoxLayout;
     antennaControl_ = new QCheckBox(tr("Antenna"), this); antennaControl_->setChecked(true);
     currentControl_ = new QCheckBox(tr("Current Overlay"), this); currentControl_->setChecked(true);
     radiationControl_ = new QCheckBox(tr("Radiation Surface"), this); radiationControl_->setChecked(true);
+    seeThroughControl_ = new QCheckBox(tr("See-through"), this);
+    seeThroughControl_->setObjectName(QStringLiteral("radiation3DSeeThrough"));
+    seeThroughControl_->setToolTip(tr("Show the antenna and the far side through a shaded surface"));
+    seeThroughControl_->setChecked(QSettings{}.value(QStringLiteral("radiation3D/seeThrough"), true).toBool());
     referenceControl_ = new QCheckBox(tr("Show Historical Overlay"), this);
     referenceControl_->setObjectName(QStringLiteral("radiation3DShowReference"));
     referenceControl_->setChecked(false);
@@ -2010,7 +2053,8 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
     exportDataButton_ = new QPushButton(tr("Export CSV…"), this);
     exportDataButton_->setObjectName(QStringLiteral("radiation3DExportData"));
     layers->addWidget(antennaControl_); layers->addWidget(currentControl_);
-    layers->addWidget(radiationControl_); layers->addWidget(referenceControl_);
+    layers->addWidget(radiationControl_); layers->addWidget(seeThroughControl_);
+    layers->addWidget(referenceControl_);
     layers->addStretch(); layers->addWidget(resetView); layers->addWidget(exportImageButton_); layers->addWidget(exportDataButton_);
     summary_ = new QLabel(tr("Run a multi-phi RP analysis to populate the 3D pattern."), this);
     summary_->setObjectName(QStringLiteral("radiation3DSummary")); summary_->setWordWrap(true);
@@ -2043,6 +2087,20 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
     connect(currentControl_, &QCheckBox::toggled, this, updateLayers);
     connect(radiationControl_, &QCheckBox::toggled, this, updateLayers);
     connect(referenceControl_, &QCheckBox::toggled, this, [this] { refresh(); });
+    const auto updateLook = [this] {
+        const auto style = static_cast<SurfaceStyle>(surfaceStyle_->currentData().toInt());
+        seeThroughControl_->setEnabled(style != SurfaceStyle::Wireframe);
+        surface_->setSurfaceLook(style, seeThroughControl_->isChecked());
+    };
+    updateLook();
+    connect(surfaceStyle_, &QComboBox::currentIndexChanged, this, [this, updateLook] {
+        QSettings{}.setValue(QStringLiteral("radiation3D/style"), surfaceStyle_->currentData());
+        updateLook();
+    });
+    connect(seeThroughControl_, &QCheckBox::toggled, this, [updateLook](bool on) {
+        QSettings{}.setValue(QStringLiteral("radiation3D/seeThrough"), on);
+        updateLook();
+    });
     connect(resetView, &QPushButton::clicked, surface_, [this] { surface_->resetView(); });
     connect(exportImageButton_, &QPushButton::clicked, this, [this] { exportImage(); });
     connect(exportDataButton_, &QPushButton::clicked, this, [this] { exportData(); });

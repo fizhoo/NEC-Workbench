@@ -16,7 +16,7 @@ guide and architecture rather than this list.
 
 ## Visualization
 
-- Optional filled or smoothly shaded 3D radiation surfaces with a numeric color scale
+- Smoothly shaded 3D radiation surfaces (per-vertex shading; today each patch is lit flat)
 - Additional polarization and field-component views
 - Near-field parsing and visualization
 

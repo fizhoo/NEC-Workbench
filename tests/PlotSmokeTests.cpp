@@ -3295,6 +3295,26 @@ auto main(int argc, char* argv[]) -> int
         && legendColorsBeforeHover > 100
         && legendColorsDuringHover == legendColorsBeforeHover
         && verticalOrbitTracksPointer;
+    // The surface: shaded with its grid, solid or see-through, or the wireframe, which has
+    // nothing to see through.
+    auto* radiation3DStyle = radiation3D.findChild<QComboBox*>(QStringLiteral("radiation3DStyle"));
+    auto* radiation3DSeeThrough = radiation3D.findChild<QCheckBox*>(
+        QStringLiteral("radiation3DSeeThrough"));
+    auto radiation3DLook = radiation3DStyle != nullptr && radiation3DSeeThrough != nullptr
+        && radiation3DStyle->count() == 3;
+    if (radiation3DLook) {
+        radiation3DStyle->setCurrentIndex(0);
+        radiation3DSeeThrough->setChecked(false);
+        const auto shadedSolid = radiation3DSurface->property("surfaceStyle").toInt() == 0
+            && !radiation3DSurface->property("seeThrough").toBool();
+        radiation3DStyle->setCurrentIndex(2);
+        const auto wireframe = radiation3DSurface->property("surfaceStyle").toInt() == 2
+            && !radiation3DSeeThrough->isEnabled();
+        radiation3DStyle->setCurrentIndex(0);
+        radiation3DSeeThrough->setChecked(true);
+        radiation3DLook = shadedSolid && wireframe && radiation3DSeeThrough->isEnabled()
+            && radiation3DSurface->property("seeThrough").toBool();
+    }
     radiation2DComponent->setCurrentIndex(1);
     radiation2D.setSelectedFrequency(14.2);
     radiation3D.setSelectedFrequency(14.2);
@@ -3346,7 +3366,7 @@ auto main(int argc, char* argv[]) -> int
         && radiation2DFloor->currentData() == radiation3DFloor->currentData();
     const auto radiationMetricsVisible = radiation2DSummary->text().contains(QStringLiteral("HPBW"))
         && radiation3DSummary->text().contains(QStringLiteral("peak"))
-        && radiation3DProbeVisible && radiation3DColorScaleVisible
+        && radiation3DProbeVisible && radiation3DColorScaleVisible && radiation3DLook
         && radiationPerformanceSummary->text().contains(QStringLiteral("Gain 2/2"))
         && radiationPerformanceSummary->text().contains(QStringLiteral("F/B 2/2"))
         && radiationPerformancePlot->property("pointCount").toInt() == 2

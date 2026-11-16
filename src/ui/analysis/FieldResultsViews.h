@@ -169,9 +169,11 @@ private:
     QComboBox* component_{};
     QComboBox* scale_{};
     QComboBox* floor_{};
+    QComboBox* surfaceStyle_{};
     QWidget* controls_{};
     QLabel* summary_{};
     QLabel* hoverReadout_{};
+    QCheckBox* seeThroughControl_{};
     QCheckBox* antennaControl_{};
     QCheckBox* currentControl_{};
     QCheckBox* radiationControl_{};

@@ -180,6 +180,8 @@ if(NECWB_BUILD_GUI)
         src/ui/analysis/CurrentAntennaView.h
         src/ui/analysis/FieldResultsViews.cpp
         src/ui/analysis/FieldResultsViews.h
+        src/ui/analysis/RadiationSurfaceMesh.cpp
+        src/ui/analysis/RadiationSurfaceMesh.h
         src/ui/cards/CardFields.cpp
         src/ui/cards/CardTables.cpp
         src/ui/cards/CardTables.h

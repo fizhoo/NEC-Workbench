@@ -571,9 +571,12 @@ The radiation frequency selector includes only frequencies with pattern data.
   sample grid; it reports the historical overlay as unavailable rather than interpolating.
   Normalized mode normalizes each trace to its own peak for shape comparison;
   Absolute mode places both traces on the same dBi scale.
-- **3D Pattern** renders the available theta/phi mesh with antenna and current
-  overlays. A compatible historical grid appears as a muted dashed wireframe. It
-  does not invent missing angular coverage.
+- **3D Pattern** renders the available theta/phi mesh as a lit surface colored by
+  gain (dark blue at the floor to dark red at the peak), with antenna and current
+  overlays. **Surface** chooses Shaded + grid, Shaded or Wireframe; **See-through**
+  shows the antenna and the far side through a shaded surface. A dense pattern is
+  drawn coarser while you drag. A compatible historical grid appears as a muted
+  dashed wireframe. It does not invent missing angular coverage.
 - **Performance vs Frequency** shows available forward gain, F/B, and F/R metrics,
   with compatible historical curves shown dashed. The line above the plot reads
   "Gain toward El 15°, Az 45°: 5.900 dBi" for the selected frequency. Right-click a
