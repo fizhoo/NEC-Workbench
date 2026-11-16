@@ -105,7 +105,8 @@ The tree lists **Frequency**, **Wires**, **Sources**, **Loads**, **Trans. lines*
 **Networks**, **Ground**, **Requests**, **Z0**, **Other**, **Variables**, **Deck**, and
 **Validation**. Frequency, Ground, Requests, and Z0 (the reference impedance SWR is
 measured against) show their values, such as "144–148 MHz · 41 pts" or "Free space"; the
-groups show their counts. Hover a row for the details. A group with nothing in it is one dim line. Right-click **Wires**,
+groups show their counts. Hover a row for the details. A group with nothing in it is one
+dim line. Right-click **Wires**,
 **Sources**, **Loads**, **Trans. lines**, or **Networks**, or any row in them, and choose
 **Add** to add one; its form opens in the pane. Expand a group to see its wires, sources,
 loads, lines, or networks. Selecting a wire in the tree selects it in the geometry views,
@@ -126,13 +127,15 @@ about 65% of the window, narrowing the results column first; the geometry stays 
 Click **⇔** again, or select a page that fits the column, to put the column back.
 
 Clicking a table row selects its item in the tree and geometry and keeps the table;
-double-click the row's Line cell, or press `Enter`, to open its form. Selecting one source,
+double-click the row's Line cell, press `Enter`, or click the item in the tree to open its
+form. Selecting one source,
 load, line, or network in the tree or in geometry shows its short form in the pane. Right-
 click a wire in geometry to add a source or a load, or pick a transmission line's two ends;
 the new item's form opens in the pane.
 
-Fields written as `SY` symbols or expressions show **ƒx**, are read-only, and name the
-expression in their tooltip: change them through the variable. Applying a wire, source,
+In the forms, fields written as `SY` symbols or expressions show **ƒx**, are read-only,
+and name the expression in their tooltip: change them through the variable, or type over
+them in the Wires table (see [Making Variables](#making-variables)). Applying a wire, source,
 load, line, or network edit rewrites only the fields you changed; the others keep their
 symbols and exact values.
 
@@ -162,8 +165,9 @@ Click the **VARIABLES** header to fold the section to one line, keeping **Live**
 too tall for the column, the variables fold while it shows and unfold when it closes,
 unless you folded them yourself.
 
-**Reset** puts every variable back to its value when the model was opened,
-saved or not; one added since goes back to its first value. It is one undoable step; its tooltip lists what would change.
+**Reset** puts every variable back to its value when the model was opened, saved or not;
+one added since goes back to the value it was created with. It is one undoable step; its
+tooltip lists what would change.
 
 A slider spans the optimizer's minimum and maximum for a variable ticked **Use** in
 Optimize, and otherwise ±25% around the value it had when first shown (−1 to 1 at zero).
@@ -201,16 +205,25 @@ card in the **Other** table or in Raw Source.
 Display units do not change model dimensions. Deck units and ordered `GS` scaling
 remain separate from display and snap settings.
 
-### Parameters
+### Making Variables
 
-Select **Variables** in the model tree to manage `SY` names and expressions in the
-Parameters table. Resolved Value is the evaluated number, not an inferred physical unit.
+A variable is an `SY` card, such as `SY len=5.1`; any card field can use it by name or in
+an expression such as `len/2`. Each one written as a number gets a slider under
+**Variables**, and the optimizer can search it. There are four ways to make one:
 
-To parameterize a field:
+- **Type it into a wire cell.** In the Wires table, type `len` or `len/2` over a
+  coordinate or radius. If `len` is new, a box under the cell asks for its value, filled
+  in, when it can be worked out, with the value that keeps the wire where it is. Enter
+  adds `SY len=…` after the other `SY` cards at the top of the deck; Esc changes nothing. As you type, existing variables are offered with
+  their values. This works in the Wires table only.
+- **Right-click a cell** in any card table and choose **Parameterize Field…** to name a
+  new parameter for its value, or link the field to an existing one.
+- **Add it in the Parameters table:** select **Variables** in the model tree and choose
+  **Add Parameter**, then use its name in a field.
+- **Write the `SY` card** in the NEC Deck.
 
-1. Select the card's group in the model tree to show its table.
-2. Right-click a continuous numeric cell.
-3. Create a new parameter or link an existing `SY` definition.
+The Parameters table lists every `SY` name with its expression; Resolved Value is the
+evaluated number, not an inferred physical unit.
 
 Parameter-controlled cells are marked and retain their source expressions. Integer
 and categorical fields are not currently optimization variables. Parameterizing a
@@ -232,14 +245,10 @@ The NEC Deck's raw source and the card tables operate on the same document.
 - Long numbers, such as those written by geometry drags or the optimizer, are shown
   at 6 significant figures to keep columns narrow. The deck keeps the exact value:
   hover a cell to see it, and editing starts from it.
-- In the wire table, type a name such as `len`, or an expression such as `len/2`, into a
-  coordinate or radius to make it a variable. A name that is not defined yet opens a
-  small box under the cell asking for its value, filled in with the value that keeps the
-  wire as it is when that is simple to work out: Enter creates the `SY` card after the
-  others at the top of the deck, and Esc leaves the cell as it was. As you type, a list
-  offers the variables already defined, with their values.
-- A cell written as an expression shows its value; hover it to see the expression, and
-  type over it to change it. Typing a number there replaces the expression.
+- In the wire table, type a name or an expression into a coordinate or radius to use a
+  variable; see [Making Variables](#making-variables). A cell written as an expression
+  shows its value; hover it to see the expression, and type over it to change it. Typing
+  a number there replaces the expression.
 - Right-click a numeric cell to parameterize it with a named parameter, or to link it to
   an existing one.
 - Selecting a row selects its source, load, line, or network everywhere, or moves the

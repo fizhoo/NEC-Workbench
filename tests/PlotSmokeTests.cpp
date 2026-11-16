@@ -25,6 +25,7 @@
 #include "ui/modeltree/ModelTree.h"
 #include "ui/modeltree/PropertiesPane.h"
 #include "ui/modeltree/VariablesSection.h"
+#include "ui/analysis/RadiationSurfaceMesh.h"
 #include "ui/geometry/WirePropertiesEditor.h"
 #include "ui/geometry/AutoSegmentationDialog.h"
 #include "ui/geometry/GeometryView.h"
@@ -3314,6 +3315,27 @@ auto main(int argc, char* argv[]) -> int
         radiation3DSeeThrough->setChecked(true);
         radiation3DLook = shadedSolid && wireframe && radiation3DSeeThrough->isEnabled()
             && radiation3DSurface->property("seeThrough").toBool();
+    }
+    // A θ×φ grid fills with patches; a single cut has nothing to fill.
+    {
+        std::vector<necwb::ui::SurfaceSample> grid, cut;
+        for (auto theta = 0; theta <= 180; theta += 45)
+            for (auto phi = 0; phi < 360; phi += 45) {
+                const auto t = theta * std::numbers::pi / 180.0, f = phi * std::numbers::pi / 180.0;
+                const necwb::ui::SurfaceSample sample{double(theta), double(phi),
+                    {std::sin(t) * std::cos(f), std::sin(t) * std::sin(f), std::cos(t)}, 0.8};
+                grid.push_back(sample);
+                if (phi == 0) cut.push_back(sample);
+            }
+        QImage canvas(200, 200, QImage::Format_ARGB32);
+        canvas.fill(Qt::white);
+        QPainter painter(&canvas);
+        const necwb::ui::SurfaceView view{0.3, 0.4, 80.0, QPointF(100, 100)};
+        const auto cutDrawn = necwb::ui::drawRadiationSurface(painter, cut, view, true, false, 1000);
+        const auto gridDrawn = necwb::ui::drawRadiationSurface(painter, grid, view, true, false, 1000);
+        painter.end();
+        radiation3DLook = radiation3DLook && !cutDrawn && gridDrawn
+            && canvas.pixelColor(100, 100) != QColor(Qt::white);
     }
     radiation2DComponent->setCurrentIndex(1);
     radiation2D.setSelectedFrequency(14.2);

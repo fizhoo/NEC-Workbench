@@ -38,8 +38,8 @@ struct SurfaceSample {
 
 // The pattern as lit patches between neighbouring samples of its θ×φ grid, drawn far to near,
 // with the grid in a darker shade if `grid`. Over `maxFaces` patches, every second (third, ...)
-// row and column is used.
-void drawRadiationSurface(QPainter& painter, const std::vector<SurfaceSample>& samples,
-    const SurfaceView& view, bool grid, bool seeThrough, std::size_t maxFaces);
+// row and column is used. Returns false, drawing nothing, for a single cut with no grid to fill.
+auto drawRadiationSurface(QPainter& painter, const std::vector<SurfaceSample>& samples,
+    const SurfaceView& view, bool grid, bool seeThrough, std::size_t maxFaces) -> bool;
 
 }

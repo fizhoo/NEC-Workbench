@@ -76,15 +76,15 @@ auto SurfaceView::depth(const model::Point3D& point) const -> double
     return std::cos(pitch) * ry + std::sin(pitch) * point.z;
 }
 
-void drawRadiationSurface(QPainter& painter, const std::vector<SurfaceSample>& samples,
-    const SurfaceView& view, bool grid, bool seeThrough, std::size_t maxFaces)
+auto drawRadiationSurface(QPainter& painter, const std::vector<SurfaceSample>& samples,
+    const SurfaceView& view, bool grid, bool seeThrough, std::size_t maxFaces) -> bool
 {
     std::map<double, std::size_t> thetaIndex, phiIndex;
     for (const auto& sample : samples) {
         thetaIndex.emplace(sample.thetaDegrees, 0);
         phiIndex.emplace(sample.phiDegrees, 0);
     }
-    if (thetaIndex.size() < 2 || phiIndex.size() < 2) return;
+    if (thetaIndex.size() < 2 || phiIndex.size() < 2) return false;
     std::vector<double> phis;
     for (auto index = std::size_t{0}; auto& [theta, slot] : thetaIndex) slot = index++;
     for (auto index = std::size_t{0}; auto& [phi, slot] : phiIndex) {
@@ -160,6 +160,7 @@ void drawRadiationSurface(QPainter& painter, const std::vector<SurfaceSample>& s
         painter.drawPolygon(face.polygon);
     }
     painter.restore();
+    return true;
 }
 
 }

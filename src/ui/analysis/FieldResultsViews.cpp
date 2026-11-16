@@ -981,23 +981,21 @@ protected:
                 ? drawCurrents(painter, antennaScale, modelExtent, *maximumCurrent) : QString{};
         };
         // A shaded surface hides the antenna inside it unless it is see-through.
-        const auto shaded = hasRadiation && style_ != SurfaceStyle::Wireframe;
-        QString currentReadout;
-        if (shaded) {
-            currentReadout = drawModel();
-            drawShadedRadiation(painter, scale, maxGain);
-        }
+        // A single cut has no surface to fill and is drawn as lines.
+        const auto modelFirst = hasRadiation && style_ != SurfaceStyle::Wireframe;
+        const auto currentReadout = modelFirst ? drawModel() : QString{};
+        const auto shaded = modelFirst && drawShadedRadiation(painter, scale, maxGain);
         if (referenceMaximum)
             drawRadiation(painter, scale, *referenceMaximum, referenceSamples_, true);
         if (hasRadiation && !shaded) drawRadiation(painter, scale, maxGain, samples_, false);
-        if (!shaded) currentReadout = drawModel();
-        if (!currentReadout.isEmpty()) {
+        const auto readoutText = modelFirst ? currentReadout : drawModel();
+        if (!readoutText.isEmpty()) {
             const QRectF readout(8, height()-31, width()-16, 23);
             painter.fillRect(readout, palette().brush(QPalette::AlternateBase));
             painter.setPen(palette().color(QPalette::Mid)); painter.drawRect(readout);
             painter.setPen(palette().color(QPalette::Text));
             painter.drawText(readout.adjusted(7, 0, -7, 0), Qt::AlignVCenter | Qt::AlignLeft,
-                currentReadout);
+                readoutText);
         }
         if (hasRadiation && tracking_) {
             if (const auto nearest = nearestProjectedSample(
@@ -1165,7 +1163,7 @@ private:
     { return {yaw_, pitch_, scale, QPointF(width() / 2.0, height() / 2.0) + pan_}; }
     [[nodiscard]] auto project(const model::Point3D& point, double scale) const -> QPointF
     { return surfaceView(scale).project(point); }
-    void drawShadedRadiation(QPainter& painter, double scale, double maxGain)
+    auto drawShadedRadiation(QPainter& painter, double scale, double maxGain) -> bool
     {
         std::vector<SurfaceSample> points;
         const auto reference = gainReference(maxGain);
@@ -1176,7 +1174,7 @@ private:
                 samplePoint(sample, gain, reference), gainRatio(gain, reference)});
         }
         // A coarser surface while dragging keeps a dense pattern moving smoothly.
-        drawRadiationSurface(painter, points, surfaceView(scale),
+        return drawRadiationSurface(painter, points, surfaceView(scale),
             style_ == SurfaceStyle::ShadedGrid, seeThrough_, dragging_ ? 6000 : 40000);
     }
     static auto normalized(const model::Point3D& point, double extent) -> model::Point3D
