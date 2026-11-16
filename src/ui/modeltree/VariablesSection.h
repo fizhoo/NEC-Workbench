@@ -43,7 +43,7 @@ public:
     // Puts back a value typed but not yet applied; false when there is none.
     auto revertTyping() -> bool;
 
-    // The variables as opened or saved, which Reset goes back to.
+    // The variables as opened, which Reset goes back to; one added later keeps its first value.
     void markBaseline();
     // Each variable whose SY expression differs from the baseline, with the baseline's.
     using Reset = std::vector<std::pair<nec::SymbolDefinition, std::string>>;

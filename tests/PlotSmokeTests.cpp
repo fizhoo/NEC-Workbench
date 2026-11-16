@@ -1171,6 +1171,16 @@ auto main(int argc, char* argv[]) -> int
                 const auto cancelled = typeName(0, 4, QStringLiteral("w"), false) == QStringLiteral("0")
                     && text() == deckBefore && wireCells->item(0, 4)->text() == QStringLiteral("0");
                 const auto namesTyped = created && cancelled;
+                // A wire picked in the table is selected in the tree; clicking it there opens it.
+                wireCells->selectRow(0);
+                application.processEvents();
+                auto* wireRow = tree->findItems(QStringLiteral("Wire 1"), Qt::MatchExactly | Qt::MatchRecursive).value(0);
+                const auto tableKept = wireRow != nullptr && tree->currentItem() == wireRow
+                    && pageTitle() == QStringLiteral("Wires");
+                if (wireRow != nullptr) emit tree->itemClicked(wireRow, 0);
+                application.processEvents();
+                const auto wireOpened = tableKept && pageTitle() == QStringLiteral("Wire 1");
+                if (!wireOpened) qWarning() << "wire click" << tableKept << pageTitle();
                 selectGroup(QStringLiteral("Deck"));
                 QMouseEvent click(QEvent::MouseButtonRelease, QPointF(5, 5), header->mapToGlobal(QPointF(5, 5)),
                     Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
@@ -1185,7 +1195,7 @@ auto main(int argc, char* argv[]) -> int
                 cardTables = bottomPanelPlain && groupShows && widened && narrowedAgain && pageWidening
                     && familyRefits && treeAddOpensForm
                     && symbolsKept && rowSelects && lineOpensForm && geometrySelects
-                    && tableAddsPlaced && loadAdded && linePicked && namesTyped && folded && unfolded;
+                    && tableAddsPlaced && loadAdded && linePicked && namesTyped && wireOpened && folded && unfolded;
                 if (!cardTables) {
                     qWarning() << "card tables" << bottomPanelPlain << groupShows << widened << pageWidening
                                << familyRefits << treeAddOpensForm
@@ -3822,6 +3832,17 @@ auto main(int argc, char* argv[]) -> int
         && rangeChanges.front().first == QStringLiteral("offset")
         && rangeChanges.front().second == necwb::ui::VariablesSection::Range{-2.0, 2.0}
         && variableSliders[1]->value() == 500;
+    // Reset: saving keeps the opened values, and a variable added since keeps its first value.
+    variablesSection.markBaseline();
+    variablesSection.setVariables({{"len", "0.5", 0.5, 1}, {"twice", "len*2", 1.0, 1},
+        {"offset", "0", 0.0, 2}, {"w", "1", 1.0, 1}});
+    variablesSection.setVariables({{"len", "0.6", 0.6, 1}, {"twice", "len*2", 1.2, 1},
+        {"offset", "0", 0.0, 2}, {"w", "2", 2.0, 1}});
+    const auto* variablesReset = variablesSection.findChild<QToolButton*>(
+        QStringLiteral("variablesReset"));
+    const auto resetKeepsAdded = variablesReset != nullptr && variablesReset->isEnabled()
+        && variablesReset->toolTip().contains(QStringLiteral("len 0.6 → 0.5"))
+        && variablesReset->toolTip().contains(QStringLiteral("w 2 → 1"));
     const auto linkedFieldShown = linkedEndY->isReadOnly()
         && linkedEndY->text().startsWith(QStringLiteral("ƒx "))
         && linkedEndY->toolTip().contains(QStringLiteral("-half"))
@@ -3874,6 +3895,7 @@ auto main(int argc, char* argv[]) -> int
         std::pair{"steps are one change", stepsAreOneChange},
         std::pair{"optimizer range used", optimizerRangeUsed},
         std::pair{"range edit reported", rangeEditReported},
+        std::pair{"reset keeps added variables", resetKeepsAdded},
         std::pair{"untouched fields exact", untouchedFieldsExact},
         std::pair{"linked field shown", linkedFieldShown}, std::pair{"toolbar", toolBarValid}};
     for (const auto& [name, passed] : modelTreeChecks) {

@@ -1850,7 +1850,9 @@ void MainWindow::revertToSaved()
     history_->replaceSource({tr("Revert to Saved"), static_cast<int>(EditorDestination::Geometry),
         workspace_->currentIndex()}, QString::fromUtf8(file.readAll()));
     editor_->document()->setModified(false);
-    startModelSession();
+    // Reset still goes back to the model as opened.
+    checkModel();
+    resetGeometryViews();
     statusBar()->showMessage(tr("Reverted to %1").arg(QFileInfo(currentFile_).fileName()), 3000);
 }
 
@@ -1980,7 +1982,6 @@ auto MainWindow::writeFile(const QString& path) -> bool
     file.write(editor_->toPlainText().toUtf8());
     setCurrentFile(path);
     editor_->document()->setModified(false);
-    modelColumn_->variables()->markBaseline();
     statusBar()->showMessage(tr("Saved %1").arg(QFileInfo(path).fileName()), 3000);
     return true;
 }
@@ -2256,7 +2257,11 @@ void MainWindow::createModelColumn()
                                                                : convergenceValidationTabIndex_);
             validationPanel_->showWindow();
             break;
-        default: break;
+        // A row already selected, say from its table, still opens its page.
+        default:
+            if (modelColumn_->pane()->currentPage() != paneContent(selection.node).first)
+                showModelSelection(selection);
+            break;
         }
     });
     wireEditor_ = new WirePropertiesEditor(windowHost_);

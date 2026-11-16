@@ -162,8 +162,8 @@ Click the **VARIABLES** header to fold the section to one line, keeping **Live**
 too tall for the column, the variables fold while it shows and unfold when it closes,
 unless you folded them yourself.
 
-**Reset** puts every variable back to its value when the model was opened or last saved,
-as one undoable step; its tooltip lists what would change.
+**Reset** puts every variable back to its value when the model was opened,
+saved or not; one added since goes back to its first value. It is one undoable step; its tooltip lists what would change.
 
 A slider spans the optimizer's minimum and maximum for a variable ticked **Use** in
 Optimize, and otherwise ±25% around the value it had when first shown (−1 to 1 at zero).
