@@ -45,13 +45,6 @@ WorkbenchLayout::WorkbenchLayout(Panes panes, QWidget* parent)
 
     center_ = new QStackedWidget;
     center_->setObjectName(QStringLiteral("workbenchCenter"));
-    auto* geometryPane = new QWidget(center_);
-    auto* geometryLayout = new QVBoxLayout(geometryPane);
-    geometryLayout->setContentsMargins(0, 0, 0, 0);
-    geometryLayout->setSpacing(0);
-    geometryLayout->addWidget(panes.setupLine);
-    geometryLayout->addWidget(geometry_, 1);
-    geometry_ = geometryPane;
     center_->addWidget(geometry_);
     center_->addWidget(fullView_);
     center_->addWidget(deck_);

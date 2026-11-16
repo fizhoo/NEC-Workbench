@@ -21,8 +21,6 @@ public:
     struct Panes {
         QWidget* welcome{};
         QWidget* leftColumn{};
-        // Shown above the geometry.
-        QWidget* setupLine{};
         QWidget* geometry{};
         QWidget* fullView{};
         QWidget* deck{};

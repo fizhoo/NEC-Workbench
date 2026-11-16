@@ -190,6 +190,8 @@ if(NECWB_BUILD_GUI)
         src/ui/cards/WireCardEditor.h
         src/ui/cards/StructuredCardEditor.cpp
         src/ui/cards/StructuredCardEditor.h
+        src/ui/cards/SymbolPrompt.cpp
+        src/ui/cards/SymbolPrompt.h
         src/ui/editor/DeckView.cpp
         src/ui/editor/DeckView.h
         src/ui/editor/NecEditor.cpp
@@ -234,8 +236,6 @@ if(NECWB_BUILD_GUI)
         src/ui/model/ParameterEditor.h
         src/ui/setup/SetupEditor.cpp
         src/ui/setup/SetupEditor.h
-        src/ui/setup/SetupLine.cpp
-        src/ui/setup/SetupLine.h
         src/ui/setup/CardFieldForm.cpp
         src/ui/setup/CardFieldForm.h
         src/ui/welcome/WelcomePage.cpp

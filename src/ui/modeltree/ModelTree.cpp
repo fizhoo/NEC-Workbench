@@ -45,6 +45,30 @@ auto addName(ModelNode group) -> QString
     }
 }
 
+// Setup values as short as they are exact: 144, 14.175.
+auto compact(double value) -> QString
+{
+    return QString::number(value, 'g', 7);
+}
+
+auto groundText(const std::optional<model::GroundDefinition>& ground) -> std::pair<QString, QString>
+{
+    const auto type = ground ? ground->type : model::GroundType::FreeSpace;
+    const auto real = ground ? QObject::tr("εr %1, σ %2 S/m").arg(
+        compact(ground->relativePermittivity), compact(ground->conductivity)) : QString{};
+    switch (type) {
+    case model::GroundType::FreeSpace: return {QObject::tr("Free space"), QObject::tr("No ground")};
+    case model::GroundType::Perfect:
+        return {QObject::tr("Perfect"), QObject::tr("Perfectly conducting ground")};
+    case model::GroundType::SommerfeldNorton:
+        return {QObject::tr("Sommerfeld"), QObject::tr("Real ground, Sommerfeld/Norton: %1").arg(real)};
+    case model::GroundType::ReflectionApproximation:
+        return {QObject::tr("Reflection"),
+            QObject::tr("Real ground, reflection approximation: %1").arg(real)};
+    }
+    return {};
+}
+
 auto loadTypeName(int type) -> QString
 {
     switch (type) {
@@ -79,11 +103,15 @@ ModelTree::ModelTree(QWidget* parent) : QTreeWidget(parent)
     header()->setSectionResizeMode(NameColumn, QHeaderView::ResizeToContents);
     header()->setMinimumSectionSize(40);
 
+    addGroup(ModelNode::Frequency, tr("Frequency"), "frequency-sweep");
     addGroup(ModelNode::Wires, tr("Wires"), "geometry");
     addGroup(ModelNode::Sources, tr("Sources"), "sources");
     addGroup(ModelNode::Loads, tr("Loads"), "loads");
     addGroup(ModelNode::TransmissionLines, tr("Trans. lines"), "transmission-lines");
     addGroup(ModelNode::Networks, tr("Networks"), "networks");
+    addGroup(ModelNode::Ground, tr("Ground"), "ground");
+    addGroup(ModelNode::Requests, tr("Requests"), "requests");
+    addGroup(ModelNode::ReferenceImpedance, tr("Z0"), "analysis");
     addGroup(ModelNode::OtherCards, tr("Other"), "structured-cards");
     addGroup(ModelNode::Variables, tr("Variables"), "variables");
     addGroup(ModelNode::Deck, tr("Deck"), "nec-deck");
@@ -204,6 +232,14 @@ void ModelTree::setCount(ModelNode node, std::size_t count, const QString& detai
     }
 }
 
+void ModelTree::setValue(ModelNode node, const QString& value, const QString& detail)
+{
+    auto* item = group(node);
+    item->setText(SummaryColumn, value);
+    for (const auto column : {NameColumn, SummaryColumn})
+        item->setToolTip(column, detail.isEmpty() ? value : detail);
+}
+
 void ModelTree::setModel(const model::AntennaModel& model, const model::ModelSetup& setup,
     const nec::NecDocument& document)
 {
@@ -240,6 +276,32 @@ void ModelTree::setModel(const model::AntennaModel& model, const model::ModelSet
     setCount(ModelNode::Variables, summary.symbolCount, summary.symbolCount == 0
             ? tr("No variables (SY)")
             : countText(summary.symbolCount, tr("variable (SY)"), tr("variables (SY)")));
+    if (const auto& frequency = summary.frequency) {
+        const auto sweep = frequency->pointCount > 1;
+        const auto text = sweep ? tr("%1–%2 MHz · %3 pts")
+                .arg(compact(frequency->startMHz), compact(frequency->endMHz))
+                .arg(frequency->pointCount)
+            : tr("%1 MHz").arg(compact(frequency->startMHz));
+        setValue(ModelNode::Frequency, text, sweep && setup.frequency
+            ? tr("FR: %1, %2 %3").arg(text, setup.frequency->steppingMode == 1
+                    ? tr("multiplier") : tr("step"), compact(setup.frequency->step))
+            : tr("FR: %1").arg(text));
+    } else {
+        setValue(ModelNode::Frequency, tr("none"), tr("No FR card: click to add one"));
+    }
+    const auto [ground, groundDetail] = groundText(setup.ground);
+    setValue(ModelNode::Ground, ground, groundDetail);
+    const auto& patterns = summary.radiationRequests;
+    setValue(ModelNode::Requests, patterns.empty()
+            ? summary.executionRequestCount == 0 ? tr("none") : tr("Execution only")
+            : patterns.size() == 1
+            ? tr("Pattern %1×%2").arg(patterns[0].thetaCount).arg(patterns[0].phiCount)
+            : tr("%1 patterns").arg(patterns.size()),
+        tr("%1 radiation pattern (RP) and %2 execution (XQ) requests")
+            .arg(patterns.size()).arg(summary.executionRequestCount));
+    setValue(ModelNode::ReferenceImpedance, tr("%1 Ω").arg(compact(model::referenceImpedanceOhms(setup))),
+        setup.referenceImpedance ? tr("Reference impedance for SWR, from the Z0 card")
+                                 : tr("Reference impedance for SWR: the default 50 Ω"));
     setCount(ModelNode::Deck, summary.cardCount,
         tr("%1: click to open the NEC Deck").arg(countText(summary.cardCount, tr("card"), tr("cards"))));
 

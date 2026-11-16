@@ -3,11 +3,12 @@
 #include "model/AntennaModel.h"
 #include "model/LengthUnit.h"
 #include "nec/NecCardFieldEditor.h"
+#include "nec/NecSymbolResolver.h"
 
+#include <QPoint>
 #include <QWidget>
 
-#include <unordered_map>
-#include <unordered_set>
+#include <vector>
 
 class QPushButton;
 class QTableWidget;
@@ -25,8 +26,10 @@ public:
     void selectWire(int tag);
     void setLengthUnit(model::LengthUnit unit);
     void setDeckScale(double scaleToMeters, QString unitLabel);
-    void setSymbolicGeometryFields(
-        std::unordered_map<std::size_t, std::unordered_set<int>> sourceFields);
+    // The fields written as expressions, by deck line and field, with their text.
+    void setSymbolicGeometryFields(nec::NecParameterFieldMap sourceFields);
+    // The symbols a cell offers as you type.
+    void setSymbols(const std::vector<nec::SymbolDefinition>& symbols);
     void setParameterControlledFields(nec::NecParameterFieldMap sourceFields);
     void focusParameterizableField();
 
@@ -42,6 +45,10 @@ signals:
         std::size_t fieldIndex, QString fieldLabel);
     void fieldDetachmentRequested(std::size_t sourceLine,
         std::size_t fieldIndex, QString fieldLabel);
+    // Text that is not a plain number typed into a coordinate or radius, or anything typed
+    // over an expression; `below` is the bottom left of the cell on screen.
+    void fieldExpressionEntered(std::size_t sourceLine, std::size_t fieldIndex,
+        QString fieldLabel, QString expression, QPoint below);
 
 private:
     void updateActionStates();
@@ -55,7 +62,7 @@ private:
     QPushButton* duplicateButton_{};
     QPushButton* deleteButton_{};
     model::AntennaModel model_;
-    std::unordered_map<std::size_t, std::unordered_set<int>> symbolicGeometryFields_;
+    nec::NecParameterFieldMap symbolicGeometryFields_;
     nec::NecParameterFieldMap parameterControlledFields_;
     double scaleToMeters_{1.0};
     QString unitLabel_{QStringLiteral("m")};

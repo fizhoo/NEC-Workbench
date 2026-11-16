@@ -2,8 +2,8 @@
 
 NEC Workbench runs in one resizable main window. A toolbar runs across the top. With a
 model open, the **model tree**, the **variables** with their sliders, and the
-**properties pane** for what is selected form the left column; the **setup line** and
-the **geometry editor** fill the center (or the **NEC Deck** or a full result view, in
+**properties pane** for what is selected form the left column; the **geometry editor**
+fills the center (or the **NEC Deck** or a full result view, in
 their place); and the
 **results column** on the right shows the key numbers and live result thumbnails. A
 bottom panel underneath holds Problems, the Run log, Runs, and Raw output. Optimize and
@@ -15,8 +15,8 @@ focuses on workflow and behavior that is not obvious from an individual control.
 1. Create or open a `.nec` model from the Welcome page, the toolbar, or the File menu.
 2. Edit wires in the geometry editor or the properties pane, and cards in the **NEC
    Deck** (Deck in the model tree).
-3. Click the frequency, ground, requests, solver, or Z0 on the setup line above the
-   geometry, or Sources and Loads in the model tree, to set them up in the properties pane.
+3. Click Frequency, Ground, Requests, Z0, Sources, or Loads in the model tree to set them
+   up in the properties pane, and pick the engine in the list beside Run.
 4. Run **Check Model** (`F7`) and resolve the blocking errors listed under **Problems**.
 5. Select **Run Analysis** (`F5`).
 6. Read the key numbers and thumbnails in the results column; click a thumbnail to
@@ -24,8 +24,8 @@ focuses on workflow and behavior that is not obvious from an individual control.
    input and historical raw output.
 
 NEC Workbench does not include an NEC solver. Configure a separately installed
-`nec2c`, OpenNEC, or 4nec2 NEC2dXS executable by clicking the solver on the setup line
-(or **Configure…** in the toolbar's engine list).
+`nec2c`, OpenNEC, or 4nec2 NEC2dXS executable with **Configure…** in the engine list
+beside Run; hover the list to see the executable in use.
 
 The selected backend also controls compatibility validation. **NEC-2 / nec2c**
 uses strict original NEC-2 card rules, while **OpenNEC** accepts the verified
@@ -101,22 +101,19 @@ With no model open, the Welcome page provides New, Open, recent files, and
 documentation. With a model open, the left column shows the model tree, the variables,
 and the properties pane.
 
-The tree lists **Wires**, **Sources**, **Loads**, **Trans. lines**, **Networks**,
-**Other**, **Variables**, **Deck**, and **Validation**, each with its count; hover a group
-for the details. A group with nothing in it is one dim line. Right-click **Wires**,
+The tree lists **Frequency**, **Wires**, **Sources**, **Loads**, **Trans. lines**,
+**Networks**, **Ground**, **Requests**, **Z0**, **Other**, **Variables**, **Deck**, and
+**Validation**. Frequency, Ground, Requests, and Z0 (the reference impedance SWR is
+measured against) show their values, such as "144–148 MHz · 41 pts" or "Free space"; the
+groups show their counts. Hover a row for the details. A group with nothing in it is one dim line. Right-click **Wires**,
 **Sources**, **Loads**, **Trans. lines**, or **Networks**, or any row in them, and choose
 **Add** to add one; its form opens in the pane. Expand a group to see its wires, sources,
 loads, lines, or networks. Selecting a wire in the tree selects it in the geometry views,
 and selecting one in geometry selects it in the tree. Right-click **Properties…** in
 geometry selects the item and moves the keyboard into the properties pane.
 
-The **setup line** above the geometry reads, for example, "144–148 MHz · 41 pts | Free
-space | Pattern 37×73 | nec2c | Z0 50 Ω". Click a part to show its page in the pane:
-Frequency, Ground, Requests, Solver, or the reference impedance (Z0) that SWR is measured
-against. The part whose page is showing stays highlighted; hover a part for its details.
-
 The properties pane holds one item at a time: a wire's tag, segments, endpoints, and size;
-one source, load, transmission line, or network as a short form; a setup line page; and
+one source, load, transmission line, or network as a short form; a setup page; and
 the Parameters table for **Variables**. The tree takes the rows it shows, up to about
 40% of the column, and the variables up to about 25%; each scrolls beyond that, and the
 pane takes the rest.
@@ -235,7 +232,16 @@ The NEC Deck's raw source and the card tables operate on the same document.
 - Long numbers, such as those written by geometry drags or the optimizer, are shown
   at 6 significant figures to keep columns narrow. The deck keeps the exact value:
   hover a cell to see it, and editing starts from it.
-- Right-click a numeric cell to parameterize it.
+- In the wire table, type a name such as `len`, or an expression such as `len/2`, into a
+  coordinate or radius to make it a variable. A name that is not defined yet opens a
+  small box under the cell asking for its value, filled in with the value that keeps the
+  wire as it is when that is simple to work out: Enter creates the `SY` card after the
+  others at the top of the deck, and Esc leaves the cell as it was. As you type, a list
+  offers the variables already defined, with their values.
+- A cell written as an expression shows its value; hover it to see the expression, and
+  type over it to change it. Typing a number there replaces the expression.
+- Right-click a numeric cell to parameterize it with a named parameter, or to link it to
+  an existing one.
 - Selecting a row selects its source, load, line, or network everywhere, or moves the
   raw-source cursor to the card.
 
@@ -315,9 +321,10 @@ stability between levels, not universal model correctness.
 
 ## Setup
 
-Frequency, Ground, Requests, Solver, and the reference impedance (Z0) open in the
-properties pane from the setup line; sources, loads, transmission lines, and networks are
-tables and forms in the pane, opened from the model tree.
+Frequency, Ground, Requests, and the reference impedance (Z0) open in the properties pane
+from their rows in the model tree, and Solver from **Configure…** in the engine list
+beside Run; sources, loads, transmission lines, and networks are tables and forms in the
+pane, opened from the model tree.
 
 ### Sources, Loads, Networks, and Environment
 

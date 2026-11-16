@@ -20,6 +20,7 @@ namespace necwb::ui {
 class ElidedLabel;
 
 enum class ModelNode {
+    Frequency,
     Wires,
     Wire,
     Sources,
@@ -30,6 +31,9 @@ enum class ModelNode {
     TransmissionLine,
     Networks,
     Network,
+    Ground,
+    Requests,
+    ReferenceImpedance,
     // Cards with no group of their own: arcs, helices, patches, GS, GN, FR, RP and the rest.
     OtherCards,
     Variables,
@@ -37,12 +41,8 @@ enum class ModelNode {
     Validation,
     AverageGainTest,
     Convergence,
-    // Not rows: the parts of the setup line, which show their pages in the same pane.
-    Frequency,
-    Ground,
-    Requests,
-    Solver,
-    ReferenceImpedance
+    // Not a row: the solver page, from the toolbar's engine list.
+    Solver
 };
 
 // A row of the model tree: a group, or one wire, source, load, line or network in it.
@@ -54,9 +54,10 @@ struct ModelSelection {
     auto operator==(const ModelSelection&) const -> bool = default;
 };
 
-// The model as a tree: each group with its count (details in its tooltip; an empty group is
-// one dim line), expanding to its wires, sources, loads, lines and networks, and the
-// model-quality studies with Run buttons. Right-clicking a card group or its rows offers Add.
+// The model as a tree: the frequency, ground, requests and reference impedance with their
+// values, each group with its count (details in its tooltip; an empty group is one dim line),
+// expanding to its wires, sources, loads, lines and networks, and the model-quality studies
+// with Run buttons. Right-clicking a card group or its rows offers Add.
 class ModelTree final : public QTreeWidget {
 public:
     enum class Study { AverageGain, Convergence };
@@ -93,6 +94,7 @@ private:
     [[nodiscard]] auto itemFor(const ModelSelection& selection) const -> QTreeWidgetItem*;
     static auto selectionOf(const QTreeWidgetItem* item) -> ModelSelection;
     void setCount(ModelNode node, std::size_t count, const QString& detail);
+    void setValue(ModelNode node, const QString& value, const QString& detail);
     void showAddMenu(const QPoint& position);
 
     std::array<ElidedLabel*, 2> studyLabels_{};

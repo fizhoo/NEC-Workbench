@@ -681,6 +681,16 @@ void testSymbolResolution()
     expect(resolution.generatedDeck.find("SY ") == std::string::npos,
         "generated numeric deck omits Workbench symbol declarations");
 
+    // Typing an expression into a cell: the names it needs and the value that keeps the cell.
+    expect(necwb::nec::undefinedSymbols("len/2 + Half*1e3 - len + w_2", resolution.definitions)
+            == std::vector<std::string>{"len", "w_2"},
+        "an expression's undefined names are listed once, skipping known names and exponents");
+    expect(necwb::nec::symbolValueKeeping("len/2", "len", resolution.definitions, 5.1) == 10.2
+            && necwb::nec::symbolValueKeeping("2*len+half", "len", resolution.definitions, 7.0) == 1.0
+            && !necwb::nec::symbolValueKeeping("len^2", "len", resolution.definitions, 4.0)
+            && !necwb::nec::symbolValueKeeping("len*w", "len", resolution.definitions, 4.0),
+        "a new symbol's value keeps a linear expression at the cell's value, and only then");
+
     const std::string editableSymbols =
         "CM symbols\r\nSY length=10, half=length/2\r\nGW 1 11 -half 0 0 half 0 0 .001\r\nEN\r\n";
     const auto insertedSymbol = necwb::nec::insertSymbolDefinition(

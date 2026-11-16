@@ -34,7 +34,6 @@
 #include "ui/model/ParameterEditor.h"
 #include "ui/setup/CardFieldForm.h"
 #include "ui/setup/SetupEditor.h"
-#include "ui/setup/SetupLine.h"
 #include "ui/welcome/WelcomePage.h"
 #include "nec/NecParser.h"
 #include "model/WireGauge.h"
@@ -45,6 +44,7 @@
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCompleter>
 #include <QDebug>
 #include <QDoubleSpinBox>
 #include <QEventLoop>
@@ -408,11 +408,11 @@ auto main(int argc, char* argv[]) -> int
                 && mainWindow.property("workspaceDensityId").toString()
                     == QStringLiteral("density-smoke-sentinel");
         }
-        // Frequency in the setup line shows its page in the pane, inside the main window.
+        // The Frequency row shows its page in the pane, inside the main window.
         if (auto* tree = mainWindow.findChild<QTreeWidget*>(QStringLiteral("modelTree"))) {
             mainWindow.show();
             application.processEvents();
-            mainWindow.findChild<QToolButton*>(QStringLiteral("setupFrequency"))->click();
+            tree->setCurrentItem(tree->findItems(QStringLiteral("Frequency"), Qt::MatchExactly).value(0));
             application.processEvents();
             const auto* frequencyPage = mainWindow.findChild<QWidget*>(
                 QStringLiteral("frequencyEditorPage"));
@@ -700,7 +700,8 @@ auto main(int argc, char* argv[]) -> int
             application.processEvents();
             auto* tree = mainWindow.findChild<QTreeWidget*>(QStringLiteral("modelTree"));
             auto* deck = mainWindow.findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor"));
-            auto* wires = tree == nullptr ? nullptr : tree->topLevelItem(0);
+            auto* wires = tree == nullptr ? nullptr
+                : tree->findItems(QStringLiteral("Wires"), Qt::MatchExactly).value(0);
             if (deck != nullptr && wires != nullptr && wires->childCount() == 2) {
                 wires->setExpanded(true);
                 tree->setCurrentItem(wires->child(1));
@@ -1037,20 +1038,16 @@ auto main(int argc, char* argv[]) -> int
                 const auto groupShows = loadTable->isVisible() && loadTable->rowCount() == 1
                     && expand->isVisible() && !expand->isChecked()
                     && section->height() <= header->height() + 2;
-                // ⇔ widens the column to show every column; Ground, from the setup line,
-                // narrows it again and clears the tree's selection.
+                // ⇔ widens the column to show every column; the Ground row narrows it again.
                 expand->click();
                 application.processEvents();
                 const auto wideWidth = split->sizes().value(0);
                 const auto widened = wideWidth > narrowWidth
                     && wideWidth <= static_cast<int>(mainWindow.width() * 0.65) + 1
                     && !loadTable->horizontalScrollBar()->isVisible();
-                auto* groundPart = mainWindow.findChild<QToolButton*>(QStringLiteral("setupGround"));
-                groundPart->click();
-                application.processEvents();
+                selectGroup(QStringLiteral("Ground"));
                 const auto narrowedAgain = split->sizes().value(0) == narrowWidth
-                    && !expand->isVisible() && !expand->isChecked() && pageTitle() == QStringLiteral("Ground")
-                    && groundPart->isChecked() && tree->selectedItems().isEmpty();
+                    && !expand->isVisible() && !expand->isChecked() && pageTitle() == QStringLiteral("Ground");
                 // Picking a narrow card family after a wide one takes ⇔ away.
                 selectGroup(QStringLiteral("Other"));
                 auto* families = mainWindow.findChild<QWidget*>(QStringLiteral("cardsOther"))
@@ -1081,11 +1078,7 @@ auto main(int argc, char* argv[]) -> int
                 const auto* paneWidget = static_cast<necwb::ui::PropertiesPane*>(
                     mainWindow.findChild<QWidget*>(QStringLiteral("propertiesPane")));
                 auto* paneScroll = paneWidget->findChild<QScrollArea*>();
-                const auto clickPart = [&](const char* name) {
-                    mainWindow.findChild<QToolButton*>(QString::fromLatin1(name))->click();
-                    application.processEvents();
-                };
-                clickPart("setupRequests");
+                selectGroup(QStringLiteral("Requests"));
                 const auto requestsOffered = pageTitle() == QStringLiteral("Requests") && expand->isVisible();
                 expand->click();
                 application.processEvents();
@@ -1093,7 +1086,7 @@ auto main(int argc, char* argv[]) -> int
                         static_cast<int>(mainWindow.width() * 0.65))
                     && !paneScroll->horizontalScrollBar()->isVisible();
                 // Frequency fits, and the taller Requests page leaves it no scroll bar.
-                clickPart("setupFrequency");
+                selectGroup(QStringLiteral("Frequency"));
                 const auto pageWidening = requestsOffered && requestsWidened
                     && split->sizes().value(0) == narrowWidth && !expand->isVisible()
                     && !paneScroll->verticalScrollBar()->isVisible();
@@ -1154,6 +1147,30 @@ auto main(int argc, char* argv[]) -> int
                     && split->sizes().value(0) == narrowWidth;
                 // With nothing in the pane, the header folds the variables to one line with Live
                 // still there, and back.
+                // A new name typed into a wire cell asks for its value under the cell, starting
+                // at the number it replaces: Create adds it after the SY cards, Esc changes nothing.
+                selectGroup(QStringLiteral("Wires"));
+                auto* wireCells = mainWindow.findChild<QTableWidget*>(QStringLiteral("wireCardTable"));
+                const auto typeName = [&](int row, int column, const QString& name, bool create) {
+                    QString guess;
+                    QTimer::singleShot(100, [&guess, create] {
+                        auto* box = qobject_cast<QDialog*>(QApplication::activePopupWidget());
+                        if (box == nullptr) return;
+                        guess = box->findChild<QLineEdit*>(QStringLiteral("symbolValue"))->text();
+                        if (create) box->findChild<QPushButton*>(QStringLiteral("symbolCreate"))->click();
+                        else box->reject();
+                    });
+                    wireCells->item(row, column)->setText(name);
+                    application.processEvents();
+                    return guess;
+                };
+                const auto created = typeName(1, 2, QStringLiteral("len"), true) == QStringLiteral("0.3")
+                    && text().startsWith(QStringLiteral("SY r=50, v=1\nSY len=0.3\nGW 1"))
+                    && text().contains(QStringLiteral("GW 2 11 len -0.5"));
+                const auto deckBefore = text();
+                const auto cancelled = typeName(0, 4, QStringLiteral("w"), false) == QStringLiteral("0")
+                    && text() == deckBefore && wireCells->item(0, 4)->text() == QStringLiteral("0");
+                const auto namesTyped = created && cancelled;
                 selectGroup(QStringLiteral("Deck"));
                 QMouseEvent click(QEvent::MouseButtonRelease, QPointF(5, 5), header->mapToGlobal(QPointF(5, 5)),
                     Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
@@ -1168,14 +1185,14 @@ auto main(int argc, char* argv[]) -> int
                 cardTables = bottomPanelPlain && groupShows && widened && narrowedAgain && pageWidening
                     && familyRefits && treeAddOpensForm
                     && symbolsKept && rowSelects && lineOpensForm && geometrySelects
-                    && tableAddsPlaced && loadAdded && linePicked && folded && unfolded;
+                    && tableAddsPlaced && loadAdded && linePicked && namesTyped && folded && unfolded;
                 if (!cardTables) {
                     qWarning() << "card tables" << bottomPanelPlain << groupShows << widened << pageWidening
                                << familyRefits << treeAddOpensForm
                                << narrowWidth << wideWidth << narrowedAgain << symbolsKept
                                << rowSelects << selection << lineOpensForm << geometrySelects
                                << pageTitle() << tableAddsPlaced << loadAdded << linePicked
-                               << folded << unfolded << text();
+                               << namesTyped << folded << unfolded << text();
                 }
             }
             if (deck != nullptr) deck->document()->setModified(false);
@@ -3547,10 +3564,11 @@ auto main(int argc, char* argv[]) -> int
     QStringList groupNames;
     for (auto index = 0; index < modelTree->topLevelItemCount(); ++index)
         groupNames.append(modelTree->topLevelItem(index)->text(0));
-    const auto modelTreeGroups = groupNames == QStringList{QStringLiteral("Wires"),
-        QStringLiteral("Sources"), QStringLiteral("Loads"), QStringLiteral("Trans. lines"),
-        QStringLiteral("Networks"), QStringLiteral("Other"), QStringLiteral("Variables"),
-        QStringLiteral("Deck"), QStringLiteral("Validation")};
+    const auto modelTreeGroups = groupNames == QStringList{QStringLiteral("Frequency"),
+        QStringLiteral("Wires"), QStringLiteral("Sources"), QStringLiteral("Loads"),
+        QStringLiteral("Trans. lines"), QStringLiteral("Networks"), QStringLiteral("Ground"),
+        QStringLiteral("Requests"), QStringLiteral("Z0"), QStringLiteral("Other"),
+        QStringLiteral("Variables"), QStringLiteral("Deck"), QStringLiteral("Validation")};
     // Counts only, the detail in tooltips; an empty group is its name alone, dim.
     const auto dim = modelTree->palette().color(QPalette::PlaceholderText);
     const auto* loadsGroup = group(QStringLiteral("Loads"));
@@ -3591,31 +3609,13 @@ auto main(int argc, char* argv[]) -> int
                     + modelTree->topLevelItem(index)->toolTip(0);
         qWarning() << "model tree" << shown << addedTo.size();
     }
-    // The setup line: one part each, its page asked for on a click.
-    necwb::ui::SetupLine setupLine;
-    setupLine.setModel(antenna, setup, modelTreeDocument);
-    setupLine.setSolver(QStringLiteral("nec2"), {});
-    std::vector<ModelNode> clickedParts;
-    setupLine.setClickedCallback([&](auto part) { clickedParts.push_back(part); });
-    const auto partText = [&setupLine](const char* name) {
-        const auto* part = setupLine.findChild<QToolButton*>(QString::fromLatin1(name));
-        return part == nullptr ? QString{} : part->text();
-    };
-    setupLine.findChild<QToolButton*>(QStringLiteral("setupGround"))->click();
-    const auto groundUnmarked = !setupLine.findChild<QToolButton*>(QStringLiteral("setupGround"))->isChecked();
-    setupLine.setCurrent(ModelNode::Ground);
-    const auto setupLineShown = partText("setupFrequency") == QStringLiteral("14–14.2 MHz · 3 pts")
-        && partText("setupGround") == QStringLiteral("Free space")
-        && partText("setupRequests") == QStringLiteral("Pattern 19×37")
-        && partText("setupSolver") == QStringLiteral("nec2c · no executable")
-        && partText("setupReferenceImpedance") == QStringLiteral("Z0 50 Ω")
-        && clickedParts == std::vector{ModelNode::Ground} && groundUnmarked
-        && setupLine.findChild<QToolButton*>(QStringLiteral("setupGround"))->isChecked()
-        && setupLine.minimumSizeHint().width() == 0;
-    if (!setupLineShown)
-        qWarning() << "setup line" << partText("setupFrequency") << partText("setupGround")
-                   << partText("setupRequests") << partText("setupSolver")
-                   << partText("setupReferenceImpedance") << clickedParts.size() << groundUnmarked;
+    // The setup rows show their values, the detail in tooltips.
+    const auto setupRowsShown = summary(QStringLiteral("Frequency")) == QStringLiteral("14–14.2 MHz · 3 pts")
+        && summary(QStringLiteral("Ground")) == QStringLiteral("Free space")
+        && summary(QStringLiteral("Requests")) == QStringLiteral("Pattern 19×37")
+        && summary(QStringLiteral("Z0")) == QStringLiteral("50 Ω")
+        && group(QStringLiteral("Z0"))->toolTip(0) == QStringLiteral("Reference impedance for SWR: the default 50 Ω")
+        && group(QStringLiteral("Ground"))->foreground(0).color() != dim;
     modelTree->setStudyStatus(Study::AverageGain, StudyState::Complete,
         QStringLiteral("1.000 @ 14.100 MHz"));
     modelTree->setStudyStatus(Study::Convergence, StudyState::Stale);
@@ -3667,7 +3667,7 @@ auto main(int argc, char* argv[]) -> int
     modelTreeImage.fill(Qt::transparent); QPainter modelTreePainter(&modelTreeImage);
     modelColumn.render(&modelTreePainter); modelTreePainter.end();
     const auto modelTreeStateVisible = modelTreeGroups && modelTreeSummaries && studiesShown
-        && studyCleared && studyRunButtons && treeAdds && setupLineShown;
+        && studyCleared && studyRunButtons && treeAdds && setupRowsShown;
     // The properties pane: leaving applies a valid edit, an invalid one asks first, Enter
     // applies and Esc reverts.
     auto* wirePage = new necwb::ui::WirePropertiesEditor;
@@ -3839,11 +3839,12 @@ auto main(int argc, char* argv[]) -> int
     auto configureRequested = false;
     toolBar.setBackendSelectedCallback([&](const QString& id) { selectedBackend = id; });
     toolBar.setConfigureCallback([&] { configureRequested = true; });
-    toolBar.setBackend(QStringLiteral("opennec"));
+    toolBar.setBackend(QStringLiteral("opennec"), {});
     auto* backend = toolBar.findChild<QComboBox*>(QStringLiteral("toolBarBackend"));
     auto* toolOpenButton = toolBar.findChild<QToolButton*>(QStringLiteral("toolBarOpen"));
     const auto backendShownQuietly = backend != nullptr
-        && backend->currentData().toString() == QStringLiteral("opennec") && selectedBackend.isEmpty();
+        && backend->currentData().toString() == QStringLiteral("opennec") && selectedBackend.isEmpty()
+        && backend->toolTip().contains(QStringLiteral("no executable"));
     if (backend != nullptr) {
         emit backend->activated(backend->findData(QStringLiteral("nec2dxs")));
         emit backend->activated(backend->count() - 1);
@@ -3861,7 +3862,7 @@ auto main(int argc, char* argv[]) -> int
         std::pair{"window selection quiet", windowSelectionQuiet},
         std::pair{"selection survives rebuild", selectionSurvivesRebuild},
         std::pair{"deck activated", deckActivated}, std::pair{"tree adds", treeAdds},
-        std::pair{"setup line", setupLineShown},
+        std::pair{"setup rows", setupRowsShown},
         std::pair{"valid edit applied", validEditApplied},
         std::pair{"invalid edit held", invalidEditHeld},
         std::pair{"invalid edit discarded", invalidEditDiscarded},
@@ -4423,20 +4424,52 @@ auto main(int argc, char* argv[]) -> int
     auto* customGauge = qobject_cast<QComboBox*>(wireTable->cellWidget(0, 9));
     const auto customRadiusPreserved = customGauge != nullptr && customGauge->currentIndex() == 0;
     necwb::ui::WireCardEditor symbolicWireEditor;
-    symbolicWireEditor.setSymbolicGeometryFields({{1, {3, 4, 6, 7}}});
+    symbolicWireEditor.setSymbolicGeometryFields({{1, {{3, "height"}, {4, "2*3"}}}});
     symbolicWireEditor.setParameterControlledFields({{1, {{3, "height"}}}});
+    symbolicWireEditor.setSymbols({{"height", "10", 10.0, 1}});
     symbolicWireEditor.setModel(wireModel);
+    std::vector<std::pair<std::size_t, QString>> expressionsEntered;
+    auto symbolicWireEdited = false;
+    QObject::connect(&symbolicWireEditor, &necwb::ui::WireCardEditor::fieldExpressionEntered,
+        [&](std::size_t, std::size_t field, const QString&, const QString& expression, QPoint) {
+            expressionsEntered.emplace_back(field, expression);
+        });
+    QObject::connect(&symbolicWireEditor, &necwb::ui::WireCardEditor::wireEdited,
+        [&](const auto&, const auto&) { symbolicWireEdited = true; });
     auto* symbolicWireTable = symbolicWireEditor.findChild<QTableWidget*>(
         QStringLiteral("wireCardTable"));
     auto* symbolicGauge = symbolicWireTable == nullptr ? nullptr
         : qobject_cast<QComboBox*>(symbolicWireTable->cellWidget(0, 9));
-    const auto symbolicCoordinatesLocked = symbolicWireTable != nullptr
-        && !(symbolicWireTable->item(0, 3)->flags() & Qt::ItemIsEditable)
-        && (symbolicWireTable->item(0, 8)->flags() & Qt::ItemIsEditable)
-        && !symbolicWireTable->item(0, 3)->icon().isNull()
-        && symbolicWireTable->item(0, 3)->font().italic()
-        && symbolicWireTable->item(0, 3)->toolTip().contains(QStringLiteral("ƒx"));
     const auto symbolicGaugeEnabled = symbolicGauge != nullptr && symbolicGauge->isEnabled();
+    // An expression cell shows its value, styled, and edits as written with the symbols offered.
+    auto* heightCell = symbolicWireTable == nullptr ? nullptr : symbolicWireTable->item(0, 3);
+    auto symbolicCoordinatesLocked = heightCell != nullptr
+        && (heightCell->flags() & Qt::ItemIsEditable)
+        && heightCell->data(necwb::ui::CellExpressionRole).toString() == QStringLiteral("height")
+        && !heightCell->icon().isNull() && heightCell->font().italic()
+        && heightCell->toolTip().startsWith(QStringLiteral("ƒx height = "));
+    if (heightCell != nullptr) {
+        symbolicWireEditor.show();
+        symbolicWireTable->editItem(heightCell);
+        auto* cellEditor = symbolicWireTable->viewport()->findChild<QLineEdit*>();
+        symbolicCoordinatesLocked = symbolicCoordinatesLocked && cellEditor != nullptr
+            && cellEditor->text() == QStringLiteral("height") && cellEditor->completer() != nullptr
+            && cellEditor->completer()->model()->index(0, 0).data().toString() == QStringLiteral("height = 10");
+        symbolicWireTable->closePersistentEditor(heightCell);
+        // A name, a number over an expression, the expression unchanged, and a plain number.
+        symbolicWireTable->item(0, 2)->setText(QStringLiteral("len/2"));
+        application.processEvents();
+        symbolicWireTable->item(0, 4)->setText(QStringLiteral("5"));
+        application.processEvents();
+        symbolicWireTable->item(0, 3)->setText(QStringLiteral("height"));
+        application.processEvents();
+        symbolicWireTable->item(0, 5)->setText(QStringLiteral("4"));
+        application.processEvents();
+        symbolicCoordinatesLocked = symbolicCoordinatesLocked && symbolicWireEdited
+            && expressionsEntered == std::vector<std::pair<std::size_t, QString>>{
+                {2, QStringLiteral("len/2")}, {4, QStringLiteral("5")}};
+        symbolicWireEditor.hide();
+    }
     QImage wireImage(900, 400, QImage::Format_ARGB32_Premultiplied);
     wireImage.fill(Qt::transparent); QPainter wirePainter(&wireImage);
     wireEditor.render(&wirePainter); wirePainter.end();

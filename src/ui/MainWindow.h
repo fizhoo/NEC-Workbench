@@ -59,7 +59,6 @@ class SourceHistory;
 class GeometryPreview;
 class DeckView;
 class ModelColumn;
-class SetupLine;
 class WirePropertiesEditor;
 class WorkbenchToolBar;
 class OptimizationWorkspace;
@@ -167,7 +166,7 @@ private:
     void addToGroup(ModelNode group);
     // Selects the source, load, line or network a Cards row is, or its deck line.
     void selectCardInModel(std::size_t sourceLine);
-    // Shows the engine in the toolbar and on the setup line.
+    // Shows the engine in the toolbar.
     void refreshEngine();
     void discardPendingEdits(QWidget* page);
     void synchronizeGeometrySelection(int tag);
@@ -316,7 +315,6 @@ private:
     DeckView* deckView_{};
     DetachablePanel* optimizationPanel_{};
     ModelColumn* modelColumn_{};
-    SetupLine* setupLine_{};
     WirePropertiesEditor* wireEditor_{};
     WorkbenchToolBar* toolBar_{};
     WelcomePage* welcomePage_{};

@@ -35,6 +35,7 @@
 #include "ui/modeltree/VariablesSection.h"
 #include "ui/cards/WireCardEditor.h"
 #include "ui/cards/CardTables.h"
+#include "ui/cards/SymbolPrompt.h"
 #include "ui/analysis/AnalysisSetupEditor.h"
 #include "ui/analysis/AnalysisRequestEditor.h"
 #include "ui/analysis/AverageGainResultsView.h"
@@ -59,7 +60,6 @@
 #include "ui/results/ResultsColumn.h"
 #include "ui/results/ResultsController.h"
 #include "ui/setup/SetupEditor.h"
-#include "ui/setup/SetupLine.h"
 #include "ui/setup/CardFieldForm.h"
 #include "ui/welcome/WelcomePage.h"
 
@@ -132,7 +132,6 @@
 #include <sstream>
 #include <string_view>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -879,6 +878,12 @@ void MainWindow::createWorkspace()
         [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
             detachFieldParameter(sourceLine, fieldIndex, fieldLabel);
         });
+    connect(wireCardEditor_, &WireCardEditor::fieldExpressionEntered, this,
+        [this](std::size_t line, std::size_t field, const QString& label, const QString& expression, QPoint below) {
+            const auto edit = enterFieldExpression(this, below, activeSource().source(), line, field, expression);
+            if (!edit.error.isEmpty()) QMessageBox::warning(this, tr("Invalid Expression"), edit.error);
+            if (edit.source) pushGeometrySourceEdit(tr("Set %1 to %2").arg(label, expression), QString::fromStdString(*edit.source));
+        });
     connect(cardTables_, &CardTables::cardSelected, this, [this](std::size_t sourceLine) {
         const QScopedValueRollback keep(keepTable_, true);
         selectCardInModel(sourceLine);
@@ -931,7 +936,7 @@ void MainWindow::createWorkspace()
                 modelChecked_ && modelErrorCount_ == 0);
             refreshEngine();
             runAction_->setStatusTip(solverExecutablePath_.isEmpty()
-                    ? tr("Click the solver on the setup line to select a NEC engine executable")
+                    ? tr("Choose Configure… in the engine list beside Run to select a NEC engine executable")
                     : tr("Run the checked model with the selected NEC engine"));
             if (backendChanged && modelChecked_) checkModel();
             updateAnalysisReadiness();
@@ -973,10 +978,8 @@ void MainWindow::createWorkspace()
     createValidationWindow();
     createOptimizationWorkspace();
     createResultsColumn();
-    setupLine_ = new SetupLine(this);
-    setupLine_->setClickedCallback([this](ModelNode node) { selectInModel({node}); });
     workbenchLayout_ = new WorkbenchLayout({.welcome = welcomePage_, .leftColumn = modelColumn_,
-        .setupLine = setupLine_, .geometry = workspace_, .fullView = resultsController_->fullView(),
+        .geometry = workspace_, .fullView = resultsController_->fullView(),
         .deck = deckView_, .rightColumn = resultsController_->column(),
         .bottomPanel = bottomPanel_}, this);
     setCentralWidget(workbenchLayout_);
@@ -1751,7 +1754,7 @@ void MainWindow::showGettingStarted()
         tr("1. Create or open a NEC model.\n"
            "2. Edit geometry and electrical model data under Model.\n"
            "3. Run Check Model and resolve blocking errors.\n"
-           "4. Set frequency, ground, requests, and the solver on the setup line above the geometry.\n"
+           "4. Set frequency, ground and requests in the model tree, and the engine beside Run.\n"
            "5. Run Analysis, then inspect Results."));
 }
 
@@ -2071,6 +2074,7 @@ void MainWindow::checkModel(bool presentReport)
     const auto parameterFields = nec::necCardFieldsReferencingSymbols(
         cache.source(), parameterNames);
     wireCardEditor_->setParameterControlledFields(parameterFields);
+    wireCardEditor_->setSymbols(resolution.definitions);
     updateWireCardEditor();
     // Edits keep the zoom; opening a model fits it (resetGeometryViews).
     const auto sharedSegments = model::describeSharedSegments(currentModel_, currentSetup_);
@@ -2087,7 +2091,6 @@ void MainWindow::checkModel(bool presentReport)
     analysisRequestEditor_->setData(currentSetup_);
     cardTables_->setDocument(document, parameterFields);
     modelColumn_->tree()->setModel(currentModel_, currentSetup_, document);
-    setupLine_->setModel(currentModel_, currentSetup_, document);
     refreshWireEditor();
     if (modelColumn_->pane()->currentPage() == cardForm_) refreshCardForm(cardForm_->sourceLine());
     optimizationWorkspace_->setContext(editor_->toPlainText(), currentFile_,
@@ -2156,7 +2159,6 @@ void MainWindow::clearCheckResults()
         dashboardSetup = nec::NecSetupConverter{}.convert(*resolved);
     }
     modelColumn_->tree()->setModel(dashboardModel, dashboardSetup, cache.document());
-    setupLine_->setModel(dashboardModel, dashboardSetup, cache.document());
     averageGainResultsView_->markStale();
     convergenceWorkspace_->markStale();
     modelColumn_->tree()->setStudyStatus(ModelTree::Study::AverageGain,
@@ -2322,7 +2324,6 @@ void MainWindow::showModelSelection(const ModelSelection& selection)
     case ModelNode::Network: for (auto* view : views) view->selectNetwork(line); break;
     default: break;
     }
-    setupLine_->setCurrent(selection.node);
     // A row clicked in a table selects its item and leaves the table showing.
     if (keepTable_) return;
     const auto [page, title] = paneContent(selection.node);
@@ -4516,15 +4517,15 @@ void MainWindow::refreshGeometryViews()
 
 void MainWindow::updateWireCardEditor()
 {
-    std::unordered_map<std::size_t, std::unordered_set<int>> symbolicFields;
+    nec::NecParameterFieldMap symbolicFields;
     for (const auto& wire : currentModel_.wires()) {
         const auto block = editor_->document()->findBlockByNumber(
             static_cast<int>(wire.sourceLine) - 1);
         if (!block.isValid()) continue;
         const auto source = block.text().toStdString();
-        for (auto field = 0; field <= 8; ++field) {
-            if (!nec::necCardFieldIsNumeric(source, static_cast<std::size_t>(field)))
-                symbolicFields[wire.sourceLine].insert(field);
+        for (auto field = std::size_t{0}; field <= 8; ++field) {
+            if (!nec::necCardFieldIsNumeric(source, field))
+                symbolicFields[wire.sourceLine][field] = nec::necCardFieldText(source, field);
         }
     }
     wireCardEditor_->setSymbolicGeometryFields(std::move(symbolicFields));
@@ -4625,10 +4626,9 @@ void MainWindow::restoreWorkspaceLayout()
 
 void MainWindow::refreshEngine()
 {
-    // Settings load before the toolbar and the setup line exist.
-    if (toolBar_ == nullptr || setupLine_ == nullptr) return;
-    toolBar_->setBackend(solverBackendId_);
-    setupLine_->setSolver(solverBackendId_, solverExecutablePath_);
+    // Settings load before the toolbar exists.
+    if (toolBar_ == nullptr) return;
+    toolBar_->setBackend(solverBackendId_, solverExecutablePath_);
 }
 
 void MainWindow::saveWorkspaceLayout()

@@ -326,4 +326,59 @@ auto NecSymbolResolver::resolve(std::string_view source,
     return resolution;
 }
 
+auto undefinedSymbols(std::string_view expression,
+    const std::vector<SymbolDefinition>& definitions) -> std::vector<std::string>
+{
+    std::vector<std::string> names;
+    const auto known = [&definitions, &names](const std::string& name) {
+        return std::ranges::any_of(definitions, [&name](const auto& definition) {
+                return lower(definition.name) == lower(name); })
+            || std::ranges::any_of(names, [&name](const auto& listed) { return lower(listed) == lower(name); });
+    };
+    for (std::size_t position = 0; position < expression.size();) {
+        const auto character = static_cast<unsigned char>(expression[position]);
+        if (std::isalpha(character) || character == '_') {
+            auto end = position + 1;
+            while (end < expression.size() && (std::isalnum(static_cast<unsigned char>(expression[end]))
+                       || expression[end] == '_')) ++end;
+            auto name = std::string(expression.substr(position, end - position));
+            if (!known(name)) names.push_back(std::move(name));
+            position = end;
+        } else if (std::isdigit(character) || character == '.') {
+            // A number, with any exponent: the e of 1e3 is not a name.
+            double value{};
+            const auto parsed = std::from_chars(expression.data() + position,
+                expression.data() + expression.size(), value);
+            position = parsed.ec == std::errc{} ? static_cast<std::size_t>(parsed.ptr - expression.data())
+                                                : position + 1;
+        } else {
+            ++position;
+        }
+    }
+    return names;
+}
+
+auto symbolValueKeeping(std::string_view expression, std::string_view name,
+    const std::vector<SymbolDefinition>& definitions, double target) -> std::optional<double>
+{
+    std::unordered_map<std::string, double> symbols;
+    for (const auto& definition : definitions) symbols.insert_or_assign(lower(definition.name), definition.value);
+    const auto at = [&](double value) -> std::optional<double> {
+        symbols.insert_or_assign(lower(name), value);
+        try {
+            return ExpressionParser{expression, symbols}.parse();
+        } catch (const std::runtime_error&) {
+            return std::nullopt;
+        }
+    };
+    const auto zero = at(0.0);
+    const auto one = at(1.0);
+    const auto two = at(2.0);
+    if (!zero || !one || !two) return std::nullopt;
+    const auto slope = *one - *zero;
+    const auto scale = std::max({1.0, std::abs(*zero), std::abs(*one), std::abs(*two)});
+    if (slope == 0.0 || std::abs(*two - 2.0 * *one + *zero) > 1e-9 * scale) return std::nullopt;
+    return (target - *zero) / slope;
+}
+
 }
