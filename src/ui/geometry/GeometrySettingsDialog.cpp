@@ -50,6 +50,8 @@ GeometrySettingsDialog::GeometrySettingsDialog(const GeometrySettings& settings,
     auto* displayLayout = new QFormLayout(displayGroup);
     lengthUnitControl_ = createLengthControl(displayGroup);
     lengthUnitControl_->setCurrentIndex(lengthUnitControl_->findData(static_cast<int>(lengthUnit_)));
+    lengthUnitControl_->setToolTip(tr("Units for the 2D and 3D views, their grid and rulers. "
+        "Wire tables and forms use the deck's own unit."));
     showGridControl_ = new QCheckBox(tr("Show grid"), displayGroup);
     showGridControl_->setChecked(settings.showGrid);
     showAxesControl_ = new QCheckBox(tr("Show axes"), displayGroup);

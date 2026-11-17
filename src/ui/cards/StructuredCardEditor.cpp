@@ -463,7 +463,7 @@ StructuredCardEditor::StructuredCardEditor(Families families, QWidget* parent)
             if (!parameterControlled && !parsesAs<double>(item->text())) return;
             QMenu menu(this);
             auto* parameterize = menu.addAction(parameterControlled
-                ? tr("Change Parameter Link…") : tr("Parameterize Field…"));
+                ? tr("Change Variable…") : tr("Make Variable…"));
             auto* detach = parameterControlled
                 ? menu.addAction(tr("Replace With Current Numeric Value")) : nullptr;
             const auto* selected = menu.exec(table_->viewport()->mapToGlobal(position));
@@ -597,7 +597,7 @@ void StructuredCardEditor::refreshTable()
     updating_ = true;
     const QSignalBlocker blocker(table_);
     table_->setToolTip(family.description + tr(" Double-click a field to edit it; right-click "
-        "a number to parameterize it or link an SY symbol."));
+        "a number → Make Variable…"));
     auto fieldCount = family.fields.size();
     for (const auto& card : document_.cards()) {
         if (belongsTo(card, family))

@@ -76,7 +76,9 @@ changes and asks only about invalid ones. New EX, LD, TL and NT cards are placed
 `nec::setupCardInsertionIndex`. A name or expression typed into a wire cell goes through
 `enterFieldExpression` (`ui/cards/SymbolPrompt`), which asks under the cell for the value
 of each new name and adds its `SY` card with `nec::insertSymbolDefinition`. The center
-shows the geometry editor (2D and 3D views), or one full result view, or the NEC
+shows the geometry editor (2D views in `GeometryPlanes`, which puts
+`geometry::widestPlane` in the big view when a model opens and swaps on request, and the
+3D view), or one full result view, or the NEC
 Deck (`DeckView`: raw source), each non-geometry view under the same
 `CenterViewHeader`; the collapsible results column is on the right. The results (`ui/results`) are:
 

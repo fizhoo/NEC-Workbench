@@ -32,13 +32,6 @@ auto createLengthControl(QWidget* parent) -> QDoubleSpinBox*
     return control;
 }
 
-auto unitSuffix(model::LengthUnit unit) -> QString
-{
-    const auto symbol = model::lengthUnitSymbol(unit);
-    return QStringLiteral(" %1").arg(
-        QString::fromLatin1(symbol.data(), static_cast<qsizetype>(symbol.size())));
-}
-
 }
 
 WirePropertiesEditor::WirePropertiesEditor(QWidget* parent) : QWidget(parent)
@@ -64,10 +57,10 @@ WirePropertiesEditor::WirePropertiesEditor(QWidget* parent) : QWidget(parent)
     grid->addWidget(new QLabel(tr("Segments"), this), 0, 2, Qt::AlignRight);
     grid->addWidget(segmentsControl_, 0, 3);
     // One row per endpoint, X Y Z across.
-    const std::array axes{tr("X"), tr("Y"), tr("Z")};
     for (auto axis = 0; axis < 3; ++axis) {
-        auto* label = new QLabel(axes[static_cast<std::size_t>(axis)], this);
+        auto* label = new QLabel(this);
         label->setAlignment(Qt::AlignCenter);
+        axisLabels_[static_cast<std::size_t>(axis)] = label;
         grid->addWidget(label, 1, axis + 1);
     }
     const std::array endpoints{tr("Start"), tr("End")};
@@ -93,7 +86,9 @@ WirePropertiesEditor::WirePropertiesEditor(QWidget* parent) : QWidget(parent)
     diameterLabel_->setObjectName(QStringLiteral("wireDiameterLabel"));
     grid->addWidget(new QLabel(tr("Gauge"), this), 4, 0);
     grid->addWidget(gaugeControl_, 4, 1);
-    grid->addWidget(new QLabel(tr("Radius"), this), 4, 2, Qt::AlignRight);
+    radiusLabel_ = new QLabel(this);
+    radiusLabel_->setObjectName(QStringLiteral("wireRadiusLabel"));
+    grid->addWidget(radiusLabel_, 4, 2, Qt::AlignRight);
     grid->addWidget(radiusControl_, 4, 3);
     grid->addWidget(diameterLabel_, 5, 1, 1, 3);
     for (const auto column : {1, 2, 3}) grid->setColumnStretch(column, 1);
@@ -155,11 +150,12 @@ WirePropertiesEditor::WirePropertiesEditor(QWidget* parent) : QWidget(parent)
 }
 
 void WirePropertiesEditor::setWire(const model::Wire& wire, const model::AntennaModel& model,
-    model::LengthUnit lengthUnit, const LinkedFields& linked)
+    double scaleToMeters, const QString& unit, const LinkedFields& linked)
 {
     original_ = wire;
     model_ = model;
-    lengthUnit_ = lengthUnit;
+    scaleToMeters_ = scaleToMeters;
+    unit_ = unit;
     linked_ = linked;
     edited_ = {};
     updating_ = true;
@@ -167,13 +163,13 @@ void WirePropertiesEditor::setWire(const model::Wire& wire, const model::Antenna
     segmentsControl_->setValue(wire.segments);
     const std::array<double, 6> coordinates{wire.start.x, wire.start.y, wire.start.z,
         wire.end.x, wire.end.y, wire.end.z};
-    const auto suffix = unitSuffix(lengthUnit_);
-    for (auto index = std::size_t{0}; index < coordinateControls_.size(); ++index) {
-        coordinateControls_[index]->setSuffix(suffix);
-        coordinateControls_[index]->setValue(model::fromMeters(coordinates[index], lengthUnit_));
-    }
-    radiusControl_->setSuffix(suffix);
-    radiusControl_->setValue(model::fromMeters(wire.radius, lengthUnit_));
+    const std::array axes{tr("X %1"), tr("Y %1"), tr("Z %1")};
+    for (auto axis = std::size_t{0}; axis < axes.size(); ++axis)
+        axisLabels_[axis]->setText(axes[axis].arg(unit_));
+    radiusLabel_->setText(tr("Radius %1").arg(unit_));
+    for (auto index = std::size_t{0}; index < coordinateControls_.size(); ++index)
+        coordinateControls_[index]->setValue(coordinates[index] / scaleToMeters_);
+    radiusControl_->setValue(wire.radius / scaleToMeters_);
     const auto gauge = model::matchingAwg(wire.radius);
     gaugeControl_->setCurrentIndex(gauge ? gaugeControl_->findData(*gauge) : 0);
     updating_ = false;
@@ -190,7 +186,7 @@ auto WirePropertiesEditor::wire() const -> model::Wire
 {
     // A field shows its value rounded; one left alone must go back exactly as it was.
     const auto length = [this](std::size_t field, const QDoubleSpinBox* control, double original) {
-        return edited_[field] ? model::toMeters(control->value(), lengthUnit_) : original;
+        return edited_[field] ? control->value() * scaleToMeters_ : original;
     };
     const model::Point3D start{length(2, coordinateControls_[0], original_.start.x),
         length(3, coordinateControls_[1], original_.start.y),
@@ -232,7 +228,7 @@ void WirePropertiesEditor::showLinkedFields()
 
 void WirePropertiesEditor::discardPendingEdits()
 {
-    setWire(original_, model_, lengthUnit_);
+    setWire(original_, model_, scaleToMeters_, unit_, linked_);
 }
 
 void WirePropertiesEditor::setAppliedCallback(
@@ -270,15 +266,15 @@ void WirePropertiesEditor::selectGauge(int index)
     const auto data = gaugeControl_->itemData(index);
     if (!data.isValid()) return;
     selectingGauge_ = true;
-    radiusControl_->setValue(model::fromMeters(model::awgRadiusMeters(data.toInt()), lengthUnit_));
+    radiusControl_->setValue(model::awgRadiusMeters(data.toInt()) / scaleToMeters_);
     selectingGauge_ = false;
     updateDiameterLabel();
 }
 
 void WirePropertiesEditor::updateDiameterLabel()
 {
-    diameterLabel_->setText(tr("Diameter %1%2")
-        .arg(formatDecimal(radiusControl_->value() * 2.0), unitSuffix(lengthUnit_)));
+    diameterLabel_->setText(tr("Diameter %1 %2")
+        .arg(formatDecimal(radiusControl_->value() * 2.0), unit_));
 }
 
 void WirePropertiesEditor::setPending(bool pending)

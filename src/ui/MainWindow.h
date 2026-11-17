@@ -46,6 +46,7 @@ class NecEditor;
 class AnalysisSetupEditor;
 class AnalysisRequestEditor;
 class Geometry3DView;
+class GeometryPlanes;
 class GeometryView;
 class GeometryInteractionView;
 class RunReviewWindow;
@@ -185,7 +186,7 @@ private:
     void duplicateWire(int tag);
     void editWire(const model::Wire& original, const model::Wire& updated);
     void editStructuredCard(std::size_t sourceLine, const QString& cardText);
-    void makeFieldOptimizable(std::size_t sourceLine,
+    void makeFieldVariable(std::size_t sourceLine,
         std::size_t fieldIndex, const QString& fieldLabel);
     void detachFieldParameter(std::size_t sourceLine,
         std::size_t fieldIndex, const QString& fieldLabel);
@@ -327,9 +328,7 @@ private:
     SourceHistory* history_{};
     GeometryPreview* geometryPreview_{};
     QAction* revertAction_{};
-    GeometryView* xyView_{};
-    GeometryView* xzView_{};
-    GeometryView* yzView_{};
+    GeometryPlanes* geometryPlanes_{};
     Geometry3DView* geometry3DView_{};
     SetupEditor* setupEditor_{};
     CardFieldForm* cardForm_{};

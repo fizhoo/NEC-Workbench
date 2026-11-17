@@ -199,6 +199,10 @@ Editor** brings the geometry back with the view focused.
 ### Geometry
 
 The XY, XZ, YZ, and 3D views share selection with the card tables and the model tree.
+When a model opens, the plane it spreads out most in takes the big 2D view (XZ for a
+loop standing at y = 0, XY for a horizontal yagi). Double-click a small view's title, or
+right-click it and choose **Make Main View**, to swap it in; the choice stays until another
+model is opened. A view stays fitted as the window is resized until you zoom or pan it.
 Ordinary `GW` wires can be selected and edited. The 2D views support endpoint and
 whole-wire dragging, snapping, fitting, panning, and zooming. Right-click a wire
 for properties, splitting, deletion, source creation, or AWG sizing.
@@ -217,12 +221,15 @@ an expression such as `len/2`. Each one written as a number gets a slider under
 **Variables**, and the optimizer can search it. There are four ways to make one:
 
 - **Type it into a wire cell.** In the Wires table, type `len` or `len/2` over a
-  coordinate or radius. If `len` is new, a box under the cell asks for its value, filled
+  segment count, coordinate or radius. If `len` is new, a box under the cell asks for its value, filled
   in, when it can be worked out, with the value that keeps the wire where it is. Enter
   adds `SY len=…` after the other `SY` cards at the top of the deck; Esc changes nothing. As you type, existing variables are offered with
   their values. This works in the Wires table only.
-- **Right-click a cell** in any card table and choose **Parameterize Field…** to name a
-  new parameter for its value, or link the field to an existing one.
+- **Right-click a cell** and choose **Make Variable…**. In the Wires table the cell opens
+  with a suggested name such as `W2_Z1` typed in; Enter keeps the cell's value as the new
+  variable's, as if you had typed the name. In the other card tables a dialog names a new
+  variable for the value or uses an existing one. A cell that already uses a variable
+  offers **Change Variable…**.
 - **Add it in the Parameters table:** select **Variables** in the model tree and choose
   **Add Parameter**, then use its name in a field.
 - **Write the `SY` card** in the NEC Deck.
@@ -250,12 +257,14 @@ The NEC Deck's raw source and the card tables operate on the same document.
 - Long numbers, such as those written by geometry drags or the optimizer, are shown
   at 6 significant figures to keep columns narrow. The deck keeps the exact value:
   hover a cell to see it, and editing starts from it.
-- In the wire table, type a name or an expression into a coordinate or radius to use a
-  variable; see [Making Variables](#making-variables). A cell written as an expression
+- In the wire table, type a name or an expression into a segment count, coordinate or
+  radius to use a variable; see [Making Variables](#making-variables). A cell written as an expression
   shows its value; hover it to see the expression, and type over it to change it. Typing
   a number there replaces the expression.
-- Right-click a numeric cell to parameterize it with a named parameter, or to link it to
-  an existing one.
+- Right-click a numeric cell and choose **Make Variable…** to give it a variable.
+- Wire lengths, in the Wires table and the wire's own form, are in the deck's unit (its
+  `GS` scale); the unit is in each label, such as **X1 m**. The Geometry display unit only
+  changes the 2D and 3D views, their grid and rulers.
 - Selecting a row selects its source, load, line, or network everywhere, or moves the
   raw-source cursor to the card.
 
@@ -677,7 +686,7 @@ open model.
 
 Optimization consumes existing parameters. It does not decide which NEC fields a
 parameter controls. Use **Choose Parameter Fields…** to jump to the wire table when
-another field must be parameterized.
+another field needs a variable.
 
 ### Search Methods
 

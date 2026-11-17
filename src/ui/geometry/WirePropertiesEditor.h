@@ -1,7 +1,6 @@
 #pragma once
 
 #include "model/AntennaModel.h"
-#include "model/LengthUnit.h"
 
 #include <QWidget>
 
@@ -28,9 +27,10 @@ public:
 
     explicit WirePropertiesEditor(QWidget* parent = nullptr);
 
+    // Lengths are shown in the deck's own unit: scaleToMeters converts them, unit names it.
     // Linked fields show their expression and cannot be edited here.
     void setWire(const model::Wire& wire, const model::AntennaModel& model,
-        model::LengthUnit lengthUnit, const LinkedFields& linked = {});
+        double scaleToMeters, const QString& unit, const LinkedFields& linked = {});
     // Fields the user did not edit keep the wire's exact values, not the rounded display.
     [[nodiscard]] auto wire() const -> model::Wire;
     [[nodiscard]] auto hasPendingEdits() const noexcept -> bool { return pending_; }
@@ -48,7 +48,10 @@ private:
 
     model::Wire original_;
     model::AntennaModel model_;
-    model::LengthUnit lengthUnit_{model::LengthUnit::Meter};
+    double scaleToMeters_{1.0};
+    QString unit_;
+    std::array<QLabel*, 3> axisLabels_{};
+    QLabel* radiusLabel_{};
     QLabel* title_{};
     QSpinBox* tagControl_{};
     QSpinBox* segmentsControl_{};

@@ -6,6 +6,7 @@
 #include "nec/NecSymbolResolver.h"
 
 #include <QPoint>
+#include <QStringList>
 #include <QWidget>
 
 #include <vector>
@@ -41,11 +42,9 @@ signals:
     void addWireRequested();
     void duplicateWireRequested(int tag);
     void deleteWireRequested(int tag);
-    void fieldParameterizationRequested(std::size_t sourceLine,
-        std::size_t fieldIndex, QString fieldLabel);
     void fieldDetachmentRequested(std::size_t sourceLine,
         std::size_t fieldIndex, QString fieldLabel);
-    // Text that is not a plain number typed into a coordinate or radius, or anything typed
+    // Text that is not a plain number typed into segments, a coordinate or radius, or anything typed
     // over an expression; `below` is the bottom left of the cell on screen.
     void fieldExpressionEntered(std::size_t sourceLine, std::size_t fieldIndex,
         QString fieldLabel, QString expression, QPoint below);
@@ -57,6 +56,9 @@ private:
     [[nodiscard]] auto selectedTag() const -> int;
     void setCellError(QTableWidgetItem* item, const QString& message);
     void applyGauge(int tag, int gauge);
+    // A new variable's name for a wire field, such as W2_Z1, made unique.
+    [[nodiscard]] auto suggestedName(int tag, int column) const -> QString;
+    void editCellAs(QTableWidgetItem* item, const QString& text);
 
     QTableWidget* table_{};
     QPushButton* duplicateButton_{};
@@ -64,6 +66,7 @@ private:
     model::AntennaModel model_;
     nec::NecParameterFieldMap symbolicGeometryFields_;
     nec::NecParameterFieldMap parameterControlledFields_;
+    QStringList symbolNames_;
     double scaleToMeters_{1.0};
     QString unitLabel_{QStringLiteral("m")};
     bool updating_{};

@@ -3,6 +3,7 @@
 #include "model/WireGeometry.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace necwb::geometry {
@@ -94,6 +95,30 @@ auto projectedBounds(const model::AntennaModel& model, ProjectionPlane plane)
         }
     }
     return bounds;
+}
+
+auto widestPlane(const model::AntennaModel& model) -> ProjectionPlane
+{
+    constexpr std::array planes{ProjectionPlane::XY, ProjectionPlane::XZ, ProjectionPlane::YZ};
+    std::array<std::optional<Bounds2D>, planes.size()> bounds;
+    auto size = 0.0;
+    for (std::size_t index = 0; index < planes.size(); ++index) {
+        bounds[index] = projectedBounds(model, planes[index]);
+        if (bounds[index]) size = std::max({size, bounds[index]->width(), bounds[index]->height()});
+    }
+    const auto floor = size / 20.0;
+    auto widest = ProjectionPlane::XY;
+    auto widestArea = -1.0;
+    for (std::size_t index = 0; index < planes.size(); ++index) {
+        if (!bounds[index]) continue;
+        const auto area = std::max(bounds[index]->width(), floor)
+            * std::max(bounds[index]->height(), floor);
+        if (area > widestArea) {
+            widest = planes[index];
+            widestArea = area;
+        }
+    }
+    return widest;
 }
 
 auto distanceToSegment(const Point2D& point, const Point2D& start, const Point2D& end) noexcept -> double

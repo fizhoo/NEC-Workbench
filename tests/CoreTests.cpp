@@ -766,6 +766,19 @@ void testSymbolResolution()
     expect(!necwb::nec::parameterizeNecCardField(
             "FR 0 1 0 0 start 0\n", 1, 4, "frequency"),
         "an existing symbolic field is not promoted a second time");
+    {
+        const auto resolved = necwb::nec::NecSymbolResolver{}.resolve(
+            "SY W1_SEG=21\nGW 1 W1_SEG 0 0 0 1 0 0 .001\nGE 0\nEN\n");
+        const auto converted = necwb::nec::NecModelConverter{}.convert(
+            necwb::nec::NecParser{}.parse(resolved.resolvedSource));
+        expect(resolved.ok() && converted.model.wireCount() == 1
+                && converted.model.wires().front().segments == 21,
+            "a variable in a wire's segment count resolves to a whole number of segments");
+    }
+    const auto commaField = necwb::nec::replaceNecCardFieldExpression(
+        "CE\nGW 1,21,-1.87,0.,-1.87,1.87,0.,-1.87,.000814\nGE 0\nEN\n", 2, 2, "W1_X1");
+    expect(commaField && commaField->find("GW 1,21,W1_X1,0.,-1.87") != std::string::npos,
+        "a comma-separated card field takes a variable name in place");
     const auto relinkedField = necwb::nec::replaceNecCardFieldExpression(
         "SY first=5\nSY second=6\nGW 1 11 first 0 0 10 0 0 .001\n",
         3, 2, "second");
@@ -1627,6 +1640,23 @@ void testProjectionBoundsAndDistance()
             && xzBounds->minimumVertical == 0.0 && xzBounds->maximumVertical == 4.0,
         "XZ bounds use X and Z coordinates");
     const auto yzBounds = necwb::geometry::projectedBounds(model.wires(), necwb::geometry::ProjectionPlane::YZ);
+    {
+        using necwb::geometry::ProjectionPlane;
+        necwb::model::AntennaModel loop;
+        loop.addWire({1, {-1.87, 0.0, -1.87}, {1.87, 0.0, -1.87}, 21, 0.001, 1});
+        loop.addWire({2, {1.87, 0.0, -1.87}, {1.87, 0.0, 1.87}, 21, 0.001, 2});
+        loop.addWire({3, {1.87, 0.0, 1.87}, {-1.87, 0.0, 1.87}, 21, 0.001, 3});
+        necwb::model::AntennaModel yagi;
+        for (auto element = 0; element < 3; ++element)
+            yagi.addWire({element + 1, {element * 1.5, -5.0, 10.0}, {element * 1.5, 5.0, 10.0}, 21, 0.001, element + 1});
+        necwb::model::AntennaModel vertical;
+        vertical.addWire({1, {0.0, 0.0, 0.0}, {0.0, 0.0, 10.0}, 21, 0.001, 1});
+        expect(necwb::geometry::widestPlane(loop) == ProjectionPlane::XZ
+                && necwb::geometry::widestPlane(yagi) == ProjectionPlane::XY
+                && necwb::geometry::widestPlane(vertical) == ProjectionPlane::XZ
+                && necwb::geometry::widestPlane(necwb::model::AntennaModel{}) == ProjectionPlane::XY,
+            "the widest plane is the one the antenna spreads out most in, ties going to XY then XZ");
+    }
     expect(yzBounds->minimumHorizontal == -5.0 && yzBounds->maximumHorizontal == 3.0
             && yzBounds->minimumVertical == 0.0 && yzBounds->maximumVertical == 4.0,
         "YZ bounds use Y and Z coordinates");
