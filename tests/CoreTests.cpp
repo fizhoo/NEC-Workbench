@@ -2956,46 +2956,6 @@ void testOptimizationObjectives()
 
 void testAdaptiveSearch()
 {
-    necwb::analysis::AdaptiveSearch search({0.0, 10.0, 12, 0.1, 0.001});
-    const auto initial = search.initialCandidates();
-    expect(initial == std::vector<double>({0.0, 2.5, 5.0, 7.5, 10.0}),
-        "adaptive search begins with a bounded five-point sample");
-    for (const auto value : initial) search.record(value, std::pow(value - 5.0, 2.0));
-    const auto firstRefinement = search.nextCandidates();
-    expect(firstRefinement == std::vector<double>({3.75, 6.25}),
-        "adaptive search refines both neighbors of an interior best point");
-    expect(search.refinementRound() == 1,
-        "adaptive search numbers a left/right proposal batch as one refinement round");
-    for (const auto value : firstRefinement) search.record(value, std::pow(value - 5.0, 2.0));
-    const auto secondRefinement = search.nextCandidates();
-    expect(search.refinementRound() == 2,
-        "adaptive search advances its round only after proposing the next batch");
-    for (const auto value : secondRefinement) search.record(value, std::pow(value - 5.0, 2.0));
-    expect(search.nextCandidates().empty()
-            && search.stopReason() == necwb::analysis::AdaptiveStopReason::ScoreTolerance,
-        "adaptive search reports score-tolerance convergence after repeated stagnant rounds");
-    expect(search.scoreImprovements() == std::vector<double>({0.0, 0.0}),
-        "adaptive search retains the round improvements that triggered convergence");
-
-    necwb::analysis::AdaptiveSearch limited({0.0, 10.0, 5, 0.1, 0.001});
-    for (const auto value : limited.initialCandidates()) limited.record(value, value);
-    expect(limited.nextCandidates().empty()
-            && limited.stopReason() == necwb::analysis::AdaptiveStopReason::MaximumEvaluations,
-        "adaptive search obeys its solver-evaluation budget");
-
-    necwb::analysis::AdaptiveSearch resolved({0.0, 1.0, 12, 0.2, 0.001});
-    for (const auto value : resolved.initialCandidates())
-        resolved.record(value, std::pow(value - 0.5, 2.0));
-    expect(resolved.nextCandidates().empty()
-            && resolved.stopReason() == necwb::analysis::AdaptiveStopReason::ParameterTolerance,
-        "adaptive search reports parameter tolerance when neither midpoint is far enough away");
-
-    necwb::analysis::AdaptiveSearch failed({0.0, 10.0, 12, 0.1, 0.001});
-    for (const auto value : failed.initialCandidates()) failed.record(value, std::nullopt);
-    expect(failed.nextCandidates().empty()
-            && failed.stopReason() == necwb::analysis::AdaptiveStopReason::NoSuccessfulCandidate,
-        "adaptive search reports when no candidate produced an objective score");
-
     necwb::analysis::AdaptiveVectorSearch vectorSearch({
         {{0.0, 10.0, 0.1}, {100.0, 200.0, 1.0}}, 15, 0.001});
     const auto initialVectors = vectorSearch.initialCandidates();
@@ -3035,6 +2995,26 @@ void testAdaptiveSearch()
                 == necwb::analysis::AdaptiveStopReason::ScoreTolerance
             && boundarySearch.scoreImprovements() == std::vector<double>({0.0, 0.0}),
         "adaptive boundary convergence reports unchanged best-score improvements");
+
+    // The other stop reasons, for one variable as a single-variable study runs them.
+    necwb::analysis::AdaptiveVectorSearch limited({{{0.0, 10.0, 0.1}}, 3, 0.001});
+    for (const auto& candidate : limited.initialCandidates())
+        limited.record(candidate.values, candidate.values.front());
+    expect(limited.nextCandidates().empty()
+            && limited.stopReason() == necwb::analysis::AdaptiveStopReason::MaximumEvaluations,
+        "adaptive search obeys its solver-evaluation budget");
+    necwb::analysis::AdaptiveVectorSearch resolved({{{0.0, 1.0, 0.3}}, 12, 0.001});
+    for (const auto& candidate : resolved.initialCandidates())
+        resolved.record(candidate.values, std::pow(candidate.values.front() - 0.4, 2.0));
+    expect(resolved.nextCandidates().empty()
+            && resolved.stopReason() == necwb::analysis::AdaptiveStopReason::ParameterTolerance,
+        "adaptive search stops once its step is below the variable tolerance");
+    necwb::analysis::AdaptiveVectorSearch failed({{{0.0, 10.0, 0.1}}, 12, 0.001});
+    for (const auto& candidate : failed.initialCandidates())
+        failed.record(candidate.values, std::nullopt);
+    expect(failed.nextCandidates().empty()
+            && failed.stopReason() == necwb::analysis::AdaptiveStopReason::NoSuccessfulCandidate,
+        "adaptive search reports when no candidate produced an objective score");
 }
 
 void testNelderMeadSearch()
