@@ -25,17 +25,6 @@
 
 namespace necwb::ui {
 
-namespace {
-
-auto frequencyAt(const model::FrequencyDefinition& frequency, int index) -> double
-{
-    return frequency.steppingMode == 1
-        ? frequency.startMHz * std::pow(frequency.step, index)
-        : frequency.startMHz + index * frequency.step;
-}
-
-}
-
 void OptimizationWorkspace::updateFrequencyControls()
 {
     const auto explicitMode = selectedFrequencyMode() == FrequencyMode::Explicit;
@@ -52,7 +41,7 @@ void OptimizationWorkspace::populateModelFrequencies(const model::FrequencyDefin
     const auto count = std::max(1, frequency.count);
     modelFrequenciesMHz_.reserve(static_cast<std::size_t>(count));
     for (auto index = 0; index < count; ++index) {
-        const auto frequencyMHz = frequencyAt(frequency, index);
+        const auto frequencyMHz = model::frequencyAtIndex(frequency, index);
         if (std::isfinite(frequencyMHz) && frequencyMHz > 0.0)
             modelFrequenciesMHz_.push_back(frequencyMHz);
     }

@@ -77,11 +77,6 @@ WorkbenchLayout::WorkbenchLayout(Panes panes, QWidget* parent)
     connect(split_, &QSplitter::splitterMoved, this, [this] { saveColumnWidths(); });
 }
 
-void WorkbenchLayout::showWelcome()
-{
-    pages_->setCurrentIndex(0);
-}
-
 void WorkbenchLayout::showModel()
 {
     pages_->setCurrentWidget(split_);

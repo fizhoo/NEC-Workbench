@@ -16,17 +16,6 @@
 #include <cmath>
 
 namespace necwb::ui {
-namespace {
-
-auto frequencyEnd(const model::FrequencyDefinition& definition) -> double
-{
-    if (definition.count <= 1) return definition.startMHz;
-    if (definition.steppingMode == 1)
-        return definition.startMHz * std::pow(definition.step, definition.count - 1);
-    return definition.startMHz + definition.step * (definition.count - 1);
-}
-
-}
 
 QuickSweepDialog::QuickSweepDialog(const model::FrequencyDefinition& initial, QWidget* parent,
     bool radiationAvailable)
@@ -89,7 +78,7 @@ QuickSweepDialog::QuickSweepDialog(const model::FrequencyDefinition& initial, QW
     connect(buttons_, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(buttons_);
 
-    const auto initialEnd = frequencyEnd(initial);
+    const auto initialEnd = model::frequencyEndMHz(initial);
     const auto start = std::max(0.000001, initial.startMHz);
     start_->setValue(start);
     stop_->setValue(initial.count > 1 && initialEnd > start

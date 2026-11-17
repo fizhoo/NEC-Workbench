@@ -27,8 +27,6 @@ public:
     void request(const std::string& variable, double value);
     // Drops a redraw not yet made, as when the value is committed.
     void cancel();
-    // How long the last redraw took, in milliseconds.
-    [[nodiscard]] auto lastMilliseconds() const -> double { return lastMilliseconds_; }
 
 private:
     void redraw();
@@ -39,7 +37,6 @@ private:
     std::function<void(const model::AntennaModel&)> show_;
     std::optional<std::pair<std::string, double>> pending_;
     QElapsedTimer lastRedraw_;
-    double lastMilliseconds_{};
 };
 
 }

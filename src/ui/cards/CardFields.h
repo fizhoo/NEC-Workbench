@@ -1,5 +1,7 @@
 #pragma once
 
+#include "nec/ParseNumber.h"
+
 #include <QString>
 
 #include <vector>
@@ -24,5 +26,14 @@ struct FieldChoice {
 [[nodiscard]] auto cardFieldLabel(const QString& mnemonic, int fieldIndex, int type) -> QString;
 // The number of fields cardFieldLabel names for the card and type.
 [[nodiscard]] auto cardFieldCount(const QString& mnemonic, int type) -> int;
+
+// Whether a field's text is a Value as the NEC parser reads it, such as "+1" or "1e-3".
+template<typename Value>
+[[nodiscard]] auto parsesAs(const QString& text) -> bool
+{
+    const auto value = text.trimmed().toStdString();
+    Value parsed{};
+    return !value.empty() && nec::parseNumber(value, parsed);
+}
 
 }

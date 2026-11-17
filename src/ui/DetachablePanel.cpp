@@ -78,11 +78,6 @@ auto DetachablePanel::isWindowVisible() const -> bool
     return detached_ && dialog_ != nullptr && dialog_->isVisible();
 }
 
-auto DetachablePanel::isWindowActive() const -> bool
-{
-    return detached_ && dialog_ != nullptr && dialog_->isActiveWindow();
-}
-
 void DetachablePanel::showWindow()
 {
     if (!detached_) detach(false);

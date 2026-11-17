@@ -23,7 +23,6 @@ public:
     void setContent(QWidget* content);
     [[nodiscard]] auto isDetached() const -> bool;
     [[nodiscard]] auto isWindowVisible() const -> bool;
-    [[nodiscard]] auto isWindowActive() const -> bool;
     void showWindow();
     void setStatusText(QString status);
 

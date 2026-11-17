@@ -4,7 +4,6 @@
 #include "nec/NecParser.h"
 #include "nec/NecSymbolResolver.h"
 
-#include <QElapsedTimer>
 #include <QScreen>
 #include <QTimer>
 #include <QWidget>
@@ -45,8 +44,6 @@ void GeometryPreview::cancel()
 void GeometryPreview::redraw()
 {
     if (!pending_) return;
-    QElapsedTimer elapsed;
-    elapsed.start();
     lastRedraw_.start();
     const auto resolution = nec::NecSymbolResolver{}.resolve(source_(),
         {{pending_->first, pending_->second}});
@@ -54,7 +51,6 @@ void GeometryPreview::redraw()
     // A value the formulas cannot use leaves the wires as they were.
     if (!resolution.ok()) return;
     show_(nec::NecModelConverter{}.convert(nec::NecParser{}.parse(resolution.resolvedSource)).model);
-    lastMilliseconds_ = static_cast<double>(elapsed.nsecsElapsed()) / 1.0e6;
 }
 
 }

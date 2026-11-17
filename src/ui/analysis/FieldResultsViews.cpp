@@ -879,7 +879,6 @@ public:
     void setModel(const model::AntennaModel& model) { model_ = model; update(); }
     void setLayerVisibility(bool antenna, bool currents, bool radiation)
     { showAntenna_ = antenna; showCurrents_ = currents; showRadiation_ = radiation; update(); }
-    void setOverlayVisible(bool visible) { showOverlay_ = visible; update(); }
     void setSurfaceLook(SurfaceStyle style, bool seeThrough)
     {
         style_ = style; seeThrough_ = seeThrough;
@@ -1008,21 +1007,19 @@ protected:
             }
         }
         painter.setPen(palette().color(QPalette::Text));
-        if (showOverlay_) {
-            auto status = tr("Drag to orbit · wheel to zoom · zoom %1×").arg(formatDecimal(zoom_));
-            if (hasRadiation) {
-                const auto metrics = analysis::radiationMetrics(samples_, settings_.component);
-                status += tr(" · Dataset peak %1").arg(fromCore(analysis::formatGain(
-                    {.gainDb = maxGain, .thetaDegrees = metrics.peakThetaDegrees,
-                        .phiDegrees = metrics.peakPhiDegrees,
-                        .component = settings_.component, .frequencyMHz = settings_.frequencyMHz,
-                        .sampleStep = std::nullopt}).text));
-            }
-            if (referenceMaximum)
-                status += tr(" · Historical overlay %1 shown dashed").arg(referenceLabel_);
-            painter.drawText(10, 22, status + tr(" · Shift/middle-drag to pan"));
+        auto status = tr("Drag to orbit · wheel to zoom · zoom %1×").arg(formatDecimal(zoom_));
+        if (hasRadiation) {
+            const auto metrics = analysis::radiationMetrics(samples_, settings_.component);
+            status += tr(" · Dataset peak %1").arg(fromCore(analysis::formatGain(
+                {.gainDb = maxGain, .thetaDegrees = metrics.peakThetaDegrees,
+                    .phiDegrees = metrics.peakPhiDegrees,
+                    .component = settings_.component, .frequencyMHz = settings_.frequencyMHz,
+                    .sampleStep = std::nullopt}).text));
         }
-        if (hasRadiation && showOverlay_) {
+        if (referenceMaximum)
+            status += tr(" · Historical overlay %1 shown dashed").arg(referenceLabel_);
+        painter.drawText(10, 22, status + tr(" · Shift/middle-drag to pan"));
+        if (hasRadiation) {
             const auto reference = gainReference(maxGain);
             const auto minimum = reference + settings_.floorDb;
             setProperty("colorScaleMinimum", minimum);
@@ -1038,7 +1035,7 @@ protected:
                 settings_.scale == analysis::RadiationScale::Normalized ? tr("dB") : tr("dBi"));
         }
         setProperty("currentColorScale", maximumCurrent.has_value());
-        if (maximumCurrent && showOverlay_) {
+        if (maximumCurrent) {
             setProperty("currentColorScaleMinimum", 0.0);
             setProperty("currentColorScaleMaximum", *maximumCurrent);
             const auto legendTop = hasRadiation ? 100.0 : 42.0;
@@ -1313,7 +1310,6 @@ private:
     bool showAntenna_{true};
     bool showCurrents_{true};
     bool showRadiation_{true};
-    bool showOverlay_{true};
     SurfaceStyle style_{SurfaceStyle::ShadedGrid};
     bool seeThrough_{true};
 };
@@ -1999,9 +1995,9 @@ void RadiationPatternView::exportData()
 Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
-    controls_ = new QWidget(this);
-    controls_->setObjectName(QStringLiteral("radiation3DControls"));
-    auto* controlsLayout = new QVBoxLayout(controls_);
+    auto* controls = new QWidget(this);
+    controls->setObjectName(QStringLiteral("radiation3DControls"));
+    auto* controlsLayout = new QVBoxLayout(controls);
     controlsLayout->setContentsMargins(0, 0, 0, 0);
     auto* form = new QGridLayout;
     frequency_ = new QComboBox(this); frequency_->setObjectName(QStringLiteral("radiation3DFrequency"));
@@ -2069,7 +2065,7 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
     });
     controlsLayout->addLayout(form);
     controlsLayout->addLayout(layers);
-    layout->addWidget(controls_);
+    layout->addWidget(controls);
     layout->addWidget(summary_);
     layout->addWidget(hoverReadout_);
     layout->addWidget(surface_, 1);
@@ -2163,15 +2159,6 @@ void Radiation3DView::setFrequencyControlVisible(bool visible)
 {
     frequencyLabel_->setVisible(visible);
     frequency_->setVisible(visible);
-}
-void Radiation3DView::setOverviewMode(bool enabled)
-{
-    controls_->setVisible(!enabled);
-    summary_->setVisible(!enabled);
-    hoverReadout_->setVisible(!enabled);
-    surface_->setOverlayVisible(!enabled);
-    layout()->setContentsMargins(enabled ? 0 : 11, enabled ? 0 : 11,
-        enabled ? 0 : 11, enabled ? 0 : 11);
 }
 void Radiation3DView::refresh()
 {

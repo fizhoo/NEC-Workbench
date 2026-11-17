@@ -4335,6 +4335,17 @@ auto main(int argc, char* argv[]) -> int
     structuredCards.show(); application.processEvents();
     structuredTable->item(0, 8)->setText(QStringLiteral("2.5"));
     application.processEvents();
+    // A number as the parser reads it, "+1" too, goes into the deck; anything else does not.
+    const auto tableAccepts = [&](const QString& text) {
+        editedCard.clear();
+        structuredTable->item(0, 8)->setText(text);
+        application.processEvents();
+        return editedCard.contains(QLatin1Char(' ') + text);
+    };
+    const auto tableNumbers = tableAccepts(QStringLiteral("+1")) && tableAccepts(QStringLiteral("1e-3"))
+        && tableAccepts(QStringLiteral("-0.5")) && !tableAccepts(QStringLiteral("abc"))
+        && !tableAccepts(QStringLiteral("1..2"));
+    tableAccepts(QStringLiteral("2.5"));
     // An NT with zero admittances would open the wire at its ports, so Add NT writes a 50 Ω
     // series connection.
     selectStructuredFamily(structuredFamilies, QStringLiteral("NT"));
@@ -5044,13 +5055,27 @@ auto main(int argc, char* argv[]) -> int
             emit segment->textEdited(segment->text());
             apply->click();
             const auto invalidHeld = applied.isEmpty() && form.hasPendingEdits();
+            // Numbers as the parser reads them, "+1" too, apply; anything else is held.
+            const auto formAccepts = [&](QLineEdit* field, const QString& text) {
+                applied.clear();
+                field->setText(text);
+                emit field->textEdited(text);
+                apply->click();
+                return !applied.isEmpty();
+            };
+            const auto formNumbers = formAccepts(segment, QStringLiteral("+1"))
+                && formAccepts(reactance, QStringLiteral("1e-3"))
+                && formAccepts(reactance, QStringLiteral("-0.5"))
+                && formAccepts(reactance, QStringLiteral("+1"))
+                && !formAccepts(reactance, QStringLiteral("abc"))
+                && !formAccepts(reactance, QStringLiteral("1..2"));
             type->setCurrentIndex(type->findData(QStringLiteral("5")));
             const auto relabelled = std::ranges::any_of(form.findChildren<QLabel*>(),
                 [](const QLabel* label) { return label->text() == QString::fromUtf8("σ S/m"); });
-            cardFormValid = shared && linked && symbolKept && invalidHeld && relabelled;
+            cardFormValid = shared && linked && symbolKept && invalidHeld && formNumbers && relabelled;
             if (!cardFormValid)
                 qWarning() << "card form" << shared << notes->text() << linked
-                           << resistance->text() << symbolKept << applied << invalidHeld
+                           << resistance->text() << symbolKept << applied << invalidHeld << formNumbers
                            << relabelled;
         }
     }
@@ -5195,7 +5220,7 @@ auto main(int argc, char* argv[]) -> int
         && solverSetupCompact && modelTreeCompact && structuredCardsCompact
         && parameterEditorCompact && requestEditorCompact && runReviewCompact
         && runDeletionSafe
-        && !structuredImage.isNull() && invalidEditBlocked && duplicateFrequencyBlocked
+        && !structuredImage.isNull() && invalidEditBlocked && tableNumbers && duplicateFrequencyBlocked
         && structuredSelectionWorks && structuredHierarchyValid
         && descriptiveDropdown
         && trailingFieldsPreserved
@@ -5229,7 +5254,7 @@ auto main(int argc, char* argv[]) -> int
         && missingRadiationDisablesDataExport
         && resultOriginPreserved && semanticResultExtent
         && !attachmentImage.isNull() && cardFormValid;
-    if (!passed) qWarning() << "structured smoke state" << invalidEditBlocked << editedCard
+    if (!passed) qWarning() << "structured smoke state" << invalidEditBlocked << tableNumbers << editedCard
         << addedCard << deletedLine << "wire committed" << wireEditCommitted
         << "segmentation apply" << segmentationApplyAccepted
         << "run store" << storeValid << "run deletion" << runDeletionSafe

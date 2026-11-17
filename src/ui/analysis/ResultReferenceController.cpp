@@ -70,11 +70,6 @@ auto ResultReferenceController::hasReference() const -> bool
     return reference_.has_value();
 }
 
-auto ResultReferenceController::isPinned() const -> bool
-{
-    return pinned_;
-}
-
 auto ResultReferenceController::record() const -> const AnalysisRunRecord*
 {
     return reference_ ? &*reference_ : nullptr;

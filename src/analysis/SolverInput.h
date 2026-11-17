@@ -55,8 +55,7 @@ enum class RadiationSweepMode {
     bool includeRearHemisphere = false) -> std::string;
 [[nodiscard]] auto prepareDirectionalCutOptimizationInput(std::string_view source,
     std::span<const double> frequenciesMHz, DirectionalEvaluationMode mode,
-    double cutAngleDegrees, bool includeOppositeDirection,
-    bool includeRearRegion = false, bool includeRearHemisphere = false) -> std::string;
+    double cutAngleDegrees, bool includeRearHemisphere = false) -> std::string;
 
 [[nodiscard]] auto prepareMaximumGainSearchInput(std::string_view source,
     double frequencyMHz, bool aboveGroundOnly) -> std::string;

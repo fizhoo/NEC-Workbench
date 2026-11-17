@@ -29,6 +29,7 @@
 #include "nec/NecSymbolEditor.h"
 #include "nec/NecSymbolResolver.h"
 #include "nec/NecWriter.h"
+#include "nec/ParseNumber.h"
 #include "ui/modeltree/ModelColumn.h"
 #include "ui/modeltree/ModelTree.h"
 #include "ui/modeltree/PropertiesPane.h"
@@ -124,7 +125,6 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <cmath>
 #include <exception>
 #include <iomanip>
@@ -1266,9 +1266,7 @@ void MainWindow::changeDeckLengthUnit(model::LengthUnit unit)
         for (auto index = 2; index < 9; ++index) {
             const auto& field = card.fields[static_cast<std::size_t>(index)];
             double value{};
-            const auto [end, error] = std::from_chars(
-                field.data(), field.data() + field.size(), value);
-            if (error != std::errc{} || end != field.data() + field.size()) return true;
+            if (!nec::parseNumber(field, value)) return true;
         }
         return false;
     });
@@ -2029,7 +2027,6 @@ void MainWindow::checkModel(bool presentReport)
         setPendingTransmissionLineEndpoint(std::nullopt);
     }
     modelErrorCount_ = result.errorCount();
-    modelWarningCount_ = result.warningCount();
     modelChecked_ = true;
 
     const auto adequacyWarnings = std::ranges::count_if(result.diagnostics,
@@ -2890,12 +2887,6 @@ void MainWindow::changeTransmissionLine(const model::TransmissionLineDefinition&
 {
     upsertSetupCard(line.sourceLine == 0 ? tr("Add transmission line") : tr("Edit transmission line"),
         line.sourceLine, QString::fromStdString(nec::NecWriter{}.writeTransmissionLineCard(line)));
-}
-
-void MainWindow::changeNetwork(const model::NetworkDefinition& network)
-{
-    upsertSetupCard(network.sourceLine == 0 ? tr("Add network") : tr("Edit network"),
-        network.sourceLine, QString::fromStdString(nec::NecWriter{}.writeNetworkCard(network)));
 }
 
 void MainWindow::addExcitationAt(int wireTag, int segment)

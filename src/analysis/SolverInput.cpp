@@ -18,14 +18,6 @@
 namespace necwb::analysis {
 namespace {
 
-auto frequencyAt(const model::FrequencyDefinition& frequency, int index) -> double
-{
-    if (frequency.steppingMode == 1) {
-        return frequency.startMHz * std::pow(frequency.step, index);
-    }
-    return frequency.startMHz + index * frequency.step;
-}
-
 auto splitLines(std::string_view source) -> std::vector<std::string>
 {
     std::vector<std::string> lines;
@@ -147,7 +139,7 @@ auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
             indexes = {(setup.frequency->count - 1) / 2};
         }
         for (const auto index : indexes)
-            plan.pointsMHz.push_back(frequencyAt(*setup.frequency, index));
+            plan.pointsMHz.push_back(model::frequencyAtIndex(*setup.frequency, index));
     }
     return prepareSolverInput(source, setup, plan);
 }
@@ -370,11 +362,8 @@ auto prepareDirectionalOptimizationInput(std::string_view source,
 
 auto prepareDirectionalCutOptimizationInput(std::string_view source,
     std::span<const double> frequenciesMHz, DirectionalEvaluationMode mode,
-    double cutAngleDegrees, bool includeOppositeDirection,
-    bool includeRearRegion, bool includeRearHemisphere) -> std::string
+    double cutAngleDegrees, bool includeRearHemisphere) -> std::string
 {
-    (void)includeOppositeDirection;
-    (void)includeRearRegion;
     if (mode == DirectionalEvaluationMode::SpecifiedDirection
         || !std::isfinite(cutAngleDegrees))
         return prepareImpedanceInput(source);
@@ -468,9 +457,7 @@ auto prepareOptimizationInput(std::string_view source,
             objective.directionalEvaluationMode,
             objective.directionalEvaluationMode
                     == DirectionalEvaluationMode::StrongestInAzimuthCut
-                ? objective.forwardThetaDegrees : objective.forwardPhiDegrees,
-            objective.frontToBackWeight > 0.0,
-            objective.frontToRearWeight > 0.0, rearHemisphere);
+                ? objective.forwardThetaDegrees : objective.forwardPhiDegrees, rearHemisphere);
     }
     return frequencyPlan.mode == FrequencyPlanMode::Explicit
         ? prepareExplicitFrequencyInput(source, frequenciesMHz)

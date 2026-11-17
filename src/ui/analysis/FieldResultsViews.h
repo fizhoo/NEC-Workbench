@@ -150,7 +150,6 @@ public:
     void setComponent(analysis::RadiationComponent component);
     void setSettingsChangedCallback(SettingsChangedCallback callback);
     void setForwardDirectionCallback(ForwardDirectionCallback callback);
-    void setOverviewMode(bool enabled);
     void setFrequencyControlVisible(bool visible);
 
 private:
@@ -170,7 +169,6 @@ private:
     QComboBox* scale_{};
     QComboBox* floor_{};
     QComboBox* surfaceStyle_{};
-    QWidget* controls_{};
     QLabel* summary_{};
     QLabel* hoverReadout_{};
     QCheckBox* seeThroughControl_{};

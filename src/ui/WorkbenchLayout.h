@@ -30,7 +30,6 @@ public:
 
     explicit WorkbenchLayout(Panes panes, QWidget* parent = nullptr);
 
-    void showWelcome();
     void showModel();
     void showGeometry();
     void showFullView();

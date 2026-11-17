@@ -13,7 +13,6 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <charconv>
 #include <cmath>
 #include <complex>
 #include <numbers>
@@ -23,20 +22,6 @@ namespace {
 
 // Fields before this index are integers on all four cards.
 constexpr auto IntegerFields = 4;
-
-auto parses(const QString& text, bool integer) -> bool
-{
-    const auto value = text.trimmed().toStdString();
-    const auto* end = value.data() + value.size();
-    if (integer) {
-        int parsed{};
-        const auto [stop, error] = std::from_chars(value.data(), end, parsed);
-        return !value.empty() && error == std::errc{} && stop == end;
-    }
-    double parsed{};
-    const auto [stop, error] = std::from_chars(value.data(), end, parsed);
-    return !value.empty() && error == std::errc{} && stop == end;
-}
 
 }
 
@@ -214,7 +199,7 @@ void CardFieldForm::relabel()
     }
     // A voltage source reads more easily as magnitude and phase.
     const auto voltage = card_.mnemonic == "EX" && (currentType == 0 || currentType == 5)
-        && fields_.size() > 5 && parses(fieldText(4), false) && parses(fieldText(5), false);
+        && fields_.size() > 5 && parsesAs<double>(fieldText(4)) && parsesAs<double>(fieldText(5));
     if (voltage) {
         const std::complex<double> volts{fieldText(4).toDouble(), fieldText(5).toDouble()};
         summary_->setText(tr("= %1 V ∠ %2°").arg(std::abs(volts), 0, 'g', 6)
@@ -246,9 +231,10 @@ void CardFieldForm::apply()
         // An unedited field keeps the card's exact text, symbol or number.
         auto text = fields_[index].edited || index >= card_.fields.size()
             ? fieldText(index) : QString::fromStdString(card_.fields[index]);
-        if (fields_[index].edited && !parses(text, static_cast<int>(index) < IntegerFields)) {
+        const auto integer = static_cast<int>(index) < IntegerFields;
+        if (fields_[index].edited && !(integer ? parsesAs<int>(text) : parsesAs<double>(text))) {
             error_->setText(tr("%1: enter %2.").arg(fields_[index].label->text(),
-                static_cast<int>(index) < IntegerFields ? tr("a whole number") : tr("a number")));
+                integer ? tr("a whole number") : tr("a number")));
             error_->show();
             return;
         }

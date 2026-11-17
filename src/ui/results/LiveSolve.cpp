@@ -139,9 +139,7 @@ auto LiveSolve::bandCentreMHz(const model::FrequencyDefinition& frequency) -> do
     const auto middle = (frequency.startMHz + end) / 2.0;
     auto best = frequency.startMHz;
     for (auto index = 0; index < frequency.count; ++index) {
-        const auto value = frequency.steppingMode == 1
-            ? frequency.startMHz * std::pow(frequency.step, index)
-            : frequency.startMHz + index * frequency.step;
+        const auto value = model::frequencyAtIndex(frequency, index);
         if (std::abs(value - middle) < std::abs(best - middle)) best = value;
     }
     return best;
