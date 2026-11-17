@@ -142,6 +142,9 @@ struct ModelSetup {
 
 [[nodiscard]] auto referenceImpedanceOhms(const ModelSetup& setup) -> double;
 
+// The frequency of FR point `index`, from 0: the start plus `index` steps, or the start times
+// the step `index` times when the steps multiply.
+[[nodiscard]] auto frequencyAtIndex(const FrequencyDefinition& frequency, int index) -> double;
 [[nodiscard]] auto frequencyEndMHz(const FrequencyDefinition& frequency) -> double;
 [[nodiscard]] auto frequencyPointCount(int steppingMode, double startMHz,
     double endMHz, double step) -> std::optional<int>;

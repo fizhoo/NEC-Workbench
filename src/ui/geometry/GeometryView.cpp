@@ -106,18 +106,6 @@ void GeometryView::fitToView()
     update();
 }
 
-void GeometryView::setGridSnappingEnabled(bool enabled)
-{
-    settings_.gridSnapping = enabled;
-    update();
-}
-
-void GeometryView::setEndpointSnappingEnabled(bool enabled)
-{
-    settings_.endpointSnapping = enabled;
-    update();
-}
-
 void GeometryView::setLengthUnit(model::LengthUnit unit)
 {
     settings_.lengthUnit = unit;

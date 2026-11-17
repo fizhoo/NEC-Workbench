@@ -17,7 +17,6 @@ public:
     void clear();
 
     [[nodiscard]] auto hasReference() const -> bool;
-    [[nodiscard]] auto isPinned() const -> bool;
     [[nodiscard]] auto record() const -> const AnalysisRunRecord*;
     // Parsed once and shared by every view that draws the overlay; null when unreadable.
     [[nodiscard]] auto data() const -> ResultData::Pointer;

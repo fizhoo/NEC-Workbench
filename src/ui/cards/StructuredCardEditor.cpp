@@ -31,7 +31,6 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <limits>
 
 namespace necwb::ui {
@@ -185,22 +184,7 @@ auto fieldType(const QString& mnemonic, int fieldIndex) -> FieldType
     if (const auto* spec = nec::findNecCardSpec(mnemonic.toStdString()))
         return static_cast<std::size_t>(fieldIndex) < spec->integerFieldCount
             ? FieldType::Integer : FieldType::Number;
-    if (mnemonic == QStringLiteral("Z0") || mnemonic == QStringLiteral("ZO"))
-        return FieldType::Number;
-    if (mnemonic == QStringLiteral("GS"))
-        return fieldIndex < 2 ? FieldType::Integer : FieldType::Number;
-    if (mnemonic == QStringLiteral("GE") || mnemonic == QStringLiteral("XQ"))
-        return FieldType::Integer;
     return fieldIndex < 4 ? FieldType::Integer : FieldType::Number;
-}
-
-template<typename Value>
-auto parsesAs(const QString& text) -> bool
-{
-    const auto value = text.trimmed().toStdString();
-    Value parsed{};
-    const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
-    return !value.empty() && error == std::errc{} && end == value.data() + value.size();
 }
 
 auto requiredFieldCount(const QString& mnemonic, const QStringList& fields) -> int

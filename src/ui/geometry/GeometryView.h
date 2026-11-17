@@ -27,8 +27,6 @@ public:
     void setModel(const model::AntennaModel& model) override;
     void updateModel(const model::AntennaModel& model) override;
     void fitToView() override;
-    void setGridSnappingEnabled(bool enabled);
-    void setEndpointSnappingEnabled(bool enabled);
     void setLengthUnit(model::LengthUnit unit);
     void setSnapSpacing(double meters);
     void setSettings(const GeometrySettings& settings);

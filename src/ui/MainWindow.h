@@ -214,7 +214,6 @@ private:
     void changeRadiationPattern(const model::RadiationPatternRequest& pattern);
     void changeLoad(const model::LoadDefinition& load);
     void changeTransmissionLine(const model::TransmissionLineDefinition& line);
-    void changeNetwork(const model::NetworkDefinition& network);
     void updateAnalysisReadiness();
     void startAnalysis();
     void startQuickFrequencySweep();
@@ -388,7 +387,6 @@ private:
     int averageGainValidationTabIndex_{};
     int convergenceValidationTabIndex_{};
     std::size_t modelErrorCount_{};
-    std::size_t modelWarningCount_{};
     bool modelChecked_{};
     bool hasNecModel_{};
     bool resultsAvailable_{};

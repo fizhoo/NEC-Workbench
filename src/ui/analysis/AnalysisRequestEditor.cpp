@@ -1074,9 +1074,7 @@ auto AnalysisRequestEditor::modelFrequencies() const -> std::vector<double>
     if (!setup_.frequency) return frequencies;
     frequencies.reserve(static_cast<std::size_t>(std::max(1, setup_.frequency->count)));
     for (auto index = 0; index < std::max(1, setup_.frequency->count); ++index) {
-        frequencies.push_back(setup_.frequency->steppingMode == 1
-            ? setup_.frequency->startMHz * std::pow(setup_.frequency->step, index)
-            : setup_.frequency->startMHz + index * setup_.frequency->step);
+        frequencies.push_back(model::frequencyAtIndex(*setup_.frequency, index));
     }
     return frequencies;
 }

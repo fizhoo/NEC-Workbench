@@ -1,5 +1,6 @@
 #include "ui/cards/WireCardEditor.h"
 
+#include "ui/DisplayFormat.h"
 #include "ui/ParameterFieldStyle.h"
 #include "ui/cards/CompactNumberDelegate.h"
 
@@ -39,11 +40,6 @@ enum Column {
 };
 
 constexpr auto WireTagRole = Qt::UserRole;
-
-auto number(double value) -> QString
-{
-    return QString::number(value, 'g', 15);
-}
 
 }
 
@@ -150,13 +146,13 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
     for (const auto& wire : model_.wires()) {
         if (wire.geometryKind != model::WireGeometryKind::Straight) continue;
         const QStringList values{QString::number(wire.tag), QString::number(wire.segments),
-            number(wire.start.x / scaleToMeters_),
-            number(wire.start.y / scaleToMeters_),
-            number(wire.start.z / scaleToMeters_),
-            number(wire.end.x / scaleToMeters_),
-            number(wire.end.y / scaleToMeters_),
-            number(wire.end.z / scaleToMeters_),
-            number(wire.radius / scaleToMeters_)};
+            formatEditableDecimal(wire.start.x / scaleToMeters_),
+            formatEditableDecimal(wire.start.y / scaleToMeters_),
+            formatEditableDecimal(wire.start.z / scaleToMeters_),
+            formatEditableDecimal(wire.end.x / scaleToMeters_),
+            formatEditableDecimal(wire.end.y / scaleToMeters_),
+            formatEditableDecimal(wire.end.z / scaleToMeters_),
+            formatEditableDecimal(wire.radius / scaleToMeters_)};
         for (auto column = 0; column <= Radius; ++column) {
             auto* item = new QTableWidgetItem(values[column]);
             item->setData(WireTagRole, wire.tag);

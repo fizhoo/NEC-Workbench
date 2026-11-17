@@ -1781,6 +1781,13 @@ void testStructuredModelSetup()
         "multiplicative sweep requires a multiplier above one");
     expect(necwb::model::frequencyEndMHz({0, 4, 10.0, 3.0, 0}) == 19.0,
         "frequency endpoint is derived from NEC linear count and step");
+    expect(necwb::model::frequencyAtIndex({0, 4, 10.0, 3.0, 0}, 0) == 10.0
+            && necwb::model::frequencyAtIndex({0, 4, 10.0, 3.0, 0}, 2) == 16.0
+            && necwb::model::frequencyAtIndex({1, 5, 1.0, 2.0, 0}, 0) == 1.0
+            && necwb::model::frequencyAtIndex({1, 5, 1.0, 2.0, 0}, 3) == 8.0
+            && necwb::model::frequencyEndMHz({1, 5, 1.0, 2.0, 0}) == 16.0
+            && necwb::model::frequencyEndMHz({1, 1, 7.0, 2.0, 0}) == 7.0,
+        "FR points step linearly or multiply, and the end is the last point");
 
     const auto invalid = necwb::nec::NecParser{}.parse(
         "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nEX 0 2 1 0 1 0\nFR 0 2 0 0 10 0\nEN\n");
@@ -2736,7 +2743,7 @@ void testOptimizationObjectives()
         "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nFR 0 1 0 0 146 0\nEN\n",
         directionalFrequencies,
         necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut,
-        55.0, true, true);
+        55.0);
     expect(azimuthCutDeck.find("RP 0 1 72 1000 55 0 0 5") != std::string::npos
             && azimuthCutDeck.find("RP 0 1 72 1000 125 0 0 5") == std::string::npos
             && std::count(azimuthCutDeck.begin(), azimuthCutDeck.end(), '\n') >= 7,
@@ -2756,7 +2763,7 @@ void testOptimizationObjectives()
         "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nEN\n",
         directionalFrequencies,
         necwb::analysis::DirectionalEvaluationMode::StrongestInElevationCut,
-        30.0, true, true);
+        30.0);
     expect(elevationCutDeck.find("RP 0 37 1 1000 -90 30 5 0") != std::string::npos,
         "elevation tracking requests a complete fixed-phi cut");
     const auto elevationRequirements =

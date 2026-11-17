@@ -15,15 +15,15 @@ auto referenceImpedanceOhms(const ModelSetup& setup) -> double
     return setup.referenceImpedance ? setup.referenceImpedance->ohms : 50.0;
 }
 
+auto frequencyAtIndex(const FrequencyDefinition& frequency, int index) -> double
+{
+    return frequency.steppingMode == 1 ? frequency.startMHz * std::pow(frequency.step, index)
+                                       : frequency.startMHz + index * frequency.step;
+}
+
 auto frequencyEndMHz(const FrequencyDefinition& frequency) -> double
 {
-    if (frequency.count <= 1) {
-        return frequency.startMHz;
-    }
-    if (frequency.steppingMode == 1) {
-        return frequency.startMHz * std::pow(frequency.step, frequency.count - 1);
-    }
-    return frequency.startMHz + (frequency.count - 1) * frequency.step;
+    return frequency.count <= 1 ? frequency.startMHz : frequencyAtIndex(frequency, frequency.count - 1);
 }
 
 auto frequencyPointCount(int steppingMode, double startMHz, double endMHz, double step)
