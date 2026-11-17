@@ -1,22 +1,17 @@
 #include "ui/optimization/OptimizationWorkspace.h"
 
 #include "ui/DisplayFormat.h"
+#include "ui/analysis/AmateurBandDialog.h"
 
-#include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
-#include <QDialogButtonBox>
 #include <QDoubleSpinBox>
-#include <QGridLayout>
-#include <QHBoxLayout>
 #include <QInputDialog>
-#include <QLabel>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSignalBlocker>
-#include <QVBoxLayout>
 
 #include <algorithm>
 #include <cmath>
@@ -109,91 +104,41 @@ void OptimizationWorkspace::clearExplicitFrequencies()
 void OptimizationWorkspace::chooseAmateurBands()
 {
     const auto& presets = analysis::amateurBandPresets();
-    QDialog dialog(this);
-    dialog.setObjectName(QStringLiteral("optimizationAmateurBandDialog"));
-    dialog.setWindowTitle(tr("Add Amateur Bands"));
-    auto* layout = new QVBoxLayout(&dialog);
-    auto* description = new QLabel(tr(
-        "Select one or more engineering ranges. These presets do not define local operating privileges."),
-        &dialog);
-    description->setWordWrap(true);
-    layout->addWidget(description);
-
-    auto* bandLayout = new QGridLayout;
-    std::vector<QCheckBox*> checks;
-    checks.reserve(presets.size());
-    for (std::size_t index = 0; index < presets.size(); ++index) {
-        const auto& preset = presets[index];
-        auto* check = new QCheckBox(tr("%1  (%2–%3 MHz)")
-            .arg(QString::fromUtf8(preset.name.data(),
-                static_cast<qsizetype>(preset.name.size())))
-            .arg(preset.startMHz, 0, 'f', 3)
-            .arg(preset.endMHz, 0, 'f', 3), &dialog);
-        check->setObjectName(QStringLiteral("optimizationAmateurBandCheck%1").arg(index));
-        checks.push_back(check);
-        bandLayout->addWidget(check, static_cast<int>(index % 6),
-            static_cast<int>(index / 6));
-    }
-    layout->addLayout(bandLayout);
-
-    auto* summary = new QLabel(&dialog);
-    summary->setObjectName(QStringLiteral("optimizationAmateurBandSummary"));
-    auto* selectionButtons = new QHBoxLayout;
-    auto* selectAll = new QPushButton(tr("Select All"), &dialog);
-    auto* clearSelection = new QPushButton(tr("Clear"), &dialog);
-    selectionButtons->addWidget(selectAll);
-    selectionButtons->addWidget(clearSelection);
-    selectionButtons->addStretch();
-    selectionButtons->addWidget(summary);
-    layout->addLayout(selectionButtons);
-
-    auto* dialogButtons = new QDialogButtonBox(QDialogButtonBox::Cancel, &dialog);
-    auto* addSelected = dialogButtons->addButton(
-        tr("Add Selected"), QDialogButtonBox::AcceptRole);
-    addSelected->setObjectName(QStringLiteral("optimizationAddSelectedBands"));
-    layout->addWidget(dialogButtons);
-
-    const auto updateSummary = [&checks, &presets, summary, addSelected] {
-        analysis::FrequencyPlan selected{
+    const auto bandRanges = [&presets](const std::vector<std::size_t>& indexes,
+                                std::vector<double> pointsMHz) {
+        analysis::FrequencyPlan plan{
             .mode = analysis::FrequencyPlanMode::Explicit,
-            .pointsMHz = {},
+            .pointsMHz = std::move(pointsMHz),
             .ranges = {},
         };
-        auto selectedCount = 0;
-        for (std::size_t index = 0; index < checks.size(); ++index) {
-            if (!checks[index]->isChecked()) continue;
-            ++selectedCount;
-            selected.ranges.push_back({presets[index].startMHz,
-                presets[index].endMHz, presets[index].stepMHz});
-        }
-        const auto pointCount = analysis::frequencyPlanPoints(selected).size();
-        summary->setText(tr("%1 bands · %2 frequency points")
-            .arg(selectedCount).arg(pointCount));
-        addSelected->setEnabled(selectedCount > 0);
+        for (const auto index : indexes)
+            plan.ranges.push_back({presets[index].startMHz, presets[index].endMHz,
+                presets[index].stepMHz});
+        return analysis::frequencyPlanPoints(plan);
     };
-    for (auto* check : checks)
-        connect(check, &QCheckBox::toggled, &dialog, updateSummary);
-    connect(selectAll, &QPushButton::clicked, &dialog, [&checks] {
-        for (auto* check : checks) check->setChecked(true);
+    const auto chosen = ui::chooseAmateurBands(this, {
+        .objectName = QStringLiteral("optimizationAmateurBandDialog"),
+        .title = tr("Add Amateur Bands"),
+        .description = tr("Select one or more engineering ranges. These presets do not define "
+                          "local operating privileges."),
+        .checkObjectName = QStringLiteral("optimizationAmateurBandCheck"),
+        .summaryObjectName = QStringLiteral("optimizationAmateurBandSummary"),
+        .acceptText = tr("Add Selected"),
+        .acceptObjectName = QStringLiteral("optimizationAddSelectedBands"),
+        .label = [](const analysis::AmateurBandPreset& preset) {
+            return tr("%1  (%2–%3 MHz)")
+                .arg(QString::fromUtf8(preset.name.data(),
+                    static_cast<qsizetype>(preset.name.size())))
+                .arg(preset.startMHz, 0, 'f', 3)
+                .arg(preset.endMHz, 0, 'f', 3);
+        },
+        .summary = [&bandRanges](const std::vector<std::size_t>& indexes) {
+            return tr("%1 bands · %2 frequency points")
+                .arg(indexes.size()).arg(bandRanges(indexes, {}).size());
+        },
     });
-    connect(clearSelection, &QPushButton::clicked, &dialog, [&checks] {
-        for (auto* check : checks) check->setChecked(false);
-    });
-    connect(dialogButtons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(dialogButtons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    updateSummary();
-    if (dialog.exec() != QDialog::Accepted) return;
-
-    analysis::FrequencyPlan plan{
-        .mode = analysis::FrequencyPlanMode::Explicit,
-        .pointsMHz = explicitFrequencies(),
-        .ranges = {},
-    };
-    for (std::size_t index = 0; index < checks.size(); ++index) {
-        if (checks[index]->isChecked()) plan.ranges.push_back({presets[index].startMHz,
-            presets[index].endMHz, presets[index].stepMHz});
-    }
-    setExplicitFrequencies(analysis::frequencyPlanPoints(plan));
+    if (chosen.empty()) return;
+    setExplicitFrequencies(bandRanges(chosen, explicitFrequencies()));
 }
 
 void OptimizationWorkspace::pasteExplicitFrequencies()

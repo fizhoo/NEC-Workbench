@@ -3,14 +3,12 @@
 #include "analysis/PatternRequests.h"
 #include "ui/DisplayFormat.h"
 #include "ui/PendingEditIndicator.h"
+#include "ui/analysis/AmateurBandDialog.h"
 
 #include <QCheckBox>
 #include <QComboBox>
-#include <QDialog>
-#include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
-#include <QGridLayout>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QHBoxLayout>
@@ -940,73 +938,30 @@ void AnalysisRequestEditor::removeSelectedFrequencies()
 
 void AnalysisRequestEditor::chooseAmateurBandCenters()
 {
-    const auto& presets = analysis::amateurBandPresets();
-    QDialog dialog(this);
-    dialog.setObjectName(QStringLiteral("radiationAmateurBandCenterDialog"));
-    dialog.setWindowTitle(tr("Add Amateur Band Centers"));
-    auto* layout = new QVBoxLayout(&dialog);
-    auto* description = new QLabel(tr(
-        "Select one or more bands. This adds one representative center frequency per band; "
-        "it does not calculate the entire band."), &dialog);
-    description->setWordWrap(true);
-    layout->addWidget(description);
-
-    auto* bandLayout = new QGridLayout;
-    std::vector<QCheckBox*> checks;
-    checks.reserve(presets.size());
-    for (std::size_t index = 0; index < presets.size(); ++index) {
-        const auto& preset = presets[index];
-        const auto centerMHz = (preset.startMHz + preset.endMHz) / 2.0;
-        auto* check = new QCheckBox(tr("%1  (%2 MHz)")
-            .arg(QString::fromUtf8(preset.name.data(),
-                static_cast<qsizetype>(preset.name.size())))
-            .arg(centerMHz, 0, 'f', 3), &dialog);
-        check->setObjectName(QStringLiteral("radiationAmateurBandCenterCheck%1").arg(index));
-        checks.push_back(check);
-        bandLayout->addWidget(check, static_cast<int>(index % 6),
-            static_cast<int>(index / 6));
-    }
-    layout->addLayout(bandLayout);
-
-    auto* selectionRow = new QHBoxLayout;
-    auto* selectAll = new QPushButton(tr("Select All"), &dialog);
-    auto* clearSelection = new QPushButton(tr("Clear"), &dialog);
-    auto* summary = new QLabel(&dialog);
-    summary->setObjectName(QStringLiteral("radiationAmateurBandCenterSummary"));
-    selectionRow->addWidget(selectAll);
-    selectionRow->addWidget(clearSelection);
-    selectionRow->addStretch();
-    selectionRow->addWidget(summary);
-    layout->addLayout(selectionRow);
-
-    auto* dialogButtons = new QDialogButtonBox(QDialogButtonBox::Cancel, &dialog);
-    auto* addSelected = dialogButtons->addButton(
-        tr("Add Selected Centers"), QDialogButtonBox::AcceptRole);
-    addSelected->setObjectName(QStringLiteral("radiationAddSelectedBandCenters"));
-    layout->addWidget(dialogButtons);
-    const auto updateSummary = [&checks, summary, addSelected] {
-        const auto count = static_cast<int>(std::ranges::count_if(checks,
-            [](const auto* check) { return check->isChecked(); }));
-        summary->setText(QObject::tr("%1 center frequency point(s)").arg(count));
-        addSelected->setEnabled(count > 0);
+    const auto centerMHz = [](const analysis::AmateurBandPreset& preset) {
+        return (preset.startMHz + preset.endMHz) / 2.0;
     };
-    for (auto* check : checks)
-        connect(check, &QCheckBox::toggled, &dialog, updateSummary);
-    connect(selectAll, &QPushButton::clicked, &dialog, [&checks] {
-        for (auto* check : checks) check->setChecked(true);
+    const auto chosen = chooseAmateurBands(this, {
+        .objectName = QStringLiteral("radiationAmateurBandCenterDialog"),
+        .title = tr("Add Amateur Band Centers"),
+        .description = tr("Select one or more bands. This adds one representative center "
+                          "frequency per band; it does not calculate the entire band."),
+        .checkObjectName = QStringLiteral("radiationAmateurBandCenterCheck"),
+        .summaryObjectName = QStringLiteral("radiationAmateurBandCenterSummary"),
+        .acceptText = tr("Add Selected Centers"),
+        .acceptObjectName = QStringLiteral("radiationAddSelectedBandCenters"),
+        .label = [&centerMHz](const analysis::AmateurBandPreset& preset) {
+            return tr("%1  (%2 MHz)")
+                .arg(QString::fromUtf8(preset.name.data(),
+                    static_cast<qsizetype>(preset.name.size())))
+                .arg(centerMHz(preset), 0, 'f', 3);
+        },
+        .summary = [](const std::vector<std::size_t>& indexes) {
+            return tr("%1 center frequency point(s)").arg(indexes.size());
+        },
     });
-    connect(clearSelection, &QPushButton::clicked, &dialog, [&checks] {
-        for (auto* check : checks) check->setChecked(false);
-    });
-    connect(dialogButtons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(dialogButtons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    updateSummary();
-    if (dialog.exec() != QDialog::Accepted) return;
-
-    for (std::size_t index = 0; index < checks.size(); ++index) {
-        if (!checks[index]->isChecked()) continue;
-        addSelectedFrequency((presets[index].startMHz + presets[index].endMHz) / 2.0);
-    }
+    const auto& presets = analysis::amateurBandPresets();
+    for (const auto index : chosen) addSelectedFrequency(centerMHz(presets[index]));
 }
 
 void AnalysisRequestEditor::initializeFrequencySelectionFromModel()

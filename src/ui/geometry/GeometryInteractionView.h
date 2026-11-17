@@ -6,11 +6,13 @@
 
 #include <QWidget>
 
+#include <functional>
 #include <optional>
 #include <utility>
 
 class QContextMenuEvent;
 class QMouseEvent;
+class QPainter;
 
 namespace necwb::ui {
 
@@ -98,6 +100,9 @@ protected:
     virtual void showEmptyContextMenu(QContextMenuEvent* event) = 0;
 
     void clearSelection();
+    // Draws the TL and NT connectors and a pending TL start, `toScreen` placing a model point.
+    void drawConnectors(QPainter& painter,
+        const std::function<QPointF(const model::Point3D&)>& toScreen) const;
     void setInteractionModel(const model::AntennaModel& model, bool resetWireSelection);
 
     model::AntennaModel model_;

@@ -1758,7 +1758,8 @@ auto main(int argc, char* argv[]) -> int
         && optimizationResultsTable->rowCount() == 1;
     if (optimizationResultsTable != nullptr) optimizationResultsTable->setRowCount(0);
     if (optimizationFrequencyMode != nullptr) optimizationFrequencyMode->setCurrentIndex(1);
-    QTimer::singleShot(0, &optimization, [&optimization] {
+    QString amateurBandSummary;
+    QTimer::singleShot(0, &optimization, [&optimization, &amateurBandSummary] {
         auto* dialog = optimization.findChild<QDialog*>(
             QStringLiteral("optimizationAmateurBandDialog"));
         if (dialog == nullptr) return;
@@ -1767,9 +1768,21 @@ auto main(int argc, char* argv[]) -> int
         auto* addSelected = dialog->findChild<QPushButton*>(
             QStringLiteral("optimizationAddSelectedBands"));
         if (fortyMeters != nullptr) fortyMeters->setChecked(true);
+        if (auto* summary = dialog->findChild<QLabel*>(
+                QStringLiteral("optimizationAmateurBandSummary")))
+            amateurBandSummary = summary->text();
         if (addSelected != nullptr) addSelected->click();
     });
     if (optimizationAddAmateurBand != nullptr) optimizationAddAmateurBand->click();
+    const auto& fortyMeterPreset = necwb::analysis::amateurBandPresets()[2];
+    const auto fortyMeterPoints = necwb::analysis::frequencyPlanPoints({
+        .mode = necwb::analysis::FrequencyPlanMode::Explicit, .pointsMHz = {},
+        .ranges = {{fortyMeterPreset.startMHz, fortyMeterPreset.endMHz,
+            fortyMeterPreset.stepMHz}}}).size();
+    if (amateurBandSummary != QStringLiteral("1 bands · %1 frequency points").arg(fortyMeterPoints)) {
+        qWarning() << "amateur band summary" << amateurBandSummary;
+        return NECWB_SMOKE_FAILURE("optimization amateur band summary");
+    }
     QStringList selectedFrequencies;
     if (optimizationFrequencyTable != nullptr) {
         for (auto row = 0; row < optimizationFrequencyTable->count(); ++row)
@@ -5020,7 +5033,8 @@ auto main(int argc, char* argv[]) -> int
         requestEditor.radiationFrequencyPlan());
     patternFrequencyMode->setCurrentIndex(patternFrequencyMode->findData(2));
     patternSelectedFrequencies->clear();
-    QTimer::singleShot(0, &requestEditor, [&requestEditor] {
+    auto bandCenterDialogValid = false;
+    QTimer::singleShot(0, &requestEditor, [&requestEditor, &bandCenterDialogValid] {
         auto* dialog = requestEditor.findChild<QDialog*>(
             QStringLiteral("radiationAmateurBandCenterDialog"));
         if (dialog == nullptr) return;
@@ -5028,12 +5042,21 @@ auto main(int argc, char* argv[]) -> int
             QStringLiteral("radiationAmateurBandCenterCheck4"));
         auto* addSelected = dialog->findChild<QPushButton*>(
             QStringLiteral("radiationAddSelectedBandCenters"));
-        if (twentyMeters != nullptr) twentyMeters->setChecked(true);
-        if (addSelected != nullptr) addSelected->click();
+        auto* summary = dialog->findChild<QLabel*>(
+            QStringLiteral("radiationAmateurBandCenterSummary"));
+        if (twentyMeters == nullptr || addSelected == nullptr || summary == nullptr) return;
+        const auto noneTicked = !addSelected->isEnabled()
+            && summary->text() == QStringLiteral("0 center frequency point(s)");
+        twentyMeters->setChecked(true);
+        bandCenterDialogValid = noneTicked && addSelected->isEnabled()
+            && twentyMeters->text().contains(QStringLiteral("(14.175 MHz)"))
+            && summary->text() == QStringLiteral("1 center frequency point(s)");
+        addSelected->click();
     });
     addPatternBandCenters->click();
     application.processEvents();
-    const auto bandCentersPopulateList = patternSelectedFrequencies->count() == 1
+    const auto bandCentersPopulateList = bandCenterDialogValid
+        && patternSelectedFrequencies->count() == 1
         && patternSelectedFrequencies->item(0)->text().contains(QStringLiteral("14.175"))
         && patternSelectedFrequencies->viewMode() == QListView::IconMode
         && patternSelectedFrequencies->visualItemRect(
