@@ -544,7 +544,6 @@ void OptimizationWorkspace::saveSessionCompletionMetadata()
 auto OptimizationWorkspace::writeCandidateMetadata(const Candidate& candidate) -> bool
 {
     const QDir directory(candidate.record.directory);
-    const auto frequencyMode = selectedFrequencyMode();
     QJsonArray variableValues;
     for (auto index = std::size_t{};
          index < activeVariables_.size() && index < candidate.values.size(); ++index) {
@@ -553,87 +552,45 @@ auto OptimizationWorkspace::writeCandidateMetadata(const Candidate& candidate) -
             {QStringLiteral("value"), candidate.values[index]},
         });
     }
-    const auto metadata = QJsonObject{
+    const auto metadata = studyMetadata(activeSetup_, {
         {QStringLiteral("version"), 11},
         {QStringLiteral("variable"), selectedSymbol_},
         {QStringLiteral("value"), candidate.value},
         {QStringLiteral("variables"), variableValues},
         {QStringLiteral("unit"), selectedValueSuffix_.trimmed()},
-        {QStringLiteral("searchMethod"), searchMethodId(activeSearchMethod_)},
         {QStringLiteral("refinementRound"), candidate.refinementRound},
         {QStringLiteral("trialRole"), candidate.trialRole},
-        {QStringLiteral("populationSize"), differentialEvolutionPopulationControl_->value()},
-        {QStringLiteral("maximumGenerations"), differentialEvolutionGenerationControl_->value()},
-        {QStringLiteral("mutationFactor"), differentialEvolutionMutationControl_->value()},
-        {QStringLiteral("crossoverRate"), differentialEvolutionCrossoverControl_->value()},
-        {QStringLiteral("scoreTolerance"), differentialEvolutionScoreToleranceControl_->value()},
-        {QStringLiteral("randomSeed"), differentialEvolutionSeedControl_->value()},
-        {QStringLiteral("objective"), objectiveId(activeObjective_.kind)},
-        {QStringLiteral("referenceImpedance"), activeObjective_.referenceImpedance},
-        {QStringLiteral("targetFrequencyMHz"), activeObjective_.targetFrequencyMHz},
-        {QStringLiteral("swrWeight"), activeObjective_.swrWeight},
-        {QStringLiteral("resistanceWeight"), activeObjective_.resistanceWeight},
-        {QStringLiteral("resistanceTargetOhms"), activeObjective_.resistanceTargetOhms},
-        {QStringLiteral("reactanceWeight"), activeObjective_.reactanceWeight},
-        {QStringLiteral("reactanceTargetOhms"), activeObjective_.reactanceTargetOhms},
-        {QStringLiteral("forwardGainWeight"), activeObjective_.forwardGainWeight},
-        {QStringLiteral("frontToBackWeight"), activeObjective_.frontToBackWeight},
-        {QStringLiteral("frontToRearWeight"), activeObjective_.frontToRearWeight},
-        {QStringLiteral("swrGoal"), static_cast<int>(activeObjective_.swrGoal)},
-        {QStringLiteral("resistanceGoal"), static_cast<int>(activeObjective_.resistanceGoal)},
-        {QStringLiteral("reactanceGoal"), static_cast<int>(activeObjective_.reactanceGoal)},
-        {QStringLiteral("forwardGainGoal"), static_cast<int>(activeObjective_.forwardGainGoal)},
-        {QStringLiteral("frontToBackGoal"), static_cast<int>(activeObjective_.frontToBackGoal)},
-        {QStringLiteral("frontToRearGoal"), static_cast<int>(activeObjective_.frontToRearGoal)},
-        {QStringLiteral("swrTarget"), activeObjective_.swrTarget},
-        {QStringLiteral("forwardGainTarget"), activeObjective_.forwardGainTarget},
-        {QStringLiteral("frontToBackTarget"), activeObjective_.frontToBackTarget},
-        {QStringLiteral("frontToRearTarget"), activeObjective_.frontToRearTarget},
-        {QStringLiteral("swrGoodEnoughDirection"),
-            static_cast<int>(activeObjective_.swrGoodEnoughDirection)},
-        {QStringLiteral("resistanceGoodEnoughDirection"),
-            static_cast<int>(activeObjective_.resistanceGoodEnoughDirection)},
-        {QStringLiteral("reactanceGoodEnoughDirection"),
-            static_cast<int>(activeObjective_.reactanceGoodEnoughDirection)},
-        {QStringLiteral("forwardGainGoodEnoughDirection"),
-            static_cast<int>(activeObjective_.forwardGainGoodEnoughDirection)},
-        {QStringLiteral("frontToBackGoodEnoughDirection"),
-            static_cast<int>(activeObjective_.frontToBackGoodEnoughDirection)},
-        {QStringLiteral("frontToRearGoodEnoughDirection"),
-            static_cast<int>(activeObjective_.frontToRearGoodEnoughDirection)},
-        {QStringLiteral("swrAggregation"), static_cast<int>(activeObjective_.swrAggregation)},
-        {QStringLiteral("resistanceAggregation"),
-            static_cast<int>(activeObjective_.resistanceAggregation)},
-        {QStringLiteral("reactanceAggregation"),
-            static_cast<int>(activeObjective_.reactanceAggregation)},
-        {QStringLiteral("forwardGainAggregation"),
-            static_cast<int>(activeObjective_.forwardGainAggregation)},
-        {QStringLiteral("frontToBackAggregation"),
-            static_cast<int>(activeObjective_.frontToBackAggregation)},
-        {QStringLiteral("frontToRearAggregation"),
-            static_cast<int>(activeObjective_.frontToRearAggregation)},
-        {QStringLiteral("forwardThetaDegrees"), activeObjective_.forwardThetaDegrees},
-        {QStringLiteral("forwardPhiDegrees"), activeObjective_.forwardPhiDegrees},
-        {QStringLiteral("directionalEvaluationMode"),
-            static_cast<int>(activeObjective_.directionalEvaluationMode)},
-        {QStringLiteral("radiationComponent"),
-            static_cast<int>(activeObjective_.radiationComponent)},
-        {QStringLiteral("frontToRearRegion"),
-            static_cast<int>(activeObjective_.frontToRearRegion)},
-        {QStringLiteral("frequencyMode"), activeObjective_.kind
-                == analysis::OptimizationObjectiveKind::SwrAtFrequency
-            ? QStringLiteral("objective-frequency")
-            : frequencyMode == FrequencyMode::Explicit
-                ? QStringLiteral("explicit")
-                : frequencyMode == FrequencyMode::Continuous
-                    ? QStringLiteral("continuous") : QStringLiteral("model-fr")},
-        {QStringLiteral("frequenciesMHz"), frequencyArray(activeFrequenciesMHz_)},
-        {QStringLiteral("continuousStartMHz"), continuousStartControl_->value()},
-        {QStringLiteral("continuousStopMHz"), continuousStopControl_->value()},
-        {QStringLiteral("continuousStepMHz"), continuousStepControl_->value()},
-    };
+    });
     return writeFile(directory.filePath(QStringLiteral("optimization.json")),
             QJsonDocument(metadata).toJson(QJsonDocument::Indented));
+}
+
+auto OptimizationWorkspace::studyMetadata(const StudySetup& setup, QJsonObject metadata) const
+    -> QJsonObject
+{
+    const auto frequencyMode = setup.frequencySelection.mode;
+    auto shared = objectiveSpecJson(setup.objective);
+    shared.insert(QStringLiteral("searchMethod"), searchMethodId(setup.searchMethod));
+    shared.insert(QStringLiteral("scoreTolerance"), setup.scoreTolerance);
+    shared.insert(QStringLiteral("populationSize"), setup.populationSize);
+    shared.insert(QStringLiteral("maximumGenerations"), setup.maximumGenerations);
+    shared.insert(QStringLiteral("mutationFactor"), setup.mutationFactor);
+    shared.insert(QStringLiteral("crossoverRate"), setup.crossoverRate);
+    shared.insert(QStringLiteral("randomSeed"), setup.randomSeed);
+    shared.insert(QStringLiteral("frequencyMode"), setup.objective.kind
+            == analysis::OptimizationObjectiveKind::SwrAtFrequency
+        ? QStringLiteral("objective-frequency")
+        : frequencyMode == FrequencyMode::Explicit
+            ? QStringLiteral("explicit")
+            : frequencyMode == FrequencyMode::Continuous
+                ? QStringLiteral("continuous") : QStringLiteral("model-fr"));
+    shared.insert(QStringLiteral("frequenciesMHz"), frequencyArray(setup.frequenciesMHz));
+    shared.insert(QStringLiteral("continuousStartMHz"), setup.frequencySelection.continuousStartMHz);
+    shared.insert(QStringLiteral("continuousStopMHz"), setup.frequencySelection.continuousStopMHz);
+    shared.insert(QStringLiteral("continuousStepMHz"), setup.frequencySelection.continuousStepMHz);
+    for (auto field = shared.begin(); field != shared.end(); ++field)
+        metadata.insert(field.key(), field.value());
+    return metadata;
 }
 
 }

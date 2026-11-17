@@ -88,4 +88,7 @@ auto optimizationPresetName(analysis::OptimizationPresetId id) -> QString;
 
 auto frequencyArray(std::span<const double> frequenciesMHz) -> QJsonArray;
 
+// The objective's settings, under the keys session and candidate metadata share.
+auto objectiveSpecJson(const analysis::OptimizationObjectiveSpec& objective) -> QJsonObject;
+
 }

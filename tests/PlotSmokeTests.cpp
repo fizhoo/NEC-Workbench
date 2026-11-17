@@ -2597,6 +2597,76 @@ auto main(int argc, char* argv[]) -> int
         && baselineStartButton->text() == QStringLiteral("Building Baseline…");
     baselineStartWorkspace.finishOptimizationBaseline(false,
         QStringLiteral("expected smoke-test stop"));
+    if (const auto nec2c = QStandardPaths::findExecutable(QStringLiteral("nec2c")); nec2c.isEmpty()) {
+        qWarning() << "nec2c not found; skipping the optimization metadata tolerance check";
+    } else {
+        // Session and candidate metadata record the tolerance the study ran with, not the
+        // Differential Evolution one beside it.
+        necwb::ui::OptimizationWorkspace toleranceWorkspace;
+        toleranceWorkspace.setContext(optimizationSource, QStringLiteral("tolerance.nec"),
+            QStringLiteral("nec2"), nec2c, 60, true);
+        necwb::analysis::AnalysisResult toleranceBaseline;
+        toleranceBaseline.feedpoints = {{.frequencyMHz = 7.15, .wireTag = 1, .segment = 11,
+            .voltage = {1.0, 0.0}, .current = {0.02, 0.0}, .impedance = {50.0, 0.0}}};
+        necwb::ui::AnalysisRunRecord toleranceRecord;
+        toleranceRecord.id = QStringLiteral("tolerance-baseline");
+        toleranceRecord.backend = QStringLiteral("nec2");
+        toleranceRecord.referenceImpedanceOhms = 50.0;
+        toleranceRecord.impedanceFrequenciesMHz = {7.15};
+        toleranceRecord.modelFingerprint = QString::fromStdString(
+            necwb::analysis::optimizationModelFingerprint(necwb::nec::NecSymbolResolver{}
+                .resolve(optimizationSource.toStdString()).generatedDeck));
+        toleranceWorkspace.setOptimizationBaseline(toleranceRecord, toleranceBaseline);
+        auto* method = toleranceWorkspace.findChild<QComboBox*>(
+            QStringLiteral("optimizationSearchMethod"));
+        auto* adaptiveTolerance = toleranceWorkspace.findChild<QDoubleSpinBox*>(
+            QStringLiteral("optimizationAdaptiveScoreTolerance"));
+        auto* evolutionTolerance = toleranceWorkspace.findChild<QDoubleSpinBox*>(
+            QStringLiteral("optimizationDifferentialEvolutionScoreTolerance"));
+        auto* run = toleranceWorkspace.findChild<QPushButton*>(QStringLiteral("optimizationRun"));
+        if (method == nullptr || adaptiveTolerance == nullptr || evolutionTolerance == nullptr
+            || run == nullptr)
+            return NECWB_SMOKE_FAILURE("optimization tolerance controls");
+        method->setCurrentIndex(method->findData(1));
+        adaptiveTolerance->setValue(0.25);
+        evolutionTolerance->setValue(0.75);
+        necwb::ui::AnalysisRunStore toleranceStore;
+        const auto before = toleranceStore.load().size();
+        run->click();
+        const auto metadataOf = [&](const QString& runType, const QString& file) {
+            for (const auto& record : toleranceStore.load()) {
+                if (record.runType != runType || record.sourceFile != QStringLiteral("tolerance.nec"))
+                    continue;
+                QFile json(QDir(record.directory).filePath(file));
+                if (json.open(QIODevice::ReadOnly)) return QJsonDocument::fromJson(json.readAll()).object();
+            }
+            return QJsonObject{};
+        };
+        QElapsedTimer waited;
+        waited.start();
+        while (metadataOf(QStringLiteral("optimization-candidate"),
+                   QStringLiteral("optimization.json")).isEmpty() && waited.elapsed() < 20000)
+            application.processEvents(QEventLoop::AllEvents, 50);
+        toleranceWorkspace.cancelAndWait();
+        const auto session = metadataOf(QStringLiteral("optimization-session"),
+            QStringLiteral("optimization-session.json"));
+        const auto candidate = metadataOf(QStringLiteral("optimization-candidate"),
+            QStringLiteral("optimization.json"));
+        const auto toleranceRecorded = toleranceStore.load().size() > before
+            && session.value(QStringLiteral("searchMethod")).toString() == QStringLiteral("adaptive")
+            && session.value(QStringLiteral("scoreTolerance")).toDouble() == 0.25
+            && candidate.value(QStringLiteral("searchMethod")).toString() == QStringLiteral("adaptive")
+            && candidate.value(QStringLiteral("scoreTolerance")).toDouble() == 0.25
+            && candidate.value(QStringLiteral("swrWeight")) == session.value(QStringLiteral("swrWeight"))
+            && candidate.value(QStringLiteral("frequenciesMHz")) == session.value(QStringLiteral("frequenciesMHz"));
+        for (const auto& record : toleranceStore.load())
+            if (record.sourceFile == QStringLiteral("tolerance.nec") && record.parentId.isEmpty())
+                toleranceStore.removeGroup(record.id, record.directory);
+        if (!toleranceRecorded) {
+            qWarning() << "optimization tolerance" << session << candidate;
+            return NECWB_SMOKE_FAILURE("optimization metadata tolerance");
+        }
+    }
     necwb::ui::OptimizationWorkspace directionalBaselineWorkspace;
     directionalBaselineWorkspace.setContext(optimizationSource,
         QStringLiteral("directional-baseline.nec"), QStringLiteral("nec2"), {}, 120, true);
