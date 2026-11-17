@@ -31,7 +31,6 @@ public:
     // Checkable View-menu action (Ctrl+J) that opens or collapses the panel.
     [[nodiscard]] auto toggleAction() const -> QAction* { return toggleAction_; }
 
-    [[nodiscard]] auto isCollapsed() const -> bool { return collapsed_; }
     [[nodiscard]] auto currentTab() const -> Tab;
     void showTab(Tab tab);
     void setCollapsed(bool collapsed);

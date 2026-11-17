@@ -26,7 +26,6 @@ public:
     ResultFullView(const ResultState& state, QWidget* parent = nullptr);
 
     void showView(ResultView view);
-    [[nodiscard]] auto currentView() const -> ResultView { return view_; }
     // Brings the view on screen up to date with the state.
     void refresh();
     void setBackCallback(std::function<void()> callback);
