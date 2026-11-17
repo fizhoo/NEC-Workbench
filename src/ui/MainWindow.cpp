@@ -58,11 +58,12 @@
 #include "ui/optimization/OptimizationWorkspace.h"
 #include "ui/model/ParameterEditor.h"
 #include "ui/results/ResultFullView.h"
+#include "ui/start/RecentModels.h"
+#include "ui/start/StartPanel.h"
 #include "ui/results/ResultsColumn.h"
 #include "ui/results/ResultsController.h"
 #include "ui/setup/SetupEditor.h"
 #include "ui/setup/CardFieldForm.h"
-#include "ui/welcome/WelcomePage.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -70,7 +71,6 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
-#include <QCommandLinkButton>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDesktopServices>
@@ -104,6 +104,7 @@
 #include <QRegularExpression>
 #include <QScreen>
 #include <QScopedValueRollback>
+#include <QCursor>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSizePolicy>
@@ -664,9 +665,8 @@ void MainWindow::createWorkspace()
             .arg(entry.description), 5000);
     });
 
-    welcomePage_ = new WelcomePage(newAction_, openAction_,
-        [this](const QString& path) { openFileAtPath(path); },
-        [this] { openExample(); }, [this] { clearRecentFiles(); }, this);
+    startPanel_ = new StartPanel(newAction_, openAction_, [this] { openExample(); },
+        [this](const QString& path) { openFileAtPath(path); }, this);
     createModelColumn();
     QTimer::singleShot(0, this, [this] { refreshLatestRun(); });
 
@@ -978,7 +978,7 @@ void MainWindow::createWorkspace()
     createValidationWindow();
     createOptimizationWorkspace();
     createResultsColumn();
-    workbenchLayout_ = new WorkbenchLayout({.welcome = welcomePage_, .leftColumn = modelColumn_,
+    workbenchLayout_ = new WorkbenchLayout({.start = startPanel_, .leftColumn = modelColumn_,
         .geometry = workspace_, .fullView = resultsController_->fullView(),
         .deck = deckView_, .rightColumn = resultsController_->column(),
         .bottomPanel = bottomPanel_}, this);
@@ -1151,19 +1151,16 @@ void MainWindow::createOptimizationWorkspace()
 void MainWindow::showEditor(EditorDestination destination, int geometryTab)
 {
     if (destination == EditorDestination::RawSource) {
-        workbenchLayout_->showModel();
         workbenchLayout_->showDeck();
         editor_->setFocus();
         raise();
         activateWindow();
     } else if (destination == EditorDestination::Parameters) {
-        workbenchLayout_->showModel();
         selectInModel({ModelNode::Variables});
         modelColumn_->pane()->focusPage();
     } else if (destination != EditorDestination::Geometry) {
         showSetupPage(destination);
     } else {
-        workbenchLayout_->showModel();
         workbenchLayout_->showGeometry();
         workspace_->setCurrentIndex(geometryTab);
         workspace_->currentWidget()->setFocus();
@@ -1507,9 +1504,21 @@ void MainWindow::createMenusAndToolbar()
     fileMenu->setObjectName(QStringLiteral("fileMenu"));
     fileMenu->addAction(newAction_);
     fileMenu->addAction(openAction_);
-    recentModelsMenu_ = fileMenu->addMenu(tr("Open &Recent"));
+    // A submenu cannot hold a shortcut, so the window's action does; the title shows it.
+    recentModelsMenu_ = fileMenu->addMenu(tr("Open &Recent\tCtrl+Shift+O"));
     recentModelsMenu_->setObjectName(QStringLiteral("recentModelsMenu"));
-    refreshRecentFileViews(recentFiles());
+    auto* popUpRecent = new QAction(tr("Open Recent"), this);
+    popUpRecent->setObjectName(QStringLiteral("openRecentPopupAction"));
+    popUpRecent->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
+    connect(popUpRecent, &QAction::triggered, this,
+        [this] { recentModelsMenu_->popup(QCursor::pos()); });
+    addAction(popUpRecent);
+    auto* reopenAtStartup = fileMenu->addAction(tr("Reopen Last Model at Startup"));
+    reopenAtStartup->setObjectName(QStringLiteral("reopenLastModelAction"));
+    reopenAtStartup->setCheckable(true);
+    reopenAtStartup->setChecked(recentModels::reopenAtStartup());
+    connect(reopenAtStartup, &QAction::toggled, this, &recentModels::setReopenAtStartup);
+    refreshRecentFileViews(recentModels::list());
     fileMenu->addSeparator();
     fileMenu->addAction(saveAction_);
     fileMenu->addAction(saveAsAction_);
@@ -1729,8 +1738,6 @@ void MainWindow::applyWorkspaceDensity(QWidget* root)
         widget->setMinimumSize(qRound(minimumSize[0].toInt() * minimumScale),
             qRound(minimumSize[1].toInt() * minimumScale));
     };
-    for (auto* button : root->findChildren<QCommandLinkButton*>())
-        updateMinimumSize(button);
     for (auto* view : root->findChildren<GeometryView*>()) updateMinimumSize(view);
     for (auto* view : root->findChildren<Geometry3DView*>()) updateMinimumSize(view);
     for (auto* widget : root->findChildren<QWidget*>()) {
@@ -1795,9 +1802,7 @@ void MainWindow::newModel()
     activeModelResultsContext_.clear();
     editor_->setPlainText(tr("CM New NEC Workbench model\nCE\nGE 0\nEN\n"));
     history_->clear();
-    hasNecModel_ = true;
-    necDeckAction_->setEnabled(true);
-    workbenchLayout_->showModel();
+    showLoadedModel();
     analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile({});
     editor_->document()->setModified(false);
@@ -1867,10 +1872,7 @@ void MainWindow::openFileAtPath(const QString& path)
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         QMessageBox::critical(this, tr("Open Failed"), file.errorString());
-        auto files = recentFiles();
-        files.removeAll(QFileInfo(path).absoluteFilePath());
-        QSettings{}.setValue(QStringLiteral("files/recentModels"), files);
-        welcomePage_->setRecentFiles(files);
+        refreshRecentFileViews(recentModels::forget(path));
         return;
     }
     clearDisplayedResults();
@@ -1878,9 +1880,7 @@ void MainWindow::openFileAtPath(const QString& path)
     activeModelResultsContext_.clear();
     editor_->setPlainText(QString::fromUtf8(file.readAll()));
     history_->clear();
-    hasNecModel_ = true;
-    necDeckAction_->setEnabled(true);
-    workbenchLayout_->showModel();
+    showLoadedModel();
     analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile(path);
     editor_->document()->setModified(false);
@@ -1903,21 +1903,9 @@ void MainWindow::openExample()
     if (!path.isEmpty()) openFileAtPath(path);
 }
 
-auto MainWindow::recentFiles() const -> QStringList
-{
-    const auto stored = QSettings{}.value(QStringLiteral("files/recentModels")).toStringList();
-    QStringList result;
-    for (const auto& path : stored) {
-        const auto absolutePath = QFileInfo(path).absoluteFilePath();
-        if (QFileInfo::exists(absolutePath) && !result.contains(absolutePath)) result.append(absolutePath);
-        if (result.size() == 8) break;
-    }
-    return result;
-}
-
 void MainWindow::refreshRecentFileViews(const QStringList& files)
 {
-    if (welcomePage_ != nullptr) welcomePage_->setRecentFiles(files);
+    if (startPanel_ != nullptr) startPanel_->setRecentFiles(files);
     if (recentModelsMenu_ == nullptr) return;
     recentModelsMenu_->clear();
     if (files.isEmpty()) {
@@ -1937,25 +1925,36 @@ void MainWindow::refreshRecentFileViews(const QStringList& files)
     recentModelsMenu_->addSeparator();
     auto* clear = recentModelsMenu_->addAction(tr("Clear Recent Models"));
     clear->setEnabled(!files.isEmpty());
-    connect(clear, &QAction::triggered, this, [this] { clearRecentFiles(); });
+    connect(clear, &QAction::triggered, this, [this] {
+        recentModels::clear();
+        refreshRecentFileViews({});
+    });
 }
 
-void MainWindow::rememberRecentFile(const QString& path)
+void MainWindow::showLoadedModel()
 {
-    if (path.isEmpty()) return;
-    auto files = recentFiles();
-    const auto absolutePath = QFileInfo(path).absoluteFilePath();
-    files.removeAll(absolutePath);
-    files.prepend(absolutePath);
-    while (files.size() > 8) files.removeLast();
-    QSettings{}.setValue(QStringLiteral("files/recentModels"), files);
-    refreshRecentFileViews(files);
+    hasNecModel_ = true;
+    necDeckAction_->setEnabled(true);
+    workbenchLayout_->showGeometry();
 }
 
-void MainWindow::clearRecentFiles()
+void MainWindow::reopenLastModel(bool skip)
 {
-    QSettings{}.remove(QStringLiteral("files/recentModels"));
-    refreshRecentFileViews({});
+    if (const auto unfinished = recentModels::pendingReopen(); !unfinished.isEmpty()) {
+        recentModels::setPendingReopen({});
+        statusBar()->showMessage(tr("Skipped reopening %1: it did not finish opening last time")
+            .arg(QDir::toNativeSeparators(unfinished)));
+        return;
+    }
+    const auto path = recentModels::last();
+    if (skip || !recentModels::reopenAtStartup() || path.isEmpty()) return;
+    if (!QFileInfo::exists(path)) {
+        statusBar()->showMessage(tr("Last model not found: %1").arg(QDir::toNativeSeparators(path)));
+        return;
+    }
+    recentModels::setPendingReopen(path);
+    openFileAtPath(path);
+    recentModels::setPendingReopen({});
 }
 
 auto MainWindow::saveFile() -> bool
@@ -2422,7 +2421,6 @@ void MainWindow::showSetupPage(EditorDestination destination)
         : destination == EditorDestination::Requests ? ModelNode::Requests
         : destination == EditorDestination::ReferenceImpedance ? ModelNode::ReferenceImpedance
                                                      : ModelNode::Solver;
-    workbenchLayout_->showModel();
     // Already on that page (an item in the group, say): leave the selection alone.
     if (modelColumn_->pane()->currentPage() != paneContent(node).first) selectInModel({node});
     raise();
@@ -2904,7 +2902,6 @@ void MainWindow::addExcitationAt(int wireTag, int segment)
 void MainWindow::showProperties(const ModelSelection& selection)
 {
     selectInModel(selection);
-    workbenchLayout_->showModel();
     modelColumn_->pane()->focusPage();
 }
 
@@ -3812,9 +3809,7 @@ auto MainWindow::loadRunModel(const QString& directory, const QString& modelName
     clearDisplayedResults();
     editor_->setPlainText(QString::fromUtf8(inputFile.readAll()));
     history_->clear();
-    hasNecModel_ = true;
-    necDeckAction_->setEnabled(true);
-    workbenchLayout_->showModel();
+    showLoadedModel();
     analysisRequestEditor_->resetFrequencySelectionForModel();
     setCurrentFile({});
     const auto displayName = modelName.isEmpty() ? tr("Archived model.nec") : modelName;
@@ -4540,7 +4535,7 @@ void MainWindow::setCurrentFile(QString path)
     currentFile_ = std::move(path);
     revertAction_->setEnabled(editor_->document()->isModified() && !currentFile_.isEmpty());
     if (modelChanged && resultReferenceController_.hasReference()) clearResultReference();
-    if (!currentFile_.isEmpty()) rememberRecentFile(currentFile_);
+    if (!currentFile_.isEmpty()) refreshRecentFileViews(recentModels::remember(currentFile_));
     const auto name = currentFile_.isEmpty() ? tr("Untitled") : QFileInfo(currentFile_).fileName();
     setWindowTitle(tr("%1[*] — NEC Workbench").arg(name));
     const auto modelName = currentFile_.isEmpty() ? tr("Untitled model.nec") : name;

@@ -54,7 +54,7 @@ class ConvergenceWorkspace;
 class SetupEditor;
 class WireCardEditor;
 class CardFieldForm;
-class WelcomePage;
+class StartPanel;
 class SourceHistory;
 class GeometryPreview;
 class DeckView;
@@ -79,6 +79,9 @@ public:
 
     MainWindow();
     ~MainWindow() override;
+    // At launch: opens the newest recent model unless skip is set, the setting is off, or the
+    // last attempt never finished; says in the status bar when it does not.
+    void reopenLastModel(bool skip);
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -132,10 +135,9 @@ private:
     void openFile();
     void openFileAtPath(const QString& path);
     void openExample();
-    [[nodiscard]] auto recentFiles() const -> QStringList;
     void refreshRecentFileViews(const QStringList& files);
-    void rememberRecentFile(const QString& path);
-    void clearRecentFiles();
+    // A model is now in the editor: leave the start panel for the geometry.
+    void showLoadedModel();
     auto saveFile() -> bool;
     auto saveFileAs() -> bool;
     auto writeFile(const QString& path) -> bool;
@@ -316,7 +318,7 @@ private:
     ModelColumn* modelColumn_{};
     WirePropertiesEditor* wireEditor_{};
     WorkbenchToolBar* toolBar_{};
-    WelcomePage* welcomePage_{};
+    StartPanel* startPanel_{};
     WireCardEditor* wireCardEditor_{};
     CardTables* cardTables_{};
     // Set while a table row selects its item, which keeps the table in the pane.

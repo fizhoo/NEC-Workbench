@@ -240,12 +240,14 @@ if(NECWB_BUILD_GUI)
         src/ui/optimization/DirectionStrategyDialog.h
         src/ui/model/ParameterEditor.cpp
         src/ui/model/ParameterEditor.h
+        src/ui/start/RecentModels.cpp
+        src/ui/start/RecentModels.h
+        src/ui/start/StartPanel.cpp
+        src/ui/start/StartPanel.h
         src/ui/setup/SetupEditor.cpp
         src/ui/setup/SetupEditor.h
         src/ui/setup/CardFieldForm.cpp
         src/ui/setup/CardFieldForm.h
-        src/ui/welcome/WelcomePage.cpp
-        src/ui/welcome/WelcomePage.h
     )
     qt_add_resources(necwb_ui necwb_icons
         PREFIX "/icons"

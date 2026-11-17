@@ -63,6 +63,7 @@ void Geometry3DView::setLengthUnit(model::LengthUnit unit)
 
 void Geometry3DView::fitToView()
 {
+    keepFitted_ = true;
     panOffset_ = {};
     if (model_.empty()) {
         pixelsPerMeter_ = 80.0;
@@ -146,6 +147,7 @@ void Geometry3DView::mouseMoveEvent(QMouseEvent* event)
     if (orbiting_) {
         yaw_ += delta.x() * 0.009;
         pitch_ = std::clamp(pitch_ - delta.y() * 0.009, -1.45, 1.45);
+        keepFitted_ = false;
         dragMoved_ = dragMoved_ || QLineF(pressPosition_, event->position()).length() > 4.0;
         lastMousePosition_ = event->position();
         update();
@@ -154,6 +156,7 @@ void Geometry3DView::mouseMoveEvent(QMouseEvent* event)
     }
     if (panning_) {
         panOffset_ += delta;
+        keepFitted_ = false;
         dragMoved_ = true;
         lastMousePosition_ = event->position();
         update();
@@ -361,6 +364,7 @@ void Geometry3DView::wheelEvent(QWheelEvent* event)
 {
     const auto steps = event->angleDelta().y() / 120.0;
     pixelsPerMeter_ = std::clamp(pixelsPerMeter_ * std::pow(1.18, steps), 0.01, 1.0e7);
+    keepFitted_ = false;
     update();
     event->accept();
 }

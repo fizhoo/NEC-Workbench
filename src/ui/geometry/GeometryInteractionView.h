@@ -12,6 +12,7 @@
 
 class QContextMenuEvent;
 class QMouseEvent;
+class QResizeEvent;
 class QPainter;
 
 namespace necwb::ui {
@@ -86,6 +87,7 @@ protected:
     auto event(QEvent* event) -> bool override;
     void contextMenuEvent(QContextMenuEvent* event) final;
     void mouseDoubleClickEvent(QMouseEvent* event) final;
+    void resizeEvent(QResizeEvent* event) override;
     virtual auto wireAt(const QPointF& position) const -> std::optional<int> = 0;
     virtual auto excitationAt(const QPointF& position) const -> std::optional<std::size_t> = 0;
     virtual auto loadAt(const QPointF& position) const -> std::optional<std::size_t> = 0;
@@ -117,6 +119,9 @@ protected:
     std::optional<std::size_t> selectedTransmissionLine_;
     std::optional<std::size_t> selectedNetworkLine_;
     std::optional<std::pair<int, int>> pendingTransmissionLineEndpoint_;
+    // A fitted view fits again whenever it is resized, as the window and splitters settle,
+    // until the user zooms, pans or orbits it.
+    bool keepFitted_{true};
 };
 
 }
