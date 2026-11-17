@@ -54,8 +54,11 @@ same definitions.
 
 ## Workspaces
 
-The main window is resizable and laid out by `WorkbenchLayout`: with no model, the
-Welcome page; with a model, one splitter with three panes. `WorkbenchToolBar` runs
+The main window is resizable and laid out by `WorkbenchLayout`: one splitter with three
+panes. With no model the center shows `StartPanel` (`ui/start`: New, Open, Open Example and
+the recent models, kept with their open dates by `recentModels`); at launch `main` asks
+`MainWindow::reopenLastModel` to reopen the newest one, guarded by a settings flag that is
+set while it opens, so a model that crashed the last launch is skipped. `WorkbenchToolBar` runs
 across the top. The left column (`ui/modeltree`) is a `ModelColumn`: the `ModelTree`
 (the frequency, ground, requests and Z0 rows with their values, groups with counts, a row
 per wire, source, load, line, and network, right-click Add

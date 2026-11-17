@@ -4,7 +4,6 @@
 
 #include <QAction>
 #include <QEvent>
-#include <QHBoxLayout>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSplitter>
@@ -26,6 +25,7 @@ constexpr auto RightPane = 2;
 
 WorkbenchLayout::WorkbenchLayout(Panes panes, QWidget* parent)
     : QWidget(parent)
+    , start_(panes.start)
     , geometry_(panes.geometry)
     , fullView_(panes.fullView)
     , deck_(panes.deck)
@@ -35,21 +35,14 @@ WorkbenchLayout::WorkbenchLayout(Panes panes, QWidget* parent)
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-    pages_ = new QStackedWidget(this);
-
-    auto* welcomePage = new QWidget(pages_);
-    auto* welcomeLayout = new QHBoxLayout(welcomePage);
-    welcomeLayout->setContentsMargins(0, 0, 0, 0);
-    welcomeLayout->addWidget(panes.welcome, 0, Qt::AlignHCenter | Qt::AlignTop);
-    pages_->addWidget(welcomePage);
-
     center_ = new QStackedWidget;
     center_->setObjectName(QStringLiteral("workbenchCenter"));
+    center_->addWidget(start_);
     center_->addWidget(geometry_);
     center_->addWidget(fullView_);
     center_->addWidget(deck_);
 
-    split_ = new QSplitter(Qt::Horizontal, pages_);
+    split_ = new QSplitter(Qt::Horizontal, this);
     split_->setObjectName(QStringLiteral("workbenchSplit"));
     split_->setHandleWidth(3);
     split_->addWidget(panes.leftColumn);
@@ -62,9 +55,8 @@ WorkbenchLayout::WorkbenchLayout(Panes panes, QWidget* parent)
     split_->setStretchFactor(1, 1);
     split_->setStretchFactor(RightPane, 0);
     split_->installEventFilter(this);
-    pages_->addWidget(split_);
 
-    layout->addWidget(pages_, 1);
+    layout->addWidget(split_, 1);
     layout->addWidget(bottomPanel_);
 
     rightColumnAction_ = new QAction(tr("&Results Column"), this);
@@ -77,9 +69,9 @@ WorkbenchLayout::WorkbenchLayout(Panes panes, QWidget* parent)
     connect(split_, &QSplitter::splitterMoved, this, [this] { saveColumnWidths(); });
 }
 
-void WorkbenchLayout::showModel()
+void WorkbenchLayout::showStart()
 {
-    pages_->setCurrentWidget(split_);
+    center_->setCurrentWidget(start_);
 }
 
 void WorkbenchLayout::showGeometry()
@@ -119,7 +111,7 @@ auto WorkbenchLayout::minimumSizeHint() const -> QSize
     // has to grow the window.
     auto hint = QWidget::minimumSizeHint();
     hint.setHeight(std::max(hint.height(),
-        pages_->minimumSizeHint().height() + bottomPanel_->openMinimumHeight()));
+        split_->minimumSizeHint().height() + bottomPanel_->openMinimumHeight()));
     return hint;
 }
 

@@ -12,7 +12,7 @@ focuses on workflow and behavior that is not obvious from an individual control.
 
 ## Getting Started
 
-1. Create or open a `.nec` model from the Welcome page, the toolbar, or the File menu.
+1. Create or open a `.nec` model from the start panel, the toolbar, or the File menu.
 2. Edit wires in the geometry editor or the properties pane, and cards in the **NEC
    Deck** (Deck in the model tree).
 3. Click Frequency, Ground, Requests, Z0, Sources, or Loads in the model tree to set them
@@ -47,9 +47,16 @@ only the archived `model.nec` sent directly to NEC2dXS is normalized.
 
 The main window is a normal resizable, maximizable window. The first time it opens it
 takes about 85% of the screen, centered; after that it reopens where you left it.
-With no model open, the Welcome page sits centered at the top. With a model open, the
-model tree and properties pane are the left column, the geometry editor or a full result
-view fills the center, and the results column is on the right. Drag the thin handles
+The model tree and properties pane are the left column, the geometry editor or a full
+result view fills the center, and the results column is on the right. With no model open,
+the center shows the start panel at its top: **New**, **Open…**, **Open Example…**, and the
+recent models with their folder and when each was last opened (double-click one to open
+it).
+
+At launch Workbench reopens the last model you had open. Turn this off with **File →
+Reopen Last Model at Startup**, or hold `Shift` while it starts to skip it once. If that
+file is gone, or it did not finish opening the last time, Workbench starts with no model
+and says why in the status bar. Drag the thin handles
 between them to change the columns' widths, which are remembered; the left column is
 460 px wide by default and between 360 and 600 px. Drag the results column shut, or use
 **View → Results Column** (`Ctrl+Shift+R`), to collapse it. The bottom panel spans the
@@ -82,7 +89,7 @@ model check error and warning counts. Click the counts to open Problems.
 
 The menu bar holds the complete command set. Important actions include:
 
-- **File → Open Recent**
+- **File → Open Recent** (`Ctrl+Shift+O` pops the list up at the mouse)
 - **View → Results Column** and **Bottom Panel**
 - **View → Problems**, **Run Log**, and **Raw Output**
 - **View → Workspace Density** and **Reset Layout**
@@ -97,9 +104,7 @@ the application font size. Use Compact on smaller displays.
 
 ## Model Tree and Properties
 
-With no model open, the Welcome page provides New, Open, recent files, and
-documentation. With a model open, the left column shows the model tree, the variables,
-and the properties pane.
+The left column shows the model tree, the variables, and the properties pane.
 
 The tree lists **Frequency**, **Wires**, **Sources**, **Loads**, **Trans. lines**,
 **Networks**, **Ground**, **Requests**, **Z0**, **Other**, **Variables**, **Deck**, and

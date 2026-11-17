@@ -12,14 +12,13 @@ namespace necwb::ui {
 
 class BottomPanel;
 
-// The main window's content. With no model, the Welcome page sits centered at the top; with a
-// model, one splitter holds the model tree on the left, the geometry editor, a full result
-// view or the NEC Deck in the center, and the results column on the right. The bottom panel spans
-// the full width underneath.
+// The main window's content: one splitter holds the model tree on the left, the start panel
+// (with no model), the geometry editor, a full result view or the NEC Deck in the center, and
+// the results column on the right. The bottom panel spans the full width underneath.
 class WorkbenchLayout final : public QWidget {
 public:
     struct Panes {
-        QWidget* welcome{};
+        QWidget* start{};
         QWidget* leftColumn{};
         QWidget* geometry{};
         QWidget* fullView{};
@@ -30,7 +29,7 @@ public:
 
     explicit WorkbenchLayout(Panes panes, QWidget* parent = nullptr);
 
-    void showModel();
+    void showStart();
     void showGeometry();
     void showFullView();
     void showDeck();
@@ -53,9 +52,9 @@ private:
     void setRightColumnShown(bool shown);
     void expandLeftColumn(int width);
 
-    QStackedWidget* pages_{};
     QSplitter* split_{};
     QStackedWidget* center_{};
+    QWidget* start_{};
     QWidget* geometry_{};
     QWidget* fullView_{};
     QWidget* deck_{};

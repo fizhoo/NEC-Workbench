@@ -1,6 +1,7 @@
 #include "ui/MainWindow.h"
 
 #include <QApplication>
+#include <QTimer>
 #include <QSettings>
 
 namespace {
@@ -28,5 +29,8 @@ auto main(int argc, char* argv[]) -> int
 
     necwb::ui::MainWindow window;
     window.show();
+    // Holding Shift while the app starts skips reopening the last model.
+    const auto skipReopen = QApplication::queryKeyboardModifiers().testFlag(Qt::ShiftModifier);
+    QTimer::singleShot(0, &window, [&window, skipReopen] { window.reopenLastModel(skipReopen); });
     return application.exec();
 }

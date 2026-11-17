@@ -36,7 +36,8 @@
 #include "ui/model/ParameterEditor.h"
 #include "ui/setup/CardFieldForm.h"
 #include "ui/setup/SetupEditor.h"
-#include "ui/welcome/WelcomePage.h"
+#include "ui/start/RecentModels.h"
+#include "ui/start/StartPanel.h"
 #include "nec/NecParser.h"
 #include "model/WireGauge.h"
 
@@ -597,6 +598,72 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
     resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
     resultWindowSettings.sync();
+    // Launch: with no model the workspace shows the start panel in its center; reopening the
+    // last model obeys the setting, Shift, a missing file and an attempt that never finished.
+    {
+        QSettings launchSettings;
+        const QStringList launchKeys{QStringLiteral("files/recentModels"),
+            QStringLiteral("files/recentOpened"), QStringLiteral("files/reopenLastModel"),
+            QStringLiteral("files/reopening")};
+        std::vector<QVariant> savedLaunch;
+        for (const auto& key : launchKeys) savedLaunch.push_back(launchSettings.value(key));
+        QTemporaryDir launchDirectory;
+        const auto lastPath = launchDirectory.filePath(QStringLiteral("last.nec"));
+        QFile lastFile(lastPath);
+        if (lastFile.open(QIODevice::WriteOnly)) lastFile.write("GW 1 11 -5 0 6 5 0 6 0.001\nGE 0\nEN\n");
+        lastFile.close();
+        const auto missingPath = launchDirectory.filePath(QStringLiteral("gone.nec"));
+        const auto launch = [&](const QStringList& recent, bool reopen, const QString& pending,
+                                bool shift) {
+            launchSettings.setValue(QStringLiteral("files/recentModels"), recent);
+            necwb::ui::recentModels::setReopenAtStartup(reopen);
+            necwb::ui::recentModels::setPendingReopen(pending);
+            auto window = std::make_unique<necwb::ui::MainWindow>();
+            window->resize(1400, 900);
+            window->show();
+            application.processEvents();
+            window->reopenLastModel(shift);
+            application.processEvents();
+            return window;
+        };
+        const auto startShown = [](necwb::ui::MainWindow& window) {
+            auto* start = window.findChild<QWidget*>(QStringLiteral("startPanel"));
+            auto* split = window.findChild<QWidget*>(QStringLiteral("workbenchSplit"));
+            return start != nullptr && start->isVisible() && split != nullptr && split->isVisible();
+        };
+        const auto stale = launch({lastPath}, true, lastPath, false);
+        const auto staleSkipped = startShown(*stale)
+            && stale->statusBar()->currentMessage() == QStringLiteral(
+                "Skipped reopening %1: it did not finish opening last time")
+                .arg(QDir::toNativeSeparators(lastPath))
+            && necwb::ui::recentModels::pendingReopen().isEmpty();
+        const auto missing = launch({missingPath}, true, {}, false);
+        const auto missingReported = startShown(*missing)
+            && missing->statusBar()->currentMessage()
+                == QStringLiteral("Last model not found: %1").arg(QDir::toNativeSeparators(missingPath));
+        const auto settingOff = launch({lastPath}, false, {}, false);
+        const auto shiftHeld = launch({lastPath}, true, {}, true);
+        const auto skipped = startShown(*settingOff) && startShown(*shiftHeld);
+        const auto reopened = launch({lastPath}, true, {}, false);
+        auto* reopenedGeometry = reopened->findChild<QWidget*>(QStringLiteral("geometryWorkspace"));
+        const auto lastReopened = !startShown(*reopened) && reopenedGeometry != nullptr
+            && reopenedGeometry->isVisible() && reopened->windowTitle().startsWith(QStringLiteral("last.nec"))
+            && necwb::ui::recentModels::pendingReopen().isEmpty();
+        const auto popupShortcut = std::ranges::count_if(reopened->findChildren<QAction*>(),
+            [](const QAction* action) {
+                return action->shortcuts().contains(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
+            }) == 1 && reopened->findChild<QAction*>(QStringLiteral("openRecentPopupAction")) != nullptr;
+        for (std::size_t index = 0; index < launchKeys.size(); ++index) {
+            if (savedLaunch[index].isValid()) launchSettings.setValue(launchKeys[index], savedLaunch[index]);
+            else launchSettings.remove(launchKeys[index]);
+        }
+        if (!staleSkipped || !missingReported || !skipped || !lastReopened || !popupShortcut) {
+            qWarning() << "launch" << staleSkipped << missingReported << skipped << lastReopened
+                       << popupShortcut << stale->statusBar()->currentMessage()
+                       << missing->statusBar()->currentMessage() << reopened->windowTitle();
+            return NECWB_SMOKE_FAILURE("launch start panel and reopen");
+        }
+    }
     // Opening an existing model shows it in the main window without raising the NEC Deck
     // window, the left column stops at its maximum width, and at its minimum size the window
     // still has room to open the bottom panel.
@@ -4405,29 +4472,63 @@ auto main(int argc, char* argv[]) -> int
         return NECWB_SMOKE_FAILURE("off-screen window recovery");
     if (!oversizedWindowClamped)
         return NECWB_SMOKE_FAILURE("oversized result window clamping");
-    QAction welcomeNew(QStringLiteral("New NEC Model"));
-    QAction welcomeOpen(QStringLiteral("Open NEC File"));
-    QString recentOpened;
-    auto examplesOpened = false;
-    auto recentCleared = false;
-    necwb::ui::WelcomePage welcome(&welcomeNew, &welcomeOpen,
-        [&recentOpened](const QString& path) { recentOpened = path; },
-        [&examplesOpened] { examplesOpened = true; },
-        [&recentCleared] { recentCleared = true; });
-    welcome.resize(900, 650);
-    welcome.setRecentFiles({QStringLiteral("/tmp/first.nec"), QStringLiteral("/tmp/second.nec")});
-    welcome.show(); application.processEvents();
-    auto* recentList = welcome.findChild<QListWidget*>(QStringLiteral("recentModelsList"));
-    auto* openRecent = welcome.findChild<QPushButton*>(QStringLiteral("openRecentModelButton"));
-    auto* clearRecent = welcome.findChild<QPushButton*>(QStringLiteral("clearRecentModelsButton"));
-    if (recentList == nullptr || openRecent == nullptr || clearRecent == nullptr)
-        return NECWB_SMOKE_FAILURE("welcome recent files controls");
-    recentList->setCurrentRow(1); openRecent->click(); clearRecent->click();
-    QImage welcomeImage(900, 650, QImage::Format_ARGB32_Premultiplied);
-    welcomeImage.fill(Qt::transparent); QPainter welcomePainter(&welcomeImage);
-    welcome.render(&welcomePainter); welcomePainter.end();
-    const auto welcomeStateValid = recentList->count() == 2
-        && recentOpened == QStringLiteral("/tmp/second.nec") && recentCleared;
+    // The start panel: its buttons trigger New, Open and Open Example, its recent list shows
+    // file, folder and when each was opened, opens a row when activated, and is no taller
+    // than its rows.
+    auto startPanelValid = false;
+    {
+        QTemporaryDir recentDirectory;
+        const auto firstPath = recentDirectory.filePath(QStringLiteral("first.nec"));
+        const auto secondPath = recentDirectory.filePath(QStringLiteral("second.nec"));
+        for (const auto& path : {firstPath, secondPath}) {
+            QFile file(path);
+            if (file.open(QIODevice::WriteOnly)) file.write("GE 0\nEN\n");
+        }
+        QSettings recentSettings;
+        const auto savedList = recentSettings.value(QStringLiteral("files/recentModels"));
+        const auto savedOpened = recentSettings.value(QStringLiteral("files/recentOpened"));
+        necwb::ui::recentModels::clear();
+        necwb::ui::recentModels::remember(secondPath);
+        const auto files = necwb::ui::recentModels::remember(firstPath);
+        QAction startNew;
+        QAction startOpen;
+        auto newTriggered = false;
+        auto openTriggered = false;
+        auto exampleRequested = false;
+        QObject::connect(&startNew, &QAction::triggered, [&newTriggered] { newTriggered = true; });
+        QObject::connect(&startOpen, &QAction::triggered, [&openTriggered] { openTriggered = true; });
+        QString opened;
+        necwb::ui::StartPanel start(&startNew, &startOpen,
+            [&exampleRequested] { exampleRequested = true; },
+            [&opened](const QString& path) { opened = path; });
+        start.resize(900, 650);
+        start.setRecentFiles(files);
+        start.show();
+        application.processEvents();
+        auto* list = start.findChild<QTreeWidget*>(QStringLiteral("startRecentModels"));
+        for (const auto* name : {"startNewModel", "startOpenModel", "startOpenExample"})
+            if (auto* button = start.findChild<QPushButton*>(QString::fromLatin1(name))) button->click();
+        if (list != nullptr && list->topLevelItemCount() == 2)
+            emit list->itemActivated(list->topLevelItem(1), 0);
+        startPanelValid = list != nullptr && list->topLevelItemCount() == 2
+            && list->topLevelItem(0)->text(0) == QStringLiteral("first.nec")
+            && list->topLevelItem(0)->text(1)
+                == QDir::toNativeSeparators(QFileInfo(firstPath).absolutePath())
+            && !list->topLevelItem(0)->text(2).isEmpty()
+            && opened == QFileInfo(secondPath).absoluteFilePath()
+            && newTriggered && openTriggered && exampleRequested
+            && list->height() < 4 * list->sizeHintForRow(0) + list->header()->height() + 8
+            && list->geometry().bottom() < start.height() / 2;
+        if (!startPanelValid)
+            qWarning() << "start panel" << (list ? list->topLevelItemCount() : -1) << opened
+                       << newTriggered << openTriggered << exampleRequested
+                       << (list ? list->height() : -1);
+        for (const auto& [key, value] : {std::pair{QStringLiteral("files/recentModels"), savedList},
+                 std::pair{QStringLiteral("files/recentOpened"), savedOpened}}) {
+            if (value.isValid()) recentSettings.setValue(key, value);
+            else recentSettings.remove(key);
+        }
+    }
     necwb::ui::StructuredCardEditor structuredCards({{}, true});
     const auto structuredCardsCompact = hasCompactMargins(structuredCards, 6);
     structuredCards.resize(900, 500);
@@ -5378,7 +5479,7 @@ auto main(int argc, char* argv[]) -> int
         && resultPanelDetached && resultPanelHiddenButLive
         && resultPanelRaisedWithUpdate && resultPanelRestoredHidden
         && resultPanelOpenStateSaved && resultPanelRestoredVisible
-        && !welcomeImage.isNull() && welcomeStateValid && !examplesOpened && storeValid
+        && startPanelValid && storeValid
         && runReviewValid
         && runReviewSwitchesCleanly
         && solverSetupCompact && modelTreeCompact && structuredCardsCompact
