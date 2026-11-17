@@ -38,6 +38,8 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
+#include <sstream>
 #include <cmath>
 #include <complex>
 #include <numbers>
@@ -2828,6 +2830,68 @@ void testOptimizationObjectives()
             && freeSpaceMaximumGainSetup.radiationPatterns.front().thetaCount == 37
             && freeSpaceMaximumGainSetup.radiationPatterns.front().phiCount == 72,
         "maximum-gain search covers the full sphere for a free-space model");
+
+    // Every request builder keeps the deck's other cards, in order and as written, and its
+    // line endings and final newline, with or without EN.
+    const std::array studyFrequencies{14.2, 14.0};
+    struct Builder {
+        const char* name;
+        std::function<std::string(std::string_view)> build;
+        long frequencies, executions, patterns;
+    };
+    const std::array builders{
+        Builder{"explicit-frequency", [&](std::string_view deck) {
+            return necwb::analysis::prepareExplicitFrequencyInput(deck, studyFrequencies); }, 2, 2, 0},
+        Builder{"directional", [&](std::string_view deck) {
+            return necwb::analysis::prepareDirectionalOptimizationInput(
+                deck, studyFrequencies, 90.0, 0.0, true); }, 2, 2, 4},
+        Builder{"directional-cut", [&](std::string_view deck) {
+            return necwb::analysis::prepareDirectionalCutOptimizationInput(deck, studyFrequencies,
+                necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 90.0); }, 2, 2, 2},
+        Builder{"maximum-gain", [](std::string_view deck) {
+            return necwb::analysis::prepareMaximumGainSearchInput(deck, 14.1, false); }, 1, 1, 1},
+    };
+    const std::vector<std::string> authored{"CM rewrite", "CE", "GW 1 3 0 0 0 1 0 0 .001", "GE 0",
+        "EX 0 1 2 0 1 0", "FR 0 3 0 0 14 .1", "LD 5 1 0 0 5.8e7", "XQ 0", "RP 0 1 1 1000 90 0 0 0"};
+    for (const auto& builder : builders) {
+        for (const std::string ending : {"\n", "\r\n"}) {
+            for (const auto finalEnding : {true, false}) {
+                for (const auto withEnd : {true, false}) {
+                    auto lines = authored;
+                    if (withEnd) lines.emplace_back("EN");
+                    std::string deck;
+                    for (std::size_t index = 0; index < lines.size(); ++index)
+                        deck += lines[index] + (index + 1 < lines.size() || finalEnding ? ending : "");
+                    const auto output = builder.build(deck);
+                    const auto crlf = ending == "\r\n";
+                    const auto returns = std::count(output.begin(), output.end(), '\r');
+                    const auto endingsKept = output.ends_with(ending) == finalEnding
+                        && returns == (crlf ? std::count(output.begin(), output.end(), '\n') : 0);
+                    std::vector<std::string> kept;
+                    long frequencies = 0, executions = 0, patterns = 0;
+                    std::istringstream stream(output);
+                    for (std::string line; std::getline(stream, line);) {
+                        if (line.ends_with('\r')) line.pop_back();
+                        if (line.starts_with("FR")) ++frequencies;
+                        else if (line.starts_with("XQ")) ++executions;
+                        else if (line.starts_with("RP")) ++patterns;
+                        else kept.push_back(line);
+                    }
+                    auto others = std::vector<std::string>{"CM rewrite", "CE",
+                        "GW 1 3 0 0 0 1 0 0 .001", "GE 0", "EX 0 1 2 0 1 0", "LD 5 1 0 0 5.8e7"};
+                    if (withEnd) others.emplace_back("EN");
+                    const auto requestsLast = withEnd
+                        ? output.find("EN") > output.rfind("FR") && output.find("EN") > output.rfind("XQ")
+                        : output.rfind("LD") < output.find("FR");
+                    expect(endingsKept && kept == others && requestsLast
+                            && output.find("FR 0 3 0 0 14") == std::string::npos
+                            && frequencies == builder.frequencies && executions == builder.executions
+                            && patterns == builder.patterns,
+                        builder.name);
+                }
+            }
+        }
+    }
 }
 
 void testAdaptiveSearch()

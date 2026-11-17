@@ -55,6 +55,56 @@ auto frontToBackDirection(double thetaDegrees, double phiDegrees) -> std::pair<d
     return {thetaDegrees, backPhi};
 }
 
+// The finite, positive frequencies, sorted and without repeats.
+auto validFrequencies(std::span<const double> frequenciesMHz) -> std::vector<double>
+{
+    std::vector<double> frequencies;
+    frequencies.reserve(frequenciesMHz.size());
+    for (const auto frequencyMHz : frequenciesMHz) {
+        if (std::isfinite(frequencyMHz) && frequencyMHz > 0.0)
+            frequencies.push_back(frequencyMHz);
+    }
+    std::ranges::sort(frequencies);
+    const auto duplicates = std::ranges::unique(frequencies);
+    frequencies.erase(duplicates.begin(), duplicates.end());
+    return frequencies;
+}
+
+// The lines in the document's own line ending, with its final line ending if it had one.
+auto writeLines(const nec::NecDocument& document, const std::vector<std::string>& lines)
+    -> std::string
+{
+    std::ostringstream output;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        if (index != 0) output << document.lineEnding();
+        output << lines[index];
+    }
+    if (document.hasFinalLineEnding() && !lines.empty()) output << document.lineEnding();
+    return output.str();
+}
+
+// The document with its FR, RP and XQ cards removed and `requests` put in before EN, or at
+// the end when there is no EN. Every other card keeps its place and source text.
+auto replaceRequests(const nec::NecDocument& document, std::span<const std::string> requests)
+    -> std::string
+{
+    std::vector<std::string> lines;
+    lines.reserve(document.cards().size() + requests.size());
+    auto insertedRequests = false;
+    for (const auto& card : document.cards()) {
+        if (card.kind == nec::NecCardKind::Frequency
+            || card.kind == nec::NecCardKind::RadiationPattern
+            || card.kind == nec::NecCardKind::Execute) continue;
+        if (!insertedRequests && card.kind == nec::NecCardKind::End) {
+            lines.insert(lines.end(), requests.begin(), requests.end());
+            insertedRequests = true;
+        }
+        lines.push_back(card.sourceText);
+    }
+    if (!insertedRequests) lines.insert(lines.end(), requests.begin(), requests.end());
+    return writeLines(document, lines);
+}
+
 }
 
 namespace {
@@ -219,27 +269,13 @@ auto prepareImpedanceInput(std::string_view source) -> std::string
     }
     if (!hasExecution && !insertedExecution) lines.emplace_back("XQ 0");
 
-    std::ostringstream output;
-    for (std::size_t index = 0; index < lines.size(); ++index) {
-        if (index != 0) output << document.lineEnding();
-        output << lines[index];
-    }
-    if (document.hasFinalLineEnding() && !lines.empty()) output << document.lineEnding();
-    return output.str();
+    return writeLines(document, lines);
 }
 
 auto prepareExplicitFrequencyInput(std::string_view source,
     std::span<const double> frequenciesMHz) -> std::string
 {
-    std::vector<double> frequencies;
-    frequencies.reserve(frequenciesMHz.size());
-    for (const auto frequencyMHz : frequenciesMHz) {
-        if (std::isfinite(frequencyMHz) && frequencyMHz > 0.0)
-            frequencies.push_back(frequencyMHz);
-    }
-    std::ranges::sort(frequencies);
-    const auto duplicates = std::ranges::unique(frequencies);
-    frequencies.erase(duplicates.begin(), duplicates.end());
+    const auto frequencies = validFrequencies(frequenciesMHz);
     if (frequencies.empty()) return prepareImpedanceInput(source);
 
     const auto document = nec::NecParser{}.parse(normalizeSolverDeck(source));
@@ -253,30 +289,7 @@ auto prepareExplicitFrequencyInput(std::string_view source,
         requests.emplace_back("XQ 0");
     }
 
-    std::vector<std::string> lines;
-    lines.reserve(document.cards().size() + requests.size());
-    auto insertedRequests = false;
-    for (const auto& card : document.cards()) {
-        if (card.kind == nec::NecCardKind::Frequency
-            || card.kind == nec::NecCardKind::RadiationPattern
-            || card.kind == nec::NecCardKind::Execute) {
-            continue;
-        }
-        if (!insertedRequests && card.kind == nec::NecCardKind::End) {
-            lines.insert(lines.end(), requests.begin(), requests.end());
-            insertedRequests = true;
-        }
-        lines.push_back(card.sourceText);
-    }
-    if (!insertedRequests) lines.insert(lines.end(), requests.begin(), requests.end());
-
-    std::ostringstream output;
-    for (std::size_t index = 0; index < lines.size(); ++index) {
-        if (index != 0) output << document.lineEnding();
-        output << lines[index];
-    }
-    if (document.hasFinalLineEnding() && !lines.empty()) output << document.lineEnding();
-    return output.str();
+    return replaceRequests(document, requests);
 }
 
 auto prepareDirectionalOptimizationInput(std::string_view source,
@@ -296,15 +309,7 @@ auto prepareDirectionalOptimizationInput(std::string_view source,
     if (!std::isfinite(thetaDegrees) || !std::isfinite(phiDegrees))
         return prepareImpedanceInput(source);
 
-    std::vector<double> frequencies;
-    frequencies.reserve(frequenciesMHz.size());
-    for (const auto frequencyMHz : frequenciesMHz) {
-        if (std::isfinite(frequencyMHz) && frequencyMHz > 0.0)
-            frequencies.push_back(frequencyMHz);
-    }
-    std::ranges::sort(frequencies);
-    const auto duplicates = std::ranges::unique(frequencies);
-    frequencies.erase(duplicates.begin(), duplicates.end());
+    const auto frequencies = validFrequencies(frequenciesMHz);
     if (frequencies.empty()) return prepareImpedanceInput(source);
 
     const auto document = nec::NecParser{}.parse(normalizeSolverDeck(source));
@@ -343,21 +348,7 @@ auto prepareDirectionalOptimizationInput(std::string_view source,
             requests.push_back(writer.writeRadiationPatternCard(rearHemisphereGrid(document)));
     }
 
-    std::vector<std::string> lines;
-    lines.reserve(document.cards().size() + requests.size());
-    auto insertedRequests = false;
-    for (const auto& card : document.cards()) {
-        if (card.kind == nec::NecCardKind::Frequency
-            || card.kind == nec::NecCardKind::RadiationPattern
-            || card.kind == nec::NecCardKind::Execute) continue;
-        if (!insertedRequests && card.kind == nec::NecCardKind::End) {
-            lines.insert(lines.end(), requests.begin(), requests.end());
-            insertedRequests = true;
-        }
-        lines.push_back(card.sourceText);
-    }
-    if (!insertedRequests) lines.insert(lines.end(), requests.begin(), requests.end());
-    return joinLines(lines);
+    return replaceRequests(document, requests);
 }
 
 auto prepareDirectionalCutOptimizationInput(std::string_view source,
@@ -368,15 +359,7 @@ auto prepareDirectionalCutOptimizationInput(std::string_view source,
         || !std::isfinite(cutAngleDegrees))
         return prepareImpedanceInput(source);
 
-    std::vector<double> frequencies;
-    frequencies.reserve(frequenciesMHz.size());
-    for (const auto frequencyMHz : frequenciesMHz) {
-        if (std::isfinite(frequencyMHz) && frequencyMHz > 0.0)
-            frequencies.push_back(frequencyMHz);
-    }
-    std::ranges::sort(frequencies);
-    const auto duplicates = std::ranges::unique(frequencies);
-    frequencies.erase(duplicates.begin(), duplicates.end());
+    const auto frequencies = validFrequencies(frequenciesMHz);
     if (frequencies.empty()) return prepareImpedanceInput(source);
 
     constexpr auto cutStepDegrees = 5.0;
@@ -413,21 +396,7 @@ auto prepareDirectionalCutOptimizationInput(std::string_view source,
             requests.push_back(writer.writeRadiationPatternCard(pattern));
     }
 
-    std::vector<std::string> lines;
-    lines.reserve(document.cards().size() + requests.size());
-    auto insertedRequests = false;
-    for (const auto& card : document.cards()) {
-        if (card.kind == nec::NecCardKind::Frequency
-            || card.kind == nec::NecCardKind::RadiationPattern
-            || card.kind == nec::NecCardKind::Execute) continue;
-        if (!insertedRequests && card.kind == nec::NecCardKind::End) {
-            lines.insert(lines.end(), requests.begin(), requests.end());
-            insertedRequests = true;
-        }
-        lines.push_back(card.sourceText);
-    }
-    if (!insertedRequests) lines.insert(lines.end(), requests.begin(), requests.end());
-    return joinLines(lines);
+    return replaceRequests(document, requests);
 }
 
 auto prepareOptimizationInput(std::string_view source,
@@ -481,21 +450,7 @@ auto prepareMaximumGainSearchInput(std::string_view source,
         writer.writeRadiationPatternCard(pattern),
     };
 
-    std::vector<std::string> lines;
-    lines.reserve(document.cards().size() + requests.size());
-    auto insertedRequests = false;
-    for (const auto& card : document.cards()) {
-        if (card.kind == nec::NecCardKind::Frequency
-            || card.kind == nec::NecCardKind::RadiationPattern
-            || card.kind == nec::NecCardKind::Execute) continue;
-        if (!insertedRequests && card.kind == nec::NecCardKind::End) {
-            lines.insert(lines.end(), requests.begin(), requests.end());
-            insertedRequests = true;
-        }
-        lines.push_back(card.sourceText);
-    }
-    if (!insertedRequests) lines.insert(lines.end(), requests.begin(), requests.end());
-    return joinLines(lines);
+    return replaceRequests(document, requests);
 }
 
 auto prepareFrequencySweepInput(std::string_view source,
@@ -529,13 +484,7 @@ auto prepareFrequencySweepInput(std::string_view source,
         if (!retainRadiation) lines.emplace_back("XQ 0");
     }
 
-    std::ostringstream output;
-    for (std::size_t index = 0; index < lines.size(); ++index) {
-        if (index != 0) output << document.lineEnding();
-        output << lines[index];
-    }
-    if (document.hasFinalLineEnding() && !lines.empty()) output << document.lineEnding();
-    return output.str();
+    return writeLines(document, lines);
 }
 
 }
