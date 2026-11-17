@@ -583,7 +583,9 @@ The radiation frequency selector includes only frequencies with pattern data.
 - **3D Pattern** renders the available theta/phi mesh as a lit surface colored by
   gain (dark blue at the floor to dark red at the peak), with antenna and current
   overlays. **Surface** chooses Shaded + grid, Shaded or Wireframe; **See-through**
-  shows the antenna and the far side through a shaded surface. The view fits the whole
+  shows the antenna and the far side through a shaded surface. A solid surface hides
+  the parts of the antenna inside or behind it; wire ends that stick out stay visible.
+  Dragging turns the view about the middle of the pattern. The view fits the whole
   pattern below the legends until you drag, zoom or pan; **Reset View** returns to the
   starting angle and fits again. A dense pattern is drawn coarser while you drag. The
   controls wrap to fit a narrow centre. A compatible historical grid appears as a muted

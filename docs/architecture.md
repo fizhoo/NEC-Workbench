@@ -93,7 +93,8 @@ so no view copies or rescans the run. `applyResultState` gives a view only what 
 since it was last updated, and the full view brings only the view on screen up to date;
 the others catch up when they are shown. The 3D pattern's surface is drawn by
 `RadiationSurfaceMesh` with `QPainter`, not OpenGL: one flat-lit patch per θ×φ grid cell in
-Turbo colours, sorted far to near, coarser while dragging a dense pattern;
+Turbo colours, sorted far to near with the axis, wire and current lines cut into short
+pieces among them, coarser while dragging a dense pattern;
 `fitSurfaceView` fits the view to the pattern's projected bounds. `FlowLayout` wraps a
 row of controls that would otherwise widen a narrow view. The remaining workspaces are separate
 top-level windows:

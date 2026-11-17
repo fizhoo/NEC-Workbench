@@ -942,8 +942,13 @@ protected:
             setAutoFit(false);
             if (panning_) pan_ += delta;
             else {
+                // Turn about the middle of the pattern, so it stays where it is on screen.
+                const auto scale = std::min(width(), height()) * 0.38 * zoom_;
+                const auto pivot = patternCentre();
+                const auto before = project(pivot, scale);
                 yaw_ += delta.x() * 0.01;
                 pitch_ = std::clamp(pitch_ - delta.y() * 0.01, -1.4, 1.4);
+                pan_ += before - project(pivot, scale);
                 setProperty("viewPitch", pitch_);
             }
         }
@@ -979,22 +984,26 @@ protected:
         const auto maxGain = maximum.value_or(0.0);
         const auto maximumCurrent = showCurrents_ ? currentMaximum() : std::nullopt;
         const auto modelExtent = resultModelExtentFromOrigin(model_);
-        const auto antennaScale = hasRadiation ? scale * 0.32 : scale * 1.7;
-        const auto drawModel = [&] {
-            drawAxes(painter, scale * 0.34);
-            if (showAntenna_) drawAntenna(painter, antennaScale, modelExtent);
-            return maximumCurrent
-                ? drawCurrents(painter, antennaScale, modelExtent, *maximumCurrent) : QString{};
-        };
-        // A shaded surface hides the antenna inside it unless it is see-through.
-        // A single cut has no surface to fill and is drawn as lines.
-        const auto modelFirst = hasRadiation && style_ != SurfaceStyle::Wireframe;
-        const auto currentReadout = modelFirst ? drawModel() : QString{};
-        const auto shaded = modelFirst && drawShadedRadiation(painter, scale, maxGain);
+        // The antenna is drawn small inside a pattern, or large on its own.
+        const auto antennaSize = hasRadiation ? 0.32 : 1.7;
+        const auto lines = modelLines(antennaSize, modelExtent, maximumCurrent);
+        if (showAntenna_) drawPatches(painter, scale * antennaSize, modelExtent);
+        // Shaded, the lines are sorted in with the surface so it hides what is behind it;
+        // a single cut has no surface to fill and is drawn as lines.
+        const auto shaded = hasRadiation && style_ != SurfaceStyle::Wireframe
+            && drawShadedRadiation(painter, scale, maxGain, lines);
         if (referenceMaximum)
             drawRadiation(painter, scale, *referenceMaximum, referenceSamples_, true);
         if (hasRadiation && !shaded) drawRadiation(painter, scale, maxGain, samples_, false);
-        const auto readoutText = modelFirst ? currentReadout : drawModel();
+        if (!shaded) {
+            for (const auto& line : lines) {
+                painter.setPen(line.pen);
+                painter.drawLine(project(line.start, scale), project(line.end, scale));
+            }
+        }
+        drawAxisLabels(painter, scale * 0.34);
+        const auto readoutText = maximumCurrent
+            ? highlightHoveredCurrent(painter, scale * antennaSize, modelExtent) : QString{};
         if (!readoutText.isEmpty()) {
             const QRectF readout(8, height()-31, width()-16, 23);
             painter.fillRect(readout, palette().brush(QPalette::AlternateBase));
@@ -1172,6 +1181,22 @@ private:
         setProperty("autoFit", on);
         update();
     }
+    // The middle of the pattern's bounding box, or the origin with no pattern.
+    [[nodiscard]] auto patternCentre() const -> model::Point3D
+    {
+        const auto maxGain = showRadiation_ ? maximumGain(samples_) : std::nullopt;
+        if (!maxGain) return {};
+        const auto reference = gainReference(*maxGain);
+        auto low = model::Point3D{}, high = model::Point3D{};
+        for (const auto& sample : samples_) {
+            const auto gain = analysis::radiationGainDb(sample, settings_.component);
+            if (!std::isfinite(gain) || gain <= -900.0) continue;
+            const auto point = samplePoint(sample, gain, reference);
+            low = {std::min(low.x, point.x), std::min(low.y, point.y), std::min(low.z, point.z)};
+            high = {std::max(high.x, point.x), std::max(high.y, point.y), std::max(high.z, point.z)};
+        }
+        return {(low.x + high.x) / 2.0, (low.y + high.y) / 2.0, (low.z + high.z) / 2.0};
+    }
     // Zoom and pan so the pattern, axes and antenna fill the view below the legends.
     void fitToPattern(double maxGain)
     {
@@ -1203,7 +1228,8 @@ private:
     { return {yaw_, pitch_, scale, QPointF(width() / 2.0, height() / 2.0) + pan_}; }
     [[nodiscard]] auto project(const model::Point3D& point, double scale) const -> QPointF
     { return surfaceView(scale).project(point); }
-    auto drawShadedRadiation(QPainter& painter, double scale, double maxGain) -> bool
+    auto drawShadedRadiation(QPainter& painter, double scale, double maxGain,
+        const std::vector<SurfaceLine>& lines) -> bool
     {
         std::vector<SurfaceSample> points;
         const auto reference = gainReference(maxGain);
@@ -1215,24 +1241,18 @@ private:
         }
         // A coarser surface while dragging keeps a dense pattern moving smoothly.
         return drawRadiationSurface(painter, points, surfaceView(scale),
-            style_ == SurfaceStyle::ShadedGrid, seeThrough_, dragging_ ? 6000 : 40000);
+            style_ == SurfaceStyle::ShadedGrid, seeThrough_, dragging_ ? 6000 : 40000, lines);
     }
     static auto normalized(const model::Point3D& point, double extent) -> model::Point3D
     { return {point.x/extent, point.y/extent, point.z/extent}; }
-    void drawAxes(QPainter& painter, double scale)
+    void drawAxisLabels(QPainter& painter, double scale)
     {
-        const auto origin = project({}, scale);
-        const std::array axes{
-            std::pair{model::Point3D{1.0, 0.0, 0.0}, QColor(210, 70, 65)},
-            std::pair{model::Point3D{0.0, 1.0, 0.0}, QColor(65, 175, 90)},
-            std::pair{model::Point3D{0.0, 0.0, 1.0}, QColor(55, 125, 220)}};
-        const std::array labels{tr("X"), tr("Y"), tr("Z")};
-        for (auto index = 0U; index < axes.size(); ++index) {
-            const auto end = project(axes[index].first, scale);
-            painter.setPen(QPen(axes[index].second, 2));
-            painter.drawLine(origin, end);
-            painter.drawText(end + QPointF(4.0, -4.0), labels[index]);
-        }
+        const std::array labels{std::pair{model::Point3D{1.0, 0.0, 0.0}, tr("X")},
+            std::pair{model::Point3D{0.0, 1.0, 0.0}, tr("Y")},
+            std::pair{model::Point3D{0.0, 0.0, 1.0}, tr("Z")}};
+        painter.setPen(palette().color(QPalette::Text));
+        for (const auto& [axis, label] : labels)
+            painter.drawText(project(axis, scale) + QPointF(4.0, -4.0), label);
     }
     void drawRadiation(QPainter& painter, double scale, double maxGain,
         std::span<const analysis::RadiationSample> samples, bool referencePattern)
@@ -1281,9 +1301,41 @@ private:
             && (phiPaths.rbegin()->first - phiPaths.begin()->first) >= 270.0;
         drawPaths(thetaPaths, referencePattern ? 0.8 : 1.0, closeAzimuth);
     }
-    void drawAntenna(QPainter& painter, double scale, double extent)
+    // The axes, wires and currents as lines, in units of the view scale, with the antenna
+    // `size` across, so a shaded surface can hide the parts behind it.
+    [[nodiscard]] auto modelLines(double size, double extent,
+        std::optional<double> maximumCurrent) const -> std::vector<SurfaceLine>
     {
-        if (model_.empty()) return;
+        std::vector<SurfaceLine> lines{
+            {{}, {0.34, 0.0, 0.0}, QPen(QColor(210, 70, 65), 2)},
+            {{}, {0.0, 0.34, 0.0}, QPen(QColor(65, 175, 90), 2)},
+            {{}, {0.0, 0.0, 0.34}, QPen(QColor(55, 125, 220), 2)}};
+        const auto place = [&](const model::Point3D& point) {
+            const auto unit = normalized(point, extent);
+            return model::Point3D{unit.x * size, unit.y * size, unit.z * size};
+        };
+        if (showAntenna_) {
+            for (const auto& wire : model_.wires())
+                for (auto index = std::size_t{1}; index < model::wirePathPointCount(wire); ++index)
+                    lines.push_back({place(model::wirePathPoint(wire, index - 1)),
+                        place(model::wirePathPoint(wire, index)), QPen(QColor(245, 190, 45), 3)});
+        }
+        if (maximumCurrent) {
+            const analysis::WireSegmentIndex index(model_);
+            for (const auto& current : currents_) {
+                const auto location = index.locate(current);
+                const auto endpoints = location
+                    ? model::wireSegmentEndpoints(*location->wire, location->segment) : std::nullopt;
+                if (!endpoints) continue;
+                const auto ratio = current.magnitude / std::max(*maximumCurrent, 1.0e-30);
+                lines.push_back({place(endpoints->first), place(endpoints->second),
+                    QPen(gainColor(ratio), 3.0 + 4.0 * ratio), 1});
+            }
+        }
+        return lines;
+    }
+    void drawPatches(QPainter& painter, double scale, double extent)
+    {
         painter.setPen(QPen(QColor(210, 155, 35), 1.5));
         painter.setBrush(QColor(245, 190, 45, 75));
         for (const auto& patch : model_.surfacePatches()) {
@@ -1292,44 +1344,31 @@ private:
                 polygon << project(normalized(point, extent), scale);
             if (polygon.size() >= 3) painter.drawPolygon(polygon);
         }
-        painter.setPen(QPen(QColor(245, 190, 45), 3));
-        for (const auto& wire : model_.wires()) {
-            for (auto index = std::size_t{1}; index < model::wirePathPointCount(wire); ++index) {
-                painter.drawLine(
-                    project(normalized(model::wirePathPoint(wire, index - 1), extent), scale),
-                    project(normalized(model::wirePathPoint(wire, index), extent), scale));
-            }
-        }
     }
-    // Returns the readout for the segment under the pointer, if any.
-    auto drawCurrents(QPainter& painter, double scale, double extent, double maximum) -> QString
+    // Highlights the current segment under the pointer and returns its readout.
+    auto highlightHoveredCurrent(QPainter& painter, double scale, double extent) -> QString
     {
-        painter.save();
+        if (!tracking_) return {};
         const analysis::SegmentCurrentResult* hovered{};
-        QPointF hoveredStart;
-        QPointF hoveredEnd;
+        QLineF hoveredLine;
         auto hoverDistance = 9.0;
         const analysis::WireSegmentIndex index(model_);
         for (const auto& current : currents_) {
             const auto location = index.locate(current);
-            if (!location) continue;
-            const auto endpoints = model::wireSegmentEndpoints(*location->wire, location->segment);
+            const auto endpoints = location
+                ? model::wireSegmentEndpoints(*location->wire, location->segment) : std::nullopt;
             if (!endpoints) continue;
-            const auto start = project(normalized(endpoints->first, extent), scale);
-            const auto end = project(normalized(endpoints->second, extent), scale);
-            const auto ratio = current.magnitude / std::max(maximum, 1.0e-30);
-            painter.setPen(QPen(gainColor(ratio), 3.0 + 4.0*ratio));
-            painter.drawLine(start, end);
-            const auto distance = tracking_ ? pointToSegmentDistance(cursor_, start, end) : 10.0;
+            const QLineF line(project(normalized(endpoints->first, extent), scale),
+                project(normalized(endpoints->second, extent), scale));
+            const auto distance = pointToSegmentDistance(cursor_, line.p1(), line.p2());
             if (distance < hoverDistance) {
-                hoverDistance = distance; hovered = &current; hoveredStart = start; hoveredEnd = end;
+                hoverDistance = distance; hovered = &current; hoveredLine = line;
             }
         }
-        if (hovered != nullptr) {
-            painter.setPen(QPen(Qt::white, 2)); painter.drawLine(hoveredStart, hoveredEnd);
-        }
-        painter.restore();
-        return hovered == nullptr ? QString{} : tr("Wire %1 · Segment %2 · Current %3 A · Phase %4°")
+        if (hovered == nullptr) return {};
+        painter.setPen(QPen(Qt::white, 2));
+        painter.drawLine(hoveredLine);
+        return tr("Wire %1 · Segment %2 · Current %3 A · Phase %4°")
             .arg(hovered->wireTag).arg(hovered->segment)
             .arg(formatDecimal(hovered->magnitude), formatDecimal(hovered->phaseDegrees));
     }

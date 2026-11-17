@@ -3335,7 +3335,27 @@ auto main(int argc, char* argv[]) -> int
         const auto cutDrawn = necwb::ui::drawRadiationSurface(painter, cut, view, true, false, 1000);
         const auto gridDrawn = necwb::ui::drawRadiationSurface(painter, grid, view, true, false, 1000);
         painter.end();
-        radiation3DLook = radiation3DLook && !cutDrawn && gridDrawn
+        // Wires sort in with a solid surface: one inside it is hidden, one in front of it
+        // shows over it.
+        QImage sorted(400, 400, QImage::Format_ARGB32);
+        sorted.fill(Qt::white);
+        QPainter sortedPainter(&sorted);
+        const necwb::ui::SurfaceView wide{0.3, 0.4, 80.0, QPointF(200, 200)};
+        // Toward the viewer, and right across the screen.
+        const necwb::model::Point3D near{-1.8 * std::cos(0.4) * std::sin(0.3),
+            -1.8 * std::cos(0.4) * std::cos(0.3), -1.8 * std::sin(0.4)};
+        const necwb::model::Point3D right{0.15 * std::cos(0.3), -0.15 * std::sin(0.3), 0};
+        const QPen blue(QColor(0, 0, 255), 4);
+        const std::vector<necwb::ui::SurfaceLine> wires{{{0, 0, 0}, {0.6, 0, 0}, blue},
+            {{near.x - right.x, near.y - right.y, near.z}, {near.x + right.x, near.y + right.y, near.z}, blue}};
+        necwb::ui::drawRadiationSurface(sortedPainter, grid, wide, false, false, 4000, wires);
+        sortedPainter.end();
+        const auto front = wide.project(near).toPoint();
+        const auto inside = wide.project({0.4, 0, 0}).toPoint();
+        const auto wireSorted = sorted.pixelColor(front) == QColor(0, 0, 255)
+            && sorted.pixelColor(inside) != QColor(0, 0, 255);
+        if (!wireSorted) qWarning() << "wire sorting" << sorted.pixelColor(front) << sorted.pixelColor(inside);
+        radiation3DLook = radiation3DLook && !cutDrawn && gridDrawn && wireSorted
             && canvas.pixelColor(100, 100) != QColor(Qt::white);
     }
     // Fitting: a lobe off to one side is centred and fills the area; the view fits until
