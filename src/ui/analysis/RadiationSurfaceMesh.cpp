@@ -40,11 +40,16 @@ auto strided(std::size_t count, std::size_t stride) -> std::vector<std::size_t>
     return indices;
 }
 
+// A surface patch, or one piece of a line when `pen` is set.
 struct Face {
     QPolygonF polygon;
     double depth{};
     QColor color;
+    const QPen* pen{};
 };
+
+// Pieces short enough that each sorts on the right side of the patches around it.
+constexpr auto LinePieces = 8;
 
 }
 
@@ -76,8 +81,26 @@ auto SurfaceView::depth(const model::Point3D& point) const -> double
     return std::cos(pitch) * ry + std::sin(pitch) * point.z;
 }
 
+auto fitSurfaceView(const std::vector<model::Point3D>& points, double yaw, double pitch,
+    const QRectF& area) -> SurfaceView
+{
+    const SurfaceView unitView{yaw, pitch, 1.0, {}};
+    if (points.empty() || area.isEmpty()) return {yaw, pitch, 1.0, area.center()};
+    auto low = unitView.project(points.front()), high = low;
+    for (const auto& point : points) {
+        const auto screen = unitView.project(point);
+        low = {std::min(low.x(), screen.x()), std::min(low.y(), screen.y())};
+        high = {std::max(high.x(), screen.x()), std::max(high.y(), screen.y())};
+    }
+    const QRectF bounds(low, high);
+    const auto scale = std::min(area.width() / std::max(bounds.width(), 1.0e-6),
+        area.height() / std::max(bounds.height(), 1.0e-6));
+    return {yaw, pitch, scale, area.center() - bounds.center() * scale};
+}
+
 auto drawRadiationSurface(QPainter& painter, const std::vector<SurfaceSample>& samples,
-    const SurfaceView& view, bool grid, bool seeThrough, std::size_t maxFaces) -> bool
+    const SurfaceView& view, bool grid, bool seeThrough, std::size_t maxFaces,
+    const std::vector<SurfaceLine>& lines) -> bool
 {
     std::map<double, std::size_t> thetaIndex, phiIndex;
     for (const auto& sample : samples) {
@@ -149,9 +172,26 @@ auto drawRadiationSurface(QPainter& painter, const std::vector<SurfaceSample>& s
             faces.push_back(std::move(face));
         }
     }
+    for (const auto& line : lines) {
+        const auto at = [&line](double t) {
+            return model::Point3D{line.start.x + (line.end.x - line.start.x) * t,
+                line.start.y + (line.end.y - line.start.y) * t,
+                line.start.z + (line.end.z - line.start.z) * t};
+        };
+        for (auto piece = 0; piece < LinePieces; ++piece) {
+            const auto from = at(double(piece) / LinePieces), to = at(double(piece + 1) / LinePieces);
+            faces.push_back({QPolygonF{view.project(from), view.project(to)},
+                (view.depth(from) + view.depth(to)) / 2.0 - line.layer * 1.0e-3, {}, &line.pen});
+        }
+    }
     std::ranges::sort(faces, std::greater{}, &Face::depth);
     painter.save();
     for (const auto& face : faces) {
+        if (face.pen != nullptr) {
+            painter.setPen(*face.pen);
+            painter.drawLine(face.polygon[0], face.polygon[1]);
+            continue;
+        }
         // The edge in the fill colour closes the hairline gaps antialiasing leaves between patches.
         auto edge = grid ? face.color.darker(160) : face.color;
         if (seeThrough && !grid) edge.setAlphaF(0.25F);

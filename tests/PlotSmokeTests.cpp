@@ -26,6 +26,7 @@
 #include "ui/modeltree/PropertiesPane.h"
 #include "ui/modeltree/VariablesSection.h"
 #include "ui/analysis/RadiationSurfaceMesh.h"
+#include "ui/FlowLayout.h"
 #include "ui/geometry/WirePropertiesEditor.h"
 #include "ui/geometry/AutoSegmentationDialog.h"
 #include "ui/geometry/GeometryView.h"
@@ -3334,8 +3335,78 @@ auto main(int argc, char* argv[]) -> int
         const auto cutDrawn = necwb::ui::drawRadiationSurface(painter, cut, view, true, false, 1000);
         const auto gridDrawn = necwb::ui::drawRadiationSurface(painter, grid, view, true, false, 1000);
         painter.end();
-        radiation3DLook = radiation3DLook && !cutDrawn && gridDrawn
+        // Wires sort in with a solid surface: one inside it is hidden, one in front of it
+        // shows over it.
+        QImage sorted(400, 400, QImage::Format_ARGB32);
+        sorted.fill(Qt::white);
+        QPainter sortedPainter(&sorted);
+        const necwb::ui::SurfaceView wide{0.3, 0.4, 80.0, QPointF(200, 200)};
+        // Toward the viewer, and right across the screen.
+        const necwb::model::Point3D near{-1.8 * std::cos(0.4) * std::sin(0.3),
+            -1.8 * std::cos(0.4) * std::cos(0.3), -1.8 * std::sin(0.4)};
+        const necwb::model::Point3D right{0.15 * std::cos(0.3), -0.15 * std::sin(0.3), 0};
+        const QPen blue(QColor(0, 0, 255), 4);
+        const std::vector<necwb::ui::SurfaceLine> wires{{{0, 0, 0}, {0.6, 0, 0}, blue},
+            {{near.x - right.x, near.y - right.y, near.z}, {near.x + right.x, near.y + right.y, near.z}, blue}};
+        necwb::ui::drawRadiationSurface(sortedPainter, grid, wide, false, false, 4000, wires);
+        sortedPainter.end();
+        const auto front = wide.project(near).toPoint();
+        const auto inside = wide.project({0.4, 0, 0}).toPoint();
+        const auto wireSorted = sorted.pixelColor(front) == QColor(0, 0, 255)
+            && sorted.pixelColor(inside) != QColor(0, 0, 255);
+        if (!wireSorted) qWarning() << "wire sorting" << sorted.pixelColor(front) << sorted.pixelColor(inside);
+        radiation3DLook = radiation3DLook && !cutDrawn && gridDrawn && wireSorted
             && canvas.pixelColor(100, 100) != QColor(Qt::white);
+    }
+    // Fitting: a lobe off to one side is centred and fills the area; the view fits until
+    // a zoom, and Reset View fits again. The controls wrap to a narrow centre.
+    {
+        const std::vector<necwb::model::Point3D> lobe{{0, 0, 0}, {1.0, 0.2, 0.1}, {0.6, -0.2, -0.1}};
+        const QRectF area(20, 100, 400, 300);
+        const auto fitted = necwb::ui::fitSurfaceView(lobe, -0.7, 0.45, area);
+        auto inside = true;
+        QRectF bounds;
+        for (const auto& point : lobe) {
+            const auto screen = fitted.project(point);
+            inside = inside && area.adjusted(-0.01, -0.01, 0.01, 0.01).contains(screen);
+            bounds = bounds.united(QRectF(screen, QSizeF(0.001, 0.001)));
+        }
+        const auto fills = std::abs(bounds.width() - area.width()) < 0.5
+            || std::abs(bounds.height() - area.height()) < 0.5;
+        auto* resetView = [&radiation3D]() -> QPushButton* {
+            for (auto* button : radiation3D.findChildren<QPushButton*>())
+                if (button->text() == QStringLiteral("Reset View")) return button;
+            return nullptr;
+        }();
+        const necwb::ui::Radiation3DView fresh;
+        const auto fitsAtStart = fresh.findChild<QWidget*>(QStringLiteral("radiation3DSurface"))
+            ->property("autoFit").toBool();
+        QWheelEvent wheel(QPointF(50, 50), radiation3DSurface->mapToGlobal(QPointF(50, 50)), {},
+            {0, 120}, Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(radiation3DSurface, &wheel);
+        const auto zoomStopsFit = !radiation3DSurface->property("autoFit").toBool();
+        if (resetView != nullptr) resetView->click();
+        const auto resetFits = radiation3DSurface->property("autoFit").toBool();
+        const auto narrow = radiation3D.minimumSizeHint().width() <= 560;
+        QWidget host;
+        auto* flow = new necwb::ui::FlowLayout(&host);
+        auto* first = new QWidget(&host);
+        auto* second = new QWidget(&host);
+        first->setFixedSize(100, 20);
+        second->setFixedSize(100, 20);
+        flow->addWidget(first);
+        flow->addStretch();
+        flow->addWidget(second);
+        host.show();
+        const auto wraps = flow->heightForWidth(250) == 20 && flow->heightForWidth(150) == 46;
+        flow->setGeometry(QRect(0, 0, 150, 46));
+        const auto rightAligned = second->geometry() == QRect(50, 26, 100, 20);
+        const auto fitted3D = inside && fills && fitsAtStart && zoomStopsFit && resetFits
+            && narrow && wraps && rightAligned;
+        if (!fitted3D)
+            qWarning() << "3D fit" << inside << fills << fitsAtStart << zoomStopsFit << resetFits
+                       << radiation3D.minimumSizeHint() << flow->heightForWidth(150) << second->geometry();
+        radiation3DLook = radiation3DLook && fitted3D;
     }
     radiation2DComponent->setCurrentIndex(1);
     radiation2D.setSelectedFrequency(14.2);
