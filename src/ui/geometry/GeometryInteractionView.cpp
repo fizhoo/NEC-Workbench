@@ -4,6 +4,7 @@
 #include <QHelpEvent>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QResizeEvent>
 #include <QPainter>
 #include <QStringList>
 #include <QToolTip>
@@ -268,6 +269,12 @@ void GeometryInteractionView::contextMenuEvent(QContextMenuEvent* event)
         showEmptyContextMenu(event);
     }
     event->accept();
+}
+
+void GeometryInteractionView::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    if (keepFitted_) fitToView();
 }
 
 void GeometryInteractionView::mouseDoubleClickEvent(QMouseEvent* event)

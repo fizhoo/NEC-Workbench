@@ -86,6 +86,7 @@ void GeometryView::updateModel(const model::AntennaModel& model)
 
 void GeometryView::fitToView()
 {
+    keepFitted_ = true;
     const auto bounds = geometry::projectedBounds(model_, plane_);
     if (!bounds) {
         worldCenter_ = {};
@@ -186,6 +187,7 @@ void GeometryView::mouseMoveEvent(QMouseEvent* event)
         const auto delta = event->position() - lastMousePosition_;
         worldCenter_.rx() -= delta.x() / pixelsPerMeter_;
         worldCenter_.ry() += delta.y() / pixelsPerMeter_;
+        keepFitted_ = false;
         lastMousePosition_ = event->position();
         cursorWorld_ = mapToWorld(event->position());
         update();
@@ -341,6 +343,7 @@ void GeometryView::wheelEvent(QWheelEvent* event)
     const auto worldBeforeZoom = mapToWorld(event->position());
     const auto zoomFactor = std::pow(1.0015, event->angleDelta().y());
     pixelsPerMeter_ = std::clamp(pixelsPerMeter_ * zoomFactor, 0.02, 1.0e6);
+    keepFitted_ = false;
     const auto worldAfterZoom = mapToWorld(event->position());
     worldCenter_.rx() += worldBeforeZoom.horizontal - worldAfterZoom.horizontal;
     worldCenter_.ry() += worldBeforeZoom.vertical - worldAfterZoom.vertical;

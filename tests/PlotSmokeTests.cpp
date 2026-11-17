@@ -649,6 +649,28 @@ auto main(int argc, char* argv[]) -> int
         const auto lastReopened = !startShown(*reopened) && reopenedGeometry != nullptr
             && reopenedGeometry->isVisible() && reopened->windowTitle().startsWith(QStringLiteral("last.nec"))
             && necwb::ui::recentModels::pendingReopen().isEmpty();
+        // The reopened model's views fit once the window has its final size, and keep fitting
+        // through resizes until the user zooms one.
+        reopened->resize(1600, 1000);
+        application.processEvents();
+        necwb::ui::GeometryView* plane = nullptr;
+        for (auto* candidate : reopened->findChildren<necwb::ui::GeometryView*>())
+            if (plane == nullptr && candidate->isVisible()) plane = candidate;
+        const auto fittedNow = [&] {
+            const auto shown = plane->grab().toImage();
+            plane->fitToView();
+            return shown == plane->grab().toImage();
+        };
+        const auto fittedAfterResize = plane != nullptr && fittedNow();
+        auto zoomStaysAfterResize = false;
+        if (plane != nullptr) {
+            QWheelEvent zoom(QPointF(plane->rect().center()), plane->mapToGlobal(QPointF(plane->rect().center())),
+                {}, {0, 240}, Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+            QApplication::sendEvent(plane, &zoom);
+            reopened->resize(1500, 950);
+            application.processEvents();
+            zoomStaysAfterResize = !fittedNow();
+        }
         const auto popupShortcut = std::ranges::count_if(reopened->findChildren<QAction*>(),
             [](const QAction* action) {
                 return action->shortcuts().contains(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
@@ -657,9 +679,10 @@ auto main(int argc, char* argv[]) -> int
             if (savedLaunch[index].isValid()) launchSettings.setValue(launchKeys[index], savedLaunch[index]);
             else launchSettings.remove(launchKeys[index]);
         }
-        if (!staleSkipped || !missingReported || !skipped || !lastReopened || !popupShortcut) {
+        if (!staleSkipped || !missingReported || !skipped || !lastReopened || !popupShortcut
+            || !fittedAfterResize || !zoomStaysAfterResize) {
             qWarning() << "launch" << staleSkipped << missingReported << skipped << lastReopened
-                       << popupShortcut << stale->statusBar()->currentMessage()
+                       << popupShortcut << fittedAfterResize << zoomStaysAfterResize << stale->statusBar()->currentMessage()
                        << missing->statusBar()->currentMessage() << reopened->windowTitle();
             return NECWB_SMOKE_FAILURE("launch start panel and reopen");
         }
