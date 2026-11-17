@@ -681,6 +681,16 @@ void testSymbolResolution()
     expect(resolution.generatedDeck.find("SY ") == std::string::npos,
         "generated numeric deck omits Workbench symbol declarations");
 
+    // Typing an expression into a cell: the names it needs and the value that keeps the cell.
+    expect(necwb::nec::undefinedSymbols("len/2 + Half*1e3 - len + w_2", resolution.definitions)
+            == std::vector<std::string>{"len", "w_2"},
+        "an expression's undefined names are listed once, skipping known names and exponents");
+    expect(necwb::nec::symbolValueKeeping("len/2", "len", resolution.definitions, 5.1) == 10.2
+            && necwb::nec::symbolValueKeeping("2*len+half", "len", resolution.definitions, 7.0) == 1.0
+            && !necwb::nec::symbolValueKeeping("len^2", "len", resolution.definitions, 4.0)
+            && !necwb::nec::symbolValueKeeping("len*w", "len", resolution.definitions, 4.0),
+        "a new symbol's value keeps a linear expression at the cell's value, and only then");
+
     const std::string editableSymbols =
         "CM symbols\r\nSY length=10, half=length/2\r\nGW 1 11 -half 0 0 half 0 0 .001\r\nEN\r\n";
     const auto insertedSymbol = necwb::nec::insertSymbolDefinition(
@@ -904,6 +914,17 @@ void testCardFieldEditingPreservesExpressions()
         "symbolic GW geometry fields are distinguished from numeric fields");
     expect(necwb::nec::necCardFieldIsNumeric("GW 1 11 +1D-3 0 0 1 0 0 .001", 2),
         "signed Fortran-exponent fields remain numeric");
+    // Commas separate fields as spaces do, and the mnemonic is two letters.
+    const std::string commaWire = "GW 1,21,-1.87,0.,len,1.87,0.,-1.87,.000814";
+    const std::array commaReplacement{necwb::nec::NecFieldReplacement{1, "31"}};
+    const auto updatedCommaWire = necwb::nec::replaceNecCardFields(commaWire, commaReplacement);
+    expect(necwb::nec::necCardFieldIsNumeric(commaWire, 0)
+            && necwb::nec::necCardFieldText(commaWire, 0) == "1"
+            && !necwb::nec::necCardFieldIsNumeric(commaWire, 4)
+            && necwb::nec::necCardFieldIsNumeric(commaWire, 8)
+            && necwb::nec::necCardFieldText("GW1 2 3", 0) == "1"
+            && updatedCommaWire && *updatedCommaWire == "GW 1,31,-1.87,0.,len,1.87,0.,-1.87,.000814",
+        "comma-separated card fields are read and edited one at a time");
 
     const std::string line = "TL 1 11 2 9 z0 electrical_len 0 0 0 0";
     const std::array lineReplacements{

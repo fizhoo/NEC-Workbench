@@ -37,7 +37,6 @@ private:
     QComboBox* backendControl_{};
     QLineEdit* executableControl_{};
     QSpinBox* timeoutControl_{};
-    QLabel* description_{};
     QLabel* status_{};
     QHash<QString, QString> executablePaths_;
     QString selectedBackendId_;

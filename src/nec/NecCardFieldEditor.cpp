@@ -17,21 +17,23 @@ struct FieldSpan {
     std::size_t end{};
 };
 
+// Fields are separated by spaces, tabs or commas, as the parser reads them.
+auto separator(char character) -> bool
+{ return character == ',' || std::isspace(static_cast<unsigned char>(character)); }
+
 auto dataFields(std::string_view source) -> std::vector<FieldSpan>
 {
     std::vector<FieldSpan> fields;
     auto position = std::size_t{};
-    while (position < source.size()
-        && std::isspace(static_cast<unsigned char>(source[position]))) ++position;
-    while (position < source.size()
-        && !std::isspace(static_cast<unsigned char>(source[position]))) ++position;
+    while (position < source.size() && std::isspace(static_cast<unsigned char>(source[position])))
+        ++position;
+    // The mnemonic is two letters, so GW1,21,... is a GW card too.
+    position = std::min(position + 2, source.size());
     while (position < source.size()) {
-        while (position < source.size()
-            && std::isspace(static_cast<unsigned char>(source[position]))) ++position;
+        while (position < source.size() && separator(source[position])) ++position;
         if (position == source.size()) break;
         const auto begin = position;
-        while (position < source.size()
-            && !std::isspace(static_cast<unsigned char>(source[position]))) ++position;
+        while (position < source.size() && !separator(source[position])) ++position;
         fields.push_back({begin, position});
     }
     return fields;

@@ -173,6 +173,8 @@ void VariablesSection::setVariables(const std::vector<nec::SymbolDefinition>& va
     });
     if (!variables_.empty() && !shared) ranges_.clear();
     variables_ = variables;
+    // A variable added since opening goes back to its first value.
+    for (const auto& variable : variables_) baseline_.try_emplace(variable.name, variable.expression);
     updateReset();
     if (!sameNames) {
         rebuild();
@@ -261,8 +263,8 @@ void VariablesSection::updateReset()
             QString::fromStdString(variable.expression), QString::fromStdString(expression)));
     }
     reset_->setToolTip(changes.empty()
-            ? tr("Put the variables back as opened or saved; none have changed")
-            : tr("Put the variables back as opened or saved:\n%1").arg(lines.join(QLatin1Char('\n'))));
+            ? tr("Put the variables back as opened; none have changed")
+            : tr("Put the variables back as opened:\n%1").arg(lines.join(QLatin1Char('\n'))));
 }
 
 void VariablesSection::refreshRanges()

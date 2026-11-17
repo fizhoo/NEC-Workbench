@@ -123,7 +123,7 @@ over the existing reproducible methods.
 ## Longer Term
 
 - Smith chart and transmission-line, stub, matching, and phasing calculators
-- Filled or shaded 3D radiation surfaces and additional polarization views
+- Additional polarization views
 - Signed installers and broader platform packaging
 - Accessibility and theme refinement
 - Carefully bounded plugin interfaces after core model, solver, and result APIs stabilize

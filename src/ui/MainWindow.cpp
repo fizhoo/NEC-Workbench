@@ -35,6 +35,7 @@
 #include "ui/modeltree/VariablesSection.h"
 #include "ui/cards/WireCardEditor.h"
 #include "ui/cards/CardTables.h"
+#include "ui/cards/SymbolPrompt.h"
 #include "ui/analysis/AnalysisSetupEditor.h"
 #include "ui/analysis/AnalysisRequestEditor.h"
 #include "ui/analysis/AverageGainResultsView.h"
@@ -131,7 +132,6 @@
 #include <sstream>
 #include <string_view>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -848,7 +848,7 @@ void MainWindow::createWorkspace()
         });
     connect(setupEditor_, &SetupEditor::referenceImpedanceDeleteRequested, this,
         [this](std::size_t sourceLine) { deleteReferenceImpedance(sourceLine); });
-    cardTables_ = new CardTables(setupEditor_->sourcesPage(), windowHost_);
+    cardTables_ = new CardTables(windowHost_);
     wireCardEditor_ = cardTables_->wires();
     connect(cardTables_->deckUnits(), &QComboBox::currentIndexChanged, this, [this] {
         const auto unit = cardTables_->deckUnits()->currentData().toInt();
@@ -877,6 +877,12 @@ void MainWindow::createWorkspace()
     connect(wireCardEditor_, &WireCardEditor::fieldDetachmentRequested, this,
         [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
             detachFieldParameter(sourceLine, fieldIndex, fieldLabel);
+        });
+    connect(wireCardEditor_, &WireCardEditor::fieldExpressionEntered, this,
+        [this](std::size_t line, std::size_t field, const QString& label, const QString& expression, QPoint below) {
+            const auto edit = enterFieldExpression(this, below, activeSource().source(), line, field, expression);
+            if (!edit.error.isEmpty()) QMessageBox::warning(this, tr("Invalid Expression"), edit.error);
+            if (edit.source) pushGeometrySourceEdit(tr("Set %1 to %2").arg(label, expression), QString::fromStdString(*edit.source));
         });
     connect(cardTables_, &CardTables::cardSelected, this, [this](std::size_t sourceLine) {
         const QScopedValueRollback keep(keepTable_, true);
@@ -930,7 +936,7 @@ void MainWindow::createWorkspace()
                 modelChecked_ && modelErrorCount_ == 0);
             refreshEngine();
             runAction_->setStatusTip(solverExecutablePath_.isEmpty()
-                    ? tr("Select a NEC engine executable under Setup → Solver")
+                    ? tr("Choose Configure… in the engine list beside Run to select a NEC engine executable")
                     : tr("Run the checked model with the selected NEC engine"));
             if (backendChanged && modelChecked_) checkModel();
             updateAnalysisReadiness();
@@ -973,8 +979,9 @@ void MainWindow::createWorkspace()
     createOptimizationWorkspace();
     createResultsColumn();
     workbenchLayout_ = new WorkbenchLayout({.welcome = welcomePage_, .leftColumn = modelColumn_,
-        .geometry = workspace_, .fullView = resultsController_->fullView(), .deck = deckView_,
-        .rightColumn = resultsController_->column(), .bottomPanel = bottomPanel_}, this);
+        .geometry = workspace_, .fullView = resultsController_->fullView(),
+        .deck = deckView_, .rightColumn = resultsController_->column(),
+        .bottomPanel = bottomPanel_}, this);
     setCentralWidget(workbenchLayout_);
     preserveControlHeights(this);
 }
@@ -1747,7 +1754,7 @@ void MainWindow::showGettingStarted()
         tr("1. Create or open a NEC model.\n"
            "2. Edit geometry and electrical model data under Model.\n"
            "3. Run Check Model and resolve blocking errors.\n"
-           "4. Configure frequency, sources, environment, requests, and the solver under Setup.\n"
+           "4. Set frequency, ground and requests in the model tree, and the engine beside Run.\n"
            "5. Run Analysis, then inspect Results."));
 }
 
@@ -1843,7 +1850,9 @@ void MainWindow::revertToSaved()
     history_->replaceSource({tr("Revert to Saved"), static_cast<int>(EditorDestination::Geometry),
         workspace_->currentIndex()}, QString::fromUtf8(file.readAll()));
     editor_->document()->setModified(false);
-    startModelSession();
+    // Reset still goes back to the model as opened.
+    checkModel();
+    resetGeometryViews();
     statusBar()->showMessage(tr("Reverted to %1").arg(QFileInfo(currentFile_).fileName()), 3000);
 }
 
@@ -1973,7 +1982,6 @@ auto MainWindow::writeFile(const QString& path) -> bool
     file.write(editor_->toPlainText().toUtf8());
     setCurrentFile(path);
     editor_->document()->setModified(false);
-    modelColumn_->variables()->markBaseline();
     statusBar()->showMessage(tr("Saved %1").arg(QFileInfo(path).fileName()), 3000);
     return true;
 }
@@ -2067,6 +2075,7 @@ void MainWindow::checkModel(bool presentReport)
     const auto parameterFields = nec::necCardFieldsReferencingSymbols(
         cache.source(), parameterNames);
     wireCardEditor_->setParameterControlledFields(parameterFields);
+    wireCardEditor_->setSymbols(resolution.definitions);
     updateWireCardEditor();
     // Edits keep the zoom; opening a model fits it (resetGeometryViews).
     const auto sharedSegments = model::describeSharedSegments(currentModel_, currentSetup_);
@@ -2248,7 +2257,11 @@ void MainWindow::createModelColumn()
                                                                : convergenceValidationTabIndex_);
             validationPanel_->showWindow();
             break;
-        default: break;
+        // A row already selected, say from its table, still opens its page.
+        default:
+            if (modelColumn_->pane()->currentPage() != paneContent(selection.node).first)
+                showModelSelection(selection);
+            break;
         }
     });
     wireEditor_ = new WirePropertiesEditor(windowHost_);
@@ -2257,11 +2270,8 @@ void MainWindow::createModelColumn()
             editWire(original, updated);
         });
     modelColumn_->pane()->setDiscardCallback([this](QWidget* page) { discardPendingEdits(page); });
-    modelColumn_->pane()->setExpandCallback([this](bool expand) {
-        const auto table = cardTables_->tableOf(modelColumn_->pane()->currentPage());
-        if (expand && table) widenForTable(*table);
-        else workbenchLayout_->restoreLeftColumn();
-    });
+    modelColumn_->pane()->setExpandCallback([this](bool) { fitPaneWidth(); });
+    tree->setAddCallback([this](ModelNode group) { addToGroup(group); });
     // Slider ranges come from the optimizer for variables it searches, and edits go back.
     auto* variables = modelColumn_->variables();
     variables->setRangeProvider(
@@ -2331,23 +2341,25 @@ void MainWindow::showModelSelection(const ModelSelection& selection)
 
 void MainWindow::showPanePage(QWidget* page, const QString& title)
 {
-    // ⇔ widens the column for a table; anything else puts it back.
-    const auto table = cardTables_->tableOf(page);
-    auto* pane = modelColumn_->pane();
-    pane->setExpandable(table.has_value());
-    if (!table && pane->isExpanded()) {
-        pane->setExpanded(false);
-        workbenchLayout_->restoreLeftColumn();
-    }
-    modelColumn_->showPage(page, title, table.has_value());
-    if (table && pane->isExpanded()) widenForTable(*table);
+    modelColumn_->showPage(page, title, cardTables_->tableOf(page).has_value());
+    fitPaneWidth();
 }
 
-void MainWindow::widenForTable(CardTables::Table table)
+void MainWindow::fitPaneWidth()
 {
-    constexpr auto MaximumShare = 0.65;
-    workbenchLayout_->expandLeftColumn(std::min(cardTables_->fullWidth(table),
-        static_cast<int>(width() * MaximumShare)));
+    // With ⇔ on, a page wider than the column was widens it; anything else puts it back.
+    auto* pane = modelColumn_->pane();
+    if (!pane->isExpanded() || pane->currentPage() == nullptr) workbenchLayout_->restoreLeftColumn();
+    else pane->setExpanded(workbenchLayout_->fitLeftColumn(pane->fullWidth()));
+}
+
+void MainWindow::addToGroup(ModelNode group)
+{
+    if (!modelColumn_->pane()->commitPendingEdits()) return;
+    if (group == ModelNode::Wires) return addWire({0.0, 0.0, 0.0}, {1.0, 0.0, 0.0});
+    const auto card = cardTables_->newCard(*cardTables_->tableOf(paneContent(group).first));
+    if (card.isEmpty()) statusBar()->showMessage(tr("Add a wire first"), 5000);
+    else selectCardInModel(addStructuredCard(card));
 }
 
 void MainWindow::refreshCardForm(std::size_t sourceLine)
@@ -2360,16 +2372,9 @@ void MainWindow::refreshCardForm(std::size_t sourceLine)
 
 void MainWindow::selectCardInModel(std::size_t sourceLine)
 {
-    const auto has = [sourceLine](const auto& items) {
-        return std::ranges::any_of(items,
-            [sourceLine](const auto& item) { return item.sourceLine == sourceLine; });
-    };
-    const auto node = has(currentSetup_.excitations) ? ModelNode::Source
-        : has(currentSetup_.loads) ? ModelNode::Load
-        : has(currentSetup_.transmissionLines) ? ModelNode::TransmissionLine
-        : has(currentSetup_.networks) ? ModelNode::Network : ModelNode::Deck;
-    if (node == ModelNode::Deck) editor_->goToLine(sourceLine);
-    else selectInModel({node, -1, sourceLine});
+    if (const auto selection = modelColumn_->tree()->selectionOfCard(sourceLine))
+        selectInModel(*selection);
+    else editor_->goToLine(sourceLine);
 }
 
 auto MainWindow::paneContent(ModelNode node) const -> std::pair<QWidget*, QString>
@@ -2392,6 +2397,8 @@ auto MainWindow::paneContent(ModelNode node) const -> std::pair<QWidget*, QStrin
     case ModelNode::Variables: return {parameterEditor_, tr("Variables")};
     case ModelNode::Requests: return {analysisRequestEditor_, tr("Requests")};
     case ModelNode::Solver: return {analysisSetupEditor_, tr("Solver")};
+    case ModelNode::ReferenceImpedance:
+        return {setupEditor_->referenceImpedancePage(), tr("Reference impedance")};
     default: return {nullptr, {}};
     }
 }
@@ -2405,6 +2412,7 @@ auto MainWindow::paneDestination() const -> EditorDestination
     if (page == analysisSetupEditor_) return EditorDestination::Solver;
     if (page == parameterEditor_) return EditorDestination::Parameters;
     if (page == setupEditor_->frequencyPage()) return EditorDestination::Frequency;
+    if (page == setupEditor_->referenceImpedancePage()) return EditorDestination::ReferenceImpedance;
     return EditorDestination::Geometry;
 }
 
@@ -2415,6 +2423,7 @@ void MainWindow::showSetupPage(EditorDestination destination)
         : destination == EditorDestination::Loads ? ModelNode::Loads
         : destination == EditorDestination::Environment ? ModelNode::Ground
         : destination == EditorDestination::Requests ? ModelNode::Requests
+        : destination == EditorDestination::ReferenceImpedance ? ModelNode::ReferenceImpedance
                                                      : ModelNode::Solver;
     workbenchLayout_->showModel();
     // Already on that page (an item in the group, say): leave the selection alone.
@@ -2450,9 +2459,6 @@ void MainWindow::refreshWireEditor()
 void MainWindow::discardPendingEdits(QWidget* page)
 {
     if (setupEditor_->hasPendingEdits(page)) setupEditor_->discardPendingEdits(page);
-    // The sources table carries the reference-impedance line.
-    if (page == cardTables_->page(CardTables::Table::Sources))
-        setupEditor_->discardPendingEdits(setupEditor_->sourcesPage());
     if (page == cardForm_) cardForm_->discardPendingEdits();
     if (page == analysisRequestEditor_) analysisRequestEditor_->discardPendingEdits();
     if (page == parameterEditor_) parameterEditor_->discardPendingEdits();
@@ -4375,7 +4381,7 @@ void MainWindow::detachFieldParameter(std::size_t sourceLine,
         5000);
 }
 
-void MainWindow::addStructuredCard(const QString& cardText)
+auto MainWindow::addStructuredCard(const QString& cardText) -> std::size_t
 {
     auto lines = editor_->toPlainText().split(QLatin1Char('\n'), Qt::KeepEmptyParts);
     const auto& document = activeSource().document();
@@ -4434,6 +4440,7 @@ void MainWindow::addStructuredCard(const QString& cardText)
         lines.insert(insertion+1, QString::fromStdString(nec::NecWriter{}.writeGeometryEndCard(0)));
     }
     pushGeometrySourceEdit(tr("Add %1 card").arg(mnemonic), lines.join(QLatin1Char('\n')));
+    return static_cast<std::size_t>(insertion) + 1;
 }
 
 void MainWindow::deleteStructuredCard(std::size_t sourceLine)
@@ -4515,15 +4522,15 @@ void MainWindow::refreshGeometryViews()
 
 void MainWindow::updateWireCardEditor()
 {
-    std::unordered_map<std::size_t, std::unordered_set<int>> symbolicFields;
+    nec::NecParameterFieldMap symbolicFields;
     for (const auto& wire : currentModel_.wires()) {
         const auto block = editor_->document()->findBlockByNumber(
             static_cast<int>(wire.sourceLine) - 1);
         if (!block.isValid()) continue;
         const auto source = block.text().toStdString();
-        for (auto field = 0; field <= 8; ++field) {
-            if (!nec::necCardFieldIsNumeric(source, static_cast<std::size_t>(field)))
-                symbolicFields[wire.sourceLine].insert(field);
+        for (auto field = std::size_t{0}; field <= 8; ++field) {
+            if (!nec::necCardFieldIsNumeric(source, field))
+                symbolicFields[wire.sourceLine][field] = nec::necCardFieldText(source, field);
         }
     }
     wireCardEditor_->setSymbolicGeometryFields(std::move(symbolicFields));
@@ -4624,15 +4631,9 @@ void MainWindow::restoreWorkspaceLayout()
 
 void MainWindow::refreshEngine()
 {
-    // Settings load before the toolbar and the model column exist.
-    if (toolBar_ == nullptr || modelColumn_ == nullptr) return;
-    toolBar_->setBackend(solverBackendId_);
-    const auto backends = AnalysisSetupEditor::backends();
-    const auto backend = std::ranges::find(backends, solverBackendId_,
-        &std::pair<QString, QString>::second);
-    const auto name = backend == backends.end() ? solverBackendId_ : backend->first;
-    modelColumn_->tree()->setSolver(solverExecutablePath_.isEmpty()
-        ? tr("%1 · no executable").arg(name) : name);
+    // Settings load before the toolbar exists.
+    if (toolBar_ == nullptr) return;
+    toolBar_->setBackend(solverBackendId_, solverExecutablePath_);
 }
 
 void MainWindow::saveWorkspaceLayout()

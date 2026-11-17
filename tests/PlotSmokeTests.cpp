@@ -25,6 +25,7 @@
 #include "ui/modeltree/ModelTree.h"
 #include "ui/modeltree/PropertiesPane.h"
 #include "ui/modeltree/VariablesSection.h"
+#include "ui/analysis/RadiationSurfaceMesh.h"
 #include "ui/geometry/WirePropertiesEditor.h"
 #include "ui/geometry/AutoSegmentationDialog.h"
 #include "ui/geometry/GeometryView.h"
@@ -44,6 +45,7 @@
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCompleter>
 #include <QDebug>
 #include <QDoubleSpinBox>
 #include <QEventLoop>
@@ -407,11 +409,11 @@ auto main(int argc, char* argv[]) -> int
                 && mainWindow.property("workspaceDensityId").toString()
                     == QStringLiteral("density-smoke-sentinel");
         }
-        // Selecting Frequency in the tree shows its page in the pane, inside the main window.
+        // The Frequency row shows its page in the pane, inside the main window.
         if (auto* tree = mainWindow.findChild<QTreeWidget*>(QStringLiteral("modelTree"))) {
             mainWindow.show();
             application.processEvents();
-            tree->setCurrentItem(tree->topLevelItem(0));
+            tree->setCurrentItem(tree->findItems(QStringLiteral("Frequency"), Qt::MatchExactly).value(0));
             application.processEvents();
             const auto* frequencyPage = mainWindow.findChild<QWidget*>(
                 QStringLiteral("frequencyEditorPage"));
@@ -699,7 +701,8 @@ auto main(int argc, char* argv[]) -> int
             application.processEvents();
             auto* tree = mainWindow.findChild<QTreeWidget*>(QStringLiteral("modelTree"));
             auto* deck = mainWindow.findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor"));
-            auto* wires = tree == nullptr ? nullptr : tree->topLevelItem(1);
+            auto* wires = tree == nullptr ? nullptr
+                : tree->findItems(QStringLiteral("Wires"), Qt::MatchExactly).value(0);
             if (deck != nullptr && wires != nullptr && wires->childCount() == 2) {
                 wires->setExpanded(true);
                 tree->setCurrentItem(wires->child(1));
@@ -1036,7 +1039,7 @@ auto main(int argc, char* argv[]) -> int
                 const auto groupShows = loadTable->isVisible() && loadTable->rowCount() == 1
                     && expand->isVisible() && !expand->isChecked()
                     && section->height() <= header->height() + 2;
-                // ⇔ widens the column to show every column; Ground narrows it again.
+                // ⇔ widens the column to show every column; the Ground row narrows it again.
                 expand->click();
                 application.processEvents();
                 const auto wideWidth = split->sizes().value(0);
@@ -1045,7 +1048,49 @@ auto main(int argc, char* argv[]) -> int
                     && !loadTable->horizontalScrollBar()->isVisible();
                 selectGroup(QStringLiteral("Ground"));
                 const auto narrowedAgain = split->sizes().value(0) == narrowWidth
-                    && !expand->isVisible() && !expand->isChecked();
+                    && !expand->isVisible() && !expand->isChecked() && pageTitle() == QStringLiteral("Ground");
+                // Picking a narrow card family after a wide one takes ⇔ away.
+                selectGroup(QStringLiteral("Other"));
+                auto* families = mainWindow.findChild<QWidget*>(QStringLiteral("cardsOther"))
+                    ->findChild<QTreeWidget*>(QStringLiteral("structuredCardFamilies"));
+                const auto pickFamily = [&](const QString& prefix) {
+                    for (QTreeWidgetItemIterator item(families); *item; ++item)
+                        if ((*item)->text(0).startsWith(prefix)) families->setCurrentItem(*item);
+                    application.processEvents();
+                    return expand->isVisible();
+                };
+                const auto familyRefits = pickFamily(QStringLiteral("GH")) && !pickFamily(QStringLiteral("XQ"));
+                // Right-click Add on the empty Networks group adds an NT before FR and opens it.
+                QTreeWidgetItem* networksGroup = nullptr;
+                for (auto index = 0; index < tree->topLevelItemCount(); ++index)
+                    if (tree->topLevelItem(index)->text(0) == QStringLiteral("Networks"))
+                        networksGroup = tree->topLevelItem(index);
+                QTimer::singleShot(0, [] {
+                    if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
+                        menu->actions().front()->trigger();
+                        menu->close();
+                    }
+                });
+                emit tree->customContextMenuRequested(tree->visualItemRect(networksGroup).center());
+                application.processEvents();
+                const auto treeAddOpensForm = beforeRun(QStringLiteral("NT 1 6 2 6 0.02"))
+                    && form->isVisible() && pageTitle() == QStringLiteral("Network");
+                // A wide page that is not a table, Requests, gets ⇔ too.
+                const auto* paneWidget = static_cast<necwb::ui::PropertiesPane*>(
+                    mainWindow.findChild<QWidget*>(QStringLiteral("propertiesPane")));
+                auto* paneScroll = paneWidget->findChild<QScrollArea*>();
+                selectGroup(QStringLiteral("Requests"));
+                const auto requestsOffered = pageTitle() == QStringLiteral("Requests") && expand->isVisible();
+                expand->click();
+                application.processEvents();
+                const auto requestsWidened = split->sizes().value(0) >= std::min(paneWidget->fullWidth(),
+                        static_cast<int>(mainWindow.width() * 0.65))
+                    && !paneScroll->horizontalScrollBar()->isVisible();
+                // Frequency fits, and the taller Requests page leaves it no scroll bar.
+                selectGroup(QStringLiteral("Frequency"));
+                const auto pageWidening = requestsOffered && requestsWidened
+                    && split->sizes().value(0) == narrowWidth && !expand->isVisible()
+                    && !paneScroll->verticalScrollBar()->isVisible();
                 selectGroup(QStringLiteral("Loads"));
                 // Edit X of the load and the segment of the source: the r and v symbols stay.
                 loadTable->item(0, 7)->setText(QStringLiteral("10"));
@@ -1103,7 +1148,40 @@ auto main(int argc, char* argv[]) -> int
                     && split->sizes().value(0) == narrowWidth;
                 // With nothing in the pane, the header folds the variables to one line with Live
                 // still there, and back.
-                selectGroup(QStringLiteral("Ground"));
+                // A new name typed into a wire cell asks for its value under the cell, starting
+                // at the number it replaces: Create adds it after the SY cards, Esc changes nothing.
+                selectGroup(QStringLiteral("Wires"));
+                auto* wireCells = mainWindow.findChild<QTableWidget*>(QStringLiteral("wireCardTable"));
+                const auto typeName = [&](int row, int column, const QString& name, bool create) {
+                    QString guess;
+                    QTimer::singleShot(100, [&guess, create] {
+                        auto* box = qobject_cast<QDialog*>(QApplication::activePopupWidget());
+                        if (box == nullptr) return;
+                        guess = box->findChild<QLineEdit*>(QStringLiteral("symbolValue"))->text();
+                        if (create) box->findChild<QPushButton*>(QStringLiteral("symbolCreate"))->click();
+                        else box->reject();
+                    });
+                    wireCells->item(row, column)->setText(name);
+                    application.processEvents();
+                    return guess;
+                };
+                const auto created = typeName(1, 2, QStringLiteral("len"), true) == QStringLiteral("0.3")
+                    && text().startsWith(QStringLiteral("SY r=50, v=1\nSY len=0.3\nGW 1"))
+                    && text().contains(QStringLiteral("GW 2 11 len -0.5"));
+                const auto deckBefore = text();
+                const auto cancelled = typeName(0, 4, QStringLiteral("w"), false) == QStringLiteral("0")
+                    && text() == deckBefore && wireCells->item(0, 4)->text() == QStringLiteral("0");
+                const auto namesTyped = created && cancelled;
+                // A wire picked in the table is selected in the tree; clicking it there opens it.
+                wireCells->selectRow(0);
+                application.processEvents();
+                auto* wireRow = tree->findItems(QStringLiteral("Wire 1"), Qt::MatchExactly | Qt::MatchRecursive).value(0);
+                const auto tableKept = wireRow != nullptr && tree->currentItem() == wireRow
+                    && pageTitle() == QStringLiteral("Wires");
+                if (wireRow != nullptr) emit tree->itemClicked(wireRow, 0);
+                application.processEvents();
+                const auto wireOpened = tableKept && pageTitle() == QStringLiteral("Wire 1");
+                if (!wireOpened) qWarning() << "wire click" << tableKept << pageTitle();
                 selectGroup(QStringLiteral("Deck"));
                 QMouseEvent click(QEvent::MouseButtonRelease, QPointF(5, 5), header->mapToGlobal(QPointF(5, 5)),
                     Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
@@ -1115,15 +1193,17 @@ auto main(int argc, char* argv[]) -> int
                 application.processEvents();
                 const auto unfolded = section->height() > header->height() + 2
                     && !settings.value(QStringLiteral("variables/folded")).toBool();
-                cardTables = bottomPanelPlain && groupShows && widened && narrowedAgain
+                cardTables = bottomPanelPlain && groupShows && widened && narrowedAgain && pageWidening
+                    && familyRefits && treeAddOpensForm
                     && symbolsKept && rowSelects && lineOpensForm && geometrySelects
-                    && tableAddsPlaced && loadAdded && linePicked && folded && unfolded;
+                    && tableAddsPlaced && loadAdded && linePicked && namesTyped && wireOpened && folded && unfolded;
                 if (!cardTables) {
-                    qWarning() << "card tables" << bottomPanelPlain << groupShows << widened
+                    qWarning() << "card tables" << bottomPanelPlain << groupShows << widened << pageWidening
+                               << familyRefits << treeAddOpensForm
                                << narrowWidth << wideWidth << narrowedAgain << symbolsKept
                                << rowSelects << selection << lineOpensForm << geometrySelects
                                << pageTitle() << tableAddsPlaced << loadAdded << linePicked
-                               << folded << unfolded << text();
+                               << namesTyped << folded << unfolded << text();
                 }
             }
             if (deck != nullptr) deck->document()->setModified(false);
@@ -3216,6 +3296,47 @@ auto main(int argc, char* argv[]) -> int
         && legendColorsBeforeHover > 100
         && legendColorsDuringHover == legendColorsBeforeHover
         && verticalOrbitTracksPointer;
+    // The surface: shaded with its grid, solid or see-through, or the wireframe, which has
+    // nothing to see through.
+    auto* radiation3DStyle = radiation3D.findChild<QComboBox*>(QStringLiteral("radiation3DStyle"));
+    auto* radiation3DSeeThrough = radiation3D.findChild<QCheckBox*>(
+        QStringLiteral("radiation3DSeeThrough"));
+    auto radiation3DLook = radiation3DStyle != nullptr && radiation3DSeeThrough != nullptr
+        && radiation3DStyle->count() == 3;
+    if (radiation3DLook) {
+        radiation3DStyle->setCurrentIndex(0);
+        radiation3DSeeThrough->setChecked(false);
+        const auto shadedSolid = radiation3DSurface->property("surfaceStyle").toInt() == 0
+            && !radiation3DSurface->property("seeThrough").toBool();
+        radiation3DStyle->setCurrentIndex(2);
+        const auto wireframe = radiation3DSurface->property("surfaceStyle").toInt() == 2
+            && !radiation3DSeeThrough->isEnabled();
+        radiation3DStyle->setCurrentIndex(0);
+        radiation3DSeeThrough->setChecked(true);
+        radiation3DLook = shadedSolid && wireframe && radiation3DSeeThrough->isEnabled()
+            && radiation3DSurface->property("seeThrough").toBool();
+    }
+    // A θ×φ grid fills with patches; a single cut has nothing to fill.
+    {
+        std::vector<necwb::ui::SurfaceSample> grid, cut;
+        for (auto theta = 0; theta <= 180; theta += 45)
+            for (auto phi = 0; phi < 360; phi += 45) {
+                const auto t = theta * std::numbers::pi / 180.0, f = phi * std::numbers::pi / 180.0;
+                const necwb::ui::SurfaceSample sample{double(theta), double(phi),
+                    {std::sin(t) * std::cos(f), std::sin(t) * std::sin(f), std::cos(t)}, 0.8};
+                grid.push_back(sample);
+                if (phi == 0) cut.push_back(sample);
+            }
+        QImage canvas(200, 200, QImage::Format_ARGB32);
+        canvas.fill(Qt::white);
+        QPainter painter(&canvas);
+        const necwb::ui::SurfaceView view{0.3, 0.4, 80.0, QPointF(100, 100)};
+        const auto cutDrawn = necwb::ui::drawRadiationSurface(painter, cut, view, true, false, 1000);
+        const auto gridDrawn = necwb::ui::drawRadiationSurface(painter, grid, view, true, false, 1000);
+        painter.end();
+        radiation3DLook = radiation3DLook && !cutDrawn && gridDrawn
+            && canvas.pixelColor(100, 100) != QColor(Qt::white);
+    }
     radiation2DComponent->setCurrentIndex(1);
     radiation2D.setSelectedFrequency(14.2);
     radiation3D.setSelectedFrequency(14.2);
@@ -3267,7 +3388,7 @@ auto main(int argc, char* argv[]) -> int
         && radiation2DFloor->currentData() == radiation3DFloor->currentData();
     const auto radiationMetricsVisible = radiation2DSummary->text().contains(QStringLiteral("HPBW"))
         && radiation3DSummary->text().contains(QStringLiteral("peak"))
-        && radiation3DProbeVisible && radiation3DColorScaleVisible
+        && radiation3DProbeVisible && radiation3DColorScaleVisible && radiation3DLook
         && radiationPerformanceSummary->text().contains(QStringLiteral("Gain 2/2"))
         && radiationPerformanceSummary->text().contains(QStringLiteral("F/B 2/2"))
         && radiationPerformancePlot->property("pointCount").toInt() == 2
@@ -3464,7 +3585,8 @@ auto main(int argc, char* argv[]) -> int
         "GW 1 11 0 0 -.5 0 0 .5 .001\nGE 0\nEX 0 1 6 0 1 0\n"
         "FR 0 3 0 0 14 .1\nRP 0 19 37 1000 0 0 5 10\nEN\n");
     modelTree->setModel(antenna, setup, modelTreeDocument);
-    modelTree->setSolver(QStringLiteral("NEC-2 / nec2c"));
+    std::vector<ModelNode> addedTo;
+    modelTree->setAddCallback([&](ModelNode node) { addedTo.push_back(node); });
     QAction averageGainAction(QStringLiteral("Run Average Gain Test…"), &modelColumn),
         convergenceAction(QStringLiteral("Segmentation Convergence…"), &modelColumn);
     modelTree->setStudyAction(Study::AverageGain, &averageGainAction);
@@ -3496,20 +3618,56 @@ auto main(int argc, char* argv[]) -> int
         groupNames.append(modelTree->topLevelItem(index)->text(0));
     const auto modelTreeGroups = groupNames == QStringList{QStringLiteral("Frequency"),
         QStringLiteral("Wires"), QStringLiteral("Sources"), QStringLiteral("Loads"),
-        QStringLiteral("Trans. lines"), QStringLiteral("Networks"), QStringLiteral("Other"),
-        QStringLiteral("Ground"),
-        QStringLiteral("Variables"), QStringLiteral("Requests"), QStringLiteral("Solver"),
-        QStringLiteral("Deck"), QStringLiteral("Validation")};
-    const auto modelTreeSummaries = summary(QStringLiteral("Frequency"))
-            == QStringLiteral("14.000–14.200 MHz · 3 pts")
-        && summary(QStringLiteral("Wires")) == QStringLiteral("1 wire · 11 segments")
-        && summary(QStringLiteral("Sources")) == QStringLiteral("1 source · wire 1, seg 6")
-        && summary(QStringLiteral("Requests")) == QStringLiteral("pattern 19×37")
-        && summary(QStringLiteral("Solver")) == QStringLiteral("NEC-2 / nec2c")
+        QStringLiteral("Trans. lines"), QStringLiteral("Networks"), QStringLiteral("Ground"),
+        QStringLiteral("Requests"), QStringLiteral("Z0"), QStringLiteral("Other"),
+        QStringLiteral("Variables"), QStringLiteral("Deck"), QStringLiteral("Validation")};
+    // Counts only, the detail in tooltips; an empty group is its name alone, dim.
+    const auto dim = modelTree->palette().color(QPalette::PlaceholderText);
+    const auto* loadsGroup = group(QStringLiteral("Loads"));
+    const auto modelTreeSummaries = summary(QStringLiteral("Wires")) == QStringLiteral("1")
+        && group(QStringLiteral("Wires"))->toolTip(1) == QStringLiteral("1 wire · 11 segments")
+        && summary(QStringLiteral("Sources")) == QStringLiteral("1")
+        && summary(QStringLiteral("Other")) == QStringLiteral("3")
+        && group(QStringLiteral("Other"))->toolTip(0) == QStringLiteral("3 cards: GE, FR, RP")
+        && summary(QStringLiteral("Deck")) == QStringLiteral("6")
+        && summary(QStringLiteral("Loads")).isEmpty() && loadsGroup->foreground(0).color() == dim
+        && loadsGroup->toolTip(0) == QStringLiteral("No loads. Right-click to add a load.")
+        && group(QStringLiteral("Wires"))->foreground(0).color() != dim
         && group(QStringLiteral("Wires"))->childCount() == 1
         && group(QStringLiteral("Wires"))->child(0)->text(0) == QStringLiteral("Wire 1")
         && group(QStringLiteral("Sources"))->childCount() == 1
         && group(QStringLiteral("Validation"))->childCount() == 2;
+    // Right-click Add on an empty group, on a row of a full one, and none on Deck.
+    const auto rightClick = [&](QTreeWidgetItem* item) {
+        QTimer::singleShot(0, [] {
+            if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget()))
+                if (!menu->actions().isEmpty()) menu->actions().front()->trigger();
+            if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget())) menu->close();
+        });
+        emit modelTree->customContextMenuRequested(modelTree->visualItemRect(item).center());
+        application.processEvents();
+    };
+    group(QStringLiteral("Sources"))->setExpanded(true);
+    rightClick(group(QStringLiteral("Loads")));
+    rightClick(group(QStringLiteral("Sources"))->child(0));
+    rightClick(group(QStringLiteral("Deck")));
+    group(QStringLiteral("Sources"))->setExpanded(false);
+    const auto treeAdds = addedTo == std::vector{ModelNode::Loads, ModelNode::Sources};
+    if (!modelTreeSummaries || !treeAdds) {
+        QStringList shown;
+        for (auto index = 0; index < modelTree->topLevelItemCount(); ++index)
+            shown << modelTree->topLevelItem(index)->text(0) + QLatin1Char('=')
+                    + modelTree->topLevelItem(index)->text(1) + QLatin1Char('/')
+                    + modelTree->topLevelItem(index)->toolTip(0);
+        qWarning() << "model tree" << shown << addedTo.size();
+    }
+    // The setup rows show their values, the detail in tooltips.
+    const auto setupRowsShown = summary(QStringLiteral("Frequency")) == QStringLiteral("14–14.2 MHz · 3 pts")
+        && summary(QStringLiteral("Ground")) == QStringLiteral("Free space")
+        && summary(QStringLiteral("Requests")) == QStringLiteral("Pattern 19×37")
+        && summary(QStringLiteral("Z0")) == QStringLiteral("50 Ω")
+        && group(QStringLiteral("Z0"))->toolTip(0) == QStringLiteral("Reference impedance for SWR: the default 50 Ω")
+        && group(QStringLiteral("Ground"))->foreground(0).color() != dim;
     modelTree->setStudyStatus(Study::AverageGain, StudyState::Complete,
         QStringLiteral("1.000 @ 14.100 MHz"));
     modelTree->setStudyStatus(Study::Convergence, StudyState::Stale);
@@ -3541,7 +3699,7 @@ auto main(int argc, char* argv[]) -> int
     const auto wireReported = !reportedSelections.empty()
         && reportedSelections.back() == ModelSelection{ModelNode::Wire, 1};
     allowSelectionChange = false;
-    modelTree->setCurrentItem(group(QStringLiteral("Frequency")));
+    modelTree->setCurrentItem(group(QStringLiteral("Deck")));
     const auto selectionHeld = modelTree->currentSelection()
         && *modelTree->currentSelection() == ModelSelection{ModelNode::Wire, 1};
     allowSelectionChange = true;
@@ -3561,7 +3719,7 @@ auto main(int argc, char* argv[]) -> int
     modelTreeImage.fill(Qt::transparent); QPainter modelTreePainter(&modelTreeImage);
     modelColumn.render(&modelTreePainter); modelTreePainter.end();
     const auto modelTreeStateVisible = modelTreeGroups && modelTreeSummaries && studiesShown
-        && studyCleared && studyRunButtons;
+        && studyCleared && studyRunButtons && treeAdds && setupRowsShown;
     // The properties pane: leaving applies a valid edit, an invalid one asks first, Enter
     // applies and Esc reverts.
     auto* wirePage = new necwb::ui::WirePropertiesEditor;
@@ -3716,6 +3874,17 @@ auto main(int argc, char* argv[]) -> int
         && rangeChanges.front().first == QStringLiteral("offset")
         && rangeChanges.front().second == necwb::ui::VariablesSection::Range{-2.0, 2.0}
         && variableSliders[1]->value() == 500;
+    // Reset: saving keeps the opened values, and a variable added since keeps its first value.
+    variablesSection.markBaseline();
+    variablesSection.setVariables({{"len", "0.5", 0.5, 1}, {"twice", "len*2", 1.0, 1},
+        {"offset", "0", 0.0, 2}, {"w", "1", 1.0, 1}});
+    variablesSection.setVariables({{"len", "0.6", 0.6, 1}, {"twice", "len*2", 1.2, 1},
+        {"offset", "0", 0.0, 2}, {"w", "2", 2.0, 1}});
+    const auto* variablesReset = variablesSection.findChild<QToolButton*>(
+        QStringLiteral("variablesReset"));
+    const auto resetKeepsAdded = variablesReset != nullptr && variablesReset->isEnabled()
+        && variablesReset->toolTip().contains(QStringLiteral("len 0.6 → 0.5"))
+        && variablesReset->toolTip().contains(QStringLiteral("w 2 → 1"));
     const auto linkedFieldShown = linkedEndY->isReadOnly()
         && linkedEndY->text().startsWith(QStringLiteral("ƒx "))
         && linkedEndY->toolTip().contains(QStringLiteral("-half"))
@@ -3733,11 +3902,12 @@ auto main(int argc, char* argv[]) -> int
     auto configureRequested = false;
     toolBar.setBackendSelectedCallback([&](const QString& id) { selectedBackend = id; });
     toolBar.setConfigureCallback([&] { configureRequested = true; });
-    toolBar.setBackend(QStringLiteral("opennec"));
+    toolBar.setBackend(QStringLiteral("opennec"), {});
     auto* backend = toolBar.findChild<QComboBox*>(QStringLiteral("toolBarBackend"));
     auto* toolOpenButton = toolBar.findChild<QToolButton*>(QStringLiteral("toolBarOpen"));
     const auto backendShownQuietly = backend != nullptr
-        && backend->currentData().toString() == QStringLiteral("opennec") && selectedBackend.isEmpty();
+        && backend->currentData().toString() == QStringLiteral("opennec") && selectedBackend.isEmpty()
+        && backend->toolTip().contains(QStringLiteral("no executable"));
     if (backend != nullptr) {
         emit backend->activated(backend->findData(QStringLiteral("nec2dxs")));
         emit backend->activated(backend->count() - 1);
@@ -3754,7 +3924,8 @@ auto main(int argc, char* argv[]) -> int
         std::pair{"selection held", selectionHeld},
         std::pair{"window selection quiet", windowSelectionQuiet},
         std::pair{"selection survives rebuild", selectionSurvivesRebuild},
-        std::pair{"deck activated", deckActivated},
+        std::pair{"deck activated", deckActivated}, std::pair{"tree adds", treeAdds},
+        std::pair{"setup rows", setupRowsShown},
         std::pair{"valid edit applied", validEditApplied},
         std::pair{"invalid edit held", invalidEditHeld},
         std::pair{"invalid edit discarded", invalidEditDiscarded},
@@ -3766,6 +3937,7 @@ auto main(int argc, char* argv[]) -> int
         std::pair{"steps are one change", stepsAreOneChange},
         std::pair{"optimizer range used", optimizerRangeUsed},
         std::pair{"range edit reported", rangeEditReported},
+        std::pair{"reset keeps added variables", resetKeepsAdded},
         std::pair{"untouched fields exact", untouchedFieldsExact},
         std::pair{"linked field shown", linkedFieldShown}, std::pair{"toolbar", toolBarValid}};
     for (const auto& [name, passed] : modelTreeChecks) {
@@ -4316,20 +4488,52 @@ auto main(int argc, char* argv[]) -> int
     auto* customGauge = qobject_cast<QComboBox*>(wireTable->cellWidget(0, 9));
     const auto customRadiusPreserved = customGauge != nullptr && customGauge->currentIndex() == 0;
     necwb::ui::WireCardEditor symbolicWireEditor;
-    symbolicWireEditor.setSymbolicGeometryFields({{1, {3, 4, 6, 7}}});
+    symbolicWireEditor.setSymbolicGeometryFields({{1, {{3, "height"}, {4, "2*3"}}}});
     symbolicWireEditor.setParameterControlledFields({{1, {{3, "height"}}}});
+    symbolicWireEditor.setSymbols({{"height", "10", 10.0, 1}});
     symbolicWireEditor.setModel(wireModel);
+    std::vector<std::pair<std::size_t, QString>> expressionsEntered;
+    auto symbolicWireEdited = false;
+    QObject::connect(&symbolicWireEditor, &necwb::ui::WireCardEditor::fieldExpressionEntered,
+        [&](std::size_t, std::size_t field, const QString&, const QString& expression, QPoint) {
+            expressionsEntered.emplace_back(field, expression);
+        });
+    QObject::connect(&symbolicWireEditor, &necwb::ui::WireCardEditor::wireEdited,
+        [&](const auto&, const auto&) { symbolicWireEdited = true; });
     auto* symbolicWireTable = symbolicWireEditor.findChild<QTableWidget*>(
         QStringLiteral("wireCardTable"));
     auto* symbolicGauge = symbolicWireTable == nullptr ? nullptr
         : qobject_cast<QComboBox*>(symbolicWireTable->cellWidget(0, 9));
-    const auto symbolicCoordinatesLocked = symbolicWireTable != nullptr
-        && !(symbolicWireTable->item(0, 3)->flags() & Qt::ItemIsEditable)
-        && (symbolicWireTable->item(0, 8)->flags() & Qt::ItemIsEditable)
-        && !symbolicWireTable->item(0, 3)->icon().isNull()
-        && symbolicWireTable->item(0, 3)->font().italic()
-        && symbolicWireTable->item(0, 3)->toolTip().contains(QStringLiteral("ƒx"));
     const auto symbolicGaugeEnabled = symbolicGauge != nullptr && symbolicGauge->isEnabled();
+    // An expression cell shows its value, styled, and edits as written with the symbols offered.
+    auto* heightCell = symbolicWireTable == nullptr ? nullptr : symbolicWireTable->item(0, 3);
+    auto symbolicCoordinatesLocked = heightCell != nullptr
+        && (heightCell->flags() & Qt::ItemIsEditable)
+        && heightCell->data(necwb::ui::CellExpressionRole).toString() == QStringLiteral("height")
+        && !heightCell->icon().isNull() && heightCell->font().italic()
+        && heightCell->toolTip().startsWith(QStringLiteral("ƒx height = "));
+    if (heightCell != nullptr) {
+        symbolicWireEditor.show();
+        symbolicWireTable->editItem(heightCell);
+        auto* cellEditor = symbolicWireTable->viewport()->findChild<QLineEdit*>();
+        symbolicCoordinatesLocked = symbolicCoordinatesLocked && cellEditor != nullptr
+            && cellEditor->text() == QStringLiteral("height") && cellEditor->completer() != nullptr
+            && cellEditor->completer()->model()->index(0, 0).data().toString() == QStringLiteral("height = 10");
+        symbolicWireTable->closePersistentEditor(heightCell);
+        // A name, a number over an expression, the expression unchanged, and a plain number.
+        symbolicWireTable->item(0, 2)->setText(QStringLiteral("len/2"));
+        application.processEvents();
+        symbolicWireTable->item(0, 4)->setText(QStringLiteral("5"));
+        application.processEvents();
+        symbolicWireTable->item(0, 3)->setText(QStringLiteral("height"));
+        application.processEvents();
+        symbolicWireTable->item(0, 5)->setText(QStringLiteral("4"));
+        application.processEvents();
+        symbolicCoordinatesLocked = symbolicCoordinatesLocked && symbolicWireEdited
+            && expressionsEntered == std::vector<std::pair<std::size_t, QString>>{
+                {2, QStringLiteral("len/2")}, {4, QStringLiteral("5")}};
+        symbolicWireEditor.hide();
+    }
     QImage wireImage(900, 400, QImage::Format_ARGB32_Premultiplied);
     wireImage.fill(Qt::transparent); QPainter wirePainter(&wireImage);
     wireEditor.render(&wirePainter); wirePainter.end();
@@ -4345,7 +4549,7 @@ auto main(int argc, char* argv[]) -> int
         && gaugeEditor->currentData().toInt() == 12;
     QTabWidget setupHost;
     necwb::ui::SetupEditor setupEditor(&setupHost);
-    setupHost.addTab(setupEditor.sourcesPage(), QStringLiteral("Sources"));
+    setupHost.addTab(setupEditor.referenceImpedancePage(), QStringLiteral("Z0"));
     setupHost.addTab(setupEditor.environmentPage(), QStringLiteral("Environment"));
     setupHost.addTab(setupEditor.frequencyPage(), QStringLiteral("Frequency"));
     setupHost.resize(900, 650);
@@ -4353,7 +4557,7 @@ auto main(int argc, char* argv[]) -> int
     application.processEvents();
     const auto setupColumnsValid = setupHost.count() == 3
         && !setupEditor.isVisible()
-        && setupEditor.sourcesPage()->objectName() == QStringLiteral("sourcesEditorPage")
+        && setupEditor.referenceImpedancePage()->objectName() == QStringLiteral("referenceImpedancePage")
         && setupEditor.environmentPage()->objectName() == QStringLiteral("environmentEditorPage")
         && setupEditor.frequencyPage()->objectName() == QStringLiteral("frequencyEditorPage");
     auto* groundPreset = setupEditor.environmentPage()->findChild<QComboBox*>(
@@ -4362,9 +4566,9 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("groundRelativePermittivity"));
     auto* groundConductivity = setupEditor.environmentPage()->findChild<QDoubleSpinBox*>(
         QStringLiteral("groundConductivity"));
-    auto* sourceReferenceImpedance = setupEditor.sourcesPage()->findChild<QDoubleSpinBox*>(
+    auto* sourceReferenceImpedance = setupEditor.referenceImpedancePage()->findChild<QDoubleSpinBox*>(
         QStringLiteral("sourceReferenceImpedance"));
-    auto* applyReferenceImpedance = setupEditor.sourcesPage()->findChild<QPushButton*>(
+    auto* applyReferenceImpedance = setupEditor.referenceImpedancePage()->findChild<QPushButton*>(
         QStringLiteral("applyReferenceImpedanceButton"));
     if (groundPreset == nullptr || groundPermittivity == nullptr
         || groundConductivity == nullptr || sourceReferenceImpedance == nullptr
@@ -4378,11 +4582,11 @@ auto main(int argc, char* argv[]) -> int
         });
     sourceReferenceImpedance->setValue(200.0);
     const auto referenceImpedancePending = setupEditor.hasPendingEdits(
-        setupEditor.sourcesPage())
+        setupEditor.referenceImpedancePage())
         && applyReferenceImpedance->property("pendingChanges").toBool();
     applyReferenceImpedance->click();
     const auto referenceImpedanceControlValid = referenceImpedanceSignalValid
-        && !setupEditor.hasPendingEdits(setupEditor.sourcesPage());
+        && !setupEditor.hasPendingEdits(setupEditor.referenceImpedancePage());
     const auto saltWaterIndex = groundPreset->findText(
         QStringLiteral("Salt water"), Qt::MatchStartsWith);
     groundPreset->setCurrentIndex(saltWaterIndex);
@@ -4401,6 +4605,34 @@ auto main(int argc, char* argv[]) -> int
     const auto groundDiscardRestored = !setupEditor.hasPendingEdits(
         setupEditor.environmentPage())
         && std::abs(groundConductivity->value() - 0.005) < 1.0e-12;
+    // The setup pages fit the column at its narrowest without ⇔; a wider page shows it.
+    auto setupPagesFit = true;
+    {
+        necwb::ui::PropertiesPane fitPane;
+        fitPane.resize(360, 600);
+        necwb::ui::AnalysisSetupEditor solverPage;
+        QWidget widePage;
+        widePage.setMinimumWidth(800);
+        fitPane.show();
+        auto* fitExpand = fitPane.findChild<QToolButton*>(QStringLiteral("paneExpandButton"));
+        for (auto* page : std::initializer_list<QWidget*>{setupEditor.frequencyPage(),
+                 setupEditor.environmentPage(), setupEditor.referenceImpedancePage(), &solverPage}) {
+            page->setParent(nullptr);
+            fitPane.showPage(page, QStringLiteral("Setup"));
+            application.processEvents();
+            if (fitPane.fullWidth() > 360 || fitExpand->isVisible()) {
+                qWarning() << "setup page too wide" << page->objectName() << fitPane.fullWidth();
+                setupPagesFit = false;
+            }
+        }
+        fitPane.showPage(&widePage, QStringLiteral("Wide"));
+        application.processEvents();
+        setupPagesFit = setupPagesFit && fitExpand->isVisible() && fitPane.fullWidth() > 800;
+        for (auto* page : {setupEditor.frequencyPage(), setupEditor.environmentPage(),
+                 setupEditor.referenceImpedancePage()}) page->setParent(&setupEditor);
+        widePage.setParent(nullptr);
+        solverPage.setParent(nullptr);
+    }
     necwb::ui::ParameterEditor parameterEditor;
     const auto parameterEditorCompact = hasCompactMargins(parameterEditor, 8);
     parameterEditor.setResolution(necwb::nec::NecSymbolResolver{}.resolve(
@@ -4976,7 +5208,7 @@ auto main(int argc, char* argv[]) -> int
         && symbolicCoordinatesLocked
         && symbolicGaugeEnabled
         && setupColumnsValid && groundPresetValuesValid && customGroundDetected
-        && groundApplyHighlighted && groundDiscardRestored
+        && groundApplyHighlighted && groundDiscardRestored && setupPagesFit
         && referenceImpedancePending && referenceImpedanceControlValid
         && parameterEditorValid && newParameterValid
         && multiplePatternEditorValid
@@ -5001,6 +5233,8 @@ auto main(int argc, char* argv[]) -> int
         << addedCard << deletedLine << "wire committed" << wireEditCommitted
         << "segmentation apply" << segmentationApplyAccepted
         << "run store" << storeValid << "run deletion" << runDeletionSafe
+        << "setup pages" << setupColumnsValid << setupPagesFit << referenceImpedancePending
+        << referenceImpedanceControlValid
         << "ground presets" << groundPresetValuesValid << customGroundDetected
         << groundPreset->count() << groundPreset->currentIndex()
         << groundPermittivity->value() << groundConductivity->value()

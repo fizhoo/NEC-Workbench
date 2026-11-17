@@ -44,7 +44,6 @@ WorkbenchToolBar::WorkbenchToolBar(const Actions& actions, QWidget* parent)
     addSeparator();
     backend_ = new QComboBox(this);
     backend_->setObjectName(QStringLiteral("toolBarBackend"));
-    backend_->setToolTip(tr("Calculation engine"));
     for (const auto& [name, id] : AnalysisSetupEditor::backends()) backend_->addItem(name, id);
     backend_->insertSeparator(backend_->count());
     backend_->addItem(tr("Configure…"));
@@ -60,7 +59,7 @@ WorkbenchToolBar::WorkbenchToolBar(const Actions& actions, QWidget* parent)
         const auto id = backend_->itemData(index).toString();
         if (id.isEmpty()) {
             // "Configure…" is a command, not an engine: show the engine in use again.
-            setBackend(backendId_);
+            setBackend(backendId_, executable_);
             if (configure_) configure_();
             return;
         }
@@ -69,12 +68,16 @@ WorkbenchToolBar::WorkbenchToolBar(const Actions& actions, QWidget* parent)
     });
 }
 
-void WorkbenchToolBar::setBackend(const QString& backendId)
+void WorkbenchToolBar::setBackend(const QString& backendId, const QString& executable)
 {
     backendId_ = backendId;
+    executable_ = executable;
     const QSignalBlocker blocker(backend_);
     const auto index = backend_->findData(backendId);
     if (index >= 0) backend_->setCurrentIndex(index);
+    backend_->setToolTip(executable.isEmpty()
+            ? tr("Calculation engine: no executable. Choose Configure… to select one.")
+            : tr("Calculation engine: %1").arg(executable));
 }
 
 void WorkbenchToolBar::setBackendSelectedCallback(std::function<void(const QString&)> callback)

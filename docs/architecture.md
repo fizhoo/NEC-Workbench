@@ -57,18 +57,23 @@ same definitions.
 The main window is resizable and laid out by `WorkbenchLayout`: with no model, the
 Welcome page; with a model, one splitter with three panes. `WorkbenchToolBar` runs
 across the top. The left column (`ui/modeltree`) is a `ModelColumn`: the `ModelTree`
-(groups with summaries, a row per wire, source, load, line, and network, and the
-model-quality studies), the `VariablesSection` (a slider row per `SY` variable, each
+(the frequency, ground, requests and Z0 rows with their values, groups with counts, a row
+per wire, source, load, line, and network, right-click Add
+on the card groups, and the model-quality studies), the `VariablesSection` (a slider row per `SY` variable, each
 committed change one `SY` edit; while dragging, `GeometryPreview` redraws the wires from
 the resolved symbols at most once a frame, without touching the deck), and the
 `PropertiesPane`, which hosts one page for the selection: `WirePropertiesEditor` for a
 wire, `CardFieldForm` for one source, load, line, or network (rewriting only edited
 fields), a group's table from `CardTables` (the wire table and filtered
-`StructuredCardEditor`s), the Setup pages, and the Parameters table. For a table, ⇔ asks
-`WorkbenchLayout` to widen the column to the table and puts it back for any other page.
-The pane applies valid pending edits when the selection changes and asks only about
-invalid ones. New EX, LD, TL and NT cards are placed by `nec::setupCardInsertionIndex`.
-The center shows the geometry editor (2D and 3D views), one full result view, or the NEC
+`StructuredCardEditor`s), the setup pages, and the Parameters table. The pane holds only
+the page on screen, and offers ⇔ whenever that page is wider than the column (every column
+of its table, if it has one); ⇔ asks `WorkbenchLayout` to widen the column to the page and
+puts it back for a page that fits. The pane applies valid pending edits when the selection
+changes and asks only about invalid ones. New EX, LD, TL and NT cards are placed by
+`nec::setupCardInsertionIndex`. A name or expression typed into a wire cell goes through
+`enterFieldExpression` (`ui/cards/SymbolPrompt`), which asks under the cell for the value
+of each new name and adds its `SY` card with `nec::insertSymbolDefinition`. The center
+shows the geometry editor (2D and 3D views), or one full result view, or the NEC
 Deck (`DeckView`: raw source), each non-geometry view under the same
 `CenterViewHeader`; the collapsible results column is on the right. The results (`ui/results`) are:
 
@@ -86,7 +91,9 @@ Thumbnails are compact instances of the existing views (`setCompact`). Every vie
 receives the same `ResultData`, which groups the radiation samples by frequency once,
 so no view copies or rescans the run. `applyResultState` gives a view only what changed
 since it was last updated, and the full view brings only the view on screen up to date;
-the others catch up when they are shown. The remaining workspaces are separate
+the others catch up when they are shown. The 3D pattern's surface is drawn by
+`RadiationSurfaceMesh` with `QPainter`, not OpenGL: one flat-lit patch per θ×φ grid cell in
+Turbo colours, sorted far to near, coarser while dragging a dense pattern. The remaining workspaces are separate
 top-level windows:
 
 - **Validation** shows the static check, Average Gain Test, and convergence studies.

@@ -165,24 +165,23 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
                 item->setToolTip(tr(
                     "This GW uses a following GC taper card. Edit the GC card in the Other card table or in Raw Source."));
             }
+            // An expression shows its value and opens for editing as written.
             const auto symbolicLine = symbolicGeometryFields_.find(wire.sourceLine);
-            if (symbolicLine != symbolicGeometryFields_.end()
-                && symbolicLine->second.contains(column)) {
-                item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+            const auto symbolic = symbolicLine == symbolicGeometryFields_.end() ? nullptr
+                : [&symbolicLine, column] {
+                      const auto found = symbolicLine->second.find(static_cast<std::size_t>(column));
+                      return found == symbolicLine->second.end() ? nullptr : &found->second;
+                  }();
+            if (symbolic != nullptr) {
+                const auto expression = QString::fromStdString(*symbolic);
+                item->setData(CellExpressionRole, expression);
                 const auto parameterLine = parameterControlledFields_.find(wire.sourceLine);
-                const auto parameterField = parameterLine == parameterControlledFields_.end()
-                    ? nullptr : [&parameterLine, column] {
-                        const auto found = parameterLine->second.find(
-                            static_cast<std::size_t>(column));
-                        return found == parameterLine->second.end() ? nullptr : &found->second;
-                    }();
-                if (parameterField != nullptr) {
-                    styleParameterControlledField(item, table_,
-                        QString::fromStdString(*parameterField));
-                } else {
-                    item->setToolTip(tr(
-                        "This value is controlled by an expression. Edit the raw NEC source."));
-                }
+                if (parameterLine != parameterControlledFields_.end()
+                    && parameterLine->second.contains(static_cast<std::size_t>(column)))
+                    styleParameterControlledField(item, table_, expression);
+                if (wire.editable)
+                    item->setToolTip(tr("ƒx %1 = %2\nType over it to change it; change a variable "
+                        "under Variables.").arg(expression, values[column]));
             }
             table_->setItem(row, column, item);
         }
@@ -196,7 +195,7 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
         if (!wire.editable) gaugeControl->setEnabled(false);
         const auto symbolicLine = symbolicGeometryFields_.find(wire.sourceLine);
         if (symbolicLine != symbolicGeometryFields_.end()
-            && symbolicLine->second.contains(Radius)) {
+            && symbolicLine->second.contains(static_cast<std::size_t>(Radius))) {
             gaugeControl->setEnabled(false);
             gaugeControl->setToolTip(tr(
                 "This radius is controlled by an SY expression. Edit the parameter or raw source."));
@@ -241,10 +240,16 @@ void WireCardEditor::focusParameterizableField()
     table_->setFocus(Qt::OtherFocusReason);
 }
 
-void WireCardEditor::setSymbolicGeometryFields(
-    std::unordered_map<std::size_t, std::unordered_set<int>> sourceFields)
+void WireCardEditor::setSymbolicGeometryFields(nec::NecParameterFieldMap sourceFields)
 {
     symbolicGeometryFields_ = std::move(sourceFields);
+}
+
+void WireCardEditor::setSymbols(const std::vector<nec::SymbolDefinition>& symbols)
+{
+    QList<std::pair<QString, double>> offered;
+    for (const auto& symbol : symbols) offered.append({QString::fromStdString(symbol.name), symbol.value});
+    static_cast<CompactNumberDelegate*>(table_->itemDelegate())->setSymbols(std::move(offered));
 }
 
 void WireCardEditor::setParameterControlledFields(nec::NecParameterFieldMap sourceFields)
@@ -300,7 +305,9 @@ void WireCardEditor::updateUnitLabels()
         tr("Y1 (%1)").arg(unitLabel_), tr("Z1 (%1)").arg(unitLabel_),
         tr("X2 (%1)").arg(unitLabel_), tr("Y2 (%1)").arg(unitLabel_),
         tr("Z2 (%1)").arg(unitLabel_), tr("Radius (%1)").arg(unitLabel_), tr("Wire Gauge")});
-    table_->setToolTip(tr("Double-click a cell to edit it. Values use the NEC deck geometry unit (%1); GS converts them to meters for the solver.")
+    table_->setToolTip(tr("Double-click a cell to edit it. Type a name such as len, or len/2, "
+        "to make it a variable. Values use the NEC deck geometry unit (%1); GS converts them "
+        "to meters for the solver.")
             .arg(unitLabel_));
 }
 
@@ -324,6 +331,26 @@ void WireCardEditor::validateAndCommitRow(int row, int changedColumn)
     const auto* original = model_.wireByTag(originalTag);
     if (original == nullptr) {
         setCellError(changedItem, tr("This wire no longer exists."));
+        return;
+    }
+    // A name or expression, or anything typed over one, goes to the deck as written; the
+    // cell shows the value again until the deck changes.
+    const auto typed = changedItem->text().trimmed();
+    const auto written = changedItem->data(CellExpressionRole).toString();
+    auto plainNumber = false;
+    static_cast<void>(typed.toDouble(&plainNumber));
+    if (changedColumn >= X1 && changedColumn <= Radius && (!written.isEmpty() || !plainNumber)) {
+        const auto below = table_->viewport()->mapToGlobal(
+            table_->visualItemRect(changedItem).bottomLeft());
+        const auto label = table_->horizontalHeaderItem(changedColumn)->text();
+        QTimer::singleShot(0, this, [this, sourceLine = original->sourceLine, changedColumn, label,
+                                        typed, written, below] {
+            if (typed != written) {
+                emit fieldExpressionEntered(sourceLine, static_cast<std::size_t>(changedColumn),
+                    label, typed, below);
+            }
+            setModel(model_);
+        });
         return;
     }
 

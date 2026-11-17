@@ -6,11 +6,8 @@
 
 #include <QComboBox>
 #include <QHBoxLayout>
-#include <QHeaderView>
 #include <QLabel>
-#include <QScrollBar>
 #include <QSignalBlocker>
-#include <QTableWidget>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -38,7 +35,7 @@ auto withBar(QWidget* bar, QWidget* table, QWidget* host) -> QWidget*
 
 }
 
-CardTables::CardTables(QWidget* sourcesBar, QWidget* host) : QObject(host)
+CardTables::CardTables(QWidget* host) : QObject(host)
 {
     wires_ = new WireCardEditor(host);
     auto* units = new QWidget(host);
@@ -72,7 +69,6 @@ CardTables::CardTables(QWidget* sourcesBar, QWidget* host) : QObject(host)
     cards_.back() = new StructuredCardEditor({{single.begin(), single.end()}, true}, host);
     cards_.back()->setObjectName(QStringLiteral("cardsOther"));
     pages_[index(Table::Other)] = cards_.back();
-    pages_[index(Table::Sources)] = withBar(sourcesBar, cards_.front(), host);
 
     for (auto* cards : cards_) {
         connect(cards, &StructuredCardEditor::cardSelected, this, &CardTables::cardSelected);
@@ -123,26 +119,9 @@ void CardTables::focusParameterizableField(Table table)
     else cards_[index(table) - 1]->focusParameterizableField();
 }
 
-auto CardTables::fullWidth(Table table) const -> int
+auto CardTables::newCard(Table table) const -> QString
 {
-    const auto* page = pages_[index(table)];
-    auto* grid = page->findChild<QTableWidget*>();
-    if (grid == nullptr) return page->sizeHint().width();
-    // Every column at the width its contents ask for; the columns size to their contents,
-    // except the last, which stretches, so it gets its header's width and room for a number.
-    constexpr auto NumberWidth = 64;
-    auto columns = 0;
-    const auto last = grid->columnCount() - 1;
-    for (auto column = 0; column <= last; ++column) {
-        if (grid->isColumnHidden(column)) continue;
-        columns += column < last ? grid->columnWidth(column)
-            : std::max(grid->horizontalHeader()->sectionSizeHint(column), NumberWidth);
-    }
-    const auto rows = grid->verticalHeader()->isVisible() ? grid->verticalHeader()->width() : 0;
-    const auto frame = 2 * grid->frameWidth() + grid->verticalScrollBar()->sizeHint().width();
-    // The page's own margins and the pane's, around the table.
-    const auto around = page->width() - grid->width() + 24;
-    return std::max(page->minimumSizeHint().width(), columns + rows + frame + std::max(0, around));
+    return table == Table::Wires ? QString{} : cards_[index(table) - 1]->newCard();
 }
 
 }

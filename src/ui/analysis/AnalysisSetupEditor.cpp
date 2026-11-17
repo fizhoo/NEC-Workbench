@@ -6,64 +6,48 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
-#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSpinBox>
-#include <QVBoxLayout>
 
 namespace necwb::ui {
 
 AnalysisSetupEditor::AnalysisSetupEditor(QWidget* parent)
     : QWidget(parent)
 {
-    auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(12, 12, 12, 12);
-    layout->setSpacing(8);
-    auto* heading = new QLabel(tr("Analysis Backend"), this);
-    auto headingFont = heading->font();
-    headingFont.setBold(true);
-    headingFont.setPointSize(headingFont.pointSize() + 3);
-    heading->setFont(headingFont);
-    description_ = new QLabel(this);
-    description_->setWordWrap(true);
-
-    auto* backendGroup = new QGroupBox(tr("NEC Engine"), this);
-    auto* backendLayout = new QFormLayout(backendGroup);
-    backendLayout->setRowWrapPolicy(QFormLayout::WrapLongRows);
-    backendControl_ = new QComboBox(backendGroup);
+    // A short form that fits the left column; how each engine is run is in the tooltips.
+    auto* layout = new QFormLayout(this);
+    layout->setContentsMargins(6, 6, 6, 6);
+    layout->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    layout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    backendControl_ = new QComboBox(this);
     backendControl_->setObjectName(QStringLiteral("analysisBackendControl"));
+    backendControl_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    backendControl_->setMinimumContentsLength(8);
     for (const auto& [name, id] : backends()) backendControl_->addItem(name, id);
-    auto* executableRow = new QWidget(backendGroup);
+    auto* executableRow = new QWidget(this);
     auto* executableLayout = new QHBoxLayout(executableRow);
     executableLayout->setContentsMargins(0, 0, 0, 0);
     executableControl_ = new QLineEdit(executableRow);
     executableControl_->setObjectName(QStringLiteral("analysisExecutableControl"));
-    executableControl_->setPlaceholderText(tr("Select the solver executable"));
+    executableControl_->setPlaceholderText(tr("Solver executable"));
+    executableControl_->setToolTip(tr("The executable stays external; Workbench never bundles a solver"));
     auto* browseButton = new QPushButton(tr("Browse…"), executableRow);
     executableLayout->addWidget(executableControl_, 1);
     executableLayout->addWidget(browseButton);
-    status_ = new QLabel(backendGroup);
+    status_ = new QLabel(this);
     status_->setWordWrap(true);
-    timeoutControl_ = new QSpinBox(backendGroup);
+    timeoutControl_ = new QSpinBox(this);
     timeoutControl_->setRange(5, 86400);
-    timeoutControl_->setSuffix(tr(" seconds"));
+    timeoutControl_->setSuffix(tr(" s"));
     timeoutControl_->setValue(120);
-    backendLayout->addRow(tr("Backend"), backendControl_);
-    backendLayout->addRow(tr("Executable"), executableRow);
-    backendLayout->addRow(tr("Run timeout"), timeoutControl_);
-    backendLayout->addRow(tr("Status"), status_);
-
-    auto* note = new QLabel(tr("The backend selects the executable's input/output protocol. The executable remains external and is never bundled with NEC Workbench. Run decks and output files are preserved for inspection."), this);
-    note->setWordWrap(true);
-    note->setStyleSheet(QStringLiteral("color: palette(mid);"));
-    layout->addWidget(heading);
-    layout->addWidget(description_);
-    layout->addWidget(backendGroup);
-    layout->addWidget(note);
-    layout->addStretch();
+    timeoutControl_->setToolTip(tr("Stop a run that takes longer than this"));
+    layout->addRow(tr("Engine"), backendControl_);
+    layout->addRow(tr("Path"), executableRow);
+    layout->addRow(tr("Timeout"), timeoutControl_);
+    layout->addRow(tr("Status"), status_);
 
     connect(backendControl_, &QComboBox::currentIndexChanged, this, [this] {
         if (!updating_) {
@@ -129,13 +113,13 @@ void AnalysisSetupEditor::updateDescription()
 {
     const auto backend = backendControl_->currentData().toString();
     if (backend == QStringLiteral("opennec")) {
-        description_->setText(tr(
+        backendControl_->setToolTip(tr(
             "OpenNEC receives the input deck as a positional argument and writes original NEC-2 report output."));
     } else if (backend == QStringLiteral("nec2dxs")) {
-        description_->setText(tr(
+        backendControl_->setToolTip(tr(
             "4nec2 NEC2dXS receives the input and output filenames through standard input. Browse to any desired NEC2dXS capacity executable."));
     } else {
-        description_->setText(tr(
+        backendControl_->setToolTip(tr(
             "nec2c receives working-directory-relative input and output paths through -i and -o arguments."));
     }
     const QFileInfo executable(executableControl_->text());
