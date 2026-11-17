@@ -34,8 +34,6 @@ public:
     void start(const std::string& generatedDeck, double frequencyMHz, const Solver& solver);
     void cancel();
     [[nodiscard]] auto isRunning() const -> bool;
-    // How long the last completed solve took, in seconds.
-    [[nodiscard]] auto lastSeconds() const -> double { return lastSeconds_; }
 
     // Called with the result of the latest solve.
     void setFinishedCallback(std::function<void(const analysis::AnalysisResult&, double)> callback);

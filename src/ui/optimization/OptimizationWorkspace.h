@@ -26,6 +26,7 @@ class QComboBox;
 class QDialog;
 class QDoubleSpinBox;
 class QGroupBox;
+class QJsonObject;
 class QHBoxLayout;
 class QLabel;
 class QListWidget;
@@ -227,6 +228,9 @@ private:
     void finishSweep();
     void saveSessionCompletionMetadata();
     auto writeCandidateMetadata(const Candidate& candidate) -> bool;
+    // The study's search, objective and frequency settings added to metadata's own fields.
+    [[nodiscard]] auto studyMetadata(const StudySetup& setup, QJsonObject metadata) const
+        -> QJsonObject;
     void setCandidateStatus(int row, const QString& status);
     [[nodiscard]] auto selectedObjective() const -> analysis::OptimizationObjectiveSpec;
     [[nodiscard]] auto selectedObjectivePreset() const -> analysis::OptimizationPresetId;
@@ -393,6 +397,8 @@ private:
     std::vector<StudySetup::VariableRange> activeVariables_;
     QString selectedValueSuffix_;
     analysis::OptimizationObjectiveSpec activeObjective_;
+    // The configuration captured when the running study started.
+    StudySetup activeSetup_;
     SearchMethod activeSearchMethod_{SearchMethod::ParameterSweep};
     int timeoutSeconds_{120};
     std::size_t candidateIndex_{};

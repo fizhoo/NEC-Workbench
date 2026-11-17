@@ -47,7 +47,6 @@ public:
     void setLivePoint(const analysis::AnalysisResult& point, double frequencyMHz);
     // Cancels a live solve and drops the live points, as when the deck changes.
     void clearLivePoints();
-    [[nodiscard]] auto liveSolve() const -> LiveSolve* { return liveSolve_; }
     [[nodiscard]] auto hasLivePoints() const -> bool { return !state_.liveFrequenciesMHz.empty(); }
     [[nodiscard]] auto selectedFrequency() const -> std::optional<double> { return state_.frequencyMHz; }
     // Whether the shown values at this frequency are out of date.

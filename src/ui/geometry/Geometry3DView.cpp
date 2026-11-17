@@ -268,48 +268,7 @@ void Geometry3DView::paintEvent(QPaintEvent*)
         if (patch.polygon.size() >= 3) painter.drawPolygon(patch.polygon);
     }
 
-    for (const auto& line : transmissionLines_) {
-        const auto first = model::wireSegmentPosition(model_, line.wireTag1, line.segment1);
-        const auto second = model::wireSegmentPosition(model_, line.wireTag2, line.segment2);
-        if (!first || !second) continue;
-        const auto start = project(*first).screen;
-        const auto end = project(*second).screen;
-        const auto selected = selectedTransmissionLine_ == line.sourceLine;
-        const auto color = selected ? QColor(225, 105, 25) : QColor(125, 70, 175);
-        painter.setPen(QPen(color, selected ? 3.0 : 2.0, Qt::DashLine));
-        painter.setBrush(palette().base());
-        painter.drawLine(start, end);
-        painter.drawEllipse(start, selected ? 5.0 : 4.0, selected ? 5.0 : 4.0);
-        painter.drawEllipse(end, selected ? 5.0 : 4.0, selected ? 5.0 : 4.0);
-        painter.drawText((start + end) / 2.0 + QPointF{6.0, -6.0}, tr("TL"));
-    }
-    for (const auto& network : networks_) {
-        const auto first = model::wireSegmentPosition(model_, network.wireTag1, network.segment1);
-        const auto second = model::wireSegmentPosition(model_, network.wireTag2, network.segment2);
-        if (!first || !second) continue;
-        const auto start = project(*first).screen;
-        const auto end = project(*second).screen;
-        const auto selected = selectedNetworkLine_ == network.sourceLine;
-        const auto color = selected ? QColor(225, 105, 25) : QColor(20, 140, 140);
-        const auto radius = selected ? 5.0 : 4.0;
-        painter.setPen(QPen(color, selected ? 3.0 : 2.0, Qt::DashDotLine));
-        painter.setBrush(palette().base());
-        painter.drawLine(start, end);
-        painter.drawEllipse(start, radius, radius);
-        painter.drawEllipse(end, radius, radius);
-        painter.drawText((start + end) / 2.0 + QPointF{6.0, 12.0}, tr("NT"));
-    }
-    if (pendingTransmissionLineEndpoint_) {
-        const auto position = model::wireSegmentPosition(model_,
-            pendingTransmissionLineEndpoint_->first, pendingTransmissionLineEndpoint_->second);
-        if (position) {
-            const auto screen = project(*position).screen;
-            painter.setPen(QPen(QColor(125, 70, 175), 2.5, Qt::DashLine));
-            painter.setBrush(Qt::NoBrush);
-            painter.drawEllipse(screen, 9.0, 9.0);
-            painter.drawText(screen + QPointF{11.0, -8.0}, tr("TL start"));
-        }
-    }
+    drawConnectors(painter, [this](const model::Point3D& point) { return project(point).screen; });
 
     struct RenderWire {
         const model::Wire* wire{};

@@ -38,6 +38,8 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
+#include <sstream>
 #include <cmath>
 #include <complex>
 #include <numbers>
@@ -2523,6 +2525,66 @@ void testOptimizationObjectives()
             && !nullMetrics.front().forwardGainDb,
         "radiation metrics retain pattern-null availability without exposing invalid gain");
 
+    // Scoring and diagnosis share one preparation: a case scores exactly when diagnosis finds
+    // nothing wrong, and a failure names the frequency it happened at.
+    {
+        using Failure = necwb::analysis::OptimizationObjectiveFailureKind;
+        necwb::analysis::OptimizationObjectiveSpec swrOnly;
+        swrOnly.kind = necwb::analysis::OptimizationObjectiveKind::PerCriterion;
+        swrOnly.swrWeight = 1.0;
+        auto withGain = swrOnly;
+        withGain.forwardGainWeight = 1.0;
+        withGain.forwardThetaDegrees = 90.0;
+        withGain.forwardPhiDegrees = 0.0;
+        auto negative = swrOnly;
+        negative.resistanceWeight = -1.0;
+        auto unweighted = swrOnly;
+        unweighted.swrWeight = 0.0;
+        auto nearestPoint = swrOnly;
+        nearestPoint.kind = necwb::analysis::OptimizationObjectiveKind::SwrAtFrequency;
+        nearestPoint.targetFrequencyMHz = 14.19;
+        necwb::analysis::AnalysisResult twoPoints;
+        twoPoints.feedpoints = {{.frequencyMHz = 14.0, .impedance = {50.0, 0.0}},
+            {.frequencyMHz = 14.2, .impedance = {60.0, 5.0}}};
+        twoPoints.radiation = {{.frequencyMHz = 14.0, .thetaDegrees = 90.0, .phiDegrees = 0.0,
+            .totalGainDb = 5.0}};
+        auto badImpedance = twoPoints;
+        badImpedance.feedpoints[1].impedance = {-50.0, 0.0};
+        auto bothPatterns = twoPoints;
+        bothPatterns.radiation.push_back({.frequencyMHz = 14.2, .thetaDegrees = 90.0,
+            .phiDegrees = 0.0, .totalGainDb = 6.0});
+        struct Case {
+            const char* name;
+            const necwb::analysis::AnalysisResult& analysis;
+            const necwb::analysis::OptimizationObjectiveSpec& objective;
+            Failure failure;
+            std::optional<double> frequencyMHz;
+        };
+        const necwb::analysis::AnalysisResult empty;
+        const std::array cases{
+            Case{"negative weight", twoPoints, negative, Failure::InvalidConfiguration, std::nullopt},
+            Case{"no weight", twoPoints, unweighted, Failure::InvalidConfiguration, std::nullopt},
+            Case{"no results", empty, swrOnly, Failure::NoFrequencyResults, std::nullopt},
+            Case{"non-finite SWR", badImpedance, swrOnly, Failure::InvalidStandingWaveRatio, 14.2},
+            Case{"missing forward", twoPoints, withGain, Failure::MissingForwardDirection, 14.2},
+            Case{"nearest point only", twoPoints, nearestPoint, Failure::Unknown, std::nullopt},
+            Case{"complete", bothPatterns, withGain, Failure::Unknown, std::nullopt},
+        };
+        for (const auto& item : cases) {
+            const auto failure = necwb::analysis::diagnoseOptimizationObjectiveFailure(
+                item.analysis, item.objective);
+            const auto score = necwb::analysis::evaluateOptimizationObjective(
+                item.analysis, item.objective);
+            expect(failure.kind == item.failure && failure.frequencyMHz == item.frequencyMHz
+                    && score.has_value() == (item.failure == Failure::Unknown),
+                item.name);
+        }
+        const auto nearest = necwb::analysis::evaluateOptimizationObjective(twoPoints, nearestPoint);
+        expect(nearest && nearest->evaluatedFrequencyCount == 1
+                && nearest->evaluationFrequencyMHz == 14.2,
+            "SWR at a frequency scores only the result nearest its target");
+    }
+
     const auto directionalDeck = necwb::analysis::prepareDirectionalOptimizationInput(
         "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nFR 0 3 0 0 14 .1\n"
         "RP 0 19 37 1000 0 0 5 10\nEN\n",
@@ -2828,50 +2890,72 @@ void testOptimizationObjectives()
             && freeSpaceMaximumGainSetup.radiationPatterns.front().thetaCount == 37
             && freeSpaceMaximumGainSetup.radiationPatterns.front().phiCount == 72,
         "maximum-gain search covers the full sphere for a free-space model");
+
+    // Every request builder keeps the deck's other cards, in order and as written, and its
+    // line endings and final newline, with or without EN.
+    const std::array studyFrequencies{14.2, 14.0};
+    struct Builder {
+        const char* name;
+        std::function<std::string(std::string_view)> build;
+        long frequencies, executions, patterns;
+    };
+    const std::array builders{
+        Builder{"explicit-frequency", [&](std::string_view deck) {
+            return necwb::analysis::prepareExplicitFrequencyInput(deck, studyFrequencies); }, 2, 2, 0},
+        Builder{"directional", [&](std::string_view deck) {
+            return necwb::analysis::prepareDirectionalOptimizationInput(
+                deck, studyFrequencies, 90.0, 0.0, true); }, 2, 2, 4},
+        Builder{"directional-cut", [&](std::string_view deck) {
+            return necwb::analysis::prepareDirectionalCutOptimizationInput(deck, studyFrequencies,
+                necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 90.0); }, 2, 2, 2},
+        Builder{"maximum-gain", [](std::string_view deck) {
+            return necwb::analysis::prepareMaximumGainSearchInput(deck, 14.1, false); }, 1, 1, 1},
+    };
+    const std::vector<std::string> authored{"CM rewrite", "CE", "GW 1 3 0 0 0 1 0 0 .001", "GE 0",
+        "EX 0 1 2 0 1 0", "FR 0 3 0 0 14 .1", "LD 5 1 0 0 5.8e7", "XQ 0", "RP 0 1 1 1000 90 0 0 0"};
+    for (const auto& builder : builders) {
+        for (const std::string ending : {"\n", "\r\n"}) {
+            for (const auto finalEnding : {true, false}) {
+                for (const auto withEnd : {true, false}) {
+                    auto lines = authored;
+                    if (withEnd) lines.emplace_back("EN");
+                    std::string deck;
+                    for (std::size_t index = 0; index < lines.size(); ++index)
+                        deck += lines[index] + (index + 1 < lines.size() || finalEnding ? ending : "");
+                    const auto output = builder.build(deck);
+                    const auto crlf = ending == "\r\n";
+                    const auto returns = std::count(output.begin(), output.end(), '\r');
+                    const auto endingsKept = output.ends_with(ending) == finalEnding
+                        && returns == (crlf ? std::count(output.begin(), output.end(), '\n') : 0);
+                    std::vector<std::string> kept;
+                    long frequencies = 0, executions = 0, patterns = 0;
+                    std::istringstream stream(output);
+                    for (std::string line; std::getline(stream, line);) {
+                        if (line.ends_with('\r')) line.pop_back();
+                        if (line.starts_with("FR")) ++frequencies;
+                        else if (line.starts_with("XQ")) ++executions;
+                        else if (line.starts_with("RP")) ++patterns;
+                        else kept.push_back(line);
+                    }
+                    auto others = std::vector<std::string>{"CM rewrite", "CE",
+                        "GW 1 3 0 0 0 1 0 0 .001", "GE 0", "EX 0 1 2 0 1 0", "LD 5 1 0 0 5.8e7"};
+                    if (withEnd) others.emplace_back("EN");
+                    const auto requestsLast = withEnd
+                        ? output.find("EN") > output.rfind("FR") && output.find("EN") > output.rfind("XQ")
+                        : output.rfind("LD") < output.find("FR");
+                    expect(endingsKept && kept == others && requestsLast
+                            && output.find("FR 0 3 0 0 14") == std::string::npos
+                            && frequencies == builder.frequencies && executions == builder.executions
+                            && patterns == builder.patterns,
+                        builder.name);
+                }
+            }
+        }
+    }
 }
 
 void testAdaptiveSearch()
 {
-    necwb::analysis::AdaptiveSearch search({0.0, 10.0, 12, 0.1, 0.001});
-    const auto initial = search.initialCandidates();
-    expect(initial == std::vector<double>({0.0, 2.5, 5.0, 7.5, 10.0}),
-        "adaptive search begins with a bounded five-point sample");
-    for (const auto value : initial) search.record(value, std::pow(value - 5.0, 2.0));
-    const auto firstRefinement = search.nextCandidates();
-    expect(firstRefinement == std::vector<double>({3.75, 6.25}),
-        "adaptive search refines both neighbors of an interior best point");
-    expect(search.refinementRound() == 1,
-        "adaptive search numbers a left/right proposal batch as one refinement round");
-    for (const auto value : firstRefinement) search.record(value, std::pow(value - 5.0, 2.0));
-    const auto secondRefinement = search.nextCandidates();
-    expect(search.refinementRound() == 2,
-        "adaptive search advances its round only after proposing the next batch");
-    for (const auto value : secondRefinement) search.record(value, std::pow(value - 5.0, 2.0));
-    expect(search.nextCandidates().empty()
-            && search.stopReason() == necwb::analysis::AdaptiveStopReason::ScoreTolerance,
-        "adaptive search reports score-tolerance convergence after repeated stagnant rounds");
-    expect(search.scoreImprovements() == std::vector<double>({0.0, 0.0}),
-        "adaptive search retains the round improvements that triggered convergence");
-
-    necwb::analysis::AdaptiveSearch limited({0.0, 10.0, 5, 0.1, 0.001});
-    for (const auto value : limited.initialCandidates()) limited.record(value, value);
-    expect(limited.nextCandidates().empty()
-            && limited.stopReason() == necwb::analysis::AdaptiveStopReason::MaximumEvaluations,
-        "adaptive search obeys its solver-evaluation budget");
-
-    necwb::analysis::AdaptiveSearch resolved({0.0, 1.0, 12, 0.2, 0.001});
-    for (const auto value : resolved.initialCandidates())
-        resolved.record(value, std::pow(value - 0.5, 2.0));
-    expect(resolved.nextCandidates().empty()
-            && resolved.stopReason() == necwb::analysis::AdaptiveStopReason::ParameterTolerance,
-        "adaptive search reports parameter tolerance when neither midpoint is far enough away");
-
-    necwb::analysis::AdaptiveSearch failed({0.0, 10.0, 12, 0.1, 0.001});
-    for (const auto value : failed.initialCandidates()) failed.record(value, std::nullopt);
-    expect(failed.nextCandidates().empty()
-            && failed.stopReason() == necwb::analysis::AdaptiveStopReason::NoSuccessfulCandidate,
-        "adaptive search reports when no candidate produced an objective score");
-
     necwb::analysis::AdaptiveVectorSearch vectorSearch({
         {{0.0, 10.0, 0.1}, {100.0, 200.0, 1.0}}, 15, 0.001});
     const auto initialVectors = vectorSearch.initialCandidates();
@@ -2911,6 +2995,26 @@ void testAdaptiveSearch()
                 == necwb::analysis::AdaptiveStopReason::ScoreTolerance
             && boundarySearch.scoreImprovements() == std::vector<double>({0.0, 0.0}),
         "adaptive boundary convergence reports unchanged best-score improvements");
+
+    // The other stop reasons, for one variable as a single-variable study runs them.
+    necwb::analysis::AdaptiveVectorSearch limited({{{0.0, 10.0, 0.1}}, 3, 0.001});
+    for (const auto& candidate : limited.initialCandidates())
+        limited.record(candidate.values, candidate.values.front());
+    expect(limited.nextCandidates().empty()
+            && limited.stopReason() == necwb::analysis::AdaptiveStopReason::MaximumEvaluations,
+        "adaptive search obeys its solver-evaluation budget");
+    necwb::analysis::AdaptiveVectorSearch resolved({{{0.0, 1.0, 0.3}}, 12, 0.001});
+    for (const auto& candidate : resolved.initialCandidates())
+        resolved.record(candidate.values, std::pow(candidate.values.front() - 0.4, 2.0));
+    expect(resolved.nextCandidates().empty()
+            && resolved.stopReason() == necwb::analysis::AdaptiveStopReason::ParameterTolerance,
+        "adaptive search stops once its step is below the variable tolerance");
+    necwb::analysis::AdaptiveVectorSearch failed({{{0.0, 10.0, 0.1}}, 12, 0.001});
+    for (const auto& candidate : failed.initialCandidates())
+        failed.record(candidate.values, std::nullopt);
+    expect(failed.nextCandidates().empty()
+            && failed.stopReason() == necwb::analysis::AdaptiveStopReason::NoSuccessfulCandidate,
+        "adaptive search reports when no candidate produced an objective score");
 }
 
 void testNelderMeadSearch()

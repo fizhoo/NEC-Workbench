@@ -152,6 +152,8 @@ if(NECWB_BUILD_GUI)
         src/ui/bottom/RunLogView.h
         src/ui/analysis/AnalysisSetupEditor.cpp
         src/ui/analysis/AnalysisSetupEditor.h
+        src/ui/analysis/AmateurBandDialog.cpp
+        src/ui/analysis/AmateurBandDialog.h
         src/ui/analysis/AnalysisRequestEditor.cpp
         src/ui/analysis/AnalysisRequestEditor.h
         src/ui/analysis/AnalysisRunStore.cpp

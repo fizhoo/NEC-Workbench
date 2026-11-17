@@ -4,6 +4,7 @@
 #include <QHelpEvent>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QStringList>
 #include <QToolTip>
 
@@ -277,6 +278,44 @@ void GeometryInteractionView::mouseDoubleClickEvent(QMouseEvent* event)
         return;
     }
     QWidget::mouseDoubleClickEvent(event);
+}
+
+void GeometryInteractionView::drawConnectors(QPainter& painter,
+    const std::function<QPointF(const model::Point3D&)>& toScreen) const
+{
+    const auto connector = [&](int tag1, int segment1, int tag2, int segment2, bool selected,
+                               const QColor& color, Qt::PenStyle style, QPointF labelOffset,
+                               const QString& label) {
+        const auto first = model::wireSegmentPosition(model_, tag1, segment1);
+        const auto second = model::wireSegmentPosition(model_, tag2, segment2);
+        if (!first || !second) return;
+        const auto start = toScreen(*first);
+        const auto end = toScreen(*second);
+        const auto radius = selected ? 5.0 : 4.0;
+        painter.setPen(QPen(selected ? QColor(225, 105, 25) : color, selected ? 3.0 : 2.0, style));
+        painter.setBrush(palette().base());
+        painter.drawLine(start, end);
+        painter.drawEllipse(start, radius, radius);
+        painter.drawEllipse(end, radius, radius);
+        painter.drawText((start + end) / 2.0 + labelOffset, label);
+    };
+    for (const auto& line : transmissionLines_)
+        connector(line.wireTag1, line.segment1, line.wireTag2, line.segment2,
+            selectedTransmissionLine_ == line.sourceLine, QColor(125, 70, 175), Qt::DashLine,
+            {6.0, -6.0}, tr("TL"));
+    for (const auto& network : networks_)
+        connector(network.wireTag1, network.segment1, network.wireTag2, network.segment2,
+            selectedNetworkLine_ == network.sourceLine, QColor(20, 140, 140), Qt::DashDotLine,
+            {6.0, 12.0}, tr("NT"));
+    if (!pendingTransmissionLineEndpoint_) return;
+    const auto position = model::wireSegmentPosition(model_,
+        pendingTransmissionLineEndpoint_->first, pendingTransmissionLineEndpoint_->second);
+    if (!position) return;
+    const auto screen = toScreen(*position);
+    painter.setPen(QPen(QColor(125, 70, 175), 2.5, Qt::DashLine));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawEllipse(screen, 9.0, 9.0);
+    painter.drawText(screen + QPointF{11.0, -8.0}, tr("TL start"));
 }
 
 }

@@ -1,18 +1,9 @@
 #pragma once
 
 #include <optional>
-#include <string_view>
 #include <vector>
 
 namespace necwb::analysis {
-
-struct AdaptiveSearchSettings {
-    double minimum{};
-    double maximum{};
-    int maximumEvaluations{21};
-    double parameterTolerance{0.01};
-    double scoreTolerance{0.001};
-};
 
 struct AdaptiveVectorVariable {
     double minimum{};
@@ -38,32 +29,6 @@ enum class AdaptiveStopReason {
     ParameterTolerance,
     ScoreTolerance,
     NoSuccessfulCandidate,
-};
-
-class AdaptiveSearch {
-public:
-    explicit AdaptiveSearch(AdaptiveSearchSettings settings);
-
-    [[nodiscard]] auto initialCandidates() const -> std::vector<double>;
-    void record(double value, std::optional<double> score);
-    [[nodiscard]] auto nextCandidates() -> std::vector<double>;
-    [[nodiscard]] auto stopReason() const noexcept -> AdaptiveStopReason;
-    [[nodiscard]] auto refinementRound() const noexcept -> int;
-    [[nodiscard]] auto scoreImprovements() const noexcept -> const std::vector<double>&;
-
-private:
-    struct Observation {
-        double value{};
-        std::optional<double> score;
-    };
-
-    AdaptiveSearchSettings settings_;
-    std::vector<Observation> observations_;
-    double previousBestScore_{};
-    int stagnantRounds_{};
-    int refinementRound_{};
-    std::vector<double> scoreImprovements_;
-    AdaptiveStopReason stopReason_{AdaptiveStopReason::None};
 };
 
 class AdaptiveVectorSearch {
