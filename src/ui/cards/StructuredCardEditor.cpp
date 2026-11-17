@@ -3,6 +3,7 @@
 #include "nec/NecCardCatalog.h"
 #include "nec/NecCardFieldEditor.h"
 #include "ui/ParameterFieldStyle.h"
+#include "ui/cards/VariableMenu.h"
 #include "ui/cards/CardFields.h"
 #include "ui/cards/CompactNumberDelegate.h"
 
@@ -16,7 +17,6 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QHBoxLayout>
-#include <QMenu>
 #include <QPainter>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -461,17 +461,13 @@ StructuredCardEditor::StructuredCardEditor(Families families, QWidget* parent)
             const auto parameterControlled = parameterLine != parameterControlledFields_.end()
                 && parameterLine->second.contains(static_cast<std::size_t>(fieldIndex));
             if (!parameterControlled && !parsesAs<double>(item->text())) return;
-            QMenu menu(this);
-            auto* parameterize = menu.addAction(parameterControlled
-                ? tr("Change Variable…") : tr("Make Variable…"));
-            auto* detach = parameterControlled
-                ? menu.addAction(tr("Replace With Current Numeric Value")) : nullptr;
-            const auto* selected = menu.exec(table_->viewport()->mapToGlobal(position));
             const auto label = table_->horizontalHeaderItem(item->column())->text();
-            if (selected == parameterize) {
+            const auto choice = execVariableMenu(this,
+                table_->viewport()->mapToGlobal(position), parameterControlled);
+            if (choice == VariableChoice::Make) {
                 emit fieldParameterizationRequested(sourceLine,
                     static_cast<std::size_t>(fieldIndex), label);
-            } else if (selected == detach) {
+            } else if (choice == VariableChoice::Detach) {
                 emit fieldDetachmentRequested(sourceLine,
                     static_cast<std::size_t>(fieldIndex), label);
             }

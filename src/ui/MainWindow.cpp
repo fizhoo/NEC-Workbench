@@ -830,6 +830,10 @@ void MainWindow::createWorkspace()
         [this](int tag) { duplicateWire(tag); });
     connect(wireCardEditor_, &WireCardEditor::deleteWireRequested, this,
         [this](int tag) { deleteWire(tag); });
+    connect(wireCardEditor_, &WireCardEditor::fieldParameterizationRequested, this,
+        [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
+            makeFieldVariable(sourceLine, fieldIndex, fieldLabel);
+        });
     connect(wireCardEditor_, &WireCardEditor::fieldDetachmentRequested, this,
         [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
             detachFieldParameter(sourceLine, fieldIndex, fieldLabel);
@@ -2219,6 +2223,11 @@ void MainWindow::createModelColumn()
     wireEditor_->setAppliedCallback(
         [this](const model::Wire& original, const model::Wire& updated) {
             editWire(original, updated);
+        });
+    wireEditor_->setVariableCallback(
+        [this](std::size_t sourceLine, std::size_t field, const QString& label, bool detach) {
+            if (detach) detachFieldParameter(sourceLine, field, label);
+            else makeFieldVariable(sourceLine, field, label);
         });
     modelColumn_->pane()->setDiscardCallback([this](QWidget* page) { discardPendingEdits(page); });
     modelColumn_->pane()->setExpandCallback([this](bool) { fitPaneWidth(); });

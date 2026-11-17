@@ -767,55 +767,47 @@ auto main(int argc, char* argv[]) -> int
             && wireCells->toolTip().startsWith(
                 QString::fromUtf8("Right-click a cell → Make Variable…, or type a name in the cell."));
 
-        // Make Variable on wire 1's X1: the cell opens with W1_X1, Enter keeps -1.87.
-        auto madeVariable = false;
-        if (wireCells != nullptr) {
+        // Make Variable, from the Wires table and from the wire's own form: the same menu
+        // opens the Make Variable dialog, whose defaults create a new variable for the value.
+        const auto makeVariable = [&](QWidget* target, QPoint position, const QString& expected) {
             const auto deckBefore = deck->toPlainText();
-            QTimer::singleShot(50, [] {
-                if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget()))
-                    for (auto* action : menu->actions())
-                        if (action->text() == QString::fromUtf8("Make Variable…")) {
-                            menu->setActiveAction(action);
-                            QTest::keyClick(menu, Qt::Key_Return);
-                        }
+            QString dialogTitle;
+            QTimer::singleShot(50, [&dialogTitle] {
+                auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+                if (menu == nullptr) return;
+                for (auto* action : menu->actions())
+                    if (action->text() == QString::fromUtf8("Make Variable…")) {
+                        QTimer::singleShot(100, [&dialogTitle] {
+                            if (auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget())) {
+                                dialogTitle = dialog->windowTitle();
+                                dialog->accept();
+                            }
+                        });
+                        menu->setActiveAction(action);
+                        QTest::keyClick(menu, Qt::Key_Return);
+                    }
             });
-            emit wireCells->customContextMenuRequested(
-                wireCells->visualItemRect(wireCells->item(0, 2)).center());
-            application.processEvents();
-            QLineEdit* editor = nullptr;
-            for (auto* candidate : wireCells->viewport()->findChildren<QLineEdit*>())
-                if (candidate->isVisible()) editor = candidate;
-            const auto suggested = editor != nullptr && editor->text() == QStringLiteral("W1_X1")
-                && editor->selectedText() == QStringLiteral("W1_X1");
-            QString guess;
-            QTimer::singleShot(100, [&guess] {
-                auto* box = qobject_cast<QDialog*>(QApplication::activePopupWidget());
-                if (box == nullptr) return;
-                guess = box->findChild<QLineEdit*>(QStringLiteral("symbolValue"))->text();
-                box->findChild<QPushButton*>(QStringLiteral("symbolCreate"))->click();
-            });
-            if (editor != nullptr) {
-                QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
-                QApplication::sendEvent(editor, &enter);
-            }
+            emit target->customContextMenuRequested(position);
             QElapsedTimer made;
             made.start();
             while (deck->toPlainText() == deckBefore && made.elapsed() < 2000)
                 application.processEvents(QEventLoop::AllEvents, 50);
-            const auto deckAfter = deck->toPlainText();
-            const auto written = deckAfter.contains(QStringLiteral("SY W1_X1=-1.87"))
-                && deckAfter.contains(QStringLiteral("GW 1,21,W1_X1,"));
-            const auto linked = wireCells->item(0, 2)->toolTip().contains(QStringLiteral("W1_X1"));
+            const auto written = dialogTitle == QStringLiteral("Make Variable")
+                && deck->toPlainText().contains(expected);
             // Making a variable edits the same model, so the chosen main view stays.
             keptAfterEdit = planes->mainPlane() == Plane::XY;
             undo->trigger();
             application.processEvents();
-            madeVariable = suggested && guess == QStringLiteral("-1.87") && written && linked
-                && deck->toPlainText() == deckBefore;
-            if (!madeVariable)
-                qWarning() << "make variable" << suggested
-                           << guess << written << linked << deckAfter.left(160);
-        }
+            if (!written || deck->toPlainText() != deckBefore)
+                qWarning() << "make variable" << dialogTitle << deck->toPlainText().left(120);
+            return written && deck->toPlainText() == deckBefore;
+        };
+        auto madeVariable = wireCells != nullptr && makeVariable(wireCells,
+            wireCells->visualItemRect(wireCells->item(0, 2)).center(), QStringLiteral("SY gw_x1=1.87"));
+        clickTree(QStringLiteral("Wire 1"));
+        auto* z2 = window.findChild<QDoubleSpinBox*>(QStringLiteral("wireCoordinateEditor5"));
+        madeVariable = madeVariable && z2 != nullptr
+            && makeVariable(z2, z2->rect().center(), QStringLiteral("SY gw_z2=1.87"));
 
         // Opening a model again picks its widest plane.
         deck->document()->setModified(false);

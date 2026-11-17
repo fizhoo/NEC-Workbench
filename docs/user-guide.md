@@ -225,11 +225,10 @@ an expression such as `len/2`. Each one written as a number gets a slider under
   in, when it can be worked out, with the value that keeps the wire where it is. Enter
   adds `SY len=…` after the other `SY` cards at the top of the deck; Esc changes nothing. As you type, existing variables are offered with
   their values. This works in the Wires table only.
-- **Right-click a cell** and choose **Make Variable…**. In the Wires table the cell opens
-  with a suggested name such as `W2_Z1` typed in; Enter keeps the cell's value as the new
-  variable's, as if you had typed the name. In the other card tables a dialog names a new
-  variable for the value or uses an existing one. A cell that already uses a variable
-  offers **Change Variable…**.
+- **Right-click a field** in any card table, or in a wire's own form, and choose **Make
+  Variable…**: create a new variable for its value, or pick an existing one. A field that
+  already uses a variable offers **Change Variable…** and **Replace With Current Numeric
+  Value**.
 - **Add it in the Parameters table:** select **Variables** in the model tree and choose
   **Add Parameter**, then use its name in a field.
 - **Write the `SY` card** in the NEC Deck.

@@ -3,6 +3,7 @@
 #include "model/WireGauge.h"
 #include "ui/DisplayFormat.h"
 #include "ui/PendingEditIndicator.h"
+#include "ui/cards/VariableMenu.h"
 
 #include <QAbstractSpinBox>
 #include <QComboBox>
@@ -131,6 +132,24 @@ WirePropertiesEditor::WirePropertiesEditor(QWidget* parent) : QWidget(parent)
             connect(static_cast<QDoubleSpinBox*>(fields_[field]), &QDoubleSpinBox::valueChanged,
                 this, markEdited);
     }
+    // The same right-click as the Wires table: segments, coordinates and radius.
+    for (auto field = std::size_t{1}; field < FieldCount; ++field) {
+        fields_[field]->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(fields_[field], &QWidget::customContextMenuRequested, this,
+            [this, field](const QPoint& position) {
+                if (!variable_ || !original_.editable) return;
+                if (pending_) {
+                    validationLabel_->setText(tr("Apply or revert the changes before making a variable."));
+                    validationLabel_->show();
+                    return;
+                }
+                const auto choice = execVariableMenu(this,
+                    fields_[field]->mapToGlobal(position), !linked_[field].isEmpty());
+                if (choice != VariableChoice::None)
+                    variable_(original_.sourceLine, field, wireFieldName(field),
+                        choice == VariableChoice::Detach);
+            });
+    }
     connect(gaugeControl_, &QComboBox::currentIndexChanged, this, [this](int index) {
         selectGauge(index);
     });
@@ -235,6 +254,12 @@ void WirePropertiesEditor::setAppliedCallback(
     std::function<void(const model::Wire&, const model::Wire&)> callback)
 {
     applied_ = std::move(callback);
+}
+
+void WirePropertiesEditor::setVariableCallback(
+    std::function<void(std::size_t, std::size_t, const QString&, bool)> callback)
+{
+    variable_ = std::move(callback);
 }
 
 auto WirePropertiesEditor::validationError(const model::Wire& updated) const -> QString

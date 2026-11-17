@@ -37,6 +37,10 @@ public:
     void discardPendingEdits();
     // Called with the wire as it was and as applied.
     void setAppliedCallback(std::function<void(const model::Wire&, const model::Wire&)> callback);
+    // Right-click a field → Make Variable… or Replace With Current Numeric Value: called with
+    // the wire's deck line, the GW field, its name, and whether to replace the variable.
+    void setVariableCallback(
+        std::function<void(std::size_t, std::size_t, const QString&, bool)> callback);
 
 private:
     void apply();
@@ -66,6 +70,7 @@ private:
     std::array<bool, FieldCount> edited_{};
     LinkedFields linked_;
     std::function<void(const model::Wire&, const model::Wire&)> applied_;
+    std::function<void(std::size_t, std::size_t, const QString&, bool)> variable_;
     bool updating_{};
     bool selectingGauge_{};
     bool pending_{};

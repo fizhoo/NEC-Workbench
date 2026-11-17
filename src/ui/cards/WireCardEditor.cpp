@@ -3,15 +3,14 @@
 #include "ui/DisplayFormat.h"
 #include "ui/ParameterFieldStyle.h"
 #include "ui/cards/CompactNumberDelegate.h"
+#include "ui/cards/VariableMenu.h"
 
 #include "model/WireGauge.h"
 
 #include <QAbstractItemView>
 #include <QHeaderView>
-#include <QLineEdit>
 #include <QHBoxLayout>
 #include <QComboBox>
-#include <QMenu>
 #include <QPalette>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -21,7 +20,6 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 
 namespace necwb::ui {
@@ -110,22 +108,21 @@ WireCardEditor::WireCardEditor(QWidget* parent)
             if (item == nullptr || item->column() < Segments || item->column() > Radius) return;
             const auto* wire = model_.wireByTag(
                 table_->item(item->row(), Tag)->data(WireTagRole).toInt());
-            if (wire == nullptr || !(item->flags() & Qt::ItemIsEditable)) return;
-            const auto written = item->data(CellExpressionRole).toString();
-            QMenu menu(this);
-            auto* variable = menu.addAction(written.isEmpty()
-                ? tr("Make Variable…") : tr("Change Variable…"));
+            if (wire == nullptr) return;
             const auto parameterLine = parameterControlledFields_.find(wire->sourceLine);
-            auto* detach = parameterLine != parameterControlledFields_.end()
-                    && parameterLine->second.contains(static_cast<std::size_t>(item->column()))
-                ? menu.addAction(tr("Replace With Current Numeric Value")) : nullptr;
-            const auto* selected = menu.exec(table_->viewport()->mapToGlobal(position));
-            if (selected == variable) {
-                editCellAs(item, written.isEmpty() ? suggestedName(wire->tag, item->column()) : written);
-            } else if (selected != nullptr && selected == detach) {
-                emit fieldDetachmentRequested(wire->sourceLine,
-                    static_cast<std::size_t>(item->column()),
-                    table_->horizontalHeaderItem(item->column())->text());
+            const auto parameterControlled = parameterLine != parameterControlledFields_.end()
+                && parameterLine->second.contains(static_cast<std::size_t>(item->column()));
+            if (!parameterControlled && !(item->flags() & Qt::ItemIsEditable)) return;
+            const auto field = static_cast<std::size_t>(item->column());
+            const auto label = wireFieldName(field);
+            switch (execVariableMenu(this, table_->viewport()->mapToGlobal(position), parameterControlled)) {
+            case VariableChoice::Make:
+                emit fieldParameterizationRequested(wire->sourceLine, field, label);
+                break;
+            case VariableChoice::Detach:
+                emit fieldDetachmentRequested(wire->sourceLine, field, label);
+                break;
+            case VariableChoice::None: break;
             }
         });
     updateUnitLabels();
@@ -244,11 +241,7 @@ void WireCardEditor::setSymbolicGeometryFields(nec::NecParameterFieldMap sourceF
 void WireCardEditor::setSymbols(const std::vector<nec::SymbolDefinition>& symbols)
 {
     QList<std::pair<QString, double>> offered;
-    symbolNames_.clear();
-    for (const auto& symbol : symbols) {
-        offered.append({QString::fromStdString(symbol.name), symbol.value});
-        symbolNames_.append(offered.back().first);
-    }
+    for (const auto& symbol : symbols) offered.append({QString::fromStdString(symbol.name), symbol.value});
     static_cast<CompactNumberDelegate*>(table_->itemDelegate())->setSymbols(std::move(offered));
 }
 
@@ -308,30 +301,6 @@ void WireCardEditor::updateUnitLabels()
     table_->setToolTip(tr("Right-click a cell → Make Variable…, or type a name in the cell.\n"
         "Values use the NEC deck geometry unit (%1); GS converts them to meters for the solver.")
             .arg(unitLabel_));
-}
-
-auto WireCardEditor::suggestedName(int tag, int column) const -> QString
-{
-    static const std::array fields{QStringLiteral("SEG"), QStringLiteral("X1"),
-        QStringLiteral("Y1"), QStringLiteral("Z1"), QStringLiteral("X2"), QStringLiteral("Y2"),
-        QStringLiteral("Z2"), QStringLiteral("R")};
-    const auto base = QStringLiteral("W%1_%2").arg(tag).arg(fields[static_cast<std::size_t>(column - Segments)]);
-    auto name = base;
-    for (auto suffix = 2; symbolNames_.contains(name, Qt::CaseInsensitive); ++suffix)
-        name = QStringLiteral("%1_%2").arg(base).arg(suffix);
-    return name;
-}
-
-void WireCardEditor::editCellAs(QTableWidgetItem* item, const QString& text)
-{
-    // The cell opens with the name typed and selected; Enter takes it as if typed.
-    table_->setCurrentItem(item);
-    table_->editItem(item);
-    for (auto* editor : table_->viewport()->findChildren<QLineEdit*>()) {
-        if (!editor->isVisible()) continue;
-        editor->setText(text);
-        editor->selectAll();
-    }
 }
 
 void WireCardEditor::applyGauge(int tag, int gauge)
