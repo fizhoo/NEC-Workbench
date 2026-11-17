@@ -2525,6 +2525,66 @@ void testOptimizationObjectives()
             && !nullMetrics.front().forwardGainDb,
         "radiation metrics retain pattern-null availability without exposing invalid gain");
 
+    // Scoring and diagnosis share one preparation: a case scores exactly when diagnosis finds
+    // nothing wrong, and a failure names the frequency it happened at.
+    {
+        using Failure = necwb::analysis::OptimizationObjectiveFailureKind;
+        necwb::analysis::OptimizationObjectiveSpec swrOnly;
+        swrOnly.kind = necwb::analysis::OptimizationObjectiveKind::PerCriterion;
+        swrOnly.swrWeight = 1.0;
+        auto withGain = swrOnly;
+        withGain.forwardGainWeight = 1.0;
+        withGain.forwardThetaDegrees = 90.0;
+        withGain.forwardPhiDegrees = 0.0;
+        auto negative = swrOnly;
+        negative.resistanceWeight = -1.0;
+        auto unweighted = swrOnly;
+        unweighted.swrWeight = 0.0;
+        auto nearestPoint = swrOnly;
+        nearestPoint.kind = necwb::analysis::OptimizationObjectiveKind::SwrAtFrequency;
+        nearestPoint.targetFrequencyMHz = 14.19;
+        necwb::analysis::AnalysisResult twoPoints;
+        twoPoints.feedpoints = {{.frequencyMHz = 14.0, .impedance = {50.0, 0.0}},
+            {.frequencyMHz = 14.2, .impedance = {60.0, 5.0}}};
+        twoPoints.radiation = {{.frequencyMHz = 14.0, .thetaDegrees = 90.0, .phiDegrees = 0.0,
+            .totalGainDb = 5.0}};
+        auto badImpedance = twoPoints;
+        badImpedance.feedpoints[1].impedance = {-50.0, 0.0};
+        auto bothPatterns = twoPoints;
+        bothPatterns.radiation.push_back({.frequencyMHz = 14.2, .thetaDegrees = 90.0,
+            .phiDegrees = 0.0, .totalGainDb = 6.0});
+        struct Case {
+            const char* name;
+            const necwb::analysis::AnalysisResult& analysis;
+            const necwb::analysis::OptimizationObjectiveSpec& objective;
+            Failure failure;
+            std::optional<double> frequencyMHz;
+        };
+        const necwb::analysis::AnalysisResult empty;
+        const std::array cases{
+            Case{"negative weight", twoPoints, negative, Failure::InvalidConfiguration, std::nullopt},
+            Case{"no weight", twoPoints, unweighted, Failure::InvalidConfiguration, std::nullopt},
+            Case{"no results", empty, swrOnly, Failure::NoFrequencyResults, std::nullopt},
+            Case{"non-finite SWR", badImpedance, swrOnly, Failure::InvalidStandingWaveRatio, 14.2},
+            Case{"missing forward", twoPoints, withGain, Failure::MissingForwardDirection, 14.2},
+            Case{"nearest point only", twoPoints, nearestPoint, Failure::Unknown, std::nullopt},
+            Case{"complete", bothPatterns, withGain, Failure::Unknown, std::nullopt},
+        };
+        for (const auto& item : cases) {
+            const auto failure = necwb::analysis::diagnoseOptimizationObjectiveFailure(
+                item.analysis, item.objective);
+            const auto score = necwb::analysis::evaluateOptimizationObjective(
+                item.analysis, item.objective);
+            expect(failure.kind == item.failure && failure.frequencyMHz == item.frequencyMHz
+                    && score.has_value() == (item.failure == Failure::Unknown),
+                item.name);
+        }
+        const auto nearest = necwb::analysis::evaluateOptimizationObjective(twoPoints, nearestPoint);
+        expect(nearest && nearest->evaluatedFrequencyCount == 1
+                && nearest->evaluationFrequencyMHz == 14.2,
+            "SWR at a frequency scores only the result nearest its target");
+    }
+
     const auto directionalDeck = necwb::analysis::prepareDirectionalOptimizationInput(
         "GW 1 3 0 0 0 1 0 0 .001\nGE 0\nFR 0 3 0 0 14 .1\n"
         "RP 0 19 37 1000 0 0 5 10\nEN\n",

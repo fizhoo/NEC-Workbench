@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <variant>
 #include <vector>
 
 namespace necwb::analysis {
@@ -127,27 +128,39 @@ auto directionalMetricsFor(const AnalysisResult& analysis,
         objective.frontToRearRegion);
 }
 
-auto evaluateObjective(const AnalysisResult& analysis,
-    const OptimizationObjectiveSpec& objective) -> std::optional<OptimizationObjectiveResult>
+// What an objective reads from one analysis: its total weight, the frequencies it scores and
+// the directional metrics at them.
+struct ObjectivePlan {
+    double totalWeight{};
+    bool impedanceEnabled{};
+    bool directionalEnabled{};
+    std::vector<double> frequencies;
+    std::vector<RadiationFrequencyMetric> directionalMetrics;
+};
+
+// The plan, or why the objective cannot be scored at any frequency.
+auto planObjective(const AnalysisResult& analysis, const OptimizationObjectiveSpec& objective)
+    -> std::variant<ObjectivePlan, OptimizationObjectiveFailureKind>
 {
     const std::array weights{objective.swrWeight, objective.resistanceWeight,
         objective.reactanceWeight, objective.forwardGainWeight,
         objective.frontToBackWeight, objective.frontToRearWeight};
-    auto totalWeight = 0.0;
+    ObjectivePlan plan;
     for (const auto weight : weights) {
-        if (!std::isfinite(weight) || weight < 0.0) return std::nullopt;
-        totalWeight += weight;
+        if (!std::isfinite(weight) || weight < 0.0)
+            return OptimizationObjectiveFailureKind::InvalidConfiguration;
+        plan.totalWeight += weight;
     }
-    if (totalWeight <= 0.0 || !std::isfinite(objective.referenceImpedance)
+    if (plan.totalWeight <= 0.0 || !std::isfinite(objective.referenceImpedance)
         || objective.referenceImpedance <= 0.0)
-        return std::nullopt;
+        return OptimizationObjectiveFailureKind::InvalidConfiguration;
 
-    const auto impedanceEnabled = objective.swrWeight > 0.0
+    plan.impedanceEnabled = objective.swrWeight > 0.0
         || objective.resistanceWeight > 0.0 || objective.reactanceWeight > 0.0;
-    const auto directionalEnabled = objective.forwardGainWeight > 0.0
+    plan.directionalEnabled = objective.forwardGainWeight > 0.0
         || objective.frontToBackWeight > 0.0 || objective.frontToRearWeight > 0.0;
-    std::vector<double> frequencies;
-    if (impedanceEnabled) {
+    auto& frequencies = plan.frequencies;
+    if (plan.impedanceEnabled) {
         for (const auto& feedpoint : analysis.feedpoints)
             frequencies.push_back(feedpoint.frequencyMHz);
     } else {
@@ -159,14 +172,74 @@ auto evaluateObjective(const AnalysisResult& analysis,
         return std::abs(left - right) <= frequencyToleranceMHz;
     });
     frequencies.erase(duplicates.begin(), duplicates.end());
-    if (frequencies.empty()) return std::nullopt;
+    if (frequencies.empty()) return OptimizationObjectiveFailureKind::NoFrequencyResults;
     if (objective.kind == OptimizationObjectiveKind::SwrAtFrequency) {
-        const auto nearest = std::ranges::min_element(frequencies, {}, [target = objective.targetFrequencyMHz](double frequency) {
-            return std::abs(frequency - target);
-        });
-        const auto nearestFrequency = *nearest;
-        frequencies.assign(1, nearestFrequency);
+        const auto nearest = *std::ranges::min_element(frequencies, {},
+            [target = objective.targetFrequencyMHz](double frequency) {
+                return std::abs(frequency - target);
+            });
+        frequencies.assign(1, nearest);
     }
+    if (plan.directionalEnabled) plan.directionalMetrics = directionalMetricsFor(analysis, objective);
+    return plan;
+}
+
+// The measurements an objective scores at one frequency; each one it weights is present.
+struct FrequencyInputs {
+    const FeedpointResult* feedpoint{};
+    double swr{};
+    const RadiationFrequencyMetric* directional{};
+};
+
+// A metric is missing when its direction was not sampled, and null when it was sampled but
+// gave no usable gain.
+auto unavailable(RadiationMetricAvailability availability,
+    OptimizationObjectiveFailureKind missing, OptimizationObjectiveFailureKind null)
+    -> OptimizationObjectiveFailureKind
+{
+    return availability == RadiationMetricAvailability::Missing ? missing : null;
+}
+
+auto frequencyInputs(const AnalysisResult& analysis, const OptimizationObjectiveSpec& objective,
+    const ObjectivePlan& plan, double frequencyMHz)
+    -> std::variant<FrequencyInputs, OptimizationObjectiveFailureKind>
+{
+    using Failure = OptimizationObjectiveFailureKind;
+    FrequencyInputs inputs;
+    if (plan.impedanceEnabled) {
+        inputs.feedpoint = feedpointAt(analysis.feedpoints, frequencyMHz);
+        if (inputs.feedpoint == nullptr) return Failure::MissingImpedance;
+        inputs.swr = standingWaveRatio(inputs.feedpoint->impedance, objective.referenceImpedance);
+        if (!std::isfinite(inputs.swr)) return Failure::InvalidStandingWaveRatio;
+    }
+    if (!plan.directionalEnabled) return inputs;
+    const auto directional = std::ranges::find_if(plan.directionalMetrics,
+        [frequencyMHz](const auto& value) {
+            return std::abs(value.frequencyMHz - frequencyMHz) <= frequencyToleranceMHz;
+        });
+    if (directional == plan.directionalMetrics.end()) return Failure::MissingForwardDirection;
+    if (!directional->forwardGainDb)
+        return unavailable(directional->forwardAvailability,
+            Failure::MissingForwardDirection, Failure::NullForwardGain);
+    if (objective.frontToBackWeight > 0.0 && !directional->frontToBackDb)
+        return unavailable(directional->backAvailability,
+            Failure::MissingBackDirection, Failure::NullBackGain);
+    if (objective.frontToRearWeight > 0.0 && !directional->frontToRearDb)
+        return unavailable(directional->rearAvailability,
+            Failure::MissingRearCoverage, Failure::NullRearGain);
+    inputs.directional = &*directional;
+    return inputs;
+}
+
+auto evaluateObjective(const AnalysisResult& analysis,
+    const OptimizationObjectiveSpec& objective) -> std::optional<OptimizationObjectiveResult>
+{
+    const auto planned = planObjective(analysis, objective);
+    if (!std::holds_alternative<ObjectivePlan>(planned)) return std::nullopt;
+    const auto& plan = std::get<ObjectivePlan>(planned);
+    const auto& frequencies = plan.frequencies;
+    const auto totalWeight = plan.totalWeight;
+    const auto impedanceEnabled = plan.impedanceEnabled;
 
     std::vector<double> swrValues;
     std::vector<double> resistanceValues;
@@ -174,46 +247,33 @@ auto evaluateObjective(const AnalysisResult& analysis,
     std::vector<double> gainValues;
     std::vector<double> frontToBackValues;
     std::vector<double> frontToRearValues;
-    const auto directionalMetrics = directionalEnabled
-        ? directionalMetricsFor(analysis, objective)
-        : std::vector<RadiationFrequencyMetric>{};
     OptimizationObjectiveResult result;
 
     for (const auto frequencyMHz : frequencies) {
         OptimizationFrequencyMetrics metrics;
         metrics.frequencyMHz = frequencyMHz;
-        if (impedanceEnabled) {
-            const auto* feedpoint = feedpointAt(analysis.feedpoints, frequencyMHz);
-            if (feedpoint == nullptr) return std::nullopt;
-            const auto swr = standingWaveRatio(feedpoint->impedance, objective.referenceImpedance);
-            if (!std::isfinite(swr)) return std::nullopt;
-            swrValues.push_back(swr);
+        const auto measured = frequencyInputs(analysis, objective, plan, frequencyMHz);
+        if (!std::holds_alternative<FrequencyInputs>(measured)) return std::nullopt;
+        const auto& inputs = std::get<FrequencyInputs>(measured);
+        if (const auto* feedpoint = inputs.feedpoint) {
+            swrValues.push_back(inputs.swr);
             resistanceValues.push_back(feedpoint->impedance.real());
             reactanceValues.push_back(feedpoint->impedance.imag());
-            metrics.swr = swr;
+            metrics.swr = inputs.swr;
             metrics.resistanceOhms = feedpoint->impedance.real();
             metrics.reactanceOhms = feedpoint->impedance.imag();
         }
-        if (directionalEnabled) {
-            const auto directional = std::ranges::find_if(directionalMetrics,
-                [frequencyMHz](const auto& value) {
-                    return std::abs(value.frequencyMHz - frequencyMHz)
-                        <= frequencyToleranceMHz;
-                });
-            if (directional == directionalMetrics.end() || !directional->forwardGainDb)
-                return std::nullopt;
+        if (const auto* directional = inputs.directional) {
             const auto frontGain = *directional->forwardGainDb;
             gainValues.push_back(frontGain);
             metrics.forwardGainDb = frontGain;
             metrics.forwardThetaDegrees = directional->forwardThetaDegrees;
             metrics.forwardPhiDegrees = directional->forwardPhiDegrees;
             if (objective.frontToBackWeight > 0.0) {
-                if (!directional->frontToBackDb) return std::nullopt;
                 frontToBackValues.push_back(*directional->frontToBackDb);
                 metrics.frontToBackDb = directional->frontToBackDb;
             }
             if (objective.frontToRearWeight > 0.0) {
-                if (!directional->frontToRearDb) return std::nullopt;
                 frontToRearValues.push_back(*directional->frontToRearDb);
                 metrics.frontToRearDb = directional->frontToRearDb;
             }
@@ -350,82 +410,14 @@ auto evaluateOptimizationObjective(const AnalysisResult& analysis,
 auto diagnoseOptimizationObjectiveFailure(const AnalysisResult& analysis,
     const OptimizationObjectiveSpec& objective) -> OptimizationObjectiveFailure
 {
-    const std::array weights{objective.swrWeight, objective.resistanceWeight,
-        objective.reactanceWeight, objective.forwardGainWeight,
-        objective.frontToBackWeight, objective.frontToRearWeight};
-    auto totalWeight = 0.0;
-    for (const auto weight : weights) {
-        if (!std::isfinite(weight) || weight < 0.0)
-            return {OptimizationObjectiveFailureKind::InvalidConfiguration, std::nullopt};
-        totalWeight += weight;
-    }
-    if (totalWeight <= 0.0 || !std::isfinite(objective.referenceImpedance)
-        || objective.referenceImpedance <= 0.0)
-        return {OptimizationObjectiveFailureKind::InvalidConfiguration, std::nullopt};
-
-    const auto impedanceEnabled = objective.swrWeight > 0.0
-        || objective.resistanceWeight > 0.0 || objective.reactanceWeight > 0.0;
-    const auto directionalEnabled = objective.forwardGainWeight > 0.0
-        || objective.frontToBackWeight > 0.0 || objective.frontToRearWeight > 0.0;
-    std::vector<double> frequencies;
-    if (impedanceEnabled) {
-        for (const auto& feedpoint : analysis.feedpoints)
-            frequencies.push_back(feedpoint.frequencyMHz);
-    } else {
-        for (const auto& sample : analysis.radiation)
-            frequencies.push_back(sample.frequencyMHz);
-    }
-    std::ranges::sort(frequencies);
-    const auto duplicates = std::ranges::unique(frequencies, [](double left, double right) {
-        return std::abs(left - right) <= frequencyToleranceMHz;
-    });
-    frequencies.erase(duplicates.begin(), duplicates.end());
-    if (frequencies.empty())
-        return {OptimizationObjectiveFailureKind::NoFrequencyResults, std::nullopt};
-    if (objective.kind == OptimizationObjectiveKind::SwrAtFrequency) {
-        const auto nearest = std::ranges::min_element(frequencies, {},
-            [target = objective.targetFrequencyMHz](double frequency) {
-                return std::abs(frequency - target);
-            });
-        const auto nearestFrequency = *nearest;
-        frequencies.assign(1, nearestFrequency);
-    }
-
-    const auto directionalMetrics = directionalEnabled
-        ? directionalMetricsFor(analysis, objective)
-        : std::vector<RadiationFrequencyMetric>{};
-    for (const auto frequencyMHz : frequencies) {
-        if (impedanceEnabled) {
-            const auto* feedpoint = feedpointAt(analysis.feedpoints, frequencyMHz);
-            if (feedpoint == nullptr)
-                return {OptimizationObjectiveFailureKind::MissingImpedance, frequencyMHz};
-            if (!std::isfinite(standingWaveRatio(
-                    feedpoint->impedance, objective.referenceImpedance)))
-                return {OptimizationObjectiveFailureKind::InvalidStandingWaveRatio, frequencyMHz};
-        }
-        if (!directionalEnabled) continue;
-        const auto directional = std::ranges::find_if(directionalMetrics,
-            [frequencyMHz](const auto& value) {
-                return std::abs(value.frequencyMHz - frequencyMHz)
-                    <= frequencyToleranceMHz;
-            });
-        if (directional == directionalMetrics.end()
-            || directional->forwardAvailability == RadiationMetricAvailability::Missing)
-            return {OptimizationObjectiveFailureKind::MissingForwardDirection, frequencyMHz};
-        if (directional->forwardAvailability == RadiationMetricAvailability::PatternNull)
-            return {OptimizationObjectiveFailureKind::NullForwardGain, frequencyMHz};
-        if (objective.frontToBackWeight > 0.0) {
-            if (directional->backAvailability == RadiationMetricAvailability::Missing)
-                return {OptimizationObjectiveFailureKind::MissingBackDirection, frequencyMHz};
-            if (directional->backAvailability == RadiationMetricAvailability::PatternNull)
-                return {OptimizationObjectiveFailureKind::NullBackGain, frequencyMHz};
-        }
-        if (objective.frontToRearWeight > 0.0) {
-            if (directional->rearAvailability == RadiationMetricAvailability::Missing)
-                return {OptimizationObjectiveFailureKind::MissingRearCoverage, frequencyMHz};
-            if (directional->rearAvailability == RadiationMetricAvailability::PatternNull)
-                return {OptimizationObjectiveFailureKind::NullRearGain, frequencyMHz};
-        }
+    const auto planned = planObjective(analysis, objective);
+    if (const auto* failure = std::get_if<OptimizationObjectiveFailureKind>(&planned))
+        return {*failure, std::nullopt};
+    const auto& plan = std::get<ObjectivePlan>(planned);
+    for (const auto frequencyMHz : plan.frequencies) {
+        const auto measured = frequencyInputs(analysis, objective, plan, frequencyMHz);
+        if (const auto* failure = std::get_if<OptimizationObjectiveFailureKind>(&measured))
+            return {*failure, frequencyMHz};
     }
     return {OptimizationObjectiveFailureKind::Unknown, std::nullopt};
 }
