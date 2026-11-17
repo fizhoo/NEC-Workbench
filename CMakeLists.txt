@@ -137,6 +137,8 @@ if(NECWB_BUILD_GUI)
         src/ui/results/ResultsController.cpp
         src/ui/results/ResultsController.h
         src/ui/ElidedLabel.h
+        src/ui/FlowLayout.cpp
+        src/ui/FlowLayout.h
         src/ui/FileIo.h
         src/ui/ParameterFieldStyle.cpp
         src/ui/ParameterFieldStyle.h

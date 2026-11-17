@@ -4,6 +4,7 @@
 #include "analysis/SegmentCurrentDisplay.h"
 #include "model/WireGeometry.h"
 #include "ui/DisplayFormat.h"
+#include "ui/FlowLayout.h"
 #include "ui/analysis/CurrentAntennaView.h"
 #include "ui/analysis/RadiationSurfaceMesh.h"
 #include "ui/analysis/SweepPlotsView.h"
@@ -856,6 +857,7 @@ public:
         setProperty("probeMode", QStringLiteral("nearest-nec-sample"));
         setProperty("gainColorScale", true);
         setProperty("viewPitch", pitch_);
+        setProperty("autoFit", true);
     }
     void setSamples(std::vector<analysis::RadiationSample> samples)
     {
@@ -891,6 +893,7 @@ public:
     { hoverTextCallback_ = std::move(callback); }
     void setForwardDirectionCallback(ForwardDirectionCallback callback)
     { forwardDirectionCallback_ = std::move(callback); }
+    // Back to the starting angle, fitted to the pattern until the next drag, zoom or pan.
     void resetView()
     {
         yaw_ = -0.7;
@@ -898,7 +901,7 @@ public:
         zoom_ = 1.0;
         pan_ = {};
         setProperty("viewPitch", pitch_);
-        update();
+        setAutoFit(true);
     }
 protected:
     void contextMenuEvent(QContextMenuEvent* event) override
@@ -936,6 +939,7 @@ protected:
         cursor_ = event->position(); tracking_ = true;
         if (dragging_) {
             const auto delta = event->position() - last_; last_ = event->position();
+            setAutoFit(false);
             if (panning_) pan_ += delta;
             else {
                 yaw_ += delta.x() * 0.01;
@@ -958,6 +962,7 @@ protected:
     void wheelEvent(QWheelEvent* event) override
     {
         zoom_ = std::clamp(zoom_ * std::pow(1.0015, event->angleDelta().y()), 0.35, 3.5);
+        setAutoFit(false);
         event->accept();
         update();
     }
@@ -965,8 +970,9 @@ protected:
     {
         QPainter painter(this); painter.setRenderHint(QPainter::Antialiasing);
         painter.fillRect(rect(), palette().brush(QPalette::Base));
-        const auto scale = std::min(width(), height()) * 0.38 * zoom_;
         const auto maximum = showRadiation_ ? maximumGain(samples_) : std::nullopt;
+        if (autoFit_ && maximum) fitToPattern(*maximum);
+        const auto scale = std::min(width(), height()) * 0.38 * zoom_;
         const auto referenceMaximum = showRadiation_
             ? maximumGain(referenceSamples_) : std::nullopt;
         const auto hasRadiation = maximum.has_value();
@@ -1020,7 +1026,8 @@ protected:
             }
             if (referenceMaximum)
                 status += tr(" · Historical overlay %1 shown dashed").arg(referenceLabel_);
-            painter.drawText(10, 22, status + tr(" · Shift/middle-drag to pan"));
+            painter.drawText(10, 22, fontMetrics().elidedText(status + tr(" · Shift/middle-drag to pan"),
+                Qt::ElideRight, width() - 20));
         }
         if (hasRadiation && showOverlay_) {
             const auto reference = gainReference(maxGain);
@@ -1158,6 +1165,39 @@ private:
         }
         return nearest.sample != nullptr
             ? std::optional<ProjectedRadiationSample>{nearest} : std::nullopt;
+    }
+    void setAutoFit(bool on)
+    {
+        autoFit_ = on;
+        setProperty("autoFit", on);
+        update();
+    }
+    // Zoom and pan so the pattern, axes and antenna fill the view below the legends.
+    void fitToPattern(double maxGain)
+    {
+        std::vector<model::Point3D> points{{}, {0.34, 0, 0}, {0, 0.34, 0}, {0, 0, 0.34}};
+        const auto reference = gainReference(maxGain);
+        for (const auto& sample : samples_) {
+            const auto gain = analysis::radiationGainDb(sample, settings_.component);
+            if (std::isfinite(gain) && gain > -900.0) points.push_back(samplePoint(sample, gain, reference));
+        }
+        if (showAntenna_ && !model_.empty()) {
+            const auto extent = resultModelExtentFromOrigin(model_);
+            for (const auto& wire : model_.wires())
+                for (auto index = std::size_t{0}; index < model::wirePathPointCount(wire); ++index) {
+                    const auto point = normalized(model::wirePathPoint(wire, index), extent);
+                    points.push_back({point.x * 0.32, point.y * 0.32, point.z * 0.32});
+                }
+        }
+        const auto legends = !showOverlay_ ? 8.0 : showCurrents_ && currentMaximum() ? 158.0 : 100.0;
+        const QRectF area(16.0, legends, width() - 32.0, height() - legends - 16.0);
+        const auto fitted = fitSurfaceView(points, yaw_, pitch_, area);
+        const auto base = std::min(width(), height()) * 0.38;
+        if (base <= 0.0 || fitted.scale <= 0.0) return;
+        zoom_ = std::clamp(fitted.scale / base, 0.35, 3.5);
+        // The points' centre, from where the fit put it, at the zoom actually used.
+        const auto centre = (area.center() - fitted.centre) / fitted.scale;
+        pan_ = area.center() - centre * base * zoom_ - QPointF(width() / 2.0, height() / 2.0);
     }
     [[nodiscard]] auto surfaceView(double scale) const -> SurfaceView
     { return {yaw_, pitch_, scale, QPointF(width() / 2.0, height() / 2.0) + pan_}; }
@@ -1316,6 +1356,7 @@ private:
     bool showOverlay_{true};
     SurfaceStyle style_{SurfaceStyle::ShadedGrid};
     bool seeThrough_{true};
+    bool autoFit_{true};
 };
 
 CurrentDistributionView::CurrentDistributionView(QWidget* parent) : QWidget(parent)
@@ -2005,7 +2046,6 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
     controlsLayout->setContentsMargins(0, 0, 0, 0);
     auto* form = new QGridLayout;
     frequency_ = new QComboBox(this); frequency_->setObjectName(QStringLiteral("radiation3DFrequency"));
-    frequency_->setMinimumContentsLength(20);
     dataset_ = new QComboBox(this); dataset_->setObjectName(QStringLiteral("radiation3DDataset"));
     component_ = new QComboBox(this); component_->setObjectName(QStringLiteral("radiation3DComponent"));
     scale_ = new QComboBox(this); scale_->setObjectName(QStringLiteral("radiation3DScale"));
@@ -2033,7 +2073,13 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
     form->addWidget(surfaceStyle_, 2, 3);
     form->setColumnStretch(1, 1);
     form->setColumnStretch(3, 1);
-    auto* layers = new QHBoxLayout;
+    // Lists shorten to fit a narrow centre; their full text is in the open list.
+    for (auto* list : {frequency_, dataset_, component_, scale_, floor_, surfaceStyle_}) {
+        list->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        list->setMinimumContentsLength(8);
+    }
+    auto* layersRow = new QWidget(controls_);
+    auto* layers = new FlowLayout(layersRow);
     antennaControl_ = new QCheckBox(tr("Antenna"), this); antennaControl_->setChecked(true);
     currentControl_ = new QCheckBox(tr("Current Overlay"), this); currentControl_->setChecked(true);
     radiationControl_ = new QCheckBox(tr("Radiation Surface"), this); radiationControl_->setChecked(true);
@@ -2060,6 +2106,7 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
         tr("Move the pointer over the surface to inspect calculated NEC samples."), this);
     hoverReadout_->setObjectName(QStringLiteral("radiation3DHoverReadout"));
     hoverReadout_->setMinimumHeight(24);
+    hoverReadout_->setWordWrap(true);
     hoverReadout_->setAutoFillBackground(true);
     surface_ = new RadiationSurfaceWidget(this);
     surface_->setHoverTextCallback([this](const QString& text) {
@@ -2068,7 +2115,7 @@ Radiation3DView::Radiation3DView(QWidget* parent) : QWidget(parent)
             : text);
     });
     controlsLayout->addLayout(form);
-    controlsLayout->addLayout(layers);
+    controlsLayout->addWidget(layersRow);
     layout->addWidget(controls_);
     layout->addWidget(summary_);
     layout->addWidget(hoverReadout_);

@@ -4,6 +4,7 @@
 
 #include <QColor>
 #include <QPointF>
+#include <QRectF>
 
 #include <cstddef>
 #include <vector>
@@ -28,6 +29,10 @@ struct SurfaceView {
     // Distance into the screen; larger is farther away.
     [[nodiscard]] auto depth(const model::Point3D& point) const -> double;
 };
+
+// The view at that yaw and pitch that fits `points` into `area`, centred on them.
+[[nodiscard]] auto fitSurfaceView(const std::vector<model::Point3D>& points, double yaw,
+    double pitch, const QRectF& area) -> SurfaceView;
 
 struct SurfaceSample {
     double thetaDegrees{};

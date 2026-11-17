@@ -76,6 +76,23 @@ auto SurfaceView::depth(const model::Point3D& point) const -> double
     return std::cos(pitch) * ry + std::sin(pitch) * point.z;
 }
 
+auto fitSurfaceView(const std::vector<model::Point3D>& points, double yaw, double pitch,
+    const QRectF& area) -> SurfaceView
+{
+    const SurfaceView unitView{yaw, pitch, 1.0, {}};
+    if (points.empty() || area.isEmpty()) return {yaw, pitch, 1.0, area.center()};
+    auto low = unitView.project(points.front()), high = low;
+    for (const auto& point : points) {
+        const auto screen = unitView.project(point);
+        low = {std::min(low.x(), screen.x()), std::min(low.y(), screen.y())};
+        high = {std::max(high.x(), screen.x()), std::max(high.y(), screen.y())};
+    }
+    const QRectF bounds(low, high);
+    const auto scale = std::min(area.width() / std::max(bounds.width(), 1.0e-6),
+        area.height() / std::max(bounds.height(), 1.0e-6));
+    return {yaw, pitch, scale, area.center() - bounds.center() * scale};
+}
+
 auto drawRadiationSurface(QPainter& painter, const std::vector<SurfaceSample>& samples,
     const SurfaceView& view, bool grid, bool seeThrough, std::size_t maxFaces) -> bool
 {
