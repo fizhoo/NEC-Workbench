@@ -791,14 +791,75 @@ void testSymbolResolution()
     expect(detachedField && detachedField->find(
             "GW 1 11 6 0 0 10 0 0 .001") != std::string::npos,
         "detaching a parameter replaces the raw NEC card field with its resolved numeric value");
-    const auto controlledFields = necwb::nec::necCardFieldsReferencingSymbols(
-        "SY length=10, half=length/2\nGW 1 11 -half 0 0 half 0 0 0.001\n"
-        "FR 0 1 0 0 14+0.175 0\n", std::array<std::string, 2>{"length", "half"});
-    expect(controlledFields.contains(2)
-            && controlledFields.at(2).at(2) == "-half"
-            && controlledFields.at(2).at(5) == "half"
-            && !controlledFields.contains(3),
-        "parameter-controlled field detection distinguishes SY references from numeric expressions");
+    {
+        // Every card keeps an expression as written, and resolves it to the value it stands for.
+        const std::string deck =
+            "SY len=10, r1=50, v=1, z=75, g=0.02\n"
+            "GA 2 9 len/20 0 180 0.001\n"
+            "GH 3 40 len/200 len/20 0.1 0.1 0.1 0.1 0.001\n"
+            "GW 1 21 0 0 -len/2 0 0 len/2 0.001\n"
+            "GS 0 0 len/10\n"
+            "GE 0\n"
+            "GN 2 0 0 0 len+3 g/4\n"
+            "EX 0 1 11 0 v*2 0\n"
+            "LD 0 1 1 1 r1 0 0\n"
+            "TL 1 5 1 15 z len/4 0 0 0 0\n"
+            "NT 1 5 1 15 g 0 -g 0 g 0\n"
+            "FR 0 1 0 0 len+4.175 0\n"
+            "RP 0 37 2 1000 0 0 len/2 180 0 0\n"
+            "Z0 r1\n"
+            "EN\n";
+        const auto written = necwb::nec::NecParser{}.parse(deck);
+        const auto field = [&written](std::size_t line, std::size_t index) {
+            return written.cards()[line - 1].fields[index];
+        };
+        expect(field(2, 2) == "len/20" && field(3, 3) == "len/20" && field(5, 2) == "len/10"
+                && field(7, 5) == "g/4" && field(8, 4) == "v*2" && field(9, 4) == "r1"
+                && field(10, 5) == "len/4" && field(11, 6) == "-g" && field(12, 4) == "len+4.175"
+                && field(13, 6) == "len/2" && field(14, 0) == "r1",
+            "GA, GH, GS, GN, EX, LD, TL, NT, FR, RP and Z0 parse an expression field as written");
+        const auto resolved = necwb::nec::NecSymbolResolver{}.resolve(deck);
+        const auto values = necwb::nec::NecParser{}.parse(resolved.resolvedSource);
+        const auto value = [&values](std::size_t line, std::size_t index) {
+            return values.cards()[line - 1].fields[index];
+        };
+        expect(resolved.ok() && value(2, 2) == "0.5" && value(3, 3) == "0.5" && value(5, 2) == "1"
+                && value(7, 4) == "13" && value(7, 5) == "0.005" && value(13, 6) == "5"
+                && value(14, 0) == "50",
+            "GA, GH, GS, GN, RP and Z0 expressions resolve to their values");
+        const auto setup = necwb::nec::NecSetupConverter{}.convert(values);
+        expect(setup.excitations.size() == 1 && setup.excitations.front().magnitude == 2.0
+                && setup.loads.size() == 1 && setup.loads.front().value1 == 50.0
+                && setup.transmissionLines.size() == 1
+                && setup.transmissionLines.front().characteristicImpedance == 75.0
+                && setup.transmissionLines.front().lengthMeters == 2.5
+                && setup.networks.size() == 1 && setup.networks.front().y12Real == -0.02
+                && setup.frequency && setup.frequency->startMHz == 14.175
+                && setup.ground && setup.ground->relativePermittivity == 13.0
+                && setup.referenceImpedance && setup.referenceImpedance->ohms == 50.0,
+            "EX, LD, TL, NT, FR, GN and Z0 expressions reach the setup as their values");
+        // A typed expression goes in as one field, spaces dropped; past the card's last field
+        // it follows zeros; it stays as written through the deck.
+        const auto typed = necwb::nec::replaceNecCardFieldExpression(deck, 9, 4, "r1 * 2");
+        const auto extended = typed
+            ? necwb::nec::replaceNecCardFieldExpression(*typed, 8, 7, "len / 5")
+            : std::optional<std::string>{};
+        expect(extended && extended->find("\nLD 0 1 1 1 r1*2 0 0\n") != std::string::npos
+                && extended->find("\nEX 0 1 11 0 v*2 0 0 len/5\n") != std::string::npos
+                && !necwb::nec::replaceNecCardFieldExpression(deck, 9, 4, "1,2")
+                && !necwb::nec::replaceNecCardFieldExpression(deck, 1, 0, "len"),
+            "a typed expression is one field without spaces, reaches past the last field, and never splits on a comma");
+        // Changing a variable changes every field that uses it.
+        auto changed = *extended;
+        changed.replace(changed.find("r1=50"), 5, "r1=60");
+        changed.replace(changed.find("v=1"), 3, "v=3");
+        const auto again = necwb::nec::NecSetupConverter{}.convert(necwb::nec::NecParser{}.parse(
+            necwb::nec::NecSymbolResolver{}.resolve(changed).resolvedSource));
+        expect(again.loads.size() == 1 && again.loads.front().value1 == 120.0
+                && again.excitations.size() == 1 && again.excitations.front().magnitude == 6.0
+                && again.referenceImpedance && again.referenceImpedance->ohms == 60.0,
+            "a changed variable updates the evaluated load, source and reference impedance");
+    }
     expect(resolution.resolvedSource.find("CE\r\n\r\n\r\n\r\nGW") != std::string::npos,
         "line-preserving resolution replaces each SY declaration with a blank source line");
     expect(resolution.generatedDeck.find("GW 1 21 -5 0 6 5 0 6 0.001") != std::string::npos,

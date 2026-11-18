@@ -2,16 +2,14 @@
 
 #include "nec/NecCardCatalog.h"
 #include "nec/NecCardFieldEditor.h"
-#include "ui/ParameterFieldStyle.h"
-#include "ui/cards/VariableMenu.h"
 #include "ui/cards/CardFields.h"
 #include "ui/cards/CompactNumberDelegate.h"
+#include "ui/cards/SymbolCells.h"
 
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QColor>
 #include <QComboBox>
-#include <QDoubleValidator>
 #include <QHeaderView>
 #include <QIntValidator>
 #include <QLabel>
@@ -310,15 +308,12 @@ public:
             for (const auto& choice : choices) editor->addItem(choice.label, choice.value);
             return editor;
         }
+        // A number field takes a name or an expression, with the symbols offered.
+        if (fieldType(mnemonic, index.column()-2) == FieldType::Number)
+            return CompactNumberDelegate::createEditor(parent, option, index);
         auto* editor = new QLineEdit(parent);
-        if (fieldType(mnemonic, index.column()-2) == FieldType::Integer) {
-            editor->setValidator(new QIntValidator(std::numeric_limits<int>::min(),
-                std::numeric_limits<int>::max(), editor));
-        } else {
-            auto* validator = new QDoubleValidator(editor);
-            validator->setNotation(QDoubleValidator::ScientificNotation);
-            editor->setValidator(validator);
-        }
+        editor->setValidator(new QIntValidator(std::numeric_limits<int>::min(),
+            std::numeric_limits<int>::max(), editor));
         return editor;
     }
 
@@ -328,7 +323,7 @@ public:
             combo->setCurrentIndex(std::max(0, combo->findData(index.data().toString())));
             return;
         }
-        QStyledItemDelegate::setEditorData(editor, index);
+        CompactNumberDelegate::setEditorData(editor, index);
     }
 
     void setModelData(QWidget* editor, QAbstractItemModel* model,
@@ -405,11 +400,24 @@ StructuredCardEditor::StructuredCardEditor(Families families, QWidget* parent)
     families_->setMaximumWidth(280);
     table_ = new QTableWidget(splitter);
     table_->setObjectName(QStringLiteral("structuredCardTable"));
-    table_->setItemDelegate(new CardFieldDelegate(table_));
+    auto* delegate = new CardFieldDelegate(table_);
+    table_->setItemDelegate(delegate);
+    // A number field takes symbols; type codes, tags, segments and counts do not.
+    symbolCells_ = new SymbolCells(table_, [this](const QTableWidgetItem& item) -> std::optional<CellField> {
+        const auto* line = table_->item(item.row(), 0);
+        const auto* mnemonicItem = table_->item(item.row(), 1);
+        if (item.column() < 2 || line == nullptr || mnemonicItem == nullptr) return std::nullopt;
+        const auto mnemonic = mnemonicItem->text();
+        const auto fieldIndex = item.column() - 2;
+        if (fieldType(mnemonic, fieldIndex) != FieldType::Number
+            || !cardFieldChoices(mnemonic, fieldIndex).empty()) return std::nullopt;
+        return CellField{line->data(SourceLineRole).toULongLong(),
+            static_cast<std::size_t>(fieldIndex), table_->horizontalHeaderItem(item.column())->text()};
+    });
+    delegate->setSymbolCells(symbolCells_);
     table_->setAlternatingRowColors(true);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
-    table_->setContextMenuPolicy(Qt::CustomContextMenu);
     table_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed
         | QAbstractItemView::SelectedClicked);
     table_->verticalHeader()->hide();
@@ -446,32 +454,6 @@ StructuredCardEditor::StructuredCardEditor(Families families, QWidget* parent)
     connect(table_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
         if (!updating_) commitCell(item);
     });
-    connect(table_, &QTableWidget::customContextMenuRequested, this,
-        [this](const QPoint& position) {
-            auto* item = table_->itemAt(position);
-            if (item == nullptr || item->column() < 2
-                || table_->item(item->row(), 0) == nullptr) return;
-            const auto mnemonic = table_->item(item->row(), 1)->text();
-            const auto fieldIndex = item->column() - 2;
-            if (fieldType(mnemonic, fieldIndex) != FieldType::Number
-                || !cardFieldChoices(mnemonic, fieldIndex).empty()) return;
-            const auto sourceLine = table_->item(item->row(), 0)
-                ->data(SourceLineRole).toULongLong();
-            const auto parameterLine = parameterControlledFields_.find(sourceLine);
-            const auto parameterControlled = parameterLine != parameterControlledFields_.end()
-                && parameterLine->second.contains(static_cast<std::size_t>(fieldIndex));
-            if (!parameterControlled && !parsesAs<double>(item->text())) return;
-            const auto label = table_->horizontalHeaderItem(item->column())->text();
-            const auto choice = execVariableMenu(this,
-                table_->viewport()->mapToGlobal(position), parameterControlled);
-            if (choice == VariableChoice::Make) {
-                emit fieldParameterizationRequested(sourceLine,
-                    static_cast<std::size_t>(fieldIndex), label);
-            } else if (choice == VariableChoice::Detach) {
-                emit fieldDetachmentRequested(sourceLine,
-                    static_cast<std::size_t>(fieldIndex), label);
-            }
-        });
     connect(addButton_, &QPushButton::clicked, this, [this] {
         const auto cardText = newCard();
         if (cardText.isEmpty()) return;
@@ -485,9 +467,11 @@ StructuredCardEditor::StructuredCardEditor(Families families, QWidget* parent)
     refreshFamilies();
 }
 
-void StructuredCardEditor::setDocument(const nec::NecDocument& document)
+void StructuredCardEditor::setDocument(const nec::NecDocument& document,
+    const nec::NecDocument* resolved)
 {
     document_ = document;
+    resolved_ = resolved == nullptr ? std::nullopt : std::optional{*resolved};
     refreshFamilies();
     refreshTable();
 }
@@ -499,10 +483,9 @@ void StructuredCardEditor::setDeckUnitLabel(QString unitLabel)
     refreshTable();
 }
 
-void StructuredCardEditor::setParameterControlledFields(
-    nec::NecParameterFieldMap sourceFields)
+void StructuredCardEditor::setSymbols(const std::vector<nec::SymbolDefinition>& symbols)
 {
-    parameterControlledFields_ = std::move(sourceFields);
+    symbolCells_->setSymbols(symbols);
 }
 
 void StructuredCardEditor::focusParameterizableField()
@@ -510,17 +493,13 @@ void StructuredCardEditor::focusParameterizableField()
     for (auto row = 0; row < table_->rowCount(); ++row) {
         if (table_->item(row, 0) == nullptr || table_->item(row, 1) == nullptr) continue;
         const auto mnemonic = table_->item(row, 1)->text();
-        const auto sourceLine = table_->item(row, 0)->data(SourceLineRole).toULongLong();
         for (auto column = 2; column < table_->columnCount(); ++column) {
             auto* item = table_->item(row, column);
             if (item == nullptr) continue;
             const auto fieldIndex = column-2;
             if (fieldType(mnemonic, fieldIndex) != FieldType::Number
                 || !cardFieldChoices(mnemonic, fieldIndex).empty()) continue;
-            const auto parameterLine = parameterControlledFields_.find(sourceLine);
-            const auto parameterControlled = parameterLine != parameterControlledFields_.end()
-                && parameterLine->second.contains(static_cast<std::size_t>(fieldIndex));
-            if (!parameterControlled && !parsesAs<double>(item->text())) continue;
+            if (!SymbolCells::usesExpression(*item) && !parsesAs<double>(item->text())) continue;
             table_->setCurrentCell(row, column);
             table_->scrollToItem(item, QAbstractItemView::PositionAtCenter);
             table_->setFocus(Qt::OtherFocusReason);
@@ -592,8 +571,8 @@ void StructuredCardEditor::refreshTable()
     const auto& family = families()[static_cast<std::size_t>(familyIndex)];
     updating_ = true;
     const QSignalBlocker blocker(table_);
-    table_->setToolTip(family.description + tr(" Double-click a field to edit it; right-click "
-        "a number → Make Variable…"));
+    table_->setToolTip(family.description + tr(" Double-click a field to edit it: a number, a "
+        "name or an expression such as len/2. Right-click a number → Make Variable…"));
     auto fieldCount = family.fields.size();
     for (const auto& card : document_.cards()) {
         if (belongsTo(card, family))
@@ -638,22 +617,21 @@ void StructuredCardEditor::refreshTable()
             const auto value = column < static_cast<int>(card.fields.size())
                 ? QString::fromStdString(card.fields[static_cast<std::size_t>(column)]) : QString{};
             auto* item = new QTableWidgetItem(value);
+            // An expression shows its value; one in a field that takes no symbols stays as written.
             if (!value.isEmpty() && !nec::necCardFieldIsNumeric(
                     card.sourceText, static_cast<std::size_t>(column))) {
-                item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-                const auto parameterLine = parameterControlledFields_.find(card.lineNumber);
-                const auto parameterField = parameterLine == parameterControlledFields_.end()
-                    ? nullptr : [&parameterLine, column] {
-                        const auto found = parameterLine->second.find(
-                            static_cast<std::size_t>(column));
-                        return found == parameterLine->second.end() ? nullptr : &found->second;
-                    }();
-                if (parameterField != nullptr) {
-                    styleParameterControlledField(item, table_,
-                        QString::fromStdString(*parameterField));
-                } else {
-                    item->setToolTip(tr(
-                        "This value is controlled by an expression. Edit the raw NEC source."));
+                const auto resolvedCard = resolved_ && card.lineNumber <= resolved_->cards().size()
+                    ? &resolved_->cards()[card.lineNumber - 1] : nullptr;
+                const auto resolvedValue = resolvedCard != nullptr
+                        && static_cast<std::size_t>(column) < resolvedCard->fields.size()
+                    ? QString::fromStdString(resolvedCard->fields[static_cast<std::size_t>(column)])
+                    : value;
+                SymbolCells::showExpression(item, table_, value, resolvedValue);
+                if (fieldType(QString::fromStdString(card.mnemonic), column) == FieldType::Integer
+                    || !cardFieldChoices(QString::fromStdString(card.mnemonic), column).empty()) {
+                    item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+                    item->setToolTip(tr("ƒx %1 = %2\nThis field takes a whole number; edit the "
+                        "expression in the raw NEC source.").arg(value, resolvedValue));
                 }
             }
             table_->setItem(row, column+2, item);
@@ -709,13 +687,18 @@ void StructuredCardEditor::updateActions()
 void StructuredCardEditor::commitCell(QTableWidgetItem* item)
 {
     if (item->column() < 2 || table_->item(item->row(), 0) == nullptr) return;
+    if (symbolCells_->takeExpressionEdit(item, [this] { refreshTable(); })) return;
     const auto cardIndex = table_->item(item->row(), 0)->data(CardIndexRole).toULongLong();
     if (cardIndex >= document_.cards().size()) return;
     const auto& card = document_.cards()[cardIndex];
     if (!validateRow(item->row())) return;
+    // The other expression cells go back as written, never as the values they show.
     QStringList fields;
-    for (auto column = 2; column < table_->columnCount(); ++column)
-        fields.push_back(table_->item(item->row(), column)->text().trimmed());
+    for (auto column = 2; column < table_->columnCount(); ++column) {
+        const auto* cell = table_->item(item->row(), column);
+        fields.push_back(cell != item && SymbolCells::usesExpression(*cell)
+            ? cell->data(CellExpressionRole).toString() : cell->text().trimmed());
+    }
     while (!fields.empty() && fields.back().isEmpty()) fields.removeLast();
     auto text = QString::fromStdString(card.mnemonic);
     for (const auto& field : fields) text += QLatin1Char(' ') + field;
@@ -738,7 +721,7 @@ auto StructuredCardEditor::validateRow(int row) -> bool
     for (auto fieldIndex = 0; fieldIndex < fields.size(); ++fieldIndex) {
         auto* cell = table_->item(row, fieldIndex+2);
         QString error;
-        if (!(cell->flags() & Qt::ItemIsEditable)) continue;
+        if (!(cell->flags() & Qt::ItemIsEditable) || SymbolCells::usesExpression(*cell)) continue;
         if (fields[fieldIndex].isEmpty()) {
             if (fieldIndex < required) error = tr("This field is required for %1.").arg(mnemonic);
         } else if (fieldType(mnemonic, fieldIndex) == FieldType::Integer

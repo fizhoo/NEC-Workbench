@@ -1,8 +1,8 @@
 #include "ui/cards/WireCardEditor.h"
 
 #include "ui/DisplayFormat.h"
-#include "ui/ParameterFieldStyle.h"
 #include "ui/cards/CompactNumberDelegate.h"
+#include "ui/cards/SymbolCells.h"
 #include "ui/cards/VariableMenu.h"
 
 #include "model/WireGauge.h"
@@ -62,12 +62,20 @@ WireCardEditor::WireCardEditor(QWidget* parent)
 
     table_ = new QTableWidget(this);
     table_->setObjectName(QStringLiteral("wireCardTable"));
-    table_->setItemDelegate(new CompactNumberDelegate(table_));
+    auto* delegate = new CompactNumberDelegate(table_);
+    table_->setItemDelegate(delegate);
+    symbolCells_ = new SymbolCells(table_, [this](const QTableWidgetItem& item) -> std::optional<CellField> {
+        const auto* tag = table_->item(item.row(), Tag);
+        const auto* wire = tag == nullptr ? nullptr : model_.wireByTag(tag->data(WireTagRole).toInt());
+        if (wire == nullptr || item.column() < Segments || item.column() > Radius) return std::nullopt;
+        const auto field = static_cast<std::size_t>(item.column());
+        return CellField{wire->sourceLine, field, wireFieldName(field)};
+    });
+    delegate->setSymbolCells(symbolCells_);
     table_->setColumnCount(ColumnCount);
     table_->setAlternatingRowColors(true);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
-    table_->setContextMenuPolicy(Qt::CustomContextMenu);
     table_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed
         | QAbstractItemView::SelectedClicked);
     table_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
@@ -102,29 +110,6 @@ WireCardEditor::WireCardEditor(QWidget* parent)
             validateAndCommitRow(item->row(), item->column());
         }
     });
-    connect(table_, &QTableWidget::customContextMenuRequested, this,
-        [this](const QPoint& position) {
-            auto* item = table_->itemAt(position);
-            if (item == nullptr || item->column() < Segments || item->column() > Radius) return;
-            const auto* wire = model_.wireByTag(
-                table_->item(item->row(), Tag)->data(WireTagRole).toInt());
-            if (wire == nullptr) return;
-            const auto parameterLine = parameterControlledFields_.find(wire->sourceLine);
-            const auto parameterControlled = parameterLine != parameterControlledFields_.end()
-                && parameterLine->second.contains(static_cast<std::size_t>(item->column()));
-            if (!parameterControlled && !(item->flags() & Qt::ItemIsEditable)) return;
-            const auto field = static_cast<std::size_t>(item->column());
-            const auto label = wireFieldName(field);
-            switch (execVariableMenu(this, table_->viewport()->mapToGlobal(position), parameterControlled)) {
-            case VariableChoice::Make:
-                emit fieldParameterizationRequested(wire->sourceLine, field, label);
-                break;
-            case VariableChoice::Detach:
-                emit fieldDetachmentRequested(wire->sourceLine, field, label);
-                break;
-            case VariableChoice::None: break;
-            }
-        });
     updateUnitLabels();
     updateActionStates();
 }
@@ -166,15 +151,9 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
                       return found == symbolicLine->second.end() ? nullptr : &found->second;
                   }();
             if (symbolic != nullptr) {
-                const auto expression = QString::fromStdString(*symbolic);
-                item->setData(CellExpressionRole, expression);
-                const auto parameterLine = parameterControlledFields_.find(wire.sourceLine);
-                if (parameterLine != parameterControlledFields_.end()
-                    && parameterLine->second.contains(static_cast<std::size_t>(column)))
-                    styleParameterControlledField(item, table_, expression);
-                if (wire.editable)
-                    item->setToolTip(tr("ƒx %1 = %2\nType over it to change it; change a variable "
-                        "under Variables.").arg(expression, values[column]));
+                SymbolCells::showExpression(item, table_, QString::fromStdString(*symbolic), values[column]);
+                if (!wire.editable) item->setToolTip(tr(
+                    "This GW uses a following GC taper card. Edit the GC card in the Other card table or in Raw Source."));
             }
             table_->setItem(row, column, item);
         }
@@ -217,13 +196,7 @@ void WireCardEditor::focusParameterizableField()
              column <= static_cast<int>(Radius); ++column) {
             auto* item = table_->item(row, column);
             if (item == nullptr) continue;
-            const auto* wire = model_.wireByTag(
-                table_->item(row, Tag)->data(WireTagRole).toInt());
-            if (wire == nullptr) continue;
-            const auto parameterLine = parameterControlledFields_.find(wire->sourceLine);
-            const auto parameterControlled = parameterLine != parameterControlledFields_.end()
-                && parameterLine->second.contains(static_cast<std::size_t>(column));
-            if (!(item->flags() & Qt::ItemIsEditable) && !parameterControlled) continue;
+            if (!(item->flags() & Qt::ItemIsEditable) && !SymbolCells::usesExpression(*item)) continue;
             table_->setCurrentCell(row, column);
             table_->scrollToItem(item, QAbstractItemView::PositionAtCenter);
             table_->setFocus(Qt::OtherFocusReason);
@@ -240,14 +213,7 @@ void WireCardEditor::setSymbolicGeometryFields(nec::NecParameterFieldMap sourceF
 
 void WireCardEditor::setSymbols(const std::vector<nec::SymbolDefinition>& symbols)
 {
-    QList<std::pair<QString, double>> offered;
-    for (const auto& symbol : symbols) offered.append({QString::fromStdString(symbol.name), symbol.value});
-    static_cast<CompactNumberDelegate*>(table_->itemDelegate())->setSymbols(std::move(offered));
-}
-
-void WireCardEditor::setParameterControlledFields(nec::NecParameterFieldMap sourceFields)
-{
-    parameterControlledFields_ = std::move(sourceFields);
+    symbolCells_->setSymbols(symbols);
 }
 
 void WireCardEditor::setLengthUnit(model::LengthUnit unit)
@@ -327,24 +293,7 @@ void WireCardEditor::validateAndCommitRow(int row, int changedColumn)
     }
     // A name or expression, or anything typed over one, goes to the deck as written; the
     // cell shows the value again until the deck changes.
-    const auto typed = changedItem->text().trimmed();
-    const auto written = changedItem->data(CellExpressionRole).toString();
-    auto plainNumber = false;
-    static_cast<void>(typed.toDouble(&plainNumber));
-    if (changedColumn >= Segments && changedColumn <= Radius && (!written.isEmpty() || !plainNumber)) {
-        const auto below = table_->viewport()->mapToGlobal(
-            table_->visualItemRect(changedItem).bottomLeft());
-        const auto label = table_->horizontalHeaderItem(changedColumn)->text();
-        QTimer::singleShot(0, this, [this, sourceLine = original->sourceLine, changedColumn, label,
-                                        typed, written, below] {
-            if (typed != written) {
-                emit fieldExpressionEntered(sourceLine, static_cast<std::size_t>(changedColumn),
-                    label, typed, below);
-            }
-            setModel(model_);
-        });
-        return;
-    }
+    if (symbolCells_->takeExpressionEdit(changedItem, [this] { setModel(model_); })) return;
 
     bool tagOk = false;
     bool segmentsOk = false;

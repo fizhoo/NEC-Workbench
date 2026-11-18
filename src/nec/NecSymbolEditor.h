@@ -21,6 +21,8 @@ namespace necwb::nec {
     std::size_t lineNumber, std::size_t fieldIndex,
     std::string_view name) -> std::optional<std::string>;
 
+// Writes the expression, without its spaces, into one field of the card, adding zero fields
+// up to it when the card is shorter; none for an SY card or an expression with a comma.
 [[nodiscard]] auto replaceNecCardFieldExpression(std::string_view source,
     std::size_t lineNumber, std::size_t fieldIndex,
     std::string_view expression) -> std::optional<std::string>;

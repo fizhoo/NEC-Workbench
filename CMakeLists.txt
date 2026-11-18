@@ -192,7 +192,9 @@ if(NECWB_BUILD_GUI)
         src/ui/cards/CardFields.h
         src/ui/cards/CompactNumberDelegate.cpp
         src/ui/cards/CompactNumberDelegate.h
+        src/ui/cards/SymbolCells.cpp
         src/ui/cards/VariableMenu.cpp
+        src/ui/cards/SymbolCells.h
         src/ui/cards/VariableMenu.h
         src/ui/cards/WireCardEditor.cpp
         src/ui/cards/WireCardEditor.h

@@ -830,15 +830,7 @@ void MainWindow::createWorkspace()
         [this](int tag) { duplicateWire(tag); });
     connect(wireCardEditor_, &WireCardEditor::deleteWireRequested, this,
         [this](int tag) { deleteWire(tag); });
-    connect(wireCardEditor_, &WireCardEditor::fieldParameterizationRequested, this,
-        [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
-            makeFieldVariable(sourceLine, fieldIndex, fieldLabel);
-        });
-    connect(wireCardEditor_, &WireCardEditor::fieldDetachmentRequested, this,
-        [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
-            detachFieldParameter(sourceLine, fieldIndex, fieldLabel);
-        });
-    connect(wireCardEditor_, &WireCardEditor::fieldExpressionEntered, this,
+    connect(cardTables_, &CardTables::fieldExpressionEntered, this,
         [this](std::size_t line, std::size_t field, const QString& label, const QString& expression, QPoint below) {
             const auto edit = enterFieldExpression(this, below, activeSource().source(), line, field, expression);
             if (!edit.error.isEmpty()) QMessageBox::warning(this, tr("Invalid Expression"), edit.error);
@@ -2023,14 +2015,6 @@ void MainWindow::checkModel(bool presentReport)
 
     editor_->setDiagnostics(result.diagnostics);
     updateDeckUnitControls(deckUnitInfo);
-    std::vector<std::string> parameterNames;
-    parameterNames.reserve(resolution.definitions.size());
-    for (const auto& definition : resolution.definitions)
-        parameterNames.push_back(definition.name);
-    const auto parameterFields = nec::necCardFieldsReferencingSymbols(
-        cache.source(), parameterNames);
-    wireCardEditor_->setParameterControlledFields(parameterFields);
-    wireCardEditor_->setSymbols(resolution.definitions);
     updateWireCardEditor();
     // Edits keep the zoom; opening a model fits it (resetGeometryViews).
     const auto sharedSegments = model::describeSharedSegments(currentModel_, currentSetup_);
@@ -2045,7 +2029,8 @@ void MainWindow::checkModel(bool presentReport)
     modelColumn_->variables()->setVariables(resolution.definitions);
     setupEditor_->setData(currentModel_, currentSetup_);
     analysisRequestEditor_->setData(currentSetup_);
-    cardTables_->setDocument(document, parameterFields);
+    cardTables_->setDocument(document, resolution.ok() ? cache.resolvedDocument() : nullptr,
+        resolution.definitions);
     modelColumn_->tree()->setModel(currentModel_, currentSetup_, document);
     refreshWireEditor();
     if (modelColumn_->pane()->currentPage() == cardForm_) refreshCardForm(cardForm_->sourceLine());

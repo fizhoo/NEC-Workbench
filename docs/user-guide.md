@@ -220,11 +220,15 @@ A variable is an `SY` card, such as `SY len=5.1`; any card field can use it by n
 an expression such as `len/2`. Each one written as a number gets a slider under
 **Variables**, and the optimizer can search it. There are four ways to make one:
 
-- **Type it into a wire cell.** In the Wires table, type `len` or `len/2` over a
-  segment count, coordinate or radius. If `len` is new, a box under the cell asks for its value, filled
-  in, when it can be worked out, with the value that keeps the wire where it is. Enter
-  adds `SY len=…` after the other `SY` cards at the top of the deck; Esc changes nothing. As you type, existing variables are offered with
-  their values. This works in the Wires table only.
+- **Type it into a cell.** In any card table, type `len`, `len/2` or `2*h + 0.1` over a
+  number: a wire's segment count, coordinate or radius, a source voltage, a load's R, a
+  line's Z0 or length, a network admittance, or a number in Other. If `len` is new, a box
+  under the cell asks for its value, filled in, when it can be worked out, with the value
+  that keeps the field as it is. Enter adds `SY len=…` after the other `SY` cards at the top
+  of the deck; Esc changes nothing. As you type a name, the variables containing it are
+  offered with their values (`len` offers `len`, `dlen` and `rlen`); choosing one replaces
+  only the name being typed. Tags, segment numbers, type codes and counts take whole
+  numbers only.
 - **Right-click a field** in any card table, or in a wire's own form, and choose **Make
   Variable…**: create a new variable for its value, or pick an existing one. A field that
   already uses a variable offers **Change Variable…** and **Replace With Current Numeric
@@ -256,10 +260,11 @@ The NEC Deck's raw source and the card tables operate on the same document.
 - Long numbers, such as those written by geometry drags or the optimizer, are shown
   at 6 significant figures to keep columns narrow. The deck keeps the exact value:
   hover a cell to see it, and editing starts from it.
-- In the wire table, type a name or an expression into a segment count, coordinate or
-  radius to use a variable; see [Making Variables](#making-variables). A cell written as an expression
-  shows its value; hover it to see the expression, and type over it to change it. Typing
-  a number there replaces the expression.
+- Type a name or an expression into a number cell of any table to use a variable; see
+  [Making Variables](#making-variables). A cell written as an expression shows its value
+  and **ƒx**; hover it to see the expression, and type over it to change it. Typing a
+  number there replaces the expression. A new name asks for its value under the cell; an
+  expression that cannot be worked out is refused with a message, and the deck is unchanged.
 - Right-click a numeric cell and choose **Make Variable…** to give it a variable.
 - Wire lengths, in the Wires table and the wire's own form, are in the deck's unit (its
   `GS` scale); the unit is in each label, such as **X1 m**. The Geometry display unit only

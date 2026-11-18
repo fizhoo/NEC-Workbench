@@ -1,10 +1,10 @@
 #include "ui/cards/CompactNumberDelegate.h"
 
+#include "ui/cards/SymbolCells.h"
+
 #include <QAbstractItemView>
-#include <QCompleter>
 #include <QHelpEvent>
 #include <QLineEdit>
-#include <QStandardItemModel>
 #include <QToolTip>
 
 namespace necwb::ui {
@@ -43,19 +43,7 @@ auto CompactNumberDelegate::createEditor(QWidget* parent, const QStyleOptionView
 {
     auto* editor = QStyledItemDelegate::createEditor(parent, option, index);
     auto* line = qobject_cast<QLineEdit*>(editor);
-    if (line == nullptr || symbols_.isEmpty()) return editor;
-    // The list shows each value; choosing one types its name.
-    constexpr auto NameRole = Qt::UserRole;
-    auto* names = new QStandardItemModel(line);
-    for (const auto& [name, value] : symbols_) {
-        auto* item = new QStandardItem(QObject::tr("%1 = %2").arg(name).arg(value, 0, 'g', 12));
-        item->setData(name, NameRole);
-        names->appendRow(item);
-    }
-    auto* completer = new QCompleter(names, line);
-    completer->setCompletionRole(NameRole);
-    completer->setCaseSensitivity(Qt::CaseInsensitive);
-    line->setCompleter(completer);
+    if (line != nullptr && cells_ != nullptr && cells_->takesSymbols(index)) cells_->offerSymbols(line);
     return editor;
 }
 
@@ -65,11 +53,6 @@ void CompactNumberDelegate::setEditorData(QWidget* editor, const QModelIndex& in
     const auto expression = index.data(CellExpressionRole).toString();
     if (line != nullptr && !expression.isEmpty()) line->setText(expression);
     else QStyledItemDelegate::setEditorData(editor, index);
-}
-
-void CompactNumberDelegate::setSymbols(QList<std::pair<QString, double>> symbols)
-{
-    symbols_ = std::move(symbols);
 }
 
 }

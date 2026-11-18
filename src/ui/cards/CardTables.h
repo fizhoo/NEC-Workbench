@@ -1,12 +1,14 @@
 #pragma once
 
-#include "nec/NecCardFieldEditor.h"
+#include "nec/NecSymbolResolver.h"
 #include "nec/NecDocument.h"
 
 #include <QObject>
+#include <QPoint>
 
 #include <array>
 #include <optional>
+#include <vector>
 
 class QComboBox;
 class QLabel;
@@ -38,7 +40,9 @@ public:
     // The deck's geometry unit, and the scale a GS card gives it, above the wire table.
     [[nodiscard]] auto deckUnits() const -> QComboBox* { return deckUnits_; }
     [[nodiscard]] auto deckScale() const -> QLabel* { return deckScale_; }
-    void setDocument(const nec::NecDocument& document, const nec::NecParameterFieldMap& fields);
+    // The deck as written, its resolved values when it resolves, and the symbols to offer.
+    void setDocument(const nec::NecDocument& document, const nec::NecDocument* resolved,
+        const std::vector<nec::SymbolDefinition>& symbols);
     void setDeckUnitLabel(const QString& unitLabel);
     // Selects the card's row in whichever table has it.
     void selectCard(std::size_t sourceLine);
@@ -56,6 +60,9 @@ signals:
         std::size_t fieldIndex, QString fieldLabel);
     void fieldDetachmentRequested(std::size_t sourceLine,
         std::size_t fieldIndex, QString fieldLabel);
+    // A name or expression typed into a number cell; `below` is under the cell on screen.
+    void fieldExpressionEntered(std::size_t sourceLine, std::size_t fieldIndex,
+        QString fieldLabel, QString expression, QPoint below);
 
 private:
 

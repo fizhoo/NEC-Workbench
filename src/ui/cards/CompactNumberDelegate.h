@@ -1,18 +1,15 @@
 #pragma once
 
-#include <QList>
 #include <QStyledItemDelegate>
-
-#include <utility>
 
 namespace necwb::ui {
 
-// A cell written as an expression holds it here; its text is the value.
-constexpr auto CellExpressionRole = Qt::UserRole + 40;
+class SymbolCells;
 
 // Draws long numeric cell text at 6 significant figures so card tables stay narrow.
 // Only the display changes: editors and the tooltip use the exact cell text, so the
-// deck is never rounded. An expression cell edits as written, and typing offers the symbols.
+// deck is never rounded. An expression cell edits as written, and a cell that takes symbols
+// offers them as you type (SymbolCells).
 class CompactNumberDelegate : public QStyledItemDelegate {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
@@ -25,11 +22,10 @@ public:
         const QModelIndex& index) const -> QWidget* override;
     void setEditorData(QWidget* editor, const QModelIndex& index) const override;
 
-    // Names and values, offered as "len = 5.1".
-    void setSymbols(QList<std::pair<QString, double>> symbols);
+    void setSymbolCells(const SymbolCells* cells) { cells_ = cells; }
 
 private:
-    QList<std::pair<QString, double>> symbols_;
+    const SymbolCells* cells_{};
 };
 
 // Text shown for a card cell: numbers longer than 9 characters at 6 significant figures,

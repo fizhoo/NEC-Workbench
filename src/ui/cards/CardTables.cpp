@@ -2,6 +2,7 @@
 
 #include "model/LengthUnit.h"
 #include "ui/cards/StructuredCardEditor.h"
+#include "ui/cards/SymbolCells.h"
 #include "ui/cards/WireCardEditor.h"
 
 #include <QComboBox>
@@ -77,10 +78,16 @@ CardTables::CardTables(QWidget* host) : QObject(host)
         connect(cards, &StructuredCardEditor::cardAddRequested, this, &CardTables::cardAddRequested);
         connect(cards, &StructuredCardEditor::cardDeleteRequested,
             this, &CardTables::cardDeleteRequested);
-        connect(cards, &StructuredCardEditor::fieldParameterizationRequested,
+    }
+    // Every table, the wire table too, makes variables and takes expressions the same way.
+    std::vector<SymbolCells*> symbolCells{wires_->symbolCells()};
+    for (auto* cards : cards_) symbolCells.push_back(cards->symbolCells());
+    for (auto* cells : symbolCells) {
+        connect(cells, &SymbolCells::fieldParameterizationRequested,
             this, &CardTables::fieldParameterizationRequested);
-        connect(cards, &StructuredCardEditor::fieldDetachmentRequested,
+        connect(cells, &SymbolCells::fieldDetachmentRequested,
             this, &CardTables::fieldDetachmentRequested);
+        connect(cells, &SymbolCells::fieldExpressionEntered, this, &CardTables::fieldExpressionEntered);
     }
 }
 
@@ -92,11 +99,12 @@ auto CardTables::tableOf(const QWidget* page) const -> std::optional<Table>
 }
 
 void CardTables::setDocument(const nec::NecDocument& document,
-    const nec::NecParameterFieldMap& fields)
+    const nec::NecDocument* resolved, const std::vector<nec::SymbolDefinition>& symbols)
 {
+    wires_->setSymbols(symbols);
     for (auto* cards : cards_) {
-        cards->setParameterControlledFields(fields);
-        cards->setDocument(document);
+        cards->setSymbols(symbols);
+        cards->setDocument(document, resolved);
     }
 }
 

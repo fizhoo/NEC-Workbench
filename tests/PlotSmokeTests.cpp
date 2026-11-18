@@ -19,6 +19,7 @@
 #include "ui/analysis/HistoricalOverlayControl.h"
 #include "ui/cards/StructuredCardEditor.h"
 #include "ui/cards/CompactNumberDelegate.h"
+#include "ui/cards/SymbolCells.h"
 #include "ui/cards/WireCardEditor.h"
 #include "ui/editor/NecEditor.h"
 #include "ui/modeltree/ModelColumn.h"
@@ -1336,6 +1337,53 @@ auto main(int argc, char* argv[]) -> int
                 application.processEvents();
                 const auto symbolsKept = text().contains(QStringLiteral("LD 4 1 3 3 r 10 0"))
                     && text().contains(QStringLiteral("EX 0 1 5 0 v 0"));
+                // An expression typed into a load's number cell stays in the deck and shows its
+                // value; right-click offers Replace on it and Make Variable on a plain number; a
+                // changed variable updates it.
+                const auto waitFor = [&](const auto& done) {
+                    QElapsedTimer waited;
+                    waited.start();
+                    while (!done() && waited.elapsed() < 3000) application.processEvents(QEventLoop::AllEvents, 20);
+                    return done();
+                };
+                loadTable->item(0, 8)->setText(QStringLiteral("r * 2"));
+                const auto typedKept = waitFor([&] { return text().contains(QStringLiteral("LD 4 1 3 3 r 10 r*2")); })
+                    && waitFor([&] { return loadTable->item(0, 8)->text() == QStringLiteral("100"); })
+                    && loadTable->item(0, 8)->data(necwb::ui::CellExpressionRole).toString() == QStringLiteral("r*2")
+                    && loadTable->item(0, 6)->text() == QStringLiteral("50");
+                const auto menuOffers = [&](int column) {
+                    QStringList offered;
+                    QTimer::singleShot(100, [&offered] {
+                        if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
+                            for (const auto* action : menu->actions()) offered << action->text();
+                            menu->close();
+                        }
+                    });
+                    emit loadTable->customContextMenuRequested(
+                        loadTable->visualItemRect(loadTable->item(0, column)).center());
+                    application.processEvents();
+                    return offered;
+                };
+                const auto typedMenu = menuOffers(8);
+                const auto plainMenu = menuOffers(7);
+                const auto loadMenus = typedMenu == QStringList{QStringLiteral("Change Variable…"),
+                        QStringLiteral("Replace With Current Numeric Value")}
+                    && plainMenu == QStringList{QStringLiteral("Make Variable…")};
+                // The first variable row is r.
+                auto* rValue = mainWindow.findChild<QDoubleSpinBox*>(QStringLiteral("variableValue"));
+                const auto setR = [&](double value) {
+                    rValue->setValue(value);
+                    emit rValue->editingFinished();
+                    application.processEvents();
+                };
+                setR(60.0);
+                const auto variableFollowed = waitFor([&] { return loadTable->item(0, 8)->text() == QStringLiteral("120"); });
+                setR(50.0);
+                const auto loadSymbols = typedKept && loadMenus && variableFollowed
+                    && waitFor([&] { return loadTable->item(0, 8)->text() == QStringLiteral("100"); });
+                if (!loadSymbols)
+                    qWarning() << "load symbols" << typedKept << typedMenu << plainMenu << variableFollowed
+                               << loadTable->item(0, 8)->text() << text();
                 // A click selects the load in the tree and keeps the table; Line opens the form.
                 selectGroup(QStringLiteral("Loads"));
                 loadTable->selectRow(0);
@@ -1432,7 +1480,7 @@ auto main(int argc, char* argv[]) -> int
                     && !settings.value(QStringLiteral("variables/folded")).toBool();
                 cardTables = bottomPanelPlain && groupShows && widened && narrowedAgain && pageWidening
                     && familyRefits && treeAddOpensForm
-                    && symbolsKept && rowSelects && lineOpensForm && geometrySelects
+                    && symbolsKept && loadSymbols && rowSelects && lineOpensForm && geometrySelects
                     && tableAddsPlaced && loadAdded && linePicked && namesTyped && wireOpened && folded && unfolded;
                 if (!cardTables) {
                     qWarning() << "card tables" << bottomPanelPlain << groupShows << widened << pageWidening
@@ -4924,12 +4972,12 @@ auto main(int argc, char* argv[]) -> int
     const auto customRadiusPreserved = customGauge != nullptr && customGauge->currentIndex() == 0;
     necwb::ui::WireCardEditor symbolicWireEditor;
     symbolicWireEditor.setSymbolicGeometryFields({{1, {{3, "height"}, {4, "2*3"}}}});
-    symbolicWireEditor.setParameterControlledFields({{1, {{3, "height"}}}});
-    symbolicWireEditor.setSymbols({{"height", "10", 10.0, 1}});
+    symbolicWireEditor.setSymbols({{"height", "10", 10.0, 1}, {"len", "4", 4.0, 1},
+        {"dlen", "0.1", 0.1, 1}, {"rlen", "4.2", 4.2, 1}});
     symbolicWireEditor.setModel(wireModel);
     std::vector<std::pair<std::size_t, QString>> expressionsEntered;
     auto symbolicWireEdited = false;
-    QObject::connect(&symbolicWireEditor, &necwb::ui::WireCardEditor::fieldExpressionEntered,
+    QObject::connect(symbolicWireEditor.symbolCells(), &necwb::ui::SymbolCells::fieldExpressionEntered,
         [&](std::size_t, std::size_t field, const QString&, const QString& expression, QPoint) {
             expressionsEntered.emplace_back(field, expression);
         });
@@ -4951,9 +4999,33 @@ auto main(int argc, char* argv[]) -> int
         symbolicWireEditor.show();
         symbolicWireTable->editItem(heightCell);
         auto* cellEditor = symbolicWireTable->viewport()->findChild<QLineEdit*>();
+        auto* completer = cellEditor == nullptr ? nullptr : cellEditor->findChild<QCompleter*>();
         symbolicCoordinatesLocked = symbolicCoordinatesLocked && cellEditor != nullptr
-            && cellEditor->text() == QStringLiteral("height") && cellEditor->completer() != nullptr
-            && cellEditor->completer()->model()->index(0, 0).data().toString() == QStringLiteral("height = 10");
+            && cellEditor->text() == QStringLiteral("height") && completer != nullptr
+            && completer->model()->index(0, 0).data().toString() == QStringLiteral("height = 10");
+        // The symbols match anywhere in the name, and only the word being typed is completed.
+        if (completer != nullptr) {
+            const auto offered = [completer] {
+                QStringList names;
+                for (auto row = 0; completer->setCurrentRow(row); ++row) names << completer->currentCompletion();
+                return names;
+            };
+            cellEditor->clear();
+            QTest::keyClicks(cellEditor, QStringLiteral("LEN"));
+            const auto midName = offered() == QStringList{QStringLiteral("len"), QStringLiteral("dlen"),
+                QStringLiteral("rlen")};
+            cellEditor->setText(QStringLiteral("len/"));
+            QTest::keyClicks(cellEditor, QStringLiteral("h"));
+            const auto wordOnly = completer->completionPrefix() == QStringLiteral("h")
+                && offered() == QStringList{QStringLiteral("height")};
+            emit completer->activated(QStringLiteral("height"));
+            const auto wordReplaced = cellEditor->text() == QStringLiteral("len/height");
+            if (!midName || !wordOnly || !wordReplaced)
+                qWarning() << "symbol completer" << midName << wordOnly << wordReplaced << offered()
+                           << cellEditor->text();
+            symbolicCoordinatesLocked = symbolicCoordinatesLocked && midName && wordOnly && wordReplaced;
+            cellEditor->setText(QStringLiteral("height"));
+        }
         symbolicWireTable->closePersistentEditor(heightCell);
         // A name, a number over an expression, the expression unchanged, and a plain number.
         symbolicWireTable->item(0, 2)->setText(QStringLiteral("len/2"));

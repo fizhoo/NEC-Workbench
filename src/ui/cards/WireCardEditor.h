@@ -5,7 +5,6 @@
 #include "nec/NecCardFieldEditor.h"
 #include "nec/NecSymbolResolver.h"
 
-#include <QPoint>
 #include <QWidget>
 
 #include <vector>
@@ -15,6 +14,8 @@ class QTableWidget;
 class QTableWidgetItem;
 
 namespace necwb::ui {
+
+class SymbolCells;
 
 class WireCardEditor final : public QWidget {
     Q_OBJECT
@@ -30,8 +31,9 @@ public:
     void setSymbolicGeometryFields(nec::NecParameterFieldMap sourceFields);
     // The symbols a cell offers as you type.
     void setSymbols(const std::vector<nec::SymbolDefinition>& symbols);
-    void setParameterControlledFields(nec::NecParameterFieldMap sourceFields);
     void focusParameterizableField();
+    // Symbols, Make Variable… and expressions typed into a cell.
+    [[nodiscard]] auto symbolCells() const -> SymbolCells* { return symbolCells_; }
 
 signals:
     void wireSelected(int tag);
@@ -41,14 +43,6 @@ signals:
     void addWireRequested();
     void duplicateWireRequested(int tag);
     void deleteWireRequested(int tag);
-    void fieldParameterizationRequested(std::size_t sourceLine,
-        std::size_t fieldIndex, QString fieldLabel);
-    void fieldDetachmentRequested(std::size_t sourceLine,
-        std::size_t fieldIndex, QString fieldLabel);
-    // Text that is not a plain number typed into segments, a coordinate or radius, or anything typed
-    // over an expression; `below` is the bottom left of the cell on screen.
-    void fieldExpressionEntered(std::size_t sourceLine, std::size_t fieldIndex,
-        QString fieldLabel, QString expression, QPoint below);
 
 private:
     void updateActionStates();
@@ -63,7 +57,7 @@ private:
     QPushButton* deleteButton_{};
     model::AntennaModel model_;
     nec::NecParameterFieldMap symbolicGeometryFields_;
-    nec::NecParameterFieldMap parameterControlledFields_;
+    SymbolCells* symbolCells_{};
     double scaleToMeters_{1.0};
     QString unitLabel_{QStringLiteral("m")};
     bool updating_{};

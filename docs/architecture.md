@@ -73,9 +73,12 @@ the page on screen, and offers ⇔ whenever that page is wider than the column (
 of its table, if it has one); ⇔ asks `WorkbenchLayout` to widen the column to the page and
 puts it back for a page that fits. The pane applies valid pending edits when the selection
 changes and asks only about invalid ones. New EX, LD, TL and NT cards are placed by
-`nec::setupCardInsertionIndex`. A name or expression typed into a wire cell goes through
-`enterFieldExpression` (`ui/cards/SymbolPrompt`), which asks under the cell for the value
-of each new name and adds its `SY` card with `nec::insertSymbolDefinition`. The center
+`nec::setupCardInsertionIndex`. Every card table hands its number cells to one
+`SymbolCells` (`ui/cards`): it shows an expression cell's resolved value and edits it as
+written, offers the symbols for the word being typed, owns the Make Variable… / Replace
+menu, and sends a typed name or expression to `enterFieldExpression`
+(`ui/cards/SymbolPrompt`), which asks under the cell for the value of each new name, adds
+its `SY` card with `nec::insertSymbolDefinition`, and writes only that field. The center
 shows the geometry editor (2D views in `GeometryPlanes`, which puts
 `geometry::widestPlane` in the big view when a model opens and swaps on request, and the
 3D view), or one full result view, or the NEC

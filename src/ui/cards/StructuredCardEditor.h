@@ -1,11 +1,12 @@
 #pragma once
 
 #include "nec/NecDocument.h"
-#include "nec/NecCardFieldEditor.h"
+#include "nec/NecSymbolResolver.h"
 
 #include <QStringList>
 #include <QWidget>
 
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -16,6 +17,8 @@ class QTreeWidget;
 class QTreeWidgetItem;
 
 namespace necwb::ui {
+
+class SymbolCells;
 
 class StructuredCardEditor final : public QWidget {
     Q_OBJECT
@@ -29,9 +32,13 @@ public:
     };
 
     explicit StructuredCardEditor(Families families, QWidget* parent = nullptr);
-    void setDocument(const nec::NecDocument& document);
+    // `resolved` gives the values of fields written as expressions; without it they show as written.
+    void setDocument(const nec::NecDocument& document, const nec::NecDocument* resolved = nullptr);
     void setDeckUnitLabel(QString unitLabel);
-    void setParameterControlledFields(nec::NecParameterFieldMap sourceFields);
+    // The symbols a number cell offers as you type.
+    void setSymbols(const std::vector<nec::SymbolDefinition>& symbols);
+    // Symbols, Make Variable… and expressions typed into a cell.
+    [[nodiscard]] auto symbolCells() const -> SymbolCells* { return symbolCells_; }
     auto selectCard(std::size_t sourceLine) -> bool;
     void focusParameterizableField();
     // The card Add would add for the selected family.
@@ -44,10 +51,6 @@ signals:
     void cardEdited(std::size_t sourceLine, QString cardText);
     void cardAddRequested(QString cardText);
     void cardDeleteRequested(std::size_t sourceLine);
-    void fieldParameterizationRequested(std::size_t sourceLine,
-        std::size_t fieldIndex, QString fieldLabel);
-    void fieldDetachmentRequested(std::size_t sourceLine,
-        std::size_t fieldIndex, QString fieldLabel);
 
 private:
     void refreshFamilies();
@@ -62,7 +65,8 @@ private:
     [[nodiscard]] auto shows(int familyIndex) const -> bool;
 
     nec::NecDocument document_;
-    nec::NecParameterFieldMap parameterControlledFields_;
+    std::optional<nec::NecDocument> resolved_;
+    SymbolCells* symbolCells_{};
     QTreeWidget* families_{};
     QTableWidget* table_{};
     Families shown_;

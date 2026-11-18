@@ -253,9 +253,17 @@ auto replaceNecCardFieldExpression(std::string_view source, std::size_t lineNumb
     const auto document = NecParser{}.parse(source);
     if (lineNumber == 0 || lineNumber > document.cards().size()) return std::nullopt;
     const auto& card = document.cards()[lineNumber - 1];
-    if (fieldIndex >= card.fields.size() || trim(expression).empty()) return std::nullopt;
-    const auto replacement = replaceNecCardFields(card.sourceText,
-        std::array{NecFieldReplacement{fieldIndex, std::string(trim(expression))}});
+    // Fields are separated by spaces and commas, so an expression is written without them.
+    std::string compact;
+    for (const auto character : expression)
+        if (!std::isspace(static_cast<unsigned char>(character))) compact.push_back(character);
+    if (compact.empty() || compact.find(',') != std::string::npos
+        || card.kind == NecCardKind::Symbol) return std::nullopt;
+    // A field past the card's last one follows zeros, as NEC reads a missing field.
+    auto text = card.sourceText;
+    for (auto missing = card.fields.size(); missing <= fieldIndex; ++missing) text += " 0";
+    const auto replacement = replaceNecCardFields(text,
+        std::array{NecFieldReplacement{fieldIndex, std::move(compact)}});
     if (!replacement) return std::nullopt;
     auto lines = sourceLines(document);
     lines[lineNumber - 1] = *replacement;
