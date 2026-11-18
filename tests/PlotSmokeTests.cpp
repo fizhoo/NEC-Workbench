@@ -29,6 +29,7 @@
 #include "ui/FlowLayout.h"
 #include "ui/geometry/WirePropertiesEditor.h"
 #include "ui/geometry/AutoSegmentationDialog.h"
+#include "ui/geometry/GeometryPlanes.h"
 #include "ui/geometry/GeometryView.h"
 #include "ui/geometry/Geometry3DView.h"
 #include "ui/optimization/OptimizationWorkspace.h"
@@ -685,6 +686,151 @@ auto main(int argc, char* argv[]) -> int
                        << popupShortcut << fittedAfterResize << zoomStaysAfterResize << stale->statusBar()->currentMessage()
                        << missing->statusBar()->currentMessage() << reopened->windowTitle();
             return NECWB_SMOKE_FAILURE("launch start panel and reopen");
+        }
+    }
+    // The delta loop lies in XZ, so XZ opens in the big view; double-clicking XY's title swaps
+    // it in, fitted, and edits keep it there until a model is opened again. The wire form
+    // shows deck units (meters) with Geometry in feet, and Make Variable names W1_X1.
+    {
+        QSettings planeSettings;
+        const QStringList planeKeys{QStringLiteral("files/recentModels"),
+            QStringLiteral("files/recentOpened"), QStringLiteral("files/reopenLastModel")};
+        std::vector<QVariant> savedPlane;
+        for (const auto& key : planeKeys) savedPlane.push_back(planeSettings.value(key));
+        QTemporaryDir planeDirectory;
+        const auto deltaPath = planeDirectory.filePath(QStringLiteral("delta.nec"));
+        QFile delta(deltaPath);
+        if (delta.open(QIODevice::WriteOnly)) {
+            delta.write("CE\nGW 1,21,-1.87,0.,-1.87,1.87,0.,-1.87,.000814\n"
+                "GW 2,21,1.87,0.,-1.87,1.87,0.,1.87,.000814\n"
+                "GW 3,21,1.87,0.,1.87,-1.87,0.,1.87,.000814\n"
+                "GW 4,21,-1.87,0.,1.87,-1.87,0.,-1.87,.000814\nGE 0\nFR 0,1,0,0,21.15\nEX 0,1,11,0,1,0\nEN\n");
+        }
+        delta.close();
+        planeSettings.setValue(QStringLiteral("files/recentModels"), QStringList{deltaPath});
+        necwb::ui::recentModels::setReopenAtStartup(true);
+        necwb::ui::MainWindow window;
+        window.resize(1400, 900);
+        window.show();
+        application.processEvents();
+        window.reopenLastModel(false);
+        application.processEvents();
+        using Plane = necwb::geometry::ProjectionPlane;
+        auto* planes = dynamic_cast<necwb::ui::GeometryPlanes*>(
+            window.findChild<QSplitter*>(QStringLiteral("geometryPlanes")));
+        auto* deck = window.findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor"));
+        auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("modelTree"));
+        auto* undo = window.findChild<QAction*>(QStringLiteral("undoAction"));
+        if (planes == nullptr || deck == nullptr || tree == nullptr || undo == nullptr)
+            return NECWB_SMOKE_FAILURE("geometry planes controls");
+        const auto widestFirst = planes->mainPlane() == Plane::XZ;
+        QWidget* xyHeader = nullptr;
+        for (auto* header : planes->findChildren<QWidget*>(QStringLiteral("geometryPaneHeader")))
+            for (const auto* label : header->findChildren<QLabel*>())
+                if (label->text() == QStringLiteral("XY Plane")) xyHeader = header;
+        if (xyHeader != nullptr) {
+            QMouseEvent doubleClick(QEvent::MouseButtonDblClick, QPointF(5, 5),
+                xyHeader->mapToGlobal(QPointF(5, 5)), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(xyHeader, &doubleClick);
+        }
+        application.processEvents();
+        const auto fitted = [](necwb::ui::GeometryView* view) {
+            const auto shown = view->grab().toImage();
+            view->fitToView();
+            return shown == view->grab().toImage();
+        };
+        const auto views = planes->views();
+        const auto swapped = planes->mainPlane() == Plane::XY && fitted(views[0]) && fitted(views[1]);
+        auto keptAfterEdit = false;
+
+        // Units: Geometry in feet; the wire form and the Wires table stay in the deck's meters.
+        for (auto* units : window.findChildren<QComboBox*>())
+            if (units->count() == 5 && units->itemText(4) == QStringLiteral("Feet")) units->setCurrentIndex(4);
+        application.processEvents();
+        const auto clickTree = [&](const QString& name) {
+            auto* item = tree->findItems(name, Qt::MatchExactly | Qt::MatchRecursive).value(0);
+            if (item != nullptr) {
+                tree->setCurrentItem(item);
+                emit tree->itemClicked(item, 0);
+            }
+            application.processEvents();
+        };
+        clickTree(QStringLiteral("Wire 1"));
+        auto* x1 = window.findChild<QDoubleSpinBox*>(QStringLiteral("wireCoordinateEditor0"));
+        auto* radiusLabel = window.findChild<QLabel*>(QStringLiteral("wireRadiusLabel"));
+        const auto formInDeckUnits = x1 != nullptr && std::abs(x1->value() + 1.87) < 1.0e-9
+            && radiusLabel != nullptr && radiusLabel->text() == QStringLiteral("Radius m");
+        clickTree(QStringLiteral("Wires"));
+        auto* wireCells = window.findChild<QTableWidget*>(QStringLiteral("wireCardTable"));
+        const auto tableInDeckUnits = wireCells != nullptr
+            && wireCells->horizontalHeaderItem(2)->text() == QStringLiteral("X1 m")
+            && wireCells->toolTip().startsWith(
+                QString::fromUtf8("Right-click a cell → Make Variable…, or type a name in the cell."));
+
+        // Make Variable, from the Wires table and from the wire's own form: the same menu
+        // opens the Make Variable dialog, whose defaults create a new variable for the value.
+        const auto makeVariable = [&](QWidget* target, QPoint position, const QString& expected) {
+            const auto deckBefore = deck->toPlainText();
+            QString dialogTitle;
+            QTimer::singleShot(50, [&dialogTitle] {
+                auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+                if (menu == nullptr) return;
+                for (auto* action : menu->actions())
+                    if (action->text() == QString::fromUtf8("Make Variable…")) {
+                        QTimer::singleShot(100, [&dialogTitle] {
+                            if (auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget())) {
+                                dialogTitle = dialog->windowTitle();
+                                dialog->accept();
+                            }
+                        });
+                        menu->setActiveAction(action);
+                        QTest::keyClick(menu, Qt::Key_Return);
+                    }
+            });
+            emit target->customContextMenuRequested(position);
+            QElapsedTimer made;
+            made.start();
+            while (deck->toPlainText() == deckBefore && made.elapsed() < 2000)
+                application.processEvents(QEventLoop::AllEvents, 50);
+            const auto written = dialogTitle == QStringLiteral("Make Variable")
+                && deck->toPlainText().contains(expected);
+            // Making a variable edits the same model, so the chosen main view stays.
+            keptAfterEdit = planes->mainPlane() == Plane::XY;
+            undo->trigger();
+            application.processEvents();
+            if (!written || deck->toPlainText() != deckBefore)
+                qWarning() << "make variable" << dialogTitle << deck->toPlainText().left(120);
+            return written && deck->toPlainText() == deckBefore;
+        };
+        auto madeVariable = wireCells != nullptr && makeVariable(wireCells,
+            wireCells->visualItemRect(wireCells->item(0, 2)).center(), QStringLiteral("SY gw_x1=1.87"));
+        clickTree(QStringLiteral("Wire 1"));
+        auto* z2 = window.findChild<QDoubleSpinBox*>(QStringLiteral("wireCoordinateEditor5"));
+        madeVariable = madeVariable && z2 != nullptr
+            && makeVariable(z2, z2->rect().center(), QStringLiteral("SY gw_z2=1.87"));
+
+        // Opening a model again picks its widest plane.
+        deck->document()->setModified(false);
+        auto* recentMenu = window.findChild<QMenu*>(QStringLiteral("recentModelsMenu"));
+        QAction* reopenDelta = nullptr;
+        for (auto* action : recentMenu != nullptr ? recentMenu->actions() : QList<QAction*>{})
+            if (action->data().toString() == QFileInfo(deltaPath).absoluteFilePath()) reopenDelta = action;
+        // Opening rebuilds the menu, so the action is triggered after the search.
+        if (reopenDelta != nullptr) reopenDelta->trigger();
+        application.processEvents();
+        const auto choseAgain = planes->mainPlane() == Plane::XZ;
+        for (std::size_t index = 0; index < planeKeys.size(); ++index) {
+            if (savedPlane[index].isValid()) planeSettings.setValue(planeKeys[index], savedPlane[index]);
+            else planeSettings.remove(planeKeys[index]);
+        }
+        if (!widestFirst || !swapped || !keptAfterEdit || !formInDeckUnits || !tableInDeckUnits
+            || !madeVariable || !choseAgain) {
+            qWarning() << "planes/units/variables" << widestFirst << swapped << keptAfterEdit
+                       << formInDeckUnits << (x1 ? x1->value() : 0.0)
+                       << (radiusLabel ? radiusLabel->text() : QString{}) << tableInDeckUnits
+                       << (wireCells ? wireCells->horizontalHeaderItem(2)->text() : QString{})
+                       << madeVariable << choseAgain;
+            return NECWB_SMOKE_FAILURE("geometry planes, deck units and Make Variable");
         }
     }
     // Opening an existing model shows it in the main window without raising the NEC Deck
@@ -3968,7 +4114,7 @@ auto main(int argc, char* argv[]) -> int
     // applies and Esc reverts.
     auto* wirePage = new necwb::ui::WirePropertiesEditor;
     const auto& paneWire = antenna.wires().front();
-    wirePage->setWire(paneWire, antenna, necwb::model::LengthUnit::Meter);
+    wirePage->setWire(paneWire, antenna, 1.0, QStringLiteral("m"));
     auto wireApplications = 0;
     std::optional<necwb::model::Wire> appliedWire;
     wirePage->setAppliedCallback([&](const auto&, const necwb::model::Wire& updated) {
@@ -4021,7 +4167,7 @@ auto main(int argc, char* argv[]) -> int
     necwb::ui::WirePropertiesEditor::LinkedFields linkedFields;
     linkedFields[6] = QStringLiteral("-half");
     preciseEditor.setWire(preciseModel.wires().front(), preciseModel,
-        necwb::model::LengthUnit::Meter, linkedFields);
+        1.0, QStringLiteral("m"), linkedFields);
     std::optional<necwb::model::Wire> preciseApplied;
     preciseEditor.setAppliedCallback(
         [&preciseApplied](const auto&, const necwb::model::Wire& updated) { preciseApplied = updated; });
@@ -4832,7 +4978,7 @@ auto main(int argc, char* argv[]) -> int
         11, gaugeRadius, 1};
     gaugeModel.addWire(gaugeWire);
     necwb::ui::WirePropertiesEditor wireProperties;
-    wireProperties.setWire(gaugeWire, gaugeModel, necwb::model::LengthUnit::Meter);
+    wireProperties.setWire(gaugeWire, gaugeModel, 1.0, QStringLiteral("m"));
     auto* gaugeEditor = wireProperties.findChild<QComboBox*>(QStringLiteral("wireGaugeEditor"));
     const auto gaugeDropdownValid = gaugeEditor != nullptr
         && gaugeEditor->currentData().toInt() == 12;

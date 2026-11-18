@@ -1,7 +1,6 @@
 #pragma once
 
 #include "model/AntennaModel.h"
-#include "model/LengthUnit.h"
 
 #include <QWidget>
 
@@ -28,15 +27,20 @@ public:
 
     explicit WirePropertiesEditor(QWidget* parent = nullptr);
 
+    // Lengths are shown in the deck's own unit: scaleToMeters converts them, unit names it.
     // Linked fields show their expression and cannot be edited here.
     void setWire(const model::Wire& wire, const model::AntennaModel& model,
-        model::LengthUnit lengthUnit, const LinkedFields& linked = {});
+        double scaleToMeters, const QString& unit, const LinkedFields& linked = {});
     // Fields the user did not edit keep the wire's exact values, not the rounded display.
     [[nodiscard]] auto wire() const -> model::Wire;
     [[nodiscard]] auto hasPendingEdits() const noexcept -> bool { return pending_; }
     void discardPendingEdits();
     // Called with the wire as it was and as applied.
     void setAppliedCallback(std::function<void(const model::Wire&, const model::Wire&)> callback);
+    // Right-click a field → Make Variable… or Replace With Current Numeric Value: called with
+    // the wire's deck line, the GW field, its name, and whether to replace the variable.
+    void setVariableCallback(
+        std::function<void(std::size_t, std::size_t, const QString&, bool)> callback);
 
 private:
     void apply();
@@ -48,7 +52,10 @@ private:
 
     model::Wire original_;
     model::AntennaModel model_;
-    model::LengthUnit lengthUnit_{model::LengthUnit::Meter};
+    double scaleToMeters_{1.0};
+    QString unit_;
+    std::array<QLabel*, 3> axisLabels_{};
+    QLabel* radiusLabel_{};
     QLabel* title_{};
     QSpinBox* tagControl_{};
     QSpinBox* segmentsControl_{};
@@ -63,6 +70,7 @@ private:
     std::array<bool, FieldCount> edited_{};
     LinkedFields linked_;
     std::function<void(const model::Wire&, const model::Wire&)> applied_;
+    std::function<void(std::size_t, std::size_t, const QString&, bool)> variable_;
     bool updating_{};
     bool selectingGauge_{};
     bool pending_{};

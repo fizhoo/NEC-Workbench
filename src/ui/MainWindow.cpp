@@ -51,6 +51,7 @@
 #include "ui/geometry/EngineeringSpinBox.h"
 #include "ui/geometry/AutoSegmentationDialog.h"
 #include "ui/geometry/Geometry3DView.h"
+#include "ui/geometry/GeometryPlanes.h"
 #include "ui/geometry/GeometryPreview.h"
 #include "ui/geometry/GeometryView.h"
 #include "ui/geometry/GeometrySettingsDialog.h"
@@ -285,33 +286,6 @@ auto writeAverageGainMetadata(const QString& directory, double frequencyMHz,
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
     const auto contents = QJsonDocument(metadata).toJson(QJsonDocument::Indented);
     return file.write(contents) == contents.size();
-}
-
-auto createGeometryPane(const QString& title, GeometryView* view, QWidget* parent) -> QWidget*
-{
-    auto* pane = new QWidget(parent);
-    auto* layout = new QVBoxLayout(pane);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
-
-    auto* header = new QWidget(pane);
-    auto* headerLayout = new QHBoxLayout(header);
-    headerLayout->setContentsMargins(7, 3, 5, 3);
-    auto* label = new QLabel(title, header);
-    auto font = label->font();
-    font.setBold(true);
-    label->setFont(font);
-    auto* fitButton = new QToolButton(header);
-    fitButton->setText(QObject::tr("Fit"));
-    fitButton->setAutoRaise(true);
-    QObject::connect(fitButton, &QToolButton::clicked, view, &GeometryView::fitToView);
-    headerLayout->addWidget(label);
-    headerLayout->addStretch();
-    headerLayout->addWidget(fitButton);
-
-    layout->addWidget(header);
-    layout->addWidget(view, 1);
-    return pane;
 }
 
 void preserveControlHeights(QWidget* root)
@@ -685,11 +659,7 @@ void MainWindow::createWorkspace()
     geometryToolbar->addWidget(new QLabel(tr("Orthographic Views"), geometryToolbar));
     geometryToolbar->addSeparator();
     geometryToolbar->addAction(fitGeometryAction_);
-    auto* horizontalSplitter = new QSplitter(Qt::Horizontal, geometryPage);
-    auto* verticalSplitter = new QSplitter(Qt::Vertical, horizontalSplitter);
-    xyView_ = new GeometryView(geometry::ProjectionPlane::XY, horizontalSplitter);
-    xzView_ = new GeometryView(geometry::ProjectionPlane::XZ, verticalSplitter);
-    yzView_ = new GeometryView(geometry::ProjectionPlane::YZ, verticalSplitter);
+    geometryPlanes_ = new GeometryPlanes(geometryPage);
     geometryToolbar->addSeparator();
     geometryToolbar->addAction(snapGridAction_);
     geometryToolbar->addAction(snapEndpointsAction_);
@@ -718,16 +688,8 @@ void MainWindow::createWorkspace()
     });
     geometryToolbar->addAction(geometrySettingsAction_);
     applyGeometrySettings(geometrySettings_);
-    horizontalSplitter->addWidget(createGeometryPane(tr("XY Plane"), xyView_, horizontalSplitter));
-    verticalSplitter->addWidget(createGeometryPane(tr("XZ Plane"), xzView_, verticalSplitter));
-    verticalSplitter->addWidget(createGeometryPane(tr("YZ Plane"), yzView_, verticalSplitter));
-    horizontalSplitter->addWidget(verticalSplitter);
-    horizontalSplitter->setStretchFactor(0, 3);
-    horizontalSplitter->setStretchFactor(1, 2);
-    verticalSplitter->setStretchFactor(0, 1);
-    verticalSplitter->setStretchFactor(1, 1);
     geometryLayout->addWidget(geometryToolbar);
-    geometryLayout->addWidget(horizontalSplitter, 1);
+    geometryLayout->addWidget(geometryPlanes_, 1);
     geometryTabIndex_ = workspace_->addTab(geometryPage, tr("2D Geometry"));
     const auto connectAttachments = [this]<typename View>(View* view) {
         connect(view, &View::wireSelected, this,
@@ -794,12 +756,10 @@ void MainWindow::createWorkspace()
         connect(view, &GeometryView::deleteWireRequested, this,
             [this](int tag) { deleteWire(tag); });
     };
-    connectAttachments(xyView_);
-    connectAttachments(xzView_);
-    connectAttachments(yzView_);
-    connectEndpointEditing(xyView_);
-    connectEndpointEditing(xzView_);
-    connectEndpointEditing(yzView_);
+    for (auto* view : geometryPlanes_->views()) {
+        connectAttachments(view);
+        connectEndpointEditing(view);
+    }
     auto* geometry3DPage = new QWidget(workspace_);
     auto* geometry3DLayout = new QVBoxLayout(geometry3DPage);
     geometry3DLayout->setContentsMargins(0, 0, 0, 0);
@@ -872,7 +832,7 @@ void MainWindow::createWorkspace()
         [this](int tag) { deleteWire(tag); });
     connect(wireCardEditor_, &WireCardEditor::fieldParameterizationRequested, this,
         [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
-            makeFieldOptimizable(sourceLine, fieldIndex, fieldLabel);
+            makeFieldVariable(sourceLine, fieldIndex, fieldLabel);
         });
     connect(wireCardEditor_, &WireCardEditor::fieldDetachmentRequested, this,
         [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
@@ -900,7 +860,7 @@ void MainWindow::createWorkspace()
         [this](std::size_t sourceLine) { deleteStructuredCard(sourceLine); });
     connect(cardTables_, &CardTables::fieldParameterizationRequested, this,
         [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
-            makeFieldOptimizable(sourceLine, fieldIndex, fieldLabel);
+            makeFieldVariable(sourceLine, fieldIndex, fieldLabel);
         });
     connect(cardTables_, &CardTables::fieldDetachmentRequested, this,
         [this](std::size_t sourceLine, std::size_t fieldIndex, const QString& fieldLabel) {
@@ -1099,7 +1059,7 @@ void MainWindow::createOptimizationWorkspace()
         selectInModel({ModelNode::Wires});
         cardTables_->focusParameterizableField(CardTables::Table::Wires);
         statusBar()->showMessage(tr(
-            "Right-click a numeric field and choose Parameterize Field or Change Parameter Link."),
+            "Right-click a cell → Make Variable…, or type a name in the cell."),
             6000);
     });
     optimizationWorkspace_->setApplyParameterCallback(
@@ -1271,7 +1231,7 @@ void MainWindow::changeDeckLengthUnit(model::LengthUnit unit)
         QMessageBox::information(this, tr("Symbolic Geometry Units"),
             tr("This GW card uses SY expressions. Workbench recognizes its GS scale, but will not "
                "rewrite symbolic geometry automatically because that could change optimizer meaning. "
-               "Choose deck units before parameterizing the geometry, or update the expressions and GS card together."));
+               "Choose deck units before making variables, or update the expressions and GS card together."));
         checkModel();
         return;
     }
@@ -1342,9 +1302,7 @@ void MainWindow::applyGeometrySettings(const GeometrySettings& settings)
         snapGridAction_->setChecked(geometrySettings_.gridSnapping);
         snapEndpointsAction_->setChecked(geometrySettings_.endpointSnapping);
     }
-    xyView_->setSettings(geometrySettings_);
-    xzView_->setSettings(geometrySettings_);
-    yzView_->setSettings(geometrySettings_);
+    for (auto* view : geometryPlanes_->views()) view->setSettings(geometrySettings_);
     if (geometry3DView_ != nullptr) {
         geometry3DView_->setLengthUnit(geometrySettings_.lengthUnit);
     }
@@ -1833,6 +1791,7 @@ void MainWindow::startModelSession()
 {
     checkModel();
     resetGeometryViews();
+    geometryPlanes_->showMainPlane(geometry::widestPlane(currentModel_));
     modelColumn_->variables()->markBaseline();
 }
 
@@ -2265,6 +2224,11 @@ void MainWindow::createModelColumn()
         [this](const model::Wire& original, const model::Wire& updated) {
             editWire(original, updated);
         });
+    wireEditor_->setVariableCallback(
+        [this](std::size_t sourceLine, std::size_t field, const QString& label, bool detach) {
+            if (detach) detachFieldParameter(sourceLine, field, label);
+            else makeFieldVariable(sourceLine, field, label);
+        });
     modelColumn_->pane()->setDiscardCallback([this](QWidget* page) { discardPendingEdits(page); });
     modelColumn_->pane()->setExpandCallback([this](bool) { fitPaneWidth(); });
     tree->setAddCallback([this](ModelNode group) { addToGroup(group); });
@@ -2446,7 +2410,12 @@ void MainWindow::refreshWireEditor()
             if (!card.empty() && !nec::necCardFieldIsNumeric(card, field))
                 linked[field] = QString::fromStdString(nec::necCardFieldText(card, field));
         }
-        wireEditor_->setWire(*wire, currentModel_, geometrySettings_.lengthUnit, linked);
+        // The deck's own unit for this wire, as the Wires table shows it.
+        const auto scale = deckScaleForSourceLine(wire->sourceLine);
+        const auto unit = nec::standardLengthUnit(scale);
+        wireEditor_->setWire(*wire, currentModel_, scale, unit
+            ? QString::fromLatin1(model::lengthUnitSymbol(*unit).data())
+            : tr("×%1 m").arg(formatDecimal(scale)), linked);
     }
     showPanePage(wireEditor_, tr("Wire %1").arg(wire->tag));
 }
@@ -4152,7 +4121,7 @@ void MainWindow::editStructuredCard(std::size_t sourceLine, const QString& cardT
             QString::fromStdString(*source));
 }
 
-void MainWindow::makeFieldOptimizable(std::size_t sourceLine,
+void MainWindow::makeFieldVariable(std::size_t sourceLine,
     std::size_t fieldIndex, const QString& fieldLabel)
 {
     const auto& cache = activeSource();
@@ -4163,8 +4132,8 @@ void MainWindow::makeFieldOptimizable(std::size_t sourceLine,
     if (fieldIndex >= card.fields.size()) return;
     const auto& resolution = cache.resolution();
     if (!resolution.ok()) {
-        QMessageBox::warning(this, tr("Parameter Error"),
-            tr("Resolve the current symbol error before changing parameter links: %1")
+        QMessageBox::warning(this, tr("Variable Error"),
+            tr("Resolve the current symbol error before changing variables: %1")
                 .arg(QString::fromStdString(resolution.diagnostics.front().message)));
         return;
     }
@@ -4194,20 +4163,20 @@ void MainWindow::makeFieldOptimizable(std::size_t sourceLine,
         suggestion = QStringLiteral("%1_%2").arg(baseName).arg(suffix);
 
     QDialog dialog(this);
-    dialog.setObjectName(QStringLiteral("parameterizeFieldDialog"));
-    dialog.setWindowTitle(tr("Parameterize Field"));
+    dialog.setObjectName(QStringLiteral("makeVariableDialog"));
+    dialog.setWindowTitle(tr("Make Variable"));
     auto* layout = new QVBoxLayout(&dialog);
     auto* form = new QFormLayout;
     auto* fieldValue = new QLabel(tr("%1 → %2").arg(currentExpression, resolvedValue), &dialog);
-    fieldValue->setObjectName(QStringLiteral("parameterizeCurrentValue"));
+    fieldValue->setObjectName(QStringLiteral("makeVariableCurrentValue"));
     auto* mode = new QComboBox(&dialog);
-    mode->setObjectName(QStringLiteral("parameterizeMode"));
-    mode->addItem(tr("Create New Parameter"), 0);
-    if (!resolution.definitions.empty()) mode->addItem(tr("Use Existing Parameter"), 1);
+    mode->setObjectName(QStringLiteral("makeVariableMode"));
+    mode->addItem(tr("Create New Variable"), 0);
+    if (!resolution.definitions.empty()) mode->addItem(tr("Use Existing Variable"), 1);
     auto* newName = new QLineEdit(suggestion, &dialog);
-    newName->setObjectName(QStringLiteral("parameterizeNewName"));
+    newName->setObjectName(QStringLiteral("makeVariableNewName"));
     auto* existing = new QComboBox(&dialog);
-    existing->setObjectName(QStringLiteral("parameterizeExistingSymbol"));
+    existing->setObjectName(QStringLiteral("makeVariableExistingSymbol"));
     for (const auto& definition : resolution.definitions) {
         existing->addItem(tr("%1 = %2")
             .arg(QString::fromStdString(definition.name))
@@ -4228,18 +4197,18 @@ void MainWindow::makeFieldOptimizable(std::size_t sourceLine,
             QString::fromStdString(directSymbol->name)));
     }
     auto* preview = new QLabel(&dialog);
-    preview->setObjectName(QStringLiteral("parameterizePreview"));
+    preview->setObjectName(QStringLiteral("makeVariablePreview"));
     preview->setWordWrap(true);
     form->addRow(tr("Current field"), fieldValue);
     form->addRow(tr("Action"), mode);
-    form->addRow(tr("New parameter name"), newName);
-    form->addRow(tr("Existing parameter"), existing);
+    form->addRow(tr("New variable name"), newName);
+    form->addRow(tr("Existing variable"), existing);
     form->addRow(tr("Preview"), preview);
     auto* newNameLabel = form->labelForField(newName);
     auto* existingLabel = form->labelForField(existing);
     layout->addLayout(form);
     auto* note = new QLabel(tr(
-        "The selected field will reference the parameter. Configure optimization bounds in Optimize."),
+        "The field will use the variable. Set its optimization range in Optimize."),
         &dialog);
     note->setWordWrap(true);
     layout->addWidget(note);
@@ -4287,7 +4256,7 @@ void MainWindow::makeFieldOptimizable(std::size_t sourceLine,
     if (name.isEmpty()) return;
     const QRegularExpression validName(QStringLiteral("^[A-Za-z_][A-Za-z0-9_]*$"));
     if (create && (!validName.match(name).hasMatch() || nameUsed(name))) {
-        QMessageBox::warning(this, tr("Invalid Parameter Name"),
+        QMessageBox::warning(this, tr("Invalid Variable Name"),
             tr("Use a unique name beginning with a letter or underscore, followed only by letters, numbers, or underscores."));
         return;
     }
@@ -4313,13 +4282,13 @@ void MainWindow::makeFieldOptimizable(std::size_t sourceLine,
             : nec::replaceNecCardFieldExpression(
                 source, sourceLine, fieldIndex, existingReference.toStdString());
     if (!updated) {
-        statusBar()->showMessage(tr("The selected field could not be parameterized."), 5000);
+        statusBar()->showMessage(tr("The field could not be made a variable."), 5000);
         return;
     }
     const auto updatedResolution = nec::NecSymbolResolver{}.resolve(*updated);
     if (!updatedResolution.ok()) {
-        QMessageBox::warning(this, tr("Parameter Error"),
-            tr("The parameter could not be created: %1")
+        QMessageBox::warning(this, tr("Variable Error"),
+            tr("The variable could not be created: %1")
                 .arg(QString::fromStdString(updatedResolution.diagnostics.front().message)));
         return;
     }
@@ -4329,13 +4298,13 @@ void MainWindow::makeFieldOptimizable(std::size_t sourceLine,
     const auto geometryIssue = std::ranges::find(
         updatedConversion.issues, updatedSourceLine, &nec::ConversionIssue::lineNumber);
     if (geometryIssue != updatedConversion.issues.end()) {
-        QMessageBox::warning(this, tr("Invalid Parameter Link"),
-            tr("This parameter link would make the geometry invalid: %1")
+        QMessageBox::warning(this, tr("Invalid Variable"),
+            tr("This variable would make the geometry invalid: %1")
                 .arg(QString::fromStdString(geometryIssue->message)));
         return;
     }
     pushGeometrySourceEdit(create
-            ? tr("Parameterize %1 as new %2").arg(fieldLabel, name)
+            ? tr("Make %1 the new variable %2").arg(fieldLabel, name)
             : tr("Link %1 to %2").arg(fieldLabel, existingReference),
         QString::fromStdString(*updated));
     statusBar()->showMessage(create
@@ -4350,7 +4319,7 @@ void MainWindow::detachFieldParameter(std::size_t sourceLine,
     const auto source = std::string(cache.source());
     const auto& resolution = cache.resolution();
     if (!resolution.ok()) {
-        QMessageBox::warning(this, tr("Parameter Error"),
+        QMessageBox::warning(this, tr("Variable Error"),
             tr("Resolve the current symbol error before detaching this field."));
         return;
     }
@@ -4361,7 +4330,7 @@ void MainWindow::detachFieldParameter(std::size_t sourceLine,
     const auto updated = nec::replaceNecCardFieldExpression(
         source, sourceLine, fieldIndex, numericValue);
     if (!updated) return;
-    pushGeometrySourceEdit(tr("Detach parameter from %1").arg(fieldLabel),
+    pushGeometrySourceEdit(tr("Replace variable in %1 with its value").arg(fieldLabel),
         QString::fromStdString(*updated));
     statusBar()->showMessage(tr("Replaced %1 with its current numeric value.").arg(fieldLabel),
         5000);
@@ -4492,7 +4461,8 @@ void MainWindow::showSymbolicGeometryEditBlocked()
 
 auto MainWindow::geometryViews() const -> std::array<GeometryInteractionView*, 4>
 {
-    return {xyView_, xzView_, yzView_, geometry3DView_};
+    const auto& planes = geometryPlanes_->views();
+    return {planes[0], planes[1], planes[2], geometry3DView_};
 }
 
 void MainWindow::resetGeometryViews()

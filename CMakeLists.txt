@@ -192,6 +192,8 @@ if(NECWB_BUILD_GUI)
         src/ui/cards/CardFields.h
         src/ui/cards/CompactNumberDelegate.cpp
         src/ui/cards/CompactNumberDelegate.h
+        src/ui/cards/VariableMenu.cpp
+        src/ui/cards/VariableMenu.h
         src/ui/cards/WireCardEditor.cpp
         src/ui/cards/WireCardEditor.h
         src/ui/cards/StructuredCardEditor.cpp
@@ -210,6 +212,8 @@ if(NECWB_BUILD_GUI)
         src/ui/geometry/GeometryView.h
         src/ui/geometry/GeometryInteractionView.cpp
         src/ui/geometry/GeometryInteractionView.h
+        src/ui/geometry/GeometryPlanes.cpp
+        src/ui/geometry/GeometryPlanes.h
         src/ui/geometry/GeometryPreview.cpp
         src/ui/geometry/GeometryPreview.h
         src/ui/geometry/GeometrySettings.h

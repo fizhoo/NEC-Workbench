@@ -45,7 +45,7 @@ signals:
         std::size_t fieldIndex, QString fieldLabel);
     void fieldDetachmentRequested(std::size_t sourceLine,
         std::size_t fieldIndex, QString fieldLabel);
-    // Text that is not a plain number typed into a coordinate or radius, or anything typed
+    // Text that is not a plain number typed into segments, a coordinate or radius, or anything typed
     // over an expression; `below` is the bottom left of the cell on screen.
     void fieldExpressionEntered(std::size_t sourceLine, std::size_t fieldIndex,
         QString fieldLabel, QString expression, QPoint below);

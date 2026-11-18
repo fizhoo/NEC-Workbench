@@ -3,6 +3,7 @@
 #include "ui/DisplayFormat.h"
 #include "ui/ParameterFieldStyle.h"
 #include "ui/cards/CompactNumberDelegate.h"
+#include "ui/cards/VariableMenu.h"
 
 #include "model/WireGauge.h"
 
@@ -10,7 +11,6 @@
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QComboBox>
-#include <QMenu>
 #include <QPalette>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -105,7 +105,7 @@ WireCardEditor::WireCardEditor(QWidget* parent)
     connect(table_, &QTableWidget::customContextMenuRequested, this,
         [this](const QPoint& position) {
             auto* item = table_->itemAt(position);
-            if (item == nullptr || item->column() < X1 || item->column() > Radius) return;
+            if (item == nullptr || item->column() < Segments || item->column() > Radius) return;
             const auto* wire = model_.wireByTag(
                 table_->item(item->row(), Tag)->data(WireTagRole).toInt());
             if (wire == nullptr) return;
@@ -113,19 +113,16 @@ WireCardEditor::WireCardEditor(QWidget* parent)
             const auto parameterControlled = parameterLine != parameterControlledFields_.end()
                 && parameterLine->second.contains(static_cast<std::size_t>(item->column()));
             if (!parameterControlled && !(item->flags() & Qt::ItemIsEditable)) return;
-            QMenu menu(this);
-            auto* parameterize = menu.addAction(parameterControlled
-                ? tr("Change Parameter Link…") : tr("Parameterize Field…"));
-            auto* detach = parameterControlled
-                ? menu.addAction(tr("Replace With Current Numeric Value")) : nullptr;
-            const auto* selected = menu.exec(table_->viewport()->mapToGlobal(position));
-            const auto label = table_->horizontalHeaderItem(item->column())->text();
-            if (selected == parameterize) {
-                emit fieldParameterizationRequested(wire->sourceLine,
-                    static_cast<std::size_t>(item->column()), label);
-            } else if (selected == detach) {
-                emit fieldDetachmentRequested(wire->sourceLine,
-                    static_cast<std::size_t>(item->column()), label);
+            const auto field = static_cast<std::size_t>(item->column());
+            const auto label = wireFieldName(field);
+            switch (execVariableMenu(this, table_->viewport()->mapToGlobal(position), parameterControlled)) {
+            case VariableChoice::Make:
+                emit fieldParameterizationRequested(wire->sourceLine, field, label);
+                break;
+            case VariableChoice::Detach:
+                emit fieldDetachmentRequested(wire->sourceLine, field, label);
+                break;
+            case VariableChoice::None: break;
             }
         });
     updateUnitLabels();
@@ -297,13 +294,12 @@ void WireCardEditor::updateActionStates()
 
 void WireCardEditor::updateUnitLabels()
 {
-    table_->setHorizontalHeaderLabels({tr("Tag"), tr("Segments"), tr("X1 (%1)").arg(unitLabel_),
-        tr("Y1 (%1)").arg(unitLabel_), tr("Z1 (%1)").arg(unitLabel_),
-        tr("X2 (%1)").arg(unitLabel_), tr("Y2 (%1)").arg(unitLabel_),
-        tr("Z2 (%1)").arg(unitLabel_), tr("Radius (%1)").arg(unitLabel_), tr("Wire Gauge")});
-    table_->setToolTip(tr("Double-click a cell to edit it. Type a name such as len, or len/2, "
-        "to make it a variable. Values use the NEC deck geometry unit (%1); GS converts them "
-        "to meters for the solver.")
+    table_->setHorizontalHeaderLabels({tr("Tag"), tr("Segments"), tr("X1 %1").arg(unitLabel_),
+        tr("Y1 %1").arg(unitLabel_), tr("Z1 %1").arg(unitLabel_),
+        tr("X2 %1").arg(unitLabel_), tr("Y2 %1").arg(unitLabel_),
+        tr("Z2 %1").arg(unitLabel_), tr("Radius %1").arg(unitLabel_), tr("Wire Gauge")});
+    table_->setToolTip(tr("Right-click a cell → Make Variable…, or type a name in the cell.\n"
+        "Values use the NEC deck geometry unit (%1); GS converts them to meters for the solver.")
             .arg(unitLabel_));
 }
 
@@ -335,7 +331,7 @@ void WireCardEditor::validateAndCommitRow(int row, int changedColumn)
     const auto written = changedItem->data(CellExpressionRole).toString();
     auto plainNumber = false;
     static_cast<void>(typed.toDouble(&plainNumber));
-    if (changedColumn >= X1 && changedColumn <= Radius && (!written.isEmpty() || !plainNumber)) {
+    if (changedColumn >= Segments && changedColumn <= Radius && (!written.isEmpty() || !plainNumber)) {
         const auto below = table_->viewport()->mapToGlobal(
             table_->visualItemRect(changedItem).bottomLeft());
         const auto label = table_->horizontalHeaderItem(changedColumn)->text();
