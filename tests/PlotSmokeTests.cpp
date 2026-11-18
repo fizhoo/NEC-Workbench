@@ -1235,6 +1235,7 @@ auto main(int argc, char* argv[]) -> int
             application.processEvents();
             auto* deck = mainWindow.findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor"));
             auto* tree = mainWindow.findChild<QTreeWidget*>(QStringLiteral("modelTree"));
+            const auto openedTreeHeight = tree == nullptr ? 0 : tree->height();
             auto* bottomTabs = mainWindow.findChild<QTabBar*>(QStringLiteral("bottomPanelTabs"));
             auto* split = mainWindow.findChild<QSplitter*>(QStringLiteral("workbenchSplit"));
             auto* loads = mainWindow.findChild<QWidget*>(QStringLiteral("cardsLD"));
@@ -1457,6 +1458,57 @@ auto main(int argc, char* argv[]) -> int
                 const auto cancelled = typeName(0, 4, QStringLiteral("w"), false) == QStringLiteral("0")
                     && text() == deckBefore && wireCells->item(0, 4)->text() == QStringLiteral("0");
                 const auto namesTyped = created && cancelled;
+                // In the narrow column a new name's box, Create too, stays inside the table.
+                selectGroup(QStringLiteral("Sources"));
+                auto realColumn = -1;
+                for (auto column = 0; column < sourceTable->columnCount(); ++column)
+                    if (sourceTable->horizontalHeaderItem(column)->text() == QStringLiteral("Real V")) realColumn = column;
+                QRect boxShown, createShown, viewportShown;
+                auto boxPastCell = false;
+                if (realColumn >= 0) {
+                    sourceTable->scrollToItem(sourceTable->item(0, realColumn));
+                    viewportShown = QRect(sourceTable->viewport()->mapToGlobal(QPoint(0, 0)),
+                        sourceTable->viewport()->size());
+                    const auto cellLeft = sourceTable->viewport()->mapToGlobal(
+                        sourceTable->visualItemRect(sourceTable->item(0, realColumn)).topLeft()).x();
+                    QTimer::singleShot(100, [&] {
+                        auto* box = qobject_cast<QDialog*>(QApplication::activePopupWidget());
+                        if (box == nullptr) return;
+                        auto* create = box->findChild<QPushButton*>(QStringLiteral("symbolCreate"));
+                        boxShown = box->frameGeometry();
+                        createShown = QRect(create->mapToGlobal(QPoint(0, 0)), create->size());
+                        boxPastCell = cellLeft + box->width() > viewportShown.right();
+                        box->reject();
+                    });
+                    sourceTable->item(0, realColumn)->setText(QStringLiteral("newname/2"));
+                    application.processEvents();
+                }
+                const auto boxInside = !boxShown.isEmpty() && viewportShown.contains(boxShown)
+                    && viewportShown.contains(createShown) && !text().contains(QStringLiteral("newname"));
+                if (!boxInside || !boxPastCell)
+                    qWarning() << "symbol box" << boxShown << createShown << viewportShown << boxPastCell;
+                // Clicking rows in Wires and Sources selects their items in the tree, which keeps
+                // the height it opened with, and the table stays where it was.
+                const auto clickRows = [&](QTableWidget* table) {
+                    const auto at = table->mapTo(&mainWindow, QPoint(0, 0));
+                    auto still = true;
+                    for (auto row = 0; row < table->rowCount(); ++row) {
+                        QTest::mouseClick(table->viewport(), Qt::LeftButton, {},
+                            table->visualItemRect(table->item(row, 0)).center());
+                        application.processEvents();
+                        still = still && table->isVisible() && table->mapTo(&mainWindow, QPoint(0, 0)) == at
+                            && tree->height() == openedTreeHeight && tree->currentItem() != nullptr
+                            && tree->currentItem()->parent() != nullptr;
+                    }
+                    return still;
+                };
+                selectGroup(QStringLiteral("Wires"));
+                const auto wiresStill = clickRows(wireCells);
+                selectGroup(QStringLiteral("Sources"));
+                const auto sourcesStill = clickRows(sourceTable);
+                const auto treeKeepsHeight = wiresStill && sourcesStill && openedTreeHeight > 0;
+                if (!treeKeepsHeight) qWarning() << "tree height" << wiresStill << sourcesStill << openedTreeHeight << tree->height();
+                selectGroup(QStringLiteral("Wires"));
                 // A wire picked in the table is selected in the tree; clicking it there opens it.
                 wireCells->selectRow(0);
                 application.processEvents();
@@ -1481,7 +1533,8 @@ auto main(int argc, char* argv[]) -> int
                 cardTables = bottomPanelPlain && groupShows && widened && narrowedAgain && pageWidening
                     && familyRefits && treeAddOpensForm
                     && symbolsKept && loadSymbols && rowSelects && lineOpensForm && geometrySelects
-                    && tableAddsPlaced && loadAdded && linePicked && namesTyped && wireOpened && folded && unfolded;
+                    && tableAddsPlaced && loadAdded && linePicked && namesTyped && boxInside && boxPastCell
+                    && treeKeepsHeight && wireOpened && folded && unfolded;
                 if (!cardTables) {
                     qWarning() << "card tables" << bottomPanelPlain << groupShows << widened << pageWidening
                                << familyRefits << treeAddOpensForm
@@ -4130,9 +4183,11 @@ auto main(int argc, char* argv[]) -> int
     }
     const auto studyRunButtons = treeAverageGainTriggered && treeConvergenceTriggered;
     // A row picked by the user is reported; one picked by the window is not.
-    const auto collapsedHeight = modelTree->sizeHint().height();
+    const auto fittedHeight = modelTree->height();
     group(QStringLiteral("Wires"))->setExpanded(true);
-    const auto treeGrowsWithRows = modelTree->sizeHint().height() > collapsedHeight;
+    application.processEvents();
+    const auto treeKeepsHeight = fittedHeight > 0 && fittedHeight <= modelTree->topLevelHeight()
+        && modelTree->height() == fittedHeight;
     modelTree->setCurrentItem(group(QStringLiteral("Wires"))->child(0));
     const auto wireReported = !reportedSelections.empty()
         && reportedSelections.back() == ModelSelection{ModelNode::Wire, 1};
@@ -4358,7 +4413,7 @@ auto main(int argc, char* argv[]) -> int
         std::pair{"summaries", modelTreeSummaries}, std::pair{"studies", studiesShown},
         std::pair{"long study keeps width", longStudyKeepsWidth},
         std::pair{"study cleared", studyCleared}, std::pair{"study run buttons", studyRunButtons},
-        std::pair{"tree grows with rows", treeGrowsWithRows}, std::pair{"wire reported", wireReported},
+        std::pair{"tree keeps height", treeKeepsHeight}, std::pair{"wire reported", wireReported},
         std::pair{"selection held", selectionHeld},
         std::pair{"window selection quiet", windowSelectionQuiet},
         std::pair{"selection survives rebuild", selectionSurvivesRebuild},
@@ -4973,12 +5028,12 @@ auto main(int argc, char* argv[]) -> int
     necwb::ui::WireCardEditor symbolicWireEditor;
     symbolicWireEditor.setSymbolicGeometryFields({{1, {{3, "height"}, {4, "2*3"}}}});
     symbolicWireEditor.setSymbols({{"height", "10", 10.0, 1}, {"len", "4", 4.0, 1},
-        {"dlen", "0.1", 0.1, 1}, {"rlen", "4.2", 4.2, 1}});
+        {"dlen", "0.1", 0.1, 1}, {"rlen", "4.123456789012", 4.123456789012, 1}});
     symbolicWireEditor.setModel(wireModel);
     std::vector<std::pair<std::size_t, QString>> expressionsEntered;
     auto symbolicWireEdited = false;
     QObject::connect(symbolicWireEditor.symbolCells(), &necwb::ui::SymbolCells::fieldExpressionEntered,
-        [&](std::size_t, std::size_t field, const QString&, const QString& expression, QPoint) {
+        [&](std::size_t, std::size_t field, const QString&, const QString& expression, necwb::ui::PromptPlace) {
             expressionsEntered.emplace_back(field, expression);
         });
     QObject::connect(&symbolicWireEditor, &necwb::ui::WireCardEditor::wireEdited,
@@ -5014,6 +5069,12 @@ auto main(int argc, char* argv[]) -> int
             QTest::keyClicks(cellEditor, QStringLiteral("LEN"));
             const auto midName = offered() == QStringList{QStringLiteral("len"), QStringLiteral("dlen"),
                 QStringLiteral("rlen")};
+            // The list is as wide as its longest "name = value", past the narrower cell.
+            const auto* popup = completer->popup();
+            const auto longest = popup->fontMetrics().horizontalAdvance(QStringLiteral("rlen = 4.123456789012"));
+            const auto popupWide = popup->isVisible() && popup->width() >= longest
+                && longest > cellEditor->width();
+            if (!popupWide) qWarning() << "completer width" << popup->isVisible() << popup->width() << longest << cellEditor->width();
             cellEditor->setText(QStringLiteral("len/"));
             QTest::keyClicks(cellEditor, QStringLiteral("h"));
             const auto wordOnly = completer->completionPrefix() == QStringLiteral("h")
@@ -5023,7 +5084,7 @@ auto main(int argc, char* argv[]) -> int
             if (!midName || !wordOnly || !wordReplaced)
                 qWarning() << "symbol completer" << midName << wordOnly << wordReplaced << offered()
                            << cellEditor->text();
-            symbolicCoordinatesLocked = symbolicCoordinatesLocked && midName && wordOnly && wordReplaced;
+            symbolicCoordinatesLocked = symbolicCoordinatesLocked && midName && popupWide && wordOnly && wordReplaced;
             cellEditor->setText(QStringLiteral("height"));
         }
         symbolicWireTable->closePersistentEditor(heightCell);

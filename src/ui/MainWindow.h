@@ -263,8 +263,9 @@ private:
     // The 2D views and the 3D view.
     [[nodiscard]] auto geometryViews() const -> std::array<GeometryInteractionView*, 4>;
     void refreshGeometryViews();
-    // Fits the views to the model and clears their selection, for a model just opened.
-    void resetGeometryViews();
+    // Fits the geometry views to the model, clearing their selection, and the tree to its
+    // rows, for a model just opened, created or reloaded.
+    void resetModelViews();
     void revertToSaved();
     // Solves the model at one frequency for the results column, when Live is on and nothing
     // else is running: the selected frequency, or the band centre before any run.

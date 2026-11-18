@@ -7,9 +7,11 @@
 #include <QDialog>
 #include <QDoubleValidator>
 #include <QFormLayout>
+#include <QGuiApplication>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QScreen>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -18,8 +20,20 @@
 namespace necwb::ui {
 namespace {
 
+// Under the cell, shifted left to stay inside the area, or at its left edge when wider; above
+// the cell when there is no room below; always on the screen.
+auto placeBox(QSize size, const PromptPlace& place, const QRect& screen) -> QPoint
+{
+    auto x = std::max(std::min(place.cell.left(), place.area.right() + 1 - size.width()), place.area.left());
+    auto y = place.cell.bottom() + 1;
+    if (y + size.height() > screen.bottom() + 1) y = place.cell.top() - size.height();
+    x = std::clamp(x, screen.left(), std::max(screen.left(), screen.right() + 1 - size.width()));
+    y = std::clamp(y, screen.top(), std::max(screen.top(), screen.bottom() + 1 - size.height()));
+    return {x, y};
+}
+
 // The box under the cell: one value per new name, Create (Enter) or Esc.
-auto askValues(QWidget* parent, QPoint below, const std::vector<std::string>& names,
+auto askValues(QWidget* parent, const PromptPlace& place, const std::vector<std::string>& names,
     const std::vector<QString>& guesses) -> std::optional<std::vector<QString>>
 {
     QDialog box(parent, Qt::Popup);
@@ -53,7 +67,13 @@ auto askValues(QWidget* parent, QPoint below, const std::vector<std::string>& na
     for (auto* value : values) QObject::connect(value, &QLineEdit::textChanged, &box, update);
     QObject::connect(create, &QPushButton::clicked, &box, &QDialog::accept);
     update();
-    box.move(below);
+    const auto* screen = QGuiApplication::screenAt(place.cell.center());
+    const auto available = (screen != nullptr ? screen : box.screen())->availableGeometry();
+    box.adjustSize();
+    box.move(placeBox(box.size(), place, available));
+    // Placed again once shown, when its frame, if the platform gives popups one, is known.
+    box.show();
+    box.move(placeBox(box.frameGeometry().size(), place, available));
     values.front()->selectAll();
     values.front()->setFocus();
     if (box.exec() != QDialog::Accepted) return std::nullopt;
@@ -64,7 +84,7 @@ auto askValues(QWidget* parent, QPoint below, const std::vector<std::string>& na
 
 }
 
-auto enterFieldExpression(QWidget* parent, QPoint below, std::string_view source,
+auto enterFieldExpression(QWidget* parent, const PromptPlace& place, std::string_view source,
     std::size_t sourceLine, std::size_t fieldIndex, const QString& expression) -> FieldExpressionEdit
 {
     const auto text = expression.trimmed().toStdString();
@@ -91,7 +111,7 @@ auto enterFieldExpression(QWidget* parent, QPoint below, std::string_view source
                 : std::nullopt;
             if (guess) guesses.front() = QString::number(*guess, 'g', 12);
         }
-        const auto values = askValues(parent, below, names, guesses);
+        const auto values = askValues(parent, place, names, guesses);
         if (!values) return {};
         for (std::size_t index = 0; index < names.size(); ++index)
             updated = nec::insertSymbolDefinition(*updated, names[index], (*values)[index].toStdString());

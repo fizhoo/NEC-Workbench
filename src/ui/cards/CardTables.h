@@ -2,9 +2,9 @@
 
 #include "nec/NecSymbolResolver.h"
 #include "nec/NecDocument.h"
+#include "ui/cards/SymbolPrompt.h"
 
 #include <QObject>
-#include <QPoint>
 
 #include <array>
 #include <optional>
@@ -62,7 +62,7 @@ signals:
         std::size_t fieldIndex, QString fieldLabel);
     // A name or expression typed into a number cell; `below` is under the cell on screen.
     void fieldExpressionEntered(std::size_t sourceLine, std::size_t fieldIndex,
-        QString fieldLabel, QString expression, QPoint below);
+        QString fieldLabel, QString expression, PromptPlace place);
 
 private:
 

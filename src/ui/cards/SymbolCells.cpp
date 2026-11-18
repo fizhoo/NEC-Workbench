@@ -7,9 +7,12 @@
 #include <QAbstractItemView>
 #include <QCompleter>
 #include <QLineEdit>
+#include <QScrollBar>
 #include <QStandardItemModel>
 #include <QTableWidget>
 #include <QTimer>
+
+#include <algorithm>
 
 namespace necwb::ui {
 namespace {
@@ -29,6 +32,16 @@ auto wordAt(const QString& text, int cursor) -> std::pair<int, int>
     // A number such as 1e3 is not a name.
     if (begin < end && text[begin].isDigit()) return {cursor, 0};
     return {begin, end - begin};
+}
+
+// Under the editor, as wide as the longest "name = value" offered or the cell if wider; the
+// completer keeps it on the screen.
+auto popupRect(const QCompleter& completer, const QLineEdit& editor) -> QRect
+{
+    const auto* popup = completer.popup();
+    const auto width = popup->sizeHintForColumn(0) + 2 * popup->frameWidth()
+        + popup->verticalScrollBar()->sizeHint().width();
+    return {0, 0, std::max(editor.width(), width), editor.height()};
 }
 
 }
@@ -77,7 +90,7 @@ void SymbolCells::offerSymbols(QLineEdit* editor) const
         }
         completer->setCompletionPrefix(editor->text().mid(begin, length));
         if (completer->completionCount() == 0) completer->popup()->hide();
-        else completer->complete();
+        else completer->complete(popupRect(*completer, *editor));
     });
     connect(completer, qOverload<const QString&>(&QCompleter::activated), editor,
         [editor](const QString& name) {
@@ -94,11 +107,14 @@ auto SymbolCells::takeExpressionEdit(QTableWidgetItem* item, std::function<void(
     const auto typed = item->text().trimmed();
     const auto written = item->data(CellExpressionRole).toString();
     if (written.isEmpty() && parsesAs<double>(typed)) return false;
-    const auto below = table_->viewport()->mapToGlobal(table_->visualItemRect(item).bottomLeft());
-    QTimer::singleShot(0, this, [this, field = *field, typed, written, below,
+    const auto* viewport = table_->viewport();
+    const PromptPlace place{
+        QRect(viewport->mapToGlobal(table_->visualItemRect(item).topLeft()), table_->visualItemRect(item).size()),
+        QRect(viewport->mapToGlobal(QPoint(0, 0)), viewport->size())};
+    QTimer::singleShot(0, this, [this, field = *field, typed, written, place,
                                     restore = std::move(restore)] {
         if (typed != written && !typed.isEmpty())
-            emit fieldExpressionEntered(field.sourceLine, field.fieldIndex, field.label, typed, below);
+            emit fieldExpressionEntered(field.sourceLine, field.fieldIndex, field.label, typed, place);
         restore();
     });
     return true;

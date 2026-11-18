@@ -163,9 +163,6 @@ ModelTree::ModelTree(QWidget* parent) : QTreeWidget(parent)
     };
     connect(this, &QTreeWidget::itemClicked, this, activate);
     connect(this, &QTreeWidget::itemActivated, this, activate);
-    // The column gives the tree as many rows as are showing.
-    connect(this, &QTreeWidget::itemExpanded, this, [this] { updateGeometry(); });
-    connect(this, &QTreeWidget::itemCollapsed, this, [this] { updateGeometry(); });
 }
 
 auto ModelTree::addGroup(ModelNode node, const QString& name, const char* icon)
@@ -344,7 +341,6 @@ void ModelTree::setModel(const model::AntennaModel& model, const model::ModelSet
     setCurrentItem(restored);
     if (restored == nullptr) clearSelection();
     selecting_ = false;
-    updateGeometry();
 }
 
 void ModelTree::setStudyAction(Study study, QAction* action)
@@ -444,16 +440,10 @@ void ModelTree::showAddMenu(const QPoint& position)
     menu.exec(viewport()->mapToGlobal(position));
 }
 
-auto ModelTree::sizeHint() const -> QSize
+auto ModelTree::topLevelHeight() const -> int
 {
-    // As tall as the visible rows, so the properties pane gets the rest of the column.
-    auto rows = 0;
-    for (QTreeWidgetItemIterator it(const_cast<ModelTree*>(this)); *it != nullptr; ++it) {
-        const auto* parent = (*it)->parent();
-        if (parent == nullptr || parent->isExpanded()) ++rows;
-    }
     const auto rowHeight = std::max(sizeHintForRow(0), fontMetrics().height() + 4);
-    return {QTreeWidget::sizeHint().width(), rows * rowHeight + 2 * frameWidth() + 2};
+    return topLevelItemCount() * rowHeight + 2 * frameWidth() + 2;
 }
 
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "nec/NecSymbolResolver.h"
+#include "ui/cards/SymbolPrompt.h"
 
 #include <QList>
 #include <QObject>
@@ -62,9 +63,9 @@ signals:
         std::size_t fieldIndex, QString fieldLabel);
     void fieldDetachmentRequested(std::size_t sourceLine,
         std::size_t fieldIndex, QString fieldLabel);
-    // `below` is the bottom left of the cell on screen, where a new name's value is asked.
+    // `place` is the cell and the table on screen, where a new name's value is asked.
     void fieldExpressionEntered(std::size_t sourceLine, std::size_t fieldIndex,
-        QString fieldLabel, QString expression, QPoint below);
+        QString fieldLabel, QString expression, PromptPlace place);
 
 private:
     void showMenu(QPoint position);

@@ -120,9 +120,10 @@ geometry selects the item and moves the keyboard into the properties pane.
 
 The properties pane holds one item at a time: a wire's tag, segments, endpoints, and size;
 one source, load, transmission line, or network as a short form; a setup page; and
-the Parameters table for **Variables**. The tree takes the rows it shows, up to about
-40% of the column, and the variables up to about 25%; each scrolls beyond that, and the
-pane takes the rest.
+the Parameters table for **Variables**. The tree is as tall as its groups, up to about
+40% of the column, and keeps that height while you expand groups or select items, so the
+pane below never moves; the variables take up to about 25%. Each scrolls beyond that, and
+the pane takes the rest.
 
 Selecting the **Wires**, **Sources**, **Loads**, **Trans. lines**, **Networks**, or
 **Other** group shows that group's card table in the pane and folds the variables while it

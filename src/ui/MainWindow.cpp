@@ -831,8 +831,8 @@ void MainWindow::createWorkspace()
     connect(wireCardEditor_, &WireCardEditor::deleteWireRequested, this,
         [this](int tag) { deleteWire(tag); });
     connect(cardTables_, &CardTables::fieldExpressionEntered, this,
-        [this](std::size_t line, std::size_t field, const QString& label, const QString& expression, QPoint below) {
-            const auto edit = enterFieldExpression(this, below, activeSource().source(), line, field, expression);
+        [this](std::size_t line, std::size_t field, const QString& label, const QString& expression, PromptPlace place) {
+            const auto edit = enterFieldExpression(this, place, activeSource().source(), line, field, expression);
             if (!edit.error.isEmpty()) QMessageBox::warning(this, tr("Invalid Expression"), edit.error);
             if (edit.source) pushGeometrySourceEdit(tr("Set %1 to %2").arg(label, expression), QString::fromStdString(*edit.source));
         });
@@ -1782,7 +1782,7 @@ void MainWindow::startLiveSolve(std::optional<double> frequencyMHz)
 void MainWindow::startModelSession()
 {
     checkModel();
-    resetGeometryViews();
+    resetModelViews();
     geometryPlanes_->showMainPlane(geometry::widestPlane(currentModel_));
     modelColumn_->variables()->markBaseline();
 }
@@ -1806,7 +1806,7 @@ void MainWindow::revertToSaved()
     editor_->document()->setModified(false);
     // Reset still goes back to the model as opened.
     checkModel();
-    resetGeometryViews();
+    resetModelViews();
     statusBar()->showMessage(tr("Reverted to %1").arg(QFileInfo(currentFile_).fileName()), 3000);
 }
 
@@ -2016,7 +2016,7 @@ void MainWindow::checkModel(bool presentReport)
     editor_->setDiagnostics(result.diagnostics);
     updateDeckUnitControls(deckUnitInfo);
     updateWireCardEditor();
-    // Edits keep the zoom; opening a model fits it (resetGeometryViews).
+    // Edits keep the zoom; opening a model fits it (resetModelViews).
     const auto sharedSegments = model::describeSharedSegments(currentModel_, currentSetup_);
     for (auto* view : geometryViews()) {
         view->updateModel(currentModel_);
@@ -4450,9 +4450,10 @@ auto MainWindow::geometryViews() const -> std::array<GeometryInteractionView*, 4
     return {planes[0], planes[1], planes[2], geometry3DView_};
 }
 
-void MainWindow::resetGeometryViews()
+void MainWindow::resetModelViews()
 {
     for (auto* view : geometryViews()) view->setModel(currentModel_);
+    modelColumn_->fitTree();
 }
 
 void MainWindow::refreshGeometryViews()
