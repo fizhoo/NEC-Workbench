@@ -1647,8 +1647,9 @@ void testProjectionBoundsAndDistance()
         loop.addWire({2, {1.87, 0.0, -1.87}, {1.87, 0.0, 1.87}, 21, 0.001, 2});
         loop.addWire({3, {1.87, 0.0, 1.87}, {-1.87, 0.0, 1.87}, 21, 0.001, 3});
         necwb::model::AntennaModel yagi;
-        for (auto element = 0; element < 3; ++element)
-            yagi.addWire({element + 1, {element * 1.5, -5.0, 10.0}, {element * 1.5, 5.0, 10.0}, 21, 0.001, element + 1});
+        yagi.addWire({1, {0.0, -5.0, 10.0}, {0.0, 5.0, 10.0}, 21, 0.001, 1});
+        yagi.addWire({2, {1.5, -5.0, 10.0}, {1.5, 5.0, 10.0}, 21, 0.001, 2});
+        yagi.addWire({3, {3.0, -5.0, 10.0}, {3.0, 5.0, 10.0}, 21, 0.001, 3});
         necwb::model::AntennaModel vertical;
         vertical.addWire({1, {0.0, 0.0, 0.0}, {0.0, 0.0, 10.0}, 21, 0.001, 1});
         expect(necwb::geometry::widestPlane(loop) == ProjectionPlane::XZ
