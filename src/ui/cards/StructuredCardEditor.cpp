@@ -5,6 +5,7 @@
 #include "ui/cards/CardFields.h"
 #include "ui/cards/CompactNumberDelegate.h"
 #include "ui/cards/SymbolCells.h"
+#include "ui/ElidedLabel.h"
 
 #include <QAbstractItemView>
 #include <QApplication>
@@ -29,6 +30,8 @@
 
 #include <algorithm>
 #include <array>
+#include <complex>
+#include <numbers>
 #include <limits>
 
 namespace necwb::ui {
@@ -198,8 +201,13 @@ auto requiredFieldCount(const QString& mnemonic, const QStringList& fields) -> i
     if (mnemonic == QStringLiteral("GS")) return 3;
     if (mnemonic == QStringLiteral("GE") || mnemonic == QStringLiteral("XQ")) return 1;
     if (mnemonic == QStringLiteral("Z0") || mnemonic == QStringLiteral("ZO")) return 1;
-    if (mnemonic == QStringLiteral("LD")) return 7;
-    if (mnemonic == QStringLiteral("TL")) return 10;
+    // A load needs the fields its type uses (LD -1 clears the loads); a line, its ports,
+    // Z0 and length, the shunt admittances defaulting to zero.
+    if (mnemonic == QStringLiteral("LD")) {
+        const auto type = fields.empty() ? 0 : fields.front().toInt();
+        return type < 0 ? 1 : cardFieldCount(mnemonic, type);
+    }
+    if (mnemonic == QStringLiteral("TL")) return 6;
     if (mnemonic == QStringLiteral("RP")) return 8;
     if (mnemonic == QStringLiteral("GN")) {
         const auto type = fields.empty() ? -1 : fields.front().toInt();
@@ -426,8 +434,14 @@ StructuredCardEditor::StructuredCardEditor(Families families, QWidget* parent)
     splitter->addWidget(families_);
     splitter->addWidget(table_);
     splitter->setStretchFactor(1, 1);
+    // What the selected card does: a source's volts, and the segments it shares.
+    note_ = new ElidedLabel(this);
+    note_->setObjectName(QStringLiteral("cardRowNote"));
+    note_->setMinimumHeight(note_->fontMetrics().lineSpacing());
+    note_->setContentsMargins(4, 0, 4, 0);
     layout->addLayout(actions);
     layout->addWidget(splitter, 1);
+    layout->addWidget(note_);
     const auto single = !shown_.exclude && shown_.names.size() == 1;
     families_->setVisible(!single);
 
@@ -441,15 +455,10 @@ StructuredCardEditor::StructuredCardEditor(Families families, QWidget* parent)
             refreshTable();
         });
     connect(table_, &QTableWidget::itemSelectionChanged, this, [this] {
-        if (updating_ || table_->currentRow() < 0) return;
-        emit cardSelected(table_->item(table_->currentRow(), 0)->data(SourceLineRole).toULongLong());
+        showSelectedCard();
+        if (updating_ || selectedCard() == nullptr) return;
+        emit cardSelected(selectedCard()->lineNumber);
         updateActions();
-    });
-    // Editable cells take a double-click for editing; the read-only Line cell and Enter
-    // activate the row.
-    connect(table_, &QTableWidget::itemActivated, this, [this](QTableWidgetItem* item) {
-        if (const auto* line = table_->item(item->row(), 0))
-            emit cardActivated(line->data(SourceLineRole).toULongLong());
     });
     connect(table_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
         if (!updating_) commitCell(item);
@@ -486,6 +495,60 @@ void StructuredCardEditor::setDeckUnitLabel(QString unitLabel)
 void StructuredCardEditor::setSymbols(const std::vector<nec::SymbolDefinition>& symbols)
 {
     symbolCells_->setSymbols(symbols);
+}
+
+void StructuredCardEditor::setSharedSegments(std::vector<model::SharedSegment> shared)
+{
+    shared_ = std::move(shared);
+    showSelectedCard();
+}
+
+auto StructuredCardEditor::selectedCard() const -> const nec::NecCard*
+{
+    const auto row = table_->currentRow();
+    if (row < 0 || table_->selectedItems().empty() || table_->item(row, 0) == nullptr) return nullptr;
+    const auto index = table_->item(row, 0)->data(CardIndexRole).toULongLong();
+    return index < document_.cards().size() ? &document_.cards()[index] : nullptr;
+}
+
+void StructuredCardEditor::showSelectedCard()
+{
+    const auto* card = selectedCard();
+    // A source's or load's fields mean what its type says: a type 5 load's R Ω is σ S/m.
+    const auto mnemonic = card == nullptr ? QString{} : QString::fromStdString(card->mnemonic);
+    const auto type = card == nullptr || card->fields.empty() ? 0
+        : QString::fromStdString(card->fields.front()).toInt();
+    const auto usual = cardFieldCount(mnemonic, 0);
+    for (auto column = 2; column < table_->columnCount() && column < headers_.size(); ++column) {
+        auto label = headers_[column];
+        if (card != nullptr && cardFieldCount(mnemonic, type) > 0) {
+            const auto typed = cardFieldLabel(mnemonic, column - 2, type);
+            if (!typed.isEmpty()) label = typed;
+            else if (column - 2 < usual) label = tr("Unused");
+        }
+        if (auto* header = table_->horizontalHeaderItem(column); header != nullptr && header->text() != label)
+            header->setText(label);
+    }
+    QStringList parts;
+    if (card != nullptr) {
+        // A voltage source reads more easily as magnitude and phase.
+        const auto field = [card](std::size_t index) {
+            return index < card->fields.size() ? QString::fromStdString(card->fields[index]) : QString{};
+        };
+        if (mnemonic == QStringLiteral("EX") && (type == 0 || type == 5) && parsesAs<double>(field(4))
+            && (field(5).isEmpty() || parsesAs<double>(field(5)))) {
+            const std::complex<double> volts{field(4).toDouble(), field(5).toDouble()};
+            parts << tr("%1 V ∠ %2°").arg(std::abs(volts), 0, 'g', 6)
+                         .arg(std::arg(volts) * 180.0 / std::numbers::pi, 0, 'g', 6);
+        }
+        for (const auto& segment : shared_) {
+            if (std::ranges::any_of(segment.objects,
+                    [card](const auto& object) { return object.sourceLine == card->lineNumber; }))
+                parts << QString::fromStdString(segment.description);
+        }
+    }
+    note_->setText(parts.join(QStringLiteral(" · ")));
+    note_->setToolTip(parts.join(QLatin1Char('\n')));
 }
 
 void StructuredCardEditor::focusParameterizableField()
@@ -565,10 +628,16 @@ void StructuredCardEditor::refreshTable()
     if (familyIndex < 0) {
         table_->clear();
         table_->setRowCount(0);
+        headers_.clear();
         updateActions();
+        showSelectedCard();
         return;
     }
     const auto& family = families()[static_cast<std::size_t>(familyIndex)];
+    // The selected card stays selected when the deck changes, by its line.
+    const auto* selectedLine = table_->currentRow() < 0 || table_->selectedItems().empty()
+        ? nullptr : table_->item(table_->currentRow(), 0);
+    const auto keepLine = selectedLine == nullptr ? 0 : selectedLine->data(SourceLineRole).toULongLong();
     updating_ = true;
     const QSignalBlocker blocker(table_);
     table_->setToolTip(family.description + tr(" Double-click a field to edit it: a number, a "
@@ -588,6 +657,7 @@ void StructuredCardEditor::refreshTable()
     table_->clear();
     table_->setColumnCount(headers.size());
     table_->setHorizontalHeaderLabels(headers);
+    headers_ = headers;
     // A field's meaning and unit depend on the card's type; the header names the usual one.
     const auto typeNote = family.mnemonic == QStringLiteral("LD")
         ? tr("Series or parallel RLC: R Ω, L H, C F (per metre when distributed). "
@@ -639,8 +709,11 @@ void StructuredCardEditor::refreshTable()
         static_cast<void>(validateRow(row));
     }
     table_->setColumnHidden(0, false);
+    for (auto row = 0; row < table_->rowCount() && keepLine != 0; ++row)
+        if (table_->item(row, 0)->data(SourceLineRole).toULongLong() == keepLine) table_->selectRow(row);
     updating_ = false;
     updateActions();
+    showSelectedCard();
 }
 
 void StructuredCardEditor::updateActions()
@@ -692,7 +765,22 @@ void StructuredCardEditor::commitCell(QTableWidgetItem* item)
     if (cardIndex >= document_.cards().size()) return;
     const auto& card = document_.cards()[cardIndex];
     if (!validateRow(item->row())) return;
-    // The other expression cells go back as written, never as the values they show.
+    const auto sourceLine = card.lineNumber;
+    const auto emitEdited = [this, sourceLine](QString text) {
+        QTimer::singleShot(0, this, [this, sourceLine, text = std::move(text)] {
+            emit cardEdited(sourceLine, text);
+        });
+    };
+    // A field the card has changes alone, so the others keep their exact text and spacing.
+    const auto fieldIndex = static_cast<std::size_t>(item->column() - 2);
+    const auto typed = item->text().trimmed();
+    if (fieldIndex < card.fields.size() && !typed.isEmpty()) {
+        const std::array replacement{nec::NecFieldReplacement{fieldIndex, typed.toStdString()}};
+        if (const auto text = nec::replaceNecCardFields(card.sourceText, replacement))
+            return emitEdited(QString::fromStdString(*text));
+    }
+    // Otherwise the card is written out again; the expression cells go back as written,
+    // never as the values they show.
     QStringList fields;
     for (auto column = 2; column < table_->columnCount(); ++column) {
         const auto* cell = table_->item(item->row(), column);
@@ -700,12 +788,12 @@ void StructuredCardEditor::commitCell(QTableWidgetItem* item)
             ? cell->data(CellExpressionRole).toString() : cell->text().trimmed());
     }
     while (!fields.empty() && fields.back().isEmpty()) fields.removeLast();
+    // A field left out before one that is written is zero, as NEC reads it.
+    for (auto& field : fields)
+        if (field.isEmpty()) field = QStringLiteral("0");
     auto text = QString::fromStdString(card.mnemonic);
     for (const auto& field : fields) text += QLatin1Char(' ') + field;
-    const auto sourceLine = card.lineNumber;
-    QTimer::singleShot(0, this, [this, sourceLine, text = std::move(text)] {
-        emit cardEdited(sourceLine, text);
-    });
+    emitEdited(std::move(text));
 }
 
 auto StructuredCardEditor::validateRow(int row) -> bool

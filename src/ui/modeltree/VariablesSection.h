@@ -56,11 +56,9 @@ public:
     // Folded, only the header shows, with Live and Reset. Clicking the header folds or
     // unfolds it, and that choice is remembered.
     [[nodiscard]] auto isFolded() const -> bool;
-    // Folds for room while a long form shows in the pane, unless the user unfolds it again.
+    // Folds for room while a long page shows in the pane, unless the user unfolds it again.
     void setAutoFolded(bool folded);
     [[nodiscard]] auto unfoldedHeight() const -> int;
-    // Called when the section folds or unfolds.
-    void setFoldChangedCallback(std::function<void()> callback);
 
     [[nodiscard]] auto sizeHint() const -> QSize override;
 
@@ -102,7 +100,6 @@ private:
     std::function<void(const nec::SymbolDefinition&, double)> valueChanged_;
     std::function<void(const nec::SymbolDefinition&, double)> preview_;
     std::function<void(const Reset&)> resetRequested_;
-    std::function<void()> foldChanged_;
 };
 
 }

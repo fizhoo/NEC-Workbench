@@ -1,11 +1,13 @@
 #include "ui/cards/WireCardEditor.h"
 
 #include "ui/DisplayFormat.h"
+#include "ui/ElidedLabel.h"
 #include "ui/cards/CompactNumberDelegate.h"
 #include "ui/cards/SymbolCells.h"
 #include "ui/cards/VariableMenu.h"
 
 #include "model/WireGauge.h"
+#include "model/WireGeometry.h"
 
 #include <QAbstractItemView>
 #include <QHeaderView>
@@ -40,6 +42,9 @@ enum Column {
 };
 
 constexpr auto WireTagRole = Qt::UserRole;
+// The AWG sizes the gauge column offers, 0000 (-3) to 40.
+constexpr auto ThickestGauge = -3;
+constexpr auto ThinnestGauge = 40;
 
 }
 
@@ -82,12 +87,15 @@ WireCardEditor::WireCardEditor(QWidget* parent)
     table_->horizontalHeader()->setStretchLastSection(true);
     table_->verticalHeader()->setVisible(false);
 
+    // What the selected wire is: its diameter, length and shared segments.
+    note_ = new ElidedLabel(this);
+    note_->setObjectName(QStringLiteral("cardRowNote"));
+    note_->setMinimumHeight(note_->fontMetrics().lineSpacing());
+    note_->setContentsMargins(4, 0, 4, 0);
+
     layout->addLayout(actions);
     layout->addWidget(table_, 1);
-
-    connect(table_, &QTableWidget::itemActivated, this, [this] {
-        if (selectedTag() >= 0) emit wireActivated(selectedTag());
-    });
+    layout->addWidget(note_);
     connect(addButton, &QPushButton::clicked, this, [this] { emit addWireRequested(); });
     connect(duplicateButton_, &QPushButton::clicked, this, [this] {
         if (const auto tag = selectedTag(); tag >= 0) {
@@ -101,6 +109,7 @@ WireCardEditor::WireCardEditor(QWidget* parent)
     });
     connect(table_, &QTableWidget::itemSelectionChanged, this, [this] {
         updateActionStates();
+        describeSelectedWire();
         if (!updating_) {
             emit wireSelected(selectedTag());
         }
@@ -160,9 +169,10 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
         auto* gaugeControl = new QComboBox(table_);
         gaugeControl->setObjectName(QStringLiteral("wireGaugeEditor"));
         gaugeControl->addItem(tr("Custom radius"));
-        for (auto gauge = 10; gauge <= 30; ++gauge)
+        for (auto gauge = ThickestGauge; gauge <= ThinnestGauge; ++gauge)
             gaugeControl->addItem(QString::fromStdString(model::awgLabel(gauge)), gauge);
-        if (const auto gauge = model::matchingAwg(wire.radius); gauge && *gauge >= 10 && *gauge <= 30)
+        if (const auto gauge = model::matchingAwg(wire.radius);
+            gauge && *gauge >= ThickestGauge && *gauge <= ThinnestGauge)
             gaugeControl->setCurrentIndex(gaugeControl->findData(*gauge));
         if (!wire.editable) gaugeControl->setEnabled(false);
         const auto symbolicLine = symbolicGeometryFields_.find(wire.sourceLine);
@@ -206,6 +216,32 @@ void WireCardEditor::focusParameterizableField()
     table_->setFocus(Qt::OtherFocusReason);
 }
 
+void WireCardEditor::setSharedSegments(std::vector<model::SharedSegment> shared)
+{
+    shared_ = std::move(shared);
+    describeSelectedWire();
+}
+
+void WireCardEditor::describeSelectedWire()
+{
+    const auto* wire = model_.wireByTag(selectedTag());
+    QStringList parts;
+    if (wire != nullptr) {
+        const auto gauge = model::matchingAwg(wire->radius);
+        const auto diameter = QString::number(2.0 * wire->radius / scaleToMeters_, 'g', 4);
+        parts << (gauge ? tr("Ø %1 %2 (%3)").arg(diameter, unitLabel_,
+                              QString::fromStdString(model::awgLabel(*gauge)))
+                        : tr("Ø %1 %2").arg(diameter, unitLabel_))
+              << tr("%1 %2 long").arg(formatDecimal(model::wireLength(*wire) / scaleToMeters_), unitLabel_);
+        if (!wire->editable)
+            parts << tr("set by line %1: edit it in Other or the NEC Deck").arg(wire->sourceLine);
+        for (const auto& segment : shared_)
+            if (segment.wireTag == wire->tag) parts << QString::fromStdString(segment.description);
+    }
+    note_->setText(parts.join(QStringLiteral(" · ")));
+    note_->setToolTip(parts.join(QLatin1Char('\n')));
+}
+
 void WireCardEditor::setSymbolicGeometryFields(nec::NecParameterFieldMap sourceFields)
 {
     symbolicGeometryFields_ = std::move(sourceFields);
@@ -239,6 +275,7 @@ void WireCardEditor::selectWire(int tag)
     table_->clearSelection();
     if (tag < 0) {
         updateActionStates();
+        describeSelectedWire();
         return;
     }
     for (auto row = 0; row < table_->rowCount(); ++row) {
@@ -249,6 +286,7 @@ void WireCardEditor::selectWire(int tag)
         }
     }
     updateActionStates();
+    describeSelectedWire();
 }
 
 void WireCardEditor::updateActionStates()
@@ -295,50 +333,40 @@ void WireCardEditor::validateAndCommitRow(int row, int changedColumn)
     // cell shows the value again until the deck changes.
     if (symbolCells_->takeExpressionEdit(changedItem, [this] { setModel(model_); })) return;
 
-    bool tagOk = false;
-    bool segmentsOk = false;
-    const auto tag = table_->item(row, Tag)->text().toInt(&tagOk);
-    const auto segments = table_->item(row, Segments)->text().toInt(&segmentsOk);
-    bool valuesOk = true;
-    const auto readDouble = [&](Column column) {
-        bool ok = false;
-        const auto displayedValue = table_->item(row, column)->text().toDouble(&ok);
-        const auto value = displayedValue * scaleToMeters_;
-        valuesOk = valuesOk && ok && std::isfinite(value);
-        return value;
+    // Only the edited field changes; the others keep their exact deck values.
+    auto updated = *original;
+    const auto text = changedItem->text().trimmed();
+    bool ok = false;
+    const auto setLength = [&](double& length) {
+        const auto value = text.toDouble(&ok) * scaleToMeters_;
+        ok = ok && std::isfinite(value);
+        if (ok) length = value;
     };
-    const model::Point3D start{readDouble(X1), readDouble(Y1), readDouble(Z1)};
-    const model::Point3D end{readDouble(X2), readDouble(Y2), readDouble(Z2)};
-    const auto radius = readDouble(Radius);
-
-    if (!tagOk || tag <= 0) {
-        setCellError(changedItem, tr("Wire tag must be a positive integer."));
+    switch (changedColumn) {
+    case Tag: updated.tag = text.toInt(&ok); ok = ok && updated.tag > 0; break;
+    case Segments: updated.segments = text.toInt(&ok); ok = ok && updated.segments > 0; break;
+    case X1: setLength(updated.start.x); break;
+    case Y1: setLength(updated.start.y); break;
+    case Z1: setLength(updated.start.z); break;
+    case X2: setLength(updated.end.x); break;
+    case Y2: setLength(updated.end.y); break;
+    case Z2: setLength(updated.end.z); break;
+    case Radius: setLength(updated.radius); ok = ok && updated.radius > 0.0; break;
+    default: return;
+    }
+    const auto error = !ok ? (changedColumn == Tag ? tr("Wire tag must be a positive integer.")
+            : changedColumn == Segments ? tr("Segments must be a positive integer.")
+            : changedColumn == Radius ? tr("Radius must be a finite number greater than zero.")
+                                      : tr("Coordinates must be finite numbers."))
+        : updated.tag != originalTag && model_.wireByTag(updated.tag) != nullptr ? tr("Wire tags must be unique.")
+        : updated.start == updated.end ? tr("Wire endpoints must be different.")
+                                       : QString{};
+    if (!error.isEmpty()) {
+        setCellError(changedItem, error);
         return;
     }
-    if (tag != originalTag && model_.wireByTag(tag) != nullptr) {
-        setCellError(changedItem, tr("Wire tags must be unique."));
-        return;
-    }
-    if (!segmentsOk || segments <= 0) {
-        setCellError(changedItem, tr("Segments must be a positive integer."));
-        return;
-    }
-    if (!valuesOk) {
-        setCellError(changedItem, tr("Coordinates and radius must be finite numbers."));
-        return;
-    }
-    if (start == end) {
-        setCellError(changedItem, tr("Wire endpoints must be different."));
-        return;
-    }
-    if (radius <= 0.0) {
-        setCellError(changedItem, tr("Radius must be greater than zero."));
-        return;
-    }
-
     changedItem->setBackground({});
     changedItem->setToolTip({});
-    const model::Wire updated{tag, start, end, segments, radius, original->sourceLine};
     if (updated != *original) {
         const auto originalWire = *original;
         QTimer::singleShot(0, this, [this, originalWire, updated] {

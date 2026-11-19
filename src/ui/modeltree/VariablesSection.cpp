@@ -325,12 +325,6 @@ void VariablesSection::applyFold()
     scroll_->setVisible(!folded);
     empty_->setVisible(!folded && variables_.empty());
     updateGeometry();
-    if (foldChanged_) foldChanged_();
-}
-
-void VariablesSection::setFoldChangedCallback(std::function<void()> callback)
-{
-    foldChanged_ = std::move(callback);
 }
 
 auto VariablesSection::rangeOf(const nec::SymbolDefinition& variable) const -> Range

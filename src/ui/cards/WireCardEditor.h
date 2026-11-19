@@ -2,6 +2,7 @@
 
 #include "model/AntennaModel.h"
 #include "model/LengthUnit.h"
+#include "model/SegmentSharing.h"
 #include "nec/NecCardFieldEditor.h"
 #include "nec/NecSymbolResolver.h"
 
@@ -15,6 +16,7 @@ class QTableWidgetItem;
 
 namespace necwb::ui {
 
+class ElidedLabel;
 class SymbolCells;
 
 class WireCardEditor final : public QWidget {
@@ -31,14 +33,14 @@ public:
     void setSymbolicGeometryFields(nec::NecParameterFieldMap sourceFields);
     // The symbols a cell offers as you type.
     void setSymbols(const std::vector<nec::SymbolDefinition>& symbols);
+    // The model's shared segments, which the line under the table explains for a selected wire.
+    void setSharedSegments(std::vector<model::SharedSegment> shared);
     void focusParameterizableField();
     // Symbols, Make Variable… and expressions typed into a cell.
     [[nodiscard]] auto symbolCells() const -> SymbolCells* { return symbolCells_; }
 
 signals:
     void wireSelected(int tag);
-    // A double-click on a read-only cell, or Enter: open the wire's own editor.
-    void wireActivated(int tag);
     void wireEdited(model::Wire original, model::Wire updated);
     void addWireRequested();
     void duplicateWireRequested(int tag);
@@ -47,6 +49,7 @@ signals:
 private:
     void updateActionStates();
     void updateUnitLabels();
+    void describeSelectedWire();
     void validateAndCommitRow(int row, int changedColumn);
     [[nodiscard]] auto selectedTag() const -> int;
     void setCellError(QTableWidgetItem* item, const QString& message);
@@ -55,6 +58,8 @@ private:
     QTableWidget* table_{};
     QPushButton* duplicateButton_{};
     QPushButton* deleteButton_{};
+    ElidedLabel* note_{};
+    std::vector<model::SharedSegment> shared_;
     model::AntennaModel model_;
     nec::NecParameterFieldMap symbolicGeometryFields_;
     SymbolCells* symbolCells_{};

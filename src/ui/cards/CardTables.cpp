@@ -73,7 +73,6 @@ CardTables::CardTables(QWidget* host) : QObject(host)
 
     for (auto* cards : cards_) {
         connect(cards, &StructuredCardEditor::cardSelected, this, &CardTables::cardSelected);
-        connect(cards, &StructuredCardEditor::cardActivated, this, &CardTables::cardActivated);
         connect(cards, &StructuredCardEditor::cardEdited, this, &CardTables::cardEdited);
         connect(cards, &StructuredCardEditor::cardAddRequested, this, &CardTables::cardAddRequested);
         connect(cards, &StructuredCardEditor::cardDeleteRequested,
@@ -113,12 +112,19 @@ void CardTables::setDeckUnitLabel(const QString& unitLabel)
     for (auto* cards : cards_) cards->setDeckUnitLabel(unitLabel);
 }
 
-void CardTables::selectCard(std::size_t sourceLine)
+auto CardTables::selectCard(std::size_t sourceLine) -> std::optional<Table>
 {
-    for (auto* cards : cards_) {
-        const QSignalBlocker blocker(cards);
-        if (cards->selectCard(sourceLine)) return;
+    for (std::size_t card = 0; card < cards_.size(); ++card) {
+        const QSignalBlocker blocker(cards_[card]);
+        if (cards_[card]->selectCard(sourceLine)) return static_cast<Table>(card + 1);
     }
+    return std::nullopt;
+}
+
+void CardTables::setSharedSegments(const std::vector<model::SharedSegment>& shared)
+{
+    wires_->setSharedSegments(shared);
+    for (auto* cards : cards_) cards->setSharedSegments(shared);
 }
 
 void CardTables::focusParameterizableField(Table table)

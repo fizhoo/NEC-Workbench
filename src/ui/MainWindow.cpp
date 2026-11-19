@@ -55,7 +55,6 @@
 #include "ui/geometry/GeometryPreview.h"
 #include "ui/geometry/GeometryView.h"
 #include "ui/geometry/GeometrySettingsDialog.h"
-#include "ui/geometry/WirePropertiesEditor.h"
 #include "ui/optimization/OptimizationWorkspace.h"
 #include "ui/model/ParameterEditor.h"
 #include "ui/results/ResultFullView.h"
@@ -64,7 +63,6 @@
 #include "ui/results/ResultsColumn.h"
 #include "ui/results/ResultsController.h"
 #include "ui/setup/SetupEditor.h"
-#include "ui/setup/CardFieldForm.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -104,7 +102,6 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScreen>
-#include <QScopedValueRollback>
 #include <QCursor>
 #include <QSettings>
 #include <QSignalBlocker>
@@ -815,12 +812,8 @@ void MainWindow::createWorkspace()
         if (!updatingDeckUnitControl_ && unit >= 0)
             changeDeckLengthUnit(static_cast<model::LengthUnit>(unit));
     });
-    // A row's click selects its item and keeps the table; activating it opens its form.
-    connect(wireCardEditor_, &WireCardEditor::wireSelected, this, [this](int tag) {
-        const QScopedValueRollback keep(keepTable_, true);
-        selectWireInProject(tag);
-    });
-    connect(wireCardEditor_, &WireCardEditor::wireActivated, this,
+    // A row's click selects its item.
+    connect(wireCardEditor_, &WireCardEditor::wireSelected, this,
         [this](int tag) { selectWireInProject(tag); });
     connect(wireCardEditor_, &WireCardEditor::wireEdited, this,
         [this](model::Wire original, model::Wire updated) { editWire(original, updated); });
@@ -836,11 +829,7 @@ void MainWindow::createWorkspace()
             if (!edit.error.isEmpty()) QMessageBox::warning(this, tr("Invalid Expression"), edit.error);
             if (edit.source) pushGeometrySourceEdit(tr("Set %1 to %2").arg(label, expression), QString::fromStdString(*edit.source));
         });
-    connect(cardTables_, &CardTables::cardSelected, this, [this](std::size_t sourceLine) {
-        const QScopedValueRollback keep(keepTable_, true);
-        selectCardInModel(sourceLine);
-    });
-    connect(cardTables_, &CardTables::cardActivated, this,
+    connect(cardTables_, &CardTables::cardSelected, this,
         [this](std::size_t sourceLine) { selectCardInModel(sourceLine); });
     connect(cardTables_, &CardTables::cardEdited, this,
         [this](std::size_t sourceLine, const QString& cardText) {
@@ -859,14 +848,6 @@ void MainWindow::createWorkspace()
             detachFieldParameter(sourceLine, fieldIndex, fieldLabel);
         });
 
-    cardForm_ = new CardFieldForm(windowHost_);
-    cardForm_->setAppliedCallback([this](std::size_t sourceLine, const QString& cardText) {
-        editStructuredCard(sourceLine, cardText);
-    });
-    cardForm_->setDeleteCallback([this](std::size_t sourceLine) {
-        deleteStructuredCard(sourceLine);
-        showPanePage(nullptr, {});
-    });
     deckView_ = new DeckView(editor_, windowHost_);
     deckView_->setBackCallback(
         [this] { showEditor(EditorDestination::Geometry, workspace_->currentIndex()); });
@@ -1782,6 +1763,8 @@ void MainWindow::startLiveSolve(std::optional<double> frequencyMHz)
 void MainWindow::startModelSession()
 {
     checkModel();
+    // A new model starts with nothing selected and the pane empty.
+    selectWireInProject(-1);
     resetModelViews();
     geometryPlanes_->showMainPlane(geometry::widestPlane(currentModel_));
     modelColumn_->variables()->markBaseline();
@@ -2018,6 +2001,7 @@ void MainWindow::checkModel(bool presentReport)
     updateWireCardEditor();
     // Edits keep the zoom; opening a model fits it (resetModelViews).
     const auto sharedSegments = model::describeSharedSegments(currentModel_, currentSetup_);
+    cardTables_->setSharedSegments(sharedSegments);
     for (auto* view : geometryViews()) {
         view->updateModel(currentModel_);
         view->setExcitations(currentSetup_.excitations);
@@ -2032,8 +2016,6 @@ void MainWindow::checkModel(bool presentReport)
     cardTables_->setDocument(document, resolution.ok() ? cache.resolvedDocument() : nullptr,
         resolution.definitions);
     modelColumn_->tree()->setModel(currentModel_, currentSetup_, document);
-    refreshWireEditor();
-    if (modelColumn_->pane()->currentPage() == cardForm_) refreshCardForm(cardForm_->sourceLine());
     optimizationWorkspace_->setContext(editor_->toPlainText(), currentFile_,
         solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_,
         modelErrorCount_ == 0);
@@ -2204,16 +2186,6 @@ void MainWindow::createModelColumn()
             break;
         }
     });
-    wireEditor_ = new WirePropertiesEditor(windowHost_);
-    wireEditor_->setAppliedCallback(
-        [this](const model::Wire& original, const model::Wire& updated) {
-            editWire(original, updated);
-        });
-    wireEditor_->setVariableCallback(
-        [this](std::size_t sourceLine, std::size_t field, const QString& label, bool detach) {
-            if (detach) detachFieldParameter(sourceLine, field, label);
-            else makeFieldVariable(sourceLine, field, label);
-        });
     modelColumn_->pane()->setDiscardCallback([this](QWidget* page) { discardPendingEdits(page); });
     modelColumn_->pane()->setExpandCallback([this](bool) { fitPaneWidth(); });
     tree->setAddCallback([this](ModelNode group) { addToGroup(group); });
@@ -2260,12 +2232,19 @@ void MainWindow::showModelSelection(const ModelSelection& selection)
         synchronizeGeometrySelection(-1);
         wireCardEditor_->selectWire(-1);
     }
+    // An item shows as its row, selected, in its group's table.
+    auto content = paneContent(selection.node);
     switch (selection.node) {
-    case ModelNode::Wire:
+    case ModelNode::Wire: {
         synchronizeGeometrySelection(selection.wireTag);
         wireCardEditor_->selectWire(selection.wireTag);
-        if (!keepTable_) refreshWireEditor();
-        return;
+        // Arcs and helices are rows of the Other table, on their GA or GH card.
+        const auto* wire = currentModel_.wireByTag(selection.wireTag);
+        if (wire != nullptr && wire->geometryKind != model::WireGeometryKind::Straight
+            && cardTables_->selectCard(wire->sourceLine))
+            content = paneContent(ModelNode::OtherCards);
+        break;
+    }
     case ModelNode::Source: for (auto* view : views) view->selectExcitation(line); break;
     case ModelNode::Load: for (auto* view : views) view->selectLoad(line); break;
     case ModelNode::TransmissionLine:
@@ -2274,14 +2253,8 @@ void MainWindow::showModelSelection(const ModelSelection& selection)
     case ModelNode::Network: for (auto* view : views) view->selectNetwork(line); break;
     default: break;
     }
-    // A row clicked in a table selects its item and leaves the table showing.
-    if (keepTable_) return;
-    const auto [page, title] = paneContent(selection.node);
-    if (page == cardForm_) {
-        cardTables_->selectCard(line);
-        refreshCardForm(line);
-    }
-    showPanePage(page, title);
+    if (line != 0) cardTables_->selectCard(line);
+    showPanePage(content.first, content.second);
 }
 
 void MainWindow::showPanePage(QWidget* page, const QString& title)
@@ -2307,14 +2280,6 @@ void MainWindow::addToGroup(ModelNode group)
     else selectCardInModel(addStructuredCard(card));
 }
 
-void MainWindow::refreshCardForm(std::size_t sourceLine)
-{
-    const auto& cards = activeSource().document().cards();
-    const auto card = std::ranges::find(cards, sourceLine, &nec::NecCard::lineNumber);
-    if (card != cards.end())
-        cardForm_->setCard(*card, model::describeSharedSegments(currentModel_, currentSetup_));
-}
-
 void MainWindow::selectCardInModel(std::size_t sourceLine)
 {
     if (const auto selection = modelColumn_->tree()->selectionOfCard(sourceLine))
@@ -2326,18 +2291,18 @@ auto MainWindow::paneContent(ModelNode node) const -> std::pair<QWidget*, QStrin
 {
     switch (node) {
     case ModelNode::Frequency: return {setupEditor_->frequencyPage(), tr("Frequency")};
-    case ModelNode::Wire: return {wireEditor_, tr("Wire")};
+    case ModelNode::Wire:
     case ModelNode::Wires: return {cardTables_->page(CardTables::Table::Wires), tr("Wires")};
+    case ModelNode::Source:
     case ModelNode::Sources: return {cardTables_->page(CardTables::Table::Sources), tr("Sources")};
+    case ModelNode::Load:
     case ModelNode::Loads: return {cardTables_->page(CardTables::Table::Loads), tr("Loads")};
+    case ModelNode::TransmissionLine:
     case ModelNode::TransmissionLines:
         return {cardTables_->page(CardTables::Table::TransmissionLines), tr("Transmission lines")};
+    case ModelNode::Network:
     case ModelNode::Networks: return {cardTables_->page(CardTables::Table::Networks), tr("Networks")};
     case ModelNode::OtherCards: return {cardTables_->page(CardTables::Table::Other), tr("Other cards")};
-    case ModelNode::Source: return {cardForm_, tr("Source")};
-    case ModelNode::Load: return {cardForm_, tr("Load")};
-    case ModelNode::TransmissionLine: return {cardForm_, tr("Transmission line")};
-    case ModelNode::Network: return {cardForm_, tr("Network")};
     case ModelNode::Ground: return {setupEditor_->environmentPage(), tr("Ground")};
     case ModelNode::Variables: return {parameterEditor_, tr("Variables")};
     case ModelNode::Requests: return {analysisRequestEditor_, tr("Requests")};
@@ -2376,42 +2341,11 @@ void MainWindow::showSetupPage(EditorDestination destination)
     activateWindow();
 }
 
-void MainWindow::refreshWireEditor()
-{
-    const auto selection = modelColumn_->tree()->currentSelection();
-    const auto* wire = selection && selection->node == ModelNode::Wire
-        ? currentModel_.wireByTag(selection->wireTag) : nullptr;
-    if (wire == nullptr) {
-        if (modelColumn_->pane()->currentPage() == wireEditor_) showPanePage(nullptr, {});
-        return;
-    }
-    if (!wireEditor_->hasPendingEdits()) {
-        // Fields written as SY symbols or expressions stay linked; the pane only shows them.
-        WirePropertiesEditor::LinkedFields linked;
-        const auto block = editor_->document()->findBlockByNumber(
-            static_cast<int>(wire->sourceLine) - 1);
-        const auto card = block.isValid() ? block.text().toStdString() : std::string{};
-        for (auto field = std::size_t{0}; field < linked.size(); ++field) {
-            if (!card.empty() && !nec::necCardFieldIsNumeric(card, field))
-                linked[field] = QString::fromStdString(nec::necCardFieldText(card, field));
-        }
-        // The deck's own unit for this wire, as the Wires table shows it.
-        const auto scale = deckScaleForSourceLine(wire->sourceLine);
-        const auto unit = nec::standardLengthUnit(scale);
-        wireEditor_->setWire(*wire, currentModel_, scale, unit
-            ? QString::fromLatin1(model::lengthUnitSymbol(*unit).data())
-            : tr("×%1 m").arg(formatDecimal(scale)), linked);
-    }
-    showPanePage(wireEditor_, tr("Wire %1").arg(wire->tag));
-}
-
 void MainWindow::discardPendingEdits(QWidget* page)
 {
     if (setupEditor_->hasPendingEdits(page)) setupEditor_->discardPendingEdits(page);
-    if (page == cardForm_) cardForm_->discardPendingEdits();
     if (page == analysisRequestEditor_) analysisRequestEditor_->discardPendingEdits();
     if (page == parameterEditor_) parameterEditor_->discardPendingEdits();
-    if (page == wireEditor_) wireEditor_->discardPendingEdits();
 }
 
 void MainWindow::selectInModel(const ModelSelection& selection)
@@ -4083,7 +4017,6 @@ void MainWindow::editWire(const model::Wire& original, const model::Wire& update
     if (!editable) {
         showSymbolicGeometryEditBlocked();
         updateWireCardEditor();
-        refreshWireEditor();
         return;
     }
     if (replacements.empty()) return;
@@ -4454,6 +4387,9 @@ void MainWindow::resetModelViews()
 {
     for (auto* view : geometryViews()) view->setModel(currentModel_);
     modelColumn_->fitTree();
+    // The pane shows what the tree has selected, or nothing.
+    if (const auto selection = modelColumn_->tree()->currentSelection()) showModelSelection(*selection);
+    else showPanePage(nullptr, {});
 }
 
 void MainWindow::refreshGeometryViews()

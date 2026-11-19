@@ -22,13 +22,13 @@
 #include "ui/cards/SymbolCells.h"
 #include "ui/cards/WireCardEditor.h"
 #include "ui/editor/NecEditor.h"
+#include "ui/PendingEditIndicator.h"
 #include "ui/modeltree/ModelColumn.h"
 #include "ui/modeltree/ModelTree.h"
 #include "ui/modeltree/PropertiesPane.h"
 #include "ui/modeltree/VariablesSection.h"
 #include "ui/analysis/RadiationSurfaceMesh.h"
 #include "ui/FlowLayout.h"
-#include "ui/geometry/WirePropertiesEditor.h"
 #include "ui/geometry/AutoSegmentationDialog.h"
 #include "ui/geometry/GeometryPlanes.h"
 #include "ui/geometry/GeometryView.h"
@@ -36,7 +36,6 @@
 #include "ui/optimization/OptimizationWorkspace.h"
 #include "ui/optimization/OptimizationComparePanel.h"
 #include "ui/model/ParameterEditor.h"
-#include "ui/setup/CardFieldForm.h"
 #include "ui/setup/SetupEditor.h"
 #include "ui/start/RecentModels.h"
 #include "ui/start/StartPanel.h"
@@ -744,7 +743,7 @@ auto main(int argc, char* argv[]) -> int
         const auto swapped = planes->mainPlane() == Plane::XY && fitted(views[0]) && fitted(views[1]);
         auto keptAfterEdit = false;
 
-        // Units: Geometry in feet; the wire form and the Wires table stay in the deck's meters.
+        // Units: Geometry in feet; the Wires table stays in the deck's meters.
         for (auto* units : window.findChildren<QComboBox*>())
             if (units->count() == 5 && units->itemText(4) == QStringLiteral("Feet")) units->setCurrentIndex(4);
         application.processEvents();
@@ -756,20 +755,18 @@ auto main(int argc, char* argv[]) -> int
             }
             application.processEvents();
         };
+        // A wire picked in the tree is its row in the Wires table.
         clickTree(QStringLiteral("Wire 1"));
-        auto* x1 = window.findChild<QDoubleSpinBox*>(QStringLiteral("wireCoordinateEditor0"));
-        auto* radiusLabel = window.findChild<QLabel*>(QStringLiteral("wireRadiusLabel"));
-        const auto formInDeckUnits = x1 != nullptr && std::abs(x1->value() + 1.87) < 1.0e-9
-            && radiusLabel != nullptr && radiusLabel->text() == QStringLiteral("Radius m");
-        clickTree(QStringLiteral("Wires"));
         auto* wireCells = window.findChild<QTableWidget*>(QStringLiteral("wireCardTable"));
-        const auto tableInDeckUnits = wireCells != nullptr
+        const auto tableInDeckUnits = wireCells != nullptr && wireCells->isVisible()
+            && wireCells->currentRow() == 0 && wireCells->item(0, 2)->text() == QStringLiteral("-1.87")
             && wireCells->horizontalHeaderItem(2)->text() == QStringLiteral("X1 m")
+            && wireCells->horizontalHeaderItem(8)->text() == QStringLiteral("Radius m")
             && wireCells->toolTip().startsWith(
                 QString::fromUtf8("Right-click a cell → Make Variable…, or type a name in the cell."));
 
-        // Make Variable, from the Wires table and from the wire's own form: the same menu
-        // opens the Make Variable dialog, whose defaults create a new variable for the value.
+        // Make Variable from the Wires table opens the Make Variable dialog, whose defaults
+        // create a new variable for the value.
         const auto makeVariable = [&](QWidget* target, QPoint position, const QString& expected) {
             const auto deckBefore = deck->toPlainText();
             QString dialogTitle;
@@ -803,12 +800,8 @@ auto main(int argc, char* argv[]) -> int
                 qWarning() << "make variable" << dialogTitle << deck->toPlainText().left(120);
             return written && deck->toPlainText() == deckBefore;
         };
-        auto madeVariable = wireCells != nullptr && makeVariable(wireCells,
+        const auto madeVariable = wireCells != nullptr && makeVariable(wireCells,
             wireCells->visualItemRect(wireCells->item(0, 2)).center(), QStringLiteral("SY gw_x1=1.87"));
-        clickTree(QStringLiteral("Wire 1"));
-        auto* z2 = window.findChild<QDoubleSpinBox*>(QStringLiteral("wireCoordinateEditor5"));
-        madeVariable = madeVariable && z2 != nullptr
-            && makeVariable(z2, z2->rect().center(), QStringLiteral("SY gw_z2=1.87"));
 
         // Opening a model again picks its widest plane.
         deck->document()->setModified(false);
@@ -824,11 +817,10 @@ auto main(int argc, char* argv[]) -> int
             if (savedPlane[index].isValid()) planeSettings.setValue(planeKeys[index], savedPlane[index]);
             else planeSettings.remove(planeKeys[index]);
         }
-        if (!widestFirst || !swapped || !keptAfterEdit || !formInDeckUnits || !tableInDeckUnits
+        if (!widestFirst || !swapped || !keptAfterEdit || !tableInDeckUnits
             || !madeVariable || !choseAgain) {
             qWarning() << "planes/units/variables" << widestFirst << swapped << keptAfterEdit
-                       << formInDeckUnits << (x1 ? x1->value() : 0.0)
-                       << (radiusLabel ? radiusLabel->text() : QString{}) << tableInDeckUnits
+                       << tableInDeckUnits
                        << (wireCells ? wireCells->horizontalHeaderItem(2)->text() : QString{})
                        << madeVariable << choseAgain;
             return NECWB_SMOKE_FAILURE("geometry planes, deck units and Make Variable");
@@ -908,8 +900,8 @@ auto main(int argc, char* argv[]) -> int
         resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
         resultWindowSettings.sync();
     }
-    // Editing a wire in the properties pane rewrites only the field that changed: SY symbols
-    // in the others stay in the deck, and the pane shows them as linked and read-only.
+    // Editing a cell rewrites only its own field: SY symbols and exact numbers in the other
+    // fields stay in the deck as written, in the Wires table and the card tables alike.
     auto wirePaneKeepsSymbols = false;
     {
         const auto savedRecentModels = resultWindowSettings.value(
@@ -918,8 +910,9 @@ auto main(int argc, char* argv[]) -> int
         const auto modelPath = modelDirectory.filePath(QStringLiteral("symbolic-wires.nec"));
         QFile modelFile(modelPath);
         if (modelDirectory.isValid() && modelFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            modelFile.write("SY half=0.485, x2=0.5\nGW 1 11 0 -half 0 0 half 0 0.003\n"
-                "GW 2 11 x2 half 0 x2 -half 0 0.003\nGE 0\nEN\n");
+            modelFile.write("SY half=0.485, x2=0.5\nGW 1 11 0 -half 0 0 half 0 0.00123456\n"
+                "GW 2 11 x2 half 0 x2 -half 0 0.003\nGA 3 8 0.5 0 90 0.001\nGE 0\n"
+                "LD 0 1 3 3 12.3456789 0 0\nEN\n");
             modelFile.close();
             resultWindowSettings.setValue(QStringLiteral("files/recentModels"),
                 QStringList{modelPath});
@@ -939,28 +932,45 @@ auto main(int argc, char* argv[]) -> int
             application.processEvents();
             auto* tree = mainWindow.findChild<QTreeWidget*>(QStringLiteral("modelTree"));
             auto* deck = mainWindow.findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor"));
-            auto* wires = tree == nullptr ? nullptr
-                : tree->findItems(QStringLiteral("Wires"), Qt::MatchExactly).value(0);
-            if (deck != nullptr && wires != nullptr && wires->childCount() == 2) {
-                wires->setExpanded(true);
-                tree->setCurrentItem(wires->child(1));
+            auto* wireCells = mainWindow.findChild<QTableWidget*>(QStringLiteral("wireCardTable"));
+            auto* loadCells = mainWindow.findChild<QWidget*>(QStringLiteral("cardsLD"))
+                ->findChild<QTableWidget*>(QStringLiteral("structuredCardTable"));
+            const auto pick = [&](const QString& name) {
+                auto* item = tree->findItems(name, Qt::MatchExactly | Qt::MatchRecursive).value(0);
+                if (item != nullptr) tree->setCurrentItem(item);
                 application.processEvents();
-                auto* endY = mainWindow.findChild<QDoubleSpinBox*>(
-                    QStringLiteral("wireCoordinateEditor4"));
-                auto* endZ = mainWindow.findChild<QDoubleSpinBox*>(
-                    QStringLiteral("wireCoordinateEditor5"));
-                auto* apply = mainWindow.findChild<QPushButton*>(QStringLiteral("applyWireButton"));
-                if (endY != nullptr && endZ != nullptr && apply != nullptr) {
-                    const auto endYLinked = endY->isReadOnly()
-                        && endY->text().startsWith(QStringLiteral("ƒx "))
-                        && endY->toolTip().contains(QStringLiteral("-half"))
-                        && !endZ->isReadOnly();
-                    endZ->setValue(0.01);
-                    apply->click();
-                    application.processEvents();
-                    wirePaneKeepsSymbols = endYLinked && deck->toPlainText().contains(
-                        QStringLiteral("GW 2 11 x2 half 0 x2 -half 0.01 0.003"));
-                }
+                return item != nullptr;
+            };
+            const auto setCell = [&](QTableWidget* table, int column, const QString& value) {
+                table->item(table->currentRow(), column)->setText(value);
+                application.processEvents();
+            };
+            if (deck != nullptr && wireCells != nullptr && loadCells != nullptr
+                && pick(QStringLiteral("Wire 2"))) {
+                // End Z of wire 2, whose Y is -half; then end Z of wire 1 and L of the load.
+                const auto endYLinked = wireCells->currentRow() == 1
+                    && wireCells->item(1, 6)->data(necwb::ui::CellExpressionRole).toString() == QStringLiteral("-half");
+                setCell(wireCells, 7, QStringLiteral("0.01"));
+                const auto symbolsKept = deck->toPlainText().contains(
+                    QStringLiteral("GW 2 11 x2 half 0 x2 -half 0.01 0.003"));
+                const auto wireExact = pick(QStringLiteral("Wire 1")) && wireCells->currentRow() == 0
+                    && (setCell(wireCells, 7, QStringLiteral("0.02")), true)
+                    && deck->toPlainText().contains(QStringLiteral("GW 1 11 0 -half 0 0 half 0.02 0.00123456"));
+                const auto loadExact = pick(QStringLiteral("W1 S3")) && loadCells->currentRow() == 0
+                    && (setCell(loadCells, 7, QStringLiteral("1e-6")), true)
+                    && deck->toPlainText().contains(QStringLiteral("LD 0 1 3 3 12.3456789 1e-6 0"))
+                    && loadCells->currentRow() == 0 && !loadCells->selectedItems().isEmpty();
+                // An arc is its GA row in the Other table.
+                auto* otherCells = mainWindow.findChild<QWidget*>(QStringLiteral("cardsOther"))
+                    ->findChild<QTableWidget*>(QStringLiteral("structuredCardTable"));
+                const auto* paneTitle = mainWindow.findChild<QLabel*>(QStringLiteral("propertiesPaneTitle"));
+                const auto arcRow = pick(QStringLiteral("Wire 3")) && otherCells->isVisible()
+                    && paneTitle->text() == QStringLiteral("Other cards") && otherCells->currentRow() >= 0
+                    && otherCells->item(otherCells->currentRow(), 1)->text() == QStringLiteral("GA");
+                wirePaneKeepsSymbols = endYLinked && symbolsKept && wireExact && loadExact && arcRow;
+                if (!wirePaneKeepsSymbols)
+                    qWarning() << "exact cells" << endYLinked << symbolsKept << wireExact << loadExact << arcRow
+                               << deck->toPlainText();
             }
             // The edit is not saved; closing must not stop to ask.
             if (deck != nullptr) deck->document()->setModified(false);
@@ -1200,11 +1210,12 @@ auto main(int argc, char* argv[]) -> int
     }
     if (!variablesLive)
         return NECWB_SMOKE_FAILURE("variables live, undo, reset and revert");
-    // Card tables in the properties pane: a group shows its table and folds the variables; ⇔
-    // widens the column to the whole table, at most 65% of the window, and anything else narrows
-    // it again; a row's click selects its item and keeps the table, and its Line cell opens the
-    // form; edits keep SY symbols; new cards land before FR and RP; a right-clicked load and a
-    // TL picked by two ends show their forms; the Variables header folds them.
+    // Card tables in the properties pane, the only editors of their items: a group shows its
+    // table and folds the variables; ⇔ widens the column to the whole table, at most 65% of the
+    // window, and anything else narrows it again; a row's click selects its item, a tree item
+    // selects its row, a double-click edits a cell and Return opens nothing; edits keep SY
+    // symbols; new cards land before FR and RP; a right-clicked load and a TL picked by two
+    // ends show as rows; New empties the pane; the Variables header folds them.
     auto cardTables = false;
     {
         QSettings settings;
@@ -1242,7 +1253,6 @@ auto main(int argc, char* argv[]) -> int
             auto* sources = mainWindow.findChild<QWidget*>(QStringLiteral("cardsEX"));
             auto* lines = mainWindow.findChild<QWidget*>(QStringLiteral("cardsTL"));
             auto* networks = mainWindow.findChild<QWidget*>(QStringLiteral("cardsNT"));
-            auto* form = mainWindow.findChild<QWidget*>(QStringLiteral("cardFieldForm"));
             auto* expand = mainWindow.findChild<QToolButton*>(QStringLiteral("paneExpandButton"));
             auto* header = mainWindow.findChild<QWidget*>(QStringLiteral("variablesHeader"));
             auto* live = mainWindow.findChild<QCheckBox*>(QStringLiteral("variablesLive"));
@@ -1268,11 +1278,25 @@ auto main(int argc, char* argv[]) -> int
             };
             if (deck != nullptr && tree != nullptr && bottomTabs != nullptr && split != nullptr
                 && loads != nullptr && sources != nullptr && lines != nullptr && networks != nullptr
-                && form != nullptr && expand != nullptr && header != nullptr && live != nullptr
+                && expand != nullptr && header != nullptr && live != nullptr
                 && section != nullptr && view != nullptr) {
                 auto* loadTable = loads->findChild<QTableWidget*>(QStringLiteral("structuredCardTable"));
                 auto* sourceTable = sources->findChild<QTableWidget*>(QStringLiteral("structuredCardTable"));
+                auto* lineTable = lines->findChild<QTableWidget*>(QStringLiteral("structuredCardTable"));
+                auto* networkTable = networks->findChild<QTableWidget*>(QStringLiteral("structuredCardTable"));
                 const auto bottomPanelPlain = bottomTabs->count() == 4;
+                // The tree is fitted to whole rows, Validation's studies included.
+                auto* modelTree = static_cast<necwb::ui::ModelTree*>(tree);
+                auto* convergenceRow = tree->findItems(QStringLiteral("Convergence"),
+                    Qt::MatchExactly | Qt::MatchRecursive).value(0);
+                const auto treeWholeRows = openedTreeHeight == modelTree->heightForRows(modelTree->fittedRows())
+                    && convergenceRow != nullptr
+                    && tree->viewport()->rect().contains(tree->visualItemRect(convergenceRow));
+                if (!treeWholeRows)
+                    qWarning() << "tree rows" << openedTreeHeight << modelTree->fittedRows()
+                               << modelTree->heightForRows(modelTree->fittedRows())
+                               << (convergenceRow ? tree->visualItemRect(convergenceRow) : QRect{})
+                               << tree->viewport()->rect();
                 selectGroup(QStringLiteral("Loads"));
                 const auto narrowWidth = split->sizes().value(0);
                 const auto groupShows = loadTable->isVisible() && loadTable->rowCount() == 1
@@ -1299,7 +1323,7 @@ auto main(int argc, char* argv[]) -> int
                     return expand->isVisible();
                 };
                 const auto familyRefits = pickFamily(QStringLiteral("GH")) && !pickFamily(QStringLiteral("XQ"));
-                // Right-click Add on the empty Networks group adds an NT before FR and opens it.
+                // Right-click Add on the empty Networks group adds an NT before FR and selects its row.
                 QTreeWidgetItem* networksGroup = nullptr;
                 for (auto index = 0; index < tree->topLevelItemCount(); ++index)
                     if (tree->topLevelItem(index)->text(0) == QStringLiteral("Networks"))
@@ -1313,7 +1337,8 @@ auto main(int argc, char* argv[]) -> int
                 emit tree->customContextMenuRequested(tree->visualItemRect(networksGroup).center());
                 application.processEvents();
                 const auto treeAddOpensForm = beforeRun(QStringLiteral("NT 1 6 2 6 0.02"))
-                    && form->isVisible() && pageTitle() == QStringLiteral("Network");
+                    && pageTitle() == QStringLiteral("Networks") && networkTable->currentRow() == 0
+                    && !networkTable->selectedItems().isEmpty();
                 // A wide page that is not a table, Requests, gets ⇔ too.
                 const auto* paneWidget = static_cast<necwb::ui::PropertiesPane*>(
                     mainWindow.findChild<QWidget*>(QStringLiteral("propertiesPane")));
@@ -1385,22 +1410,45 @@ auto main(int argc, char* argv[]) -> int
                 if (!loadSymbols)
                     qWarning() << "load symbols" << typedKept << typedMenu << plainMenu << variableFollowed
                                << loadTable->item(0, 8)->text() << text();
-                // A click selects the load in the tree and keeps the table; Line opens the form.
+                // A click selects the load in the tree and keeps the table; Return opens nothing,
+                // and a double-click edits the cell.
                 selectGroup(QStringLiteral("Loads"));
                 loadTable->selectRow(0);
                 application.processEvents();
                 const auto selection = tree->currentItem() == nullptr
                         || tree->currentItem()->parent() == nullptr
                     ? QString{} : tree->currentItem()->parent()->text(0);
-                const auto rowSelects = selection == QStringLiteral("Loads") && loadTable->isVisible()
-                    && !form->isVisible();
-                emit loadTable->itemActivated(loadTable->item(0, 0));
+                const auto rowSelects = selection == QStringLiteral("Loads") && loadTable->isVisible();
+                loadTable->setFocus();
+                QTest::keyClick(loadTable, Qt::Key_Return);
                 application.processEvents();
-                const auto lineOpensForm = form->isVisible() && pageTitle() == QStringLiteral("Load");
+                const auto editing = [loadTable] {
+                    const auto editors = loadTable->viewport()->findChildren<QLineEdit*>();
+                    return std::ranges::any_of(editors, [](const QLineEdit* editor) { return editor->isVisible(); });
+                };
+                const auto returnQuiet = pageTitle() == QStringLiteral("Loads") && loadTable->isVisible()
+                    && !editing();
+                loadTable->scrollToItem(loadTable->item(0, 7));
+                const QPointF cell = loadTable->visualItemRect(loadTable->item(0, 7)).center();
+                for (const auto type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease,
+                         QEvent::MouseButtonDblClick, QEvent::MouseButtonRelease}) {
+                    QMouseEvent event(type, cell, loadTable->viewport()->mapToGlobal(cell), Qt::LeftButton,
+                        type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
+                    QApplication::sendEvent(loadTable->viewport(), &event);
+                }
+                application.processEvents();
+                const auto doubleClickEdits = editing() && pageTitle() == QStringLiteral("Loads");
+                if (auto* cellEditor = loadTable->viewport()->findChild<QLineEdit*>())
+                    QTest::keyClick(cellEditor, Qt::Key_Escape);
+                application.processEvents();
+                const auto lineOpensForm = returnQuiet && doubleClickEdits && !editing();
+                if (!lineOpensForm) qWarning() << "return/double-click" << returnQuiet << doubleClickEdits << pageTitle()
+                    << loadTable->viewport()->findChildren<QWidget*>().size() << QApplication::focusWidget()
+                    << loadTable->currentRow() << loadTable->currentColumn() << (loadTable->item(0, 7)->flags() & Qt::ItemIsEditable).toInt();
                 emit view->excitationSelected(5);
                 application.processEvents();
                 const auto geometrySelects = sourceTable->currentRow() == 0
-                    && pageTitle() == QStringLiteral("Source");
+                    && pageTitle() == QStringLiteral("Sources");
                 // New cards from every table land with the others, before FR and RP.
                 for (const auto& [group, table] : std::initializer_list<std::pair<QString, QWidget*>>{
                          {QStringLiteral("Sources"), sources}, {QStringLiteral("Loads"), loads},
@@ -1414,24 +1462,76 @@ auto main(int argc, char* argv[]) -> int
                     && beforeRun(QStringLiteral("TL 1 6 2 6 50"))
                     && beforeRun(QStringLiteral("NT 1 6 2 6 0.02"));
                 // With the table widened, a right-clicked load and a TL picked by its two ends
-                // land before FR, show their forms and narrow the column.
+                // land before FR and show as their rows, the table still widened.
                 selectGroup(QStringLiteral("Loads"));
                 expand->click();
                 application.processEvents();
                 emit view->addLoadRequested(2, 6);
                 application.processEvents();
+                const auto rowIs = [](QTableWidget* table, const QStringList& fields) {
+                    const auto row = table->currentRow();
+                    if (row < 0 || table->selectedItems().isEmpty()) return false;
+                    for (auto field = 0; field < fields.size(); ++field)
+                        if (table->item(row, field + 2)->text() != fields[field]) return false;
+                    return true;
+                };
                 const auto loadAdded = beforeRun(QStringLiteral("LD 4 2 6 6 50 0 0"))
-                    && form->isVisible() && pageTitle() == QStringLiteral("Load")
-                    && split->sizes().value(0) == narrowWidth;
+                    && pageTitle() == QStringLiteral("Loads")
+                    && rowIs(loadTable, {QStringLiteral("4"), QStringLiteral("2"), QStringLiteral("6")})
+                    && split->sizes().value(0) > narrowWidth;
                 selectGroup(QStringLiteral("Trans. lines"));
-                expand->click();
-                application.processEvents();
                 emit view->transmissionLineEndpointRequested(1, 4);
                 emit view->transmissionLineEndpointRequested(2, 4);
                 application.processEvents();
                 const auto linePicked = beforeRun(QStringLiteral("TL 1 4 2 4 50"))
-                    && form->isVisible() && pageTitle() == QStringLiteral("Transmission line")
-                    && split->sizes().value(0) == narrowWidth;
+                    && pageTitle() == QStringLiteral("Transmission lines")
+                    && rowIs(lineTable, {QStringLiteral("1"), QStringLiteral("4"), QStringLiteral("2"), QStringLiteral("4")})
+                    && split->sizes().value(0) > narrowWidth;
+                if (!linePicked) qWarning() << "line picked" << pageTitle() << lineTable->currentRow()
+                    << (lineTable->currentRow() >= 0 ? lineTable->item(lineTable->currentRow(), 2)->text() : QString{})
+                    << split->sizes().value(0) << narrowWidth << text();
+                expand->click();
+                application.processEvents();
+                // An item picked in the tree is its row in its group's table, selected and in view.
+                const auto treeSelectsRow = [&](const QString& group, QTableWidget* table, const QString& title) {
+                    auto* groupRow = tree->findItems(group, Qt::MatchExactly).value(0);
+                    if (groupRow == nullptr || groupRow->childCount() < 2) return false;
+                    auto* item = groupRow->child(groupRow->childCount() - 1);
+                    tree->setCurrentItem(item);
+                    emit tree->itemClicked(item, 0);
+                    application.processEvents();
+                    const auto row = table->currentRow();
+                    const auto picked = pageTitle() == title && table->isVisible()
+                        && row == table->rowCount() - 1 && !table->selectedItems().isEmpty()
+                        && table->viewport()->rect().intersects(table->visualItemRect(table->item(row, 0)));
+                    if (!picked) qWarning() << "tree row" << group << pageTitle() << row << table->rowCount();
+                    return picked;
+                };
+                auto* wireTable = mainWindow.findChild<QTableWidget*>(QStringLiteral("wireCardTable"));
+                const auto treeRows = treeSelectsRow(QStringLiteral("Wires"), wireTable, QStringLiteral("Wires"))
+                    && treeSelectsRow(QStringLiteral("Sources"), sourceTable, QStringLiteral("Sources"))
+                    && treeSelectsRow(QStringLiteral("Loads"), loadTable, QStringLiteral("Loads"))
+                    && treeSelectsRow(QStringLiteral("Trans. lines"), lineTable, QStringLiteral("Transmission lines"))
+                    && treeSelectsRow(QStringLiteral("Networks"), networkTable, QStringLiteral("Networks"));
+                // The line under the table explains the selected row: a source's volts and the
+                // segment it shares, a wire's diameter; nothing with no row selected.
+                const auto noteOf = [&](const QString& page) {
+                    const auto* note = mainWindow.findChild<QWidget*>(page)->findChild<QLabel*>(QStringLiteral("cardRowNote"));
+                    return note == nullptr ? QStringLiteral("?") : note->text();
+                };
+                treeSelectsRow(QStringLiteral("Sources"), sourceTable, QStringLiteral("Sources"));
+                const auto sourceNote = noteOf(QStringLiteral("cardsEX"));
+                selectGroup(QStringLiteral("Wires"));
+                wireTable->selectRow(0);
+                application.processEvents();
+                const auto wireNote = noteOf(QStringLiteral("cardsWires"));
+                selectGroup(QStringLiteral("Ground"));
+                selectGroup(QStringLiteral("Wires"));
+                const auto notesFollow = sourceNote.startsWith(QString::fromUtf8("1 V ∠ 0°"))
+                    && sourceNote.contains(QStringLiteral(" · "))
+                    && wireNote.startsWith(QString::fromUtf8("Ø 0.002 m")) && wireNote.contains(QStringLiteral("long"))
+                    && noteOf(QStringLiteral("cardsWires")).isEmpty();
+                if (!notesFollow) qWarning() << "row notes" << sourceNote << wireNote << noteOf(QStringLiteral("cardsWires"));
                 // With nothing in the pane, the header folds the variables to one line with Live
                 // still there, and back.
                 // A new name typed into a wire cell asks for its value under the cell, starting
@@ -1509,7 +1609,7 @@ auto main(int argc, char* argv[]) -> int
                 const auto treeKeepsHeight = wiresStill && sourcesStill && openedTreeHeight > 0;
                 if (!treeKeepsHeight) qWarning() << "tree height" << wiresStill << sourcesStill << openedTreeHeight << tree->height();
                 selectGroup(QStringLiteral("Wires"));
-                // A wire picked in the table is selected in the tree; clicking it there opens it.
+                // A wire picked in the table is selected in the tree; clicking it there keeps the table.
                 wireCells->selectRow(0);
                 application.processEvents();
                 auto* wireRow = tree->findItems(QStringLiteral("Wire 1"), Qt::MatchExactly | Qt::MatchRecursive).value(0);
@@ -1517,7 +1617,8 @@ auto main(int argc, char* argv[]) -> int
                     && pageTitle() == QStringLiteral("Wires");
                 if (wireRow != nullptr) emit tree->itemClicked(wireRow, 0);
                 application.processEvents();
-                const auto wireOpened = tableKept && pageTitle() == QStringLiteral("Wire 1");
+                const auto wireOpened = tableKept && pageTitle() == QStringLiteral("Wires")
+                    && wireCells->currentRow() == 0;
                 if (!wireOpened) qWarning() << "wire click" << tableKept << pageTitle();
                 selectGroup(QStringLiteral("Deck"));
                 QMouseEvent click(QEvent::MouseButtonRelease, QPointF(5, 5), header->mapToGlobal(QPointF(5, 5)),
@@ -1530,11 +1631,33 @@ auto main(int argc, char* argv[]) -> int
                 application.processEvents();
                 const auto unfolded = section->height() > header->height() + 2
                     && !settings.value(QStringLiteral("variables/folded")).toBool();
+                // New empties the pane, and the Variables bar sits right under the tree, folded
+                // or not, with the spare height below it.
+                deck->document()->setModified(false);
+                mainWindow.findChild<QAction*>(QStringLiteral("newModelAction"))->trigger();
+                application.processEvents();
+                const auto* pane = mainWindow.findChild<QWidget*>(QStringLiteral("propertiesPane"));
+                const auto underTree = [&] {
+                    return section->geometry().top() == tree->geometry().bottom() + 1
+                        && section->geometry().bottom() < section->parentWidget()->height() - 1;
+                };
+                const auto unfoldedUnder = underTree();
+                QApplication::sendEvent(header, &click);
+                application.processEvents();
+                const auto foldedUnder = underTree() && section->height() <= header->height() + 2;
+                QApplication::sendEvent(header, &click);
+                application.processEvents();
+                const auto newEmpties = pane->isHidden() && tree->selectedItems().isEmpty()
+                    && unfoldedUnder && foldedUnder;
+                if (!newEmpties)
+                    qWarning() << "new" << pane->isHidden() << tree->selectedItems().size() << unfoldedUnder
+                               << foldedUnder << tree->geometry() << section->geometry();
                 cardTables = bottomPanelPlain && groupShows && widened && narrowedAgain && pageWidening
                     && familyRefits && treeAddOpensForm
                     && symbolsKept && loadSymbols && rowSelects && lineOpensForm && geometrySelects
                     && tableAddsPlaced && loadAdded && linePicked && namesTyped && boxInside && boxPastCell
-                    && treeKeepsHeight && wireOpened && folded && unfolded;
+                    && treeKeepsHeight && wireOpened && folded && unfolded && treeWholeRows && treeRows
+                    && notesFollow && newEmpties;
                 if (!cardTables) {
                     qWarning() << "card tables" << bottomPanelPlain << groupShows << widened << pageWidening
                                << familyRefits << treeAddOpensForm
@@ -1558,7 +1681,7 @@ auto main(int argc, char* argv[]) -> int
     if (!variableSliderEdits)
         return NECWB_SMOKE_FAILURE("variable slider edits the SY card");
     if (!wirePaneKeepsSymbols)
-        return NECWB_SMOKE_FAILURE("wire pane keeps SY symbols");
+        return NECWB_SMOKE_FAILURE("cell edits keep SY symbols and exact values");
     if (!openModelKeepsDeckClosed)
         return NECWB_SMOKE_FAILURE("open model keeps NEC Deck closed");
     if (!leftColumnCappedAtContent)
@@ -4186,7 +4309,11 @@ auto main(int argc, char* argv[]) -> int
     const auto fittedHeight = modelTree->height();
     group(QStringLiteral("Wires"))->setExpanded(true);
     application.processEvents();
-    const auto treeKeepsHeight = fittedHeight > 0 && fittedHeight <= modelTree->topLevelHeight()
+    // Whole rows, no more than it was fitted to, and no taller once a group opens.
+    const auto rowPixels = modelTree->heightForRows(1) - modelTree->heightForRows(0);
+    const auto treeKeepsHeight = fittedHeight > 0 && rowPixels > 0
+        && (fittedHeight - modelTree->heightForRows(0)) % rowPixels == 0
+        && fittedHeight <= modelTree->heightForRows(modelTree->fittedRows())
         && modelTree->height() == fittedHeight;
     modelTree->setCurrentItem(group(QStringLiteral("Wires"))->child(0));
     const auto wireReported = !reportedSelections.empty()
@@ -4214,80 +4341,79 @@ auto main(int argc, char* argv[]) -> int
     const auto modelTreeStateVisible = modelTreeGroups && modelTreeSummaries && studiesShown
         && studyCleared && studyRunButtons && treeAdds && setupRowsShown;
     // The properties pane: leaving applies a valid edit, an invalid one asks first, Enter
-    // applies and Esc reverts.
-    auto* wirePage = new necwb::ui::WirePropertiesEditor;
-    const auto& paneWire = antenna.wires().front();
-    wirePage->setWire(paneWire, antenna, 1.0, QStringLiteral("m"));
-    auto wireApplications = 0;
-    std::optional<necwb::model::Wire> appliedWire;
-    wirePage->setAppliedCallback([&](const auto&, const necwb::model::Wire& updated) {
-        ++wireApplications;
-        appliedWire = updated;
+    // applies and Esc reverts. A page marks its unapplied edits on its Apply button.
+    auto* editPage = new QWidget;
+    auto* editValue = new QLineEdit(QStringLiteral("1"), editPage);
+    auto* editApply = new QPushButton(QStringLiteral("Apply"), editPage);
+    auto* editLayout = new QVBoxLayout(editPage);
+    editLayout->addWidget(editValue);
+    editLayout->addWidget(editApply);
+    auto applications = 0;
+    QString appliedValue = editValue->text();
+    QObject::connect(editApply, &QPushButton::clicked, editApply, [&] {
+        bool number{};
+        static_cast<void>(editValue->text().toDouble(&number));
+        if (!number) return;
+        ++applications;
+        appliedValue = editValue->text();
+        necwb::ui::setPendingEditIndicator(editApply, false);
     });
-    propertiesPane->setDiscardCallback([wirePage](QWidget* page) {
-        if (page == wirePage) wirePage->discardPendingEdits();
+    propertiesPane->setDiscardCallback([&](QWidget* page) {
+        if (page != editPage) return;
+        editValue->setText(appliedValue);
+        necwb::ui::setPendingEditIndicator(editApply, false);
     });
-    modelColumn.showPage(wirePage, QStringLiteral("Wire 1"));
+    const auto editTo = [&](const QString& text) {
+        editValue->setText(text);
+        necwb::ui::setPendingEditIndicator(editApply, true);
+    };
+    modelColumn.showPage(editPage, QStringLiteral("Page"));
     application.processEvents();
-    auto* endZ = wirePage->findChild<QDoubleSpinBox*>(QStringLiteral("wireCoordinateEditor5"));
-    auto* startZ = wirePage->findChild<QDoubleSpinBox*>(QStringLiteral("wireCoordinateEditor2"));
-    if (endZ == nullptr || startZ == nullptr) return NECWB_SMOKE_FAILURE("wire editor controls");
-    endZ->setValue(0.75);
-    const auto validEditApplied = wirePage->hasPendingEdits() && propertiesPane->commitPendingEdits()
-        && !wirePage->hasPendingEdits() && wireApplications == 1 && appliedWire
-        && std::abs(appliedWire->end.z - 0.75) < 1.0e-9;
+    editTo(QStringLiteral("0.75"));
+    const auto validEditApplied = propertiesPane->commitPendingEdits() && applications == 1
+        && appliedValue == QStringLiteral("0.75");
     const auto answerInvalidEdit = [](QMessageBox::StandardButton answer) {
         QTimer::singleShot(0, [answer] {
             if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))
                 box->button(answer)->click();
         });
     };
-    // An end on the start point is not a wire.
-    endZ->setValue(startZ->value());
+    editTo(QStringLiteral("x"));
     answerInvalidEdit(QMessageBox::Cancel);
     const auto invalidEditHeld = !propertiesPane->commitPendingEdits()
-        && wirePage->hasPendingEdits() && wireApplications == 1;
+        && editApply->property("pendingChanges").toBool() && applications == 1;
     answerInvalidEdit(QMessageBox::Discard);
     const auto invalidEditDiscarded = propertiesPane->commitPendingEdits()
-        && !wirePage->hasPendingEdits() && wireApplications == 1;
-    endZ->setValue(0.6);
+        && editValue->text() == QStringLiteral("0.75") && applications == 1;
+    editTo(QStringLiteral("0.6"));
     QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
     QApplication::sendEvent(propertiesPane, &enter);
-    const auto enterApplies = !wirePage->hasPendingEdits() && wireApplications == 2;
-    endZ->setValue(0.9);
+    const auto enterApplies = applications == 2 && appliedValue == QStringLiteral("0.6");
+    editTo(QStringLiteral("0.9"));
     QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
     QApplication::sendEvent(propertiesPane, &escape);
-    const auto escapeReverts = !wirePage->hasPendingEdits() && wireApplications == 2
-        && std::abs(endZ->value() - paneWire.end.z) < 1.0e-9;
+    const auto escapeReverts = applications == 2 && editValue->text() == QStringLiteral("0.6");
     modelColumn.showPage(nullptr, {});
     application.processEvents();
     const auto paneHides = propertiesPane->isHidden() && propertiesPane->currentPage() == nullptr;
-    // A field shows its value rounded, but one left alone goes back exactly as it was, and a
-    // field written as a symbol is shown linked and cannot be edited here.
+    // A cell edit changes only its own field: the others keep their exact values, even in a
+    // deck unit that does not round-trip, such as inches.
     necwb::model::AntennaModel preciseModel;
-    preciseModel.addWire({4, {0.12345, 0.0, -0.5}, {0.12345, 0.0, 0.5}, 11, 0.001, 1});
-    necwb::ui::WirePropertiesEditor preciseEditor;
-    necwb::ui::WirePropertiesEditor::LinkedFields linkedFields;
-    linkedFields[6] = QStringLiteral("-half");
-    preciseEditor.setWire(preciseModel.wires().front(), preciseModel,
-        1.0, QStringLiteral("m"), linkedFields);
+    preciseModel.addWire({4, {0.1234567890123457, 0.0, -0.5}, {0.1, 0.0, 0.5}, 11, 0.00123456, 1});
+    necwb::ui::WireCardEditor preciseTable;
+    preciseTable.setDeckScale(0.0254, QStringLiteral("in"));
+    preciseTable.setModel(preciseModel);
     std::optional<necwb::model::Wire> preciseApplied;
-    preciseEditor.setAppliedCallback(
+    QObject::connect(&preciseTable, &necwb::ui::WireCardEditor::wireEdited,
         [&preciseApplied](const auto&, const necwb::model::Wire& updated) { preciseApplied = updated; });
-    auto* preciseEndZ = preciseEditor.findChild<QDoubleSpinBox*>(
-        QStringLiteral("wireCoordinateEditor5"));
-    auto* linkedEndY = preciseEditor.findChild<QDoubleSpinBox*>(
-        QStringLiteral("wireCoordinateEditor4"));
-    auto* preciseStartX = preciseEditor.findChild<QDoubleSpinBox*>(
-        QStringLiteral("wireCoordinateEditor0"));
-    if (preciseEndZ == nullptr || linkedEndY == nullptr || preciseStartX == nullptr)
-        return NECWB_SMOKE_FAILURE("precise wire editor controls");
-    preciseEndZ->setValue(0.6);
-    if (auto* apply = preciseEditor.findChild<QPushButton*>(QStringLiteral("applyWireButton")))
-        apply->click();
-    const auto untouchedFieldsExact = preciseApplied && preciseApplied->start.x == 0.12345
-        && preciseApplied->end.x == 0.12345 && preciseApplied->end.y == 0.0
-        && preciseApplied->radius == 0.001 && std::abs(preciseApplied->end.z - 0.6) < 1.0e-9;
+    if (auto* cells = preciseTable.findChild<QTableWidget*>(QStringLiteral("wireCardTable")))
+        cells->item(0, 7)->setText(QStringLiteral("20"));
+    application.processEvents();
+    const auto& preciseWire = preciseModel.wires().front();
+    const auto untouchedFieldsExact = preciseApplied && preciseApplied->start == preciseWire.start
+        && preciseApplied->end.x == preciseWire.end.x && preciseApplied->end.y == preciseWire.end.y
+        && preciseApplied->radius == preciseWire.radius && preciseApplied->segments == 11
+        && std::abs(preciseApplied->end.z - 20 * 0.0254) < 1.0e-12;
     // The variables: a slider for each plain number and the value of each formula. A drag,
     // a typed value or a burst of steps is one change.
     necwb::ui::VariablesSection variablesSection;
@@ -4378,10 +4504,6 @@ auto main(int argc, char* argv[]) -> int
     const auto resetKeepsAdded = variablesReset != nullptr && variablesReset->isEnabled()
         && variablesReset->toolTip().contains(QStringLiteral("len 0.6 → 0.5"))
         && variablesReset->toolTip().contains(QStringLiteral("w 2 → 1"));
-    const auto linkedFieldShown = linkedEndY->isReadOnly()
-        && linkedEndY->text().startsWith(QStringLiteral("ƒx "))
-        && linkedEndY->toolTip().contains(QStringLiteral("-half"))
-        && !preciseStartX->isReadOnly() && !preciseStartX->text().startsWith(QStringLiteral("ƒx"));
     // The toolbar: one row with the engine; Configure… is a command, not an engine.
     QMenu recentModels;
     QAction toolOpen(QStringLiteral("&Open…")), toolSave(QStringLiteral("&Save")),
@@ -4432,7 +4554,7 @@ auto main(int argc, char* argv[]) -> int
         std::pair{"range edit reported", rangeEditReported},
         std::pair{"reset keeps added variables", resetKeepsAdded},
         std::pair{"untouched fields exact", untouchedFieldsExact},
-        std::pair{"linked field shown", linkedFieldShown}, std::pair{"toolbar", toolBarValid}};
+        std::pair{"toolbar", toolBarValid}};
     for (const auto& [name, passed] : modelTreeChecks) {
         if (passed) continue;
         std::fprintf(stderr, "model tree %s failed: groups \"%s\", wires \"%s\"\n", name,
@@ -5013,10 +5135,11 @@ auto main(int argc, char* argv[]) -> int
         return NECWB_SMOKE_FAILURE("wire card rows");
     auto* structuredGauge = qobject_cast<QComboBox*>(wireTable->cellWidget(0, 9));
     if (structuredGauge == nullptr) return NECWB_SMOKE_FAILURE("wire gauge editor");
-    auto structuredGaugeRangeValid = structuredGauge->count() == 22;
+    // Custom, then AWG 0000 (-3) to 40.
+    auto structuredGaugeRangeValid = structuredGauge->count() == 45;
     for (auto index = 1; index < structuredGauge->count(); ++index)
         structuredGaugeRangeValid = structuredGaugeRangeValid
-            && structuredGauge->itemData(index).toInt() == index + 9;
+            && structuredGauge->itemData(index).toInt() == index - 4;
     structuredGauge->setCurrentIndex(structuredGauge->findData(20));
     wireEditor.show(); application.processEvents();
     const auto structuredGaugeCommitted = std::abs(
@@ -5110,11 +5233,16 @@ auto main(int argc, char* argv[]) -> int
     const necwb::model::Wire gaugeWire{2, {-1.0, 0.0, 0.0}, {1.0, 0.0, 0.0},
         11, gaugeRadius, 1};
     gaugeModel.addWire(gaugeWire);
-    necwb::ui::WirePropertiesEditor wireProperties;
-    wireProperties.setWire(gaugeWire, gaugeModel, 1.0, QStringLiteral("m"));
-    auto* gaugeEditor = wireProperties.findChild<QComboBox*>(QStringLiteral("wireGaugeEditor"));
-    const auto gaugeDropdownValid = gaugeEditor != nullptr
-        && gaugeEditor->currentData().toInt() == 12;
+    // An AWG radius shows as its gauge, and the line under the table gives its diameter.
+    necwb::ui::WireCardEditor gaugeTable;
+    gaugeTable.setModel(gaugeModel);
+    gaugeTable.selectWire(2);
+    auto* gaugeEditor = gaugeTable.findChild<QComboBox*>(QStringLiteral("wireGaugeEditor"));
+    const auto* gaugeNote = gaugeTable.findChild<QLabel*>(QStringLiteral("cardRowNote"));
+    const auto gaugeDropdownValid = gaugeEditor != nullptr && gaugeEditor->currentData().toInt() == 12
+        && gaugeNote != nullptr && gaugeNote->text().startsWith(QString::fromUtf8("Ø 0.00205"))
+        && gaugeNote->text().contains(QStringLiteral("AWG"));
+    if (!gaugeDropdownValid) qWarning() << "gauge" << (gaugeNote ? gaugeNote->text() : QString{});
     QTabWidget setupHost;
     necwb::ui::SetupEditor setupEditor(&setupHost);
     setupHost.addTab(setupEditor.referenceImpedancePage(), QStringLiteral("Z0"));
@@ -5586,64 +5714,67 @@ auto main(int argc, char* argv[]) -> int
         network2D.render(&networkPainter);
         networkPainter.end();
     }
-    // The pane form for one card explains what shares its segment, keeps a field's SY symbol,
-    // relabels its fields by type, and holds back a value that is not a number.
+    // A card table: the selected row's type relabels the headers and the line under the table
+    // explains what shares its segment; a cell edit changes only its own field, keeping the
+    // others exact and an SY symbol as written; a value that is not a number is held back.
     auto cardFormValid = false;
     {
         necwb::model::ModelSetup sharedSetup;
         sharedSetup.excitations.push_back({0, 1, 6, 1.0, 0.0, 3});
         sharedSetup.loads.push_back({4, 1, 6, 6, 50.0, 0.0, 0.0, 4});
-        const auto cardDocument = necwb::nec::NecParser{}.parse("LD 4 1 6 6 r 0\n");
-        auto card = cardDocument.cards().front();
-        card.lineNumber = 4;
-        necwb::ui::CardFieldForm form;
-        form.show();
-        form.setCard(card, necwb::model::describeSharedSegments(attachmentModel, sharedSetup));
+        const std::string cardSource = "SY r=50\nGW 1 11 0 0 -.5 0 0 .5 .001\nEX 0 1 6 0 1 0\n"
+            "LD 4 1 6 6 r 0\nLD 0 1 3 3 12.3456789  0 0\nLD 5 1 1 11 5.8e7\nEN\n";
+        const auto cardDocument = necwb::nec::NecParser{}.parse(cardSource);
+        const auto cardResolved = necwb::nec::NecParser{}.parse(
+            necwb::nec::NecSymbolResolver{}.resolve(cardSource).resolvedSource);
+        necwb::ui::StructuredCardEditor loadCards({{QStringLiteral("LD")}});
+        loadCards.setDocument(cardDocument, &cardResolved);
+        loadCards.setSharedSegments(necwb::model::describeSharedSegments(attachmentModel, sharedSetup));
+        loadCards.show();
         application.processEvents();
-        QString applied;
-        form.setAppliedCallback([&applied](std::size_t, const QString& text) { applied = text; });
-        auto* notes = form.findChild<QLabel*>(QStringLiteral("cardFieldNotes"));
-        auto* resistance = form.findChild<QLineEdit*>(QStringLiteral("cardField4"));
-        auto* reactance = form.findChild<QLineEdit*>(QStringLiteral("cardField5"));
-        auto* segment = form.findChild<QLineEdit*>(QStringLiteral("cardField2"));
-        auto* type = form.findChild<QComboBox*>();
-        auto* apply = form.findChild<QPushButton*>(QStringLiteral("applyCardButton"));
-        if (notes != nullptr && resistance != nullptr && reactance != nullptr
-            && segment != nullptr && type != nullptr && apply != nullptr) {
-            const auto shared = notes->isVisible() && !notes->text().isEmpty();
-            const auto linked = resistance->isReadOnly()
-                && resistance->text() == QString::fromUtf8("ƒx r");
-            reactance->setText(QStringLiteral("25"));
-            emit reactance->textEdited(reactance->text());
-            apply->click();
-            const auto symbolKept = applied == QStringLiteral("LD 4 1 6 6 r 25");
-            applied.clear();
-            segment->setText(QStringLiteral("x"));
-            emit segment->textEdited(segment->text());
-            apply->click();
-            const auto invalidHeld = applied.isEmpty() && form.hasPendingEdits();
-            // Numbers as the parser reads them, "+1" too, apply; anything else is held.
-            const auto formAccepts = [&](QLineEdit* field, const QString& text) {
-                applied.clear();
-                field->setText(text);
-                emit field->textEdited(text);
-                apply->click();
-                return !applied.isEmpty();
+        QStringList edited;
+        QObject::connect(&loadCards, &necwb::ui::StructuredCardEditor::cardEdited,
+            [&edited](std::size_t, const QString& text) { edited << text; });
+        auto* cells = loadCards.findChild<QTableWidget*>(QStringLiteral("structuredCardTable"));
+        const auto* note = loadCards.findChild<QLabel*>(QStringLiteral("cardRowNote"));
+        if (cells != nullptr && note != nullptr && cells->rowCount() == 3) {
+            const auto headers = [cells] {
+                return QStringList{cells->horizontalHeaderItem(6)->text(),
+                    cells->horizontalHeaderItem(7)->text(), cells->horizontalHeaderItem(8)->text()};
             };
-            const auto formNumbers = formAccepts(segment, QStringLiteral("+1"))
-                && formAccepts(reactance, QStringLiteral("1e-3"))
-                && formAccepts(reactance, QStringLiteral("-0.5"))
-                && formAccepts(reactance, QStringLiteral("+1"))
-                && !formAccepts(reactance, QStringLiteral("abc"))
-                && !formAccepts(reactance, QStringLiteral("1..2"));
-            type->setCurrentIndex(type->findData(QStringLiteral("5")));
-            const auto relabelled = std::ranges::any_of(form.findChildren<QLabel*>(),
-                [](const QLabel* label) { return label->text() == QString::fromUtf8("σ S/m"); });
-            cardFormValid = shared && linked && symbolKept && invalidHeld && formNumbers && relabelled;
+            const auto usual = headers() == QStringList{QStringLiteral("R Ω"), QStringLiteral("L H"), QStringLiteral("C F")};
+            cells->selectRow(0);
+            const auto typed = headers() == QStringList{QStringLiteral("R Ω"), QStringLiteral("X Ω"), QStringLiteral("Unused")};
+            const auto shared = !note->text().isEmpty();
+            cells->selectRow(1);
+            const auto series = headers() == QStringList{QStringLiteral("R Ω"), QStringLiteral("L H"), QStringLiteral("C F")}
+                && note->text().isEmpty();
+            cells->clearSelection();
+            const auto cleared = usual && headers() == QStringList{QStringLiteral("R Ω"), QStringLiteral("L H"), QStringLiteral("C F")}
+                && note->text().isEmpty();
+            cells->item(0, 7)->setText(QStringLiteral("25"));
+            cells->item(1, 7)->setText(QStringLiteral("1e-6"));
+            application.processEvents();
+            // A type 5 load has only σ: its other fields are unused and it edits without them;
+            // a field filled in past the card's last one writes zeros up to it.
+            cells->selectRow(2);
+            const auto conductivity = headers() == QStringList{QString::fromUtf8("σ S/m"),
+                QStringLiteral("Unused"), QStringLiteral("Unused")};
+            cells->item(2, 6)->setText(QStringLiteral("3.5e7"));
+            cells->item(2, 8)->setText(QStringLiteral("1"));
+            application.processEvents();
+            const auto exact = conductivity && edited == QStringList{QStringLiteral("LD 4 1 6 6 r 25"),
+                QStringLiteral("LD 0 1 3 3 12.3456789  1e-6 0"), QStringLiteral("LD 5 1 1 11 3.5e7"),
+                QStringLiteral("LD 5 1 1 11 3.5e7 0 1")};
+            const auto editedCards = edited;
+            edited.clear();
+            cells->item(1, 4)->setText(QStringLiteral("x"));
+            application.processEvents();
+            const auto invalidHeld = edited.isEmpty();
+            cardFormValid = typed && shared && series && cleared && exact && invalidHeld;
             if (!cardFormValid)
-                qWarning() << "card form" << shared << notes->text() << linked
-                           << resistance->text() << symbolKept << applied << invalidHeld << formNumbers
-                           << relabelled;
+                qWarning() << "card table" << headers() << typed << shared << series << cleared
+                           << exact << editedCards << invalidHeld << note->text();
         }
     }
     QTemporaryDir directory;

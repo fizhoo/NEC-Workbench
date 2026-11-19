@@ -54,13 +54,11 @@ class AverageGainResultsView;
 class ConvergenceWorkspace;
 class SetupEditor;
 class WireCardEditor;
-class CardFieldForm;
 class StartPanel;
 class SourceHistory;
 class GeometryPreview;
 class DeckView;
 class ModelColumn;
-class WirePropertiesEditor;
 class WorkbenchToolBar;
 class OptimizationWorkspace;
 class ParameterEditor;
@@ -160,9 +158,6 @@ private:
     [[nodiscard]] auto paneDestination() const -> EditorDestination;
     void showSetupPage(EditorDestination destination);
     void showProperties(const ModelSelection& selection);
-    void refreshWireEditor();
-    // Shows the card on that line in the pane's form.
-    void refreshCardForm(std::size_t sourceLine);
     // Shows a page in the properties pane, the column widened for it while ⇔ is on.
     void showPanePage(QWidget* page, const QString& title);
     void fitPaneWidth();
@@ -264,7 +259,8 @@ private:
     [[nodiscard]] auto geometryViews() const -> std::array<GeometryInteractionView*, 4>;
     void refreshGeometryViews();
     // Fits the geometry views to the model, clearing their selection, and the tree to its
-    // rows, for a model just opened, created or reloaded.
+    // rows, and shows the tree's selection in the pane, for a model just opened, created or
+    // reloaded.
     void resetModelViews();
     void revertToSaved();
     // Solves the model at one frequency for the results column, when Live is on and nothing
@@ -318,13 +314,10 @@ private:
     DeckView* deckView_{};
     DetachablePanel* optimizationPanel_{};
     ModelColumn* modelColumn_{};
-    WirePropertiesEditor* wireEditor_{};
     WorkbenchToolBar* toolBar_{};
     StartPanel* startPanel_{};
     WireCardEditor* wireCardEditor_{};
     CardTables* cardTables_{};
-    // Set while a table row selects its item, which keeps the table in the pane.
-    bool keepTable_{};
     NecEditor* editor_{};
     SourceHistory* history_{};
     GeometryPreview* geometryPreview_{};
@@ -332,7 +325,6 @@ private:
     GeometryPlanes* geometryPlanes_{};
     Geometry3DView* geometry3DView_{};
     SetupEditor* setupEditor_{};
-    CardFieldForm* cardForm_{};
     AnalysisSetupEditor* analysisSetupEditor_{};
     AnalysisRequestEditor* analysisRequestEditor_{};
     RunReviewWindow* runReviewWindow_{};

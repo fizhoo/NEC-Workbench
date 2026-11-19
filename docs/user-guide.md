@@ -113,17 +113,19 @@ measured against) show their values, such as "144–148 MHz · 41 pts" or "Free 
 groups show their counts. Hover a row for the details. A group with nothing in it is one
 dim line. Right-click **Wires**,
 **Sources**, **Loads**, **Trans. lines**, or **Networks**, or any row in them, and choose
-**Add** to add one; its form opens in the pane. Expand a group to see its wires, sources,
+**Add** to add one; its row opens selected in the group's table. Expand a group to see its wires, sources,
 loads, lines, or networks. Selecting a wire in the tree selects it in the geometry views,
 and selecting one in geometry selects it in the tree. Right-click **Properties…** in
-geometry selects the item and moves the keyboard into the properties pane.
+geometry selects the item and moves the keyboard into its table.
 
-The properties pane holds one item at a time: a wire's tag, segments, endpoints, and size;
-one source, load, transmission line, or network as a short form; a setup page; and
-the Parameters table for **Variables**. The tree is as tall as its groups, up to about
-40% of the column, and keeps that height while you expand groups or select items, so the
-pane below never moves; the variables take up to about 25%. Each scrolls beyond that, and
-the pane takes the rest.
+The properties pane holds one page at a time: a group's card table, a setup page, or the
+Parameters table for **Variables**. The tree is as tall as its groups and the two
+Validation studies, in whole rows, up to about 40% of the column. It keeps that height
+while you expand groups or select items, so the pane below never moves; the variables
+take up to about 25%. Each scrolls beyond that, and the pane takes the rest. With nothing
+in the pane, the Variables bar sits right under the tree and the space below stays
+empty. New and Open start with nothing selected and the pane empty; Revert to Saved keeps
+the selection when its item is still there.
 
 Selecting the **Wires**, **Sources**, **Loads**, **Trans. lines**, **Networks**, or
 **Other** group shows that group's card table in the pane and folds the variables while it
@@ -132,18 +134,20 @@ Requests page, **⇔** in the pane header widens the column so the whole page fi
 about 65% of the window, narrowing the results column first; the geometry stays on screen.
 Click **⇔** again, or select a page that fits the column, to put the column back.
 
-Clicking a table row selects its item in the tree and geometry and keeps the table;
-double-click the row's Line cell, press `Enter`, or click the item in the tree to open its
-form. Selecting one source,
-load, line, or network in the tree or in geometry shows its short form in the pane. Right-
-click a wire in geometry to add a source or a load, or pick a transmission line's two ends;
-the new item's form opens in the pane.
+The card tables are the only editors of their items. Clicking a table row selects its item
+in the tree and geometry; selecting an item in the tree or in geometry shows its group's
+table with its row selected and scrolled into view. An arc or helix is its `GA` or `GH`
+row in the **Other** table. Double-click a cell to edit it; `Enter` on a row opens
+nothing. Right-click a wire in geometry to add a source or a load, or pick a transmission
+line's two ends; the new item's row is selected in its table.
 
-In the forms, fields written as `SY` symbols or expressions show **ƒx**, are read-only,
-and name the expression in their tooltip: change them through the variable, or type over
-them in the Wires table (see [Making Variables](#making-variables)). Applying a wire, source,
-load, line, or network edit rewrites only the fields you changed; the others keep their
-symbols and exact values.
+The line under each table explains the selected row: a wire's diameter (and AWG gauge),
+length, and the segments it shares; a source's volts as magnitude and phase; what shares a
+card's segment, such as "Wire tag 1, segment 11: EX 1 drives this gap". With a row
+selected, the Sources and Loads headers name that row's fields for its type: a type 5
+load's **R Ω** column reads **σ S/m**, a plane-wave source's **Real V** reads **θ °**, and
+fields the type does not use read **Unused**. Editing a cell rewrites only that field; the
+others keep their symbols, exact values and spacing.
 
 ### Variables
 
@@ -180,7 +184,7 @@ Optimize, and otherwise ±25% around the value it had when first shown (−1 to 
 Setting a range with **⋯** also sets the optimizer's minimum and maximum for that
 variable. Ranges are kept for the session, not saved with the model.
 
-Edits in the pane stay pending, with the Apply button emphasized, until applied. `Enter`
+Edits on a setup page stay pending, with the Apply button emphasized, until applied. `Enter`
 applies them and `Esc` reverts them. Selecting something else applies valid pending
 edits as one undoable step; only edits that cannot be applied ask whether to discard
 them. Undo returns to the page an edit was made on.
@@ -230,7 +234,7 @@ an expression such as `len/2`. Each one written as a number gets a slider under
   offered with their values (`len` offers `len`, `dlen` and `rlen`); choosing one replaces
   only the name being typed. Tags, segment numbers, type codes and counts take whole
   numbers only.
-- **Right-click a field** in any card table, or in a wire's own form, and choose **Make
+- **Right-click a field** in any card table and choose **Make
   Variable…**: create a new variable for its value, or pick an existing one. A field that
   already uses a variable offers **Change Variable…** and **Replace With Current Numeric
   Value**.
@@ -267,7 +271,7 @@ The NEC Deck's raw source and the card tables operate on the same document.
   number there replaces the expression. A new name asks for its value under the cell; an
   expression that cannot be worked out is refused with a message, and the deck is unchanged.
 - Right-click a numeric cell and choose **Make Variable…** to give it a variable.
-- Wire lengths, in the Wires table and the wire's own form, are in the deck's unit (its
+- Wire lengths in the Wires table are in the deck's unit (its
   `GS` scale); the unit is in each label, such as **X1 m**. The Geometry display unit only
   changes the 2D and 3D views, their grid and rulers.
 - Selecting a row selects its source, load, line, or network everywhere, or moves the
@@ -360,8 +364,7 @@ Each two-port network (`NT`) is given by its ports and its short-circuit admitta
 Y12, and Y22 in siemens. **Add NT Card** writes a 50 Ω series connection between two
 segments, since an `NT` port whose admittances are all zero carries no current and opens
 the wire at that segment. New `TL` and `NT` cards are added next to the deck's existing
-ones, since NEC-2 discards earlier networks and lines when other cards separate them. In a
-pane form, an emphasized Apply button indicates pending changes.
+ones, since NEC-2 discards earlier networks and lines when other cards separate them.
 
 References are validated against available wire tags and segments. Units shown in
 the interface are converted to the NEC values stored in source.

@@ -227,8 +227,6 @@ if(NECWB_BUILD_GUI)
         src/ui/geometry/Geometry3DView.h
         src/ui/geometry/GeometrySettingsDialog.cpp
         src/ui/geometry/GeometrySettingsDialog.h
-        src/ui/geometry/WirePropertiesEditor.cpp
-        src/ui/geometry/WirePropertiesEditor.h
         src/ui/optimization/OptimizationWorkspace.cpp
         src/ui/optimization/OptimizationWorkspace.h
         src/ui/optimization/OptimizationWorkspaceCandidates.cpp
@@ -252,8 +250,6 @@ if(NECWB_BUILD_GUI)
         src/ui/start/StartPanel.h
         src/ui/setup/SetupEditor.cpp
         src/ui/setup/SetupEditor.h
-        src/ui/setup/CardFieldForm.cpp
-        src/ui/setup/CardFieldForm.h
     )
     qt_add_resources(necwb_ui necwb_icons
         PREFIX "/icons"

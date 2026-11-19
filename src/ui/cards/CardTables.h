@@ -1,6 +1,7 @@
 #pragma once
 
 #include "nec/NecSymbolResolver.h"
+#include "model/SegmentSharing.h"
 #include "nec/NecDocument.h"
 #include "ui/cards/SymbolPrompt.h"
 
@@ -21,8 +22,9 @@ class WireCardEditor;
 
 // The card tables shown in the properties pane when a group is selected: wires in the wire
 // table; sources, loads, transmission lines, networks and the remaining cards in the field
-// tables, which keep SY symbols and parameterize fields. A row's click selects its item;
-// a double-click on its Line cell, or Enter, opens its form.
+// tables, which keep SY symbols and parameterize fields. They are the only editors of their
+// items: a row's click selects its item, a double-click edits a cell, and the line under each
+// table explains the selected row.
 class CardTables final : public QObject {
     Q_OBJECT
 
@@ -44,15 +46,16 @@ public:
     void setDocument(const nec::NecDocument& document, const nec::NecDocument* resolved,
         const std::vector<nec::SymbolDefinition>& symbols);
     void setDeckUnitLabel(const QString& unitLabel);
-    // Selects the card's row in whichever table has it.
-    void selectCard(std::size_t sourceLine);
+    // Selects the card's row in whichever table has it, and says which.
+    auto selectCard(std::size_t sourceLine) -> std::optional<Table>;
+    // The model's shared segments, for the line under each table.
+    void setSharedSegments(const std::vector<model::SharedSegment>& shared);
     void focusParameterizableField(Table table);
     // The card a table's Add would add; empty for the wire table, which adds its own way.
     [[nodiscard]] auto newCard(Table table) const -> QString;
 
 signals:
     void cardSelected(std::size_t sourceLine);
-    void cardActivated(std::size_t sourceLine);
     void cardEdited(std::size_t sourceLine, QString cardText);
     void cardAddRequested(QString cardText);
     void cardDeleteRequested(std::size_t sourceLine);

@@ -84,9 +84,12 @@ public:
     // Called with the group to add to: Wires, Sources, Loads, TransmissionLines or Networks.
     void setAddCallback(std::function<void(ModelNode)> callback);
 
-    // The height of the top-level rows, every group collapsed: the column sizes the tree to
-    // it when a model opens, so expanding, selecting or adding rows scrolls instead.
-    [[nodiscard]] auto topLevelHeight() const -> int;
+    // The rows showing with every card group collapsed: the top-level rows and the studies
+    // under Validation. The column sizes the tree to them when a model opens, so expanding,
+    // selecting or adding rows scrolls instead.
+    [[nodiscard]] auto fittedRows() const -> int;
+    // The tree's height for that many whole rows.
+    [[nodiscard]] auto heightForRows(int rows) const -> int;
 
 private:
     auto addGroup(ModelNode node, const QString& name, const char* icon) -> QTreeWidgetItem*;

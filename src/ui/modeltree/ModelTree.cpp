@@ -440,10 +440,16 @@ void ModelTree::showAddMenu(const QPoint& position)
     menu.exec(viewport()->mapToGlobal(position));
 }
 
-auto ModelTree::topLevelHeight() const -> int
+auto ModelTree::fittedRows() const -> int
 {
+    return topLevelItemCount() + group(ModelNode::Validation)->childCount();
+}
+
+auto ModelTree::heightForRows(int rows) const -> int
+{
+    // The rows are all as tall as the first.
     const auto rowHeight = std::max(sizeHintForRow(0), fontMetrics().height() + 4);
-    return topLevelItemCount() * rowHeight + 2 * frameWidth() + 2;
+    return rows * rowHeight + 2 * frameWidth();
 }
 
 }

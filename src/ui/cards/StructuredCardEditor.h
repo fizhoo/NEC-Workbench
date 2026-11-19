@@ -2,6 +2,7 @@
 
 #include "nec/NecDocument.h"
 #include "nec/NecSymbolResolver.h"
+#include "model/SegmentSharing.h"
 
 #include <QStringList>
 #include <QWidget>
@@ -18,6 +19,7 @@ class QTreeWidgetItem;
 
 namespace necwb::ui {
 
+class ElidedLabel;
 class SymbolCells;
 
 class StructuredCardEditor final : public QWidget {
@@ -37,6 +39,8 @@ public:
     void setDeckUnitLabel(QString unitLabel);
     // The symbols a number cell offers as you type.
     void setSymbols(const std::vector<nec::SymbolDefinition>& symbols);
+    // The model's shared segments, which the line under the table explains for a selected card.
+    void setSharedSegments(std::vector<model::SharedSegment> shared);
     // Symbols, Make Variable… and expressions typed into a cell.
     [[nodiscard]] auto symbolCells() const -> SymbolCells* { return symbolCells_; }
     auto selectCard(std::size_t sourceLine) -> bool;
@@ -46,8 +50,6 @@ public:
 
 signals:
     void cardSelected(std::size_t sourceLine);
-    // A double-click on the row's Line cell, or Enter: open the card's own editor.
-    void cardActivated(std::size_t sourceLine);
     void cardEdited(std::size_t sourceLine, QString cardText);
     void cardAddRequested(QString cardText);
     void cardDeleteRequested(std::size_t sourceLine);
@@ -57,6 +59,9 @@ private:
     void refreshTable();
     void commitCell(QTableWidgetItem* item);
     void updateActions();
+    // The headers and the line under the table, for the selected card.
+    void showSelectedCard();
+    [[nodiscard]] auto selectedCard() const -> const nec::NecCard*;
     [[nodiscard]] auto validateRow(int row) -> bool;
     [[nodiscard]] auto wireDefaults() const -> std::vector<std::pair<int, int>>;
     [[nodiscard]] auto defaultCard(int familyIndex) const -> QString;
@@ -72,6 +77,10 @@ private:
     Families shown_;
     QPushButton* addButton_{};
     QPushButton* deleteButton_{};
+    ElidedLabel* note_{};
+    // The family's own headers, which a selected card's type relabels.
+    QStringList headers_;
+    std::vector<model::SharedSegment> shared_;
     QString deckUnitLabel_{QStringLiteral("m")};
     bool updating_{};
 };
