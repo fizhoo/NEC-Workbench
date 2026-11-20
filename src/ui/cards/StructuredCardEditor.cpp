@@ -8,6 +8,7 @@
 #include "model/SegmentPlacement.h"
 #include "ui/cards/CardFields.h"
 #include "ui/cards/CompactNumberDelegate.h"
+#include "ui/cards/RowHeightCap.h"
 #include "ui/cards/SymbolCells.h"
 #include "ui/ElidedLabel.h"
 
@@ -450,8 +451,14 @@ StructuredCardEditor::StructuredCardEditor(Families families, QWidget* parent)
     layout->addLayout(actions);
     layout->addWidget(splitter, 1);
     layout->addWidget(note_);
+    layout->addStretch();
     const auto single = !shown_.exclude && shown_.names.size() == 1;
     families_->setVisible(!single);
+    // The note sits under the table's last row, or under the family list when that is longer.
+    auto* cap = new RowHeightCap(splitter, table_, [this] {
+        return std::max(rowsHeight(table_), families_->isHidden() ? 0 : rowsHeight(families_));
+    });
+    cap->watch(families_);
 
     connect(families_, &QTreeWidget::currentItemChanged, this,
         [this](QTreeWidgetItem* current) {

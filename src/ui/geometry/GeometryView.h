@@ -7,8 +7,10 @@
 #include "ui/geometry/GeometrySettings.h"
 
 #include <QPointF>
+#include <QStringList>
 
 #include <optional>
+#include <vector>
 
 class QMouseEvent;
 class QPaintEvent;
@@ -17,6 +19,10 @@ class QContextMenuEvent;
 class QEvent;
 
 namespace necwb::ui {
+
+// A grid tick's label with the decimals its step needs, so neighbouring ticks always differ.
+[[nodiscard]] auto gridTickLabel(double meters, double spacingMeters, model::LengthUnit unit)
+    -> QString;
 
 class GeometryView final : public GeometryInteractionView {
     Q_OBJECT
@@ -30,6 +36,12 @@ public:
     void setLengthUnit(model::LengthUnit unit);
     void setSnapSpacing(double meters);
     void setSettings(const GeometrySettings& settings);
+    [[nodiscard]] auto plane() const -> geometry::ProjectionPlane { return plane_; }
+    [[nodiscard]] auto infoText() const -> QString override;
+    // The grid labels drawn along the bottom (Horizontal) or the left edge (Vertical).
+    [[nodiscard]] auto tickLabels(Qt::Orientation orientation) const -> QStringList;
+    // Where a model point is drawn in this view.
+    [[nodiscard]] auto screenPoint(const model::Point3D& point) const -> QPointF;
 
 signals:
     void endpointPreviewed(int tag, model::WireEndpoint endpoint, model::Point3D position);
@@ -51,6 +63,11 @@ protected:
     void wheelEvent(QWheelEvent* event) override;
 
 private:
+    struct Tick {
+        double screen{};
+        QString label;
+    };
+    [[nodiscard]] auto labelledTicks(Qt::Orientation orientation) const -> std::vector<Tick>;
     [[nodiscard]] auto mapToScreen(const geometry::Point2D& point) const -> QPointF;
     [[nodiscard]] auto mapToWorld(const QPointF& point) const -> geometry::Point2D;
     [[nodiscard]] auto gridSpacing() const -> double;
@@ -60,7 +77,9 @@ private:
     void drawWires(QPainter& painter) const;
     void drawExcitations(QPainter& painter) const;
     void drawAttachments(QPainter& painter) const;
-    void drawOverlay(QPainter& painter) const;
+    void drawEmptyMessage(QPainter& painter) const;
+    // Repaints and tells the info line, whose grid and cursor may have changed.
+    void changed();
     void selectAt(const QPointF& position);
     [[nodiscard]] auto endpointAt(const QPointF& position) const
         -> std::optional<std::pair<int, model::WireEndpoint>>;

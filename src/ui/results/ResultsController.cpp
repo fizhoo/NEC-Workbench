@@ -242,6 +242,15 @@ void ResultsController::refresh()
     column_->refresh();
     fullView_->refresh();
     if (frequenciesChanged_) frequenciesChanged_(frequencies_, state_.frequencyMHz);
+    if (columnChanged_)
+        columnChanged_(columnState_, state_.frequencyMHz && isStaleAt(*state_.frequencyMHz));
+}
+
+void ResultsController::setColumnChangedCallback(
+    std::function<void(const ResultState&, bool)> callback)
+{
+    columnChanged_ = std::move(callback);
+    refresh();
 }
 
 void ResultsController::refreshStrip()

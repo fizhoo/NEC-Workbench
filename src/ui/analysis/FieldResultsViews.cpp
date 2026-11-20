@@ -18,7 +18,6 @@
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QLinearGradient>
 #include <QLineF>
 #include <QContextMenuEvent>
 #include <QMenu>
@@ -1105,12 +1104,7 @@ private:
         const QRectF legend(10, top, 285, 50);
         painter.fillRect(legend, palette().brush(QPalette::AlternateBase));
         const QRectF colorBar(legend.left() + 8, legend.top() + 19, 185, 10);
-        QLinearGradient gradient(colorBar.topLeft(), colorBar.topRight());
-        for (auto index = 0; index <= 4; ++index) {
-            const auto ratio = index / 4.0;
-            gradient.setColorAt(ratio, gainColor(ratio));
-        }
-        painter.fillRect(colorBar, gradient);
+        painter.fillRect(colorBar, turboGradient(colorBar));
         painter.setPen(palette().color(QPalette::Mid));
         painter.drawRect(colorBar);
         painter.setPen(palette().color(QPalette::Text));
@@ -1326,7 +1320,7 @@ private:
                 if (!endpoints) continue;
                 const auto ratio = current.magnitude / std::max(*maximumCurrent, 1.0e-30);
                 lines.push_back({place(endpoints->first), place(endpoints->second),
-                    QPen(gainColor(ratio), 3.0 + 4.0 * ratio), 1});
+                    QPen(currentColor(current.magnitude, *maximumCurrent), 3.0 + 4.0 * ratio), 1});
             }
         }
         return lines;
@@ -1469,10 +1463,7 @@ void CurrentDistributionView::refresh()
             .arg(formatDecimal(selectedFrequency(frequency_)), runContext_)
         : tr("%1 MHz · %2 current segment(s) · %3")
             .arg(formatDecimal(selectedFrequency(frequency_))).arg(values.size()).arg(runContext_));
-    std::vector<analysis::FeedpointResult> feedpoints;
-    for (const auto& feed : result.feedpoints)
-        if (nearlyEqual(feed.frequencyMHz, selectedFrequency(frequency_))) feedpoints.push_back(feed);
-    auto displayed = analysis::displayedCurrents(values, feedpoints, model_);
+    auto displayed = analysis::displayedCurrentsAt(result, selectedFrequency(frequency_), model_);
     std::map<std::pair<std::size_t, int>, double> displayedPhase;
     for (const auto& segment : displayed.segments)
         displayedPhase[{segment.wireIndex, segment.segment}] = segment.relativePhaseDegrees;

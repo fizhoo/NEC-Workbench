@@ -3,6 +3,7 @@
 #include "ui/DisplayFormat.h"
 #include "ui/ElidedLabel.h"
 #include "ui/cards/CompactNumberDelegate.h"
+#include "ui/cards/RowHeightCap.h"
 #include "ui/cards/SymbolCells.h"
 #include "ui/cards/VariableMenu.h"
 
@@ -96,6 +97,8 @@ WireCardEditor::WireCardEditor(QWidget* parent)
     layout->addLayout(actions);
     layout->addWidget(table_, 1);
     layout->addWidget(note_);
+    layout->addStretch();
+    new RowHeightCap(table_, table_);
     connect(addButton, &QPushButton::clicked, this, [this] { emit addWireRequested(); });
     connect(duplicateButton_, &QPushButton::clicked, this, [this] {
         if (const auto tag = selectedTag(); tag >= 0) {

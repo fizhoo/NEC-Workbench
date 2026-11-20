@@ -1,6 +1,7 @@
 #include "ui/geometry/Geometry3DView.h"
 
 #include "model/WireGeometry.h"
+#include "ui/ColorScale.h"
 #include "ui/DisplayFormat.h"
 
 #include <QContextMenuEvent>
@@ -8,6 +9,7 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QStringList>
 #include <QWheelEvent>
 
 #include <algorithm>
@@ -46,6 +48,7 @@ void Geometry3DView::setModel(const model::AntennaModel& model)
     setInteractionModel(model, true);
     updateModelCenter();
     fitToView();
+    emit infoChanged();
 }
 
 void Geometry3DView::updateModel(const model::AntennaModel& model)
@@ -53,12 +56,23 @@ void Geometry3DView::updateModel(const model::AntennaModel& model)
     setInteractionModel(model, false);
     updateModelCenter();
     update();
+    emit infoChanged();
 }
 
 void Geometry3DView::setLengthUnit(model::LengthUnit unit)
 {
     lengthUnit_ = unit;
     update();
+    emit infoChanged();
+}
+
+auto Geometry3DView::infoText() const -> QString
+{
+    if (model_.empty()) return {};
+    QStringList parts{geometryCounts(model_)};
+    parts << tr("Extent %1").arg(formattedLength(modelExtent_));
+    if (!currentsNote().isEmpty()) parts << currentsNote();
+    return parts.join(QStringLiteral(" · "));
 }
 
 void Geometry3DView::fitToView()
@@ -295,9 +309,20 @@ void Geometry3DView::paintEvent(QPaintEvent*)
         return (wire.start.depth + wire.end.depth) / 2.0;
     });
 
+    const auto currents = showsCurrents();
+    if (currents) {
+        // The selected wire's halo goes under everything, so it outlines the current colours.
+        for (const auto& rendered : renderWires) {
+            if (selectedWireTag_ != rendered.wire->tag) continue;
+            painter.setPen(selectionHaloPen(11.0));
+            painter.drawLine(rendered.start.screen, rendered.end.screen);
+        }
+    }
     for (const auto& rendered : renderWires) {
         const bool selected = selectedWireTag_ == rendered.wire->tag;
-        const auto color = selected ? QColor(230, 126, 34) : QColor(40, 105, 170);
+        const auto color = currents ? (selected ? palette().color(QPalette::Text)
+                                                : palette().color(QPalette::Mid))
+            : selected ? QColor(230, 126, 34) : QColor(40, 105, 170);
         painter.setPen(QPen(color, selected ? 4.5 : 2.75, Qt::SolidLine, Qt::RoundCap));
         painter.drawLine(rendered.start.screen, rendered.end.screen);
         painter.setBrush(color);
@@ -315,6 +340,26 @@ void Geometry3DView::paintEvent(QPaintEvent*)
                 QStringLiteral("%1 %2").arg(mnemonic).arg(rendered.wire->tag));
         }
     }
+    if (currents) {
+        struct RenderCurrent {
+            const analysis::DisplayedSegmentCurrent* current{};
+            CameraPoint start;
+            CameraPoint end;
+        };
+        std::vector<RenderCurrent> renderCurrents;
+        renderCurrents.reserve(currents_->segments.size());
+        for (const auto& segment : currents_->segments)
+            renderCurrents.push_back({&segment, project(segment.start), project(segment.end)});
+        std::ranges::sort(renderCurrents, {}, [](const RenderCurrent& current) {
+            return (current.start.depth + current.end.depth) / 2.0;
+        });
+        for (const auto& rendered : renderCurrents) {
+            const auto selected = selectedWireTag_ == rendered.current->wireTag;
+            painter.setPen(QPen(currentColor(rendered.current->magnitude,
+                currents_->maximumMagnitude), selected ? 5.5 : 4.0, Qt::SolidLine, Qt::FlatCap));
+            painter.drawLine(rendered.start.screen, rendered.end.screen);
+        }
+    }
 
     for (const auto& load : loads_) {
         const auto position = model::loadPosition(model_, load);
@@ -324,6 +369,11 @@ void Geometry3DView::paintEvent(QPaintEvent*)
         const auto halfSize = selected ? 8.0 : 6.0;
         const QRectF marker(screen.x() - halfSize, screen.y() - halfSize,
             halfSize * 2.0, halfSize * 2.0);
+        if (selected && currents) {
+            painter.setPen(selectionHaloPen(7.0));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRect(marker);
+        }
         painter.setPen(QPen(selected ? QColor(225, 105, 25) : QColor(45, 145, 115),
             selected ? 3.0 : 2.0));
         painter.setBrush(QColor(205, 245, 225));
@@ -342,22 +392,16 @@ void Geometry3DView::paintEvent(QPaintEvent*)
         const auto radius = selected ? 10.0 : 8.0;
         const QPolygonF diamond{screen + QPointF{0.0, -radius}, screen + QPointF{radius, 0.0},
             screen + QPointF{0.0, radius}, screen + QPointF{-radius, 0.0}};
+        if (selected && currents) {
+            painter.setPen(selectionHaloPen(7.0));
+            painter.drawPolygon(diamond);
+        }
         painter.setPen(QPen(selected ? QColor(230, 100, 25) : QColor(190, 45, 55), selected ? 3.0 : 2.0));
         painter.setBrush(QColor(255, 235, 120));
         painter.drawPolygon(diamond);
         painter.setPen(QColor(150, 30, 40));
         painter.drawText(screen + QPointF{10.0, -8.0}, tr("EX"));
     }
-
-    const auto overlay = tr("3D Model  •  %1 wires  •  %2 patches  •  Extent %3\nLeft-drag orbit  •  Shift/middle-drag pan  •  Wheel zoom  •  Click select")
-        .arg(static_cast<qulonglong>(model_.wireCount()))
-        .arg(static_cast<qulonglong>(model_.surfacePatchCount()))
-        .arg(formattedLength(modelExtent_));
-    const auto overlayBounds = painter.fontMetrics().boundingRect(QRect(12, 12, width() - 24, 60),
-        Qt::AlignLeft | Qt::AlignTop, overlay).adjusted(-7, -5, 7, 5);
-    painter.fillRect(overlayBounds, palette().window().color());
-    painter.setPen(palette().windowText().color());
-    painter.drawText(overlayBounds.adjusted(7, 5, -7, -5), Qt::AlignLeft | Qt::AlignTop, overlay);
 }
 
 void Geometry3DView::wheelEvent(QWheelEvent* event)

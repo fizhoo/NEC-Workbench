@@ -97,6 +97,17 @@ auto projectedBounds(const model::AntennaModel& model, ProjectionPlane plane)
     return bounds;
 }
 
+auto modelExtent(const model::AntennaModel& model) -> double
+{
+    // XZ and YZ between them cover all three axes.
+    auto extent = 0.0;
+    for (const auto plane : {ProjectionPlane::XZ, ProjectionPlane::YZ}) {
+        if (const auto bounds = projectedBounds(model, plane))
+            extent = std::max({extent, bounds->width(), bounds->height()});
+    }
+    return extent;
+}
+
 auto widestPlane(const model::AntennaModel& model) -> ProjectionPlane
 {
     constexpr std::array planes{ProjectionPlane::XY, ProjectionPlane::XZ, ProjectionPlane::YZ};

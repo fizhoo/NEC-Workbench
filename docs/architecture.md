@@ -81,9 +81,12 @@ written, offers the symbols for the word being typed, owns the Make Variable… 
 menu, and sends a typed name or expression to `enterFieldExpression`
 (`ui/cards/SymbolPrompt`), which asks under the cell for the value of each new name, adds
 its `SY` card with `nec::insertSymbolDefinition`, and writes only that field. The center
-shows the geometry editor (2D views in `GeometryPlanes`, which puts
-`geometry::widestPlane` in the big view when a model opens and swaps on request, and the
-3D view), or one full result view, or the NEC
+shows the geometry editor (`GeometryWorkspace`: a compact toolbar for snapping, units and
+settings over either the 2D views in `GeometryPlanes`, which puts `geometry::widestPlane` in
+the big view when a model opens and swaps on request, or the 3D view; the big view's title
+line holds the Top, Front, Side, 3D, Fit and Currents buttons, which the View menu shares,
+and each view's counts, grid and cursor go in a thin info line under it, never over the
+drawing), or one full result view, or the NEC
 Deck (`DeckView`: raw source), each non-geometry view under the same
 `CenterViewHeader`; the collapsible results column is on the right. The results (`ui/results`) are:
 
@@ -233,8 +236,13 @@ radiation records. Views consume these records rather than reparsing output.
   `analysis/SegmentCurrentDisplay` prepares them for drawing: it orients straight
   wires toward +X, +Y, or +Z (adding 180° where NEC's end-1-to-end-2 direction runs
   the other way), references phase to the first feed current, and computes the
-  instantaneous current over the RF cycle. The Currents window's Antenna tab and the
-  table's relative-phase column both consume this core result.
+  instantaneous current over the RF cycle. `displayedCurrentsAt` picks one frequency's
+  currents; the Currents view (Antenna tab and table) and the geometry views' Currents
+  colouring all consume it. The geometry views take the results column's state through
+  `ResultsController::setColumnChangedCallback`, so they follow the selected frequency and
+  live points, and draw the wires plain while that frequency is stale.
+- `ui/ColorScale` holds the one magnitude scale (Turbo) and its legend, used for radiation
+  gain and for current on the wires in the 3D pattern and the geometry views.
 - Radiation datasets retain their frequency and request identity.
 - `analysis/GainDirection` turns NEC θ/φ into elevation/azimuth and formats every
   displayed gain, cut name, reference level, and F/B or F/R definition, so widgets

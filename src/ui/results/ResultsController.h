@@ -63,6 +63,9 @@ public:
     // Called with true to show the full view in the center, false to return to geometry.
     void setShowFullViewCallback(std::function<void(bool)> callback);
     void setChooseReferenceCallback(std::function<void(QWidget*)> callback);
+    // Called after every change with what the results column shows (its run with any live
+    // points, and the selected frequency) and whether that frequency is out of date.
+    void setColumnChangedCallback(std::function<void(const ResultState&, bool)> callback);
 
 private:
     void refresh();
@@ -82,6 +85,7 @@ private:
     std::function<void(bool)> showFullView_;
     std::function<void(double)> frequencySelected_;
     std::function<void(const QString&)> status_;
+    std::function<void(const ResultState&, bool)> columnChanged_;
     LiveSolve* liveSolve_{};
 };
 

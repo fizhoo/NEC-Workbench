@@ -53,20 +53,6 @@ constexpr auto LinePieces = 8;
 
 }
 
-auto turboColor(double ratio) -> QColor
-{
-    // Google's polynomial fit of the Turbo colour map.
-    const auto t = std::clamp(ratio, 0.0, 1.0);
-    const auto red = 0.13572138 + t * (4.61539260 + t * (-42.66032258 + t * (132.13108234
-        + t * (-152.94239396 + t * 59.28637943))));
-    const auto green = 0.09140261 + t * (2.19418839 + t * (4.84296658 + t * (-14.18503333
-        + t * (4.27729857 + t * 2.82956604))));
-    const auto blue = 0.10667330 + t * (12.64194608 + t * (-60.58204836 + t * (110.36276771
-        + t * (-89.90310912 + t * 27.34824973))));
-    return QColor::fromRgbF(static_cast<float>(std::clamp(red, 0.0, 1.0)),
-        static_cast<float>(std::clamp(green, 0.0, 1.0)), static_cast<float>(std::clamp(blue, 0.0, 1.0)));
-}
-
 auto SurfaceView::project(const model::Point3D& point) const -> QPointF
 {
     const auto cy = std::cos(yaw), sy = std::sin(yaw), cp = std::cos(pitch), sp = std::sin(pitch);

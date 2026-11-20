@@ -1,5 +1,6 @@
 #include "analysis/SegmentCurrentDisplay.h"
 
+#include "analysis/FrequencyComparison.h"
 #include "model/WireGeometry.h"
 
 #include <algorithm>
@@ -129,6 +130,18 @@ auto dominantProjectionPlane(std::span<const DisplayedSegmentCurrent> segments)
     constexpr auto tieTolerance = 1.0 - 1.0e-9;
     if (xy >= std::max(xz, yz) * tieTolerance) return geometry::ProjectionPlane::XY;
     return xz >= yz * tieTolerance ? geometry::ProjectionPlane::XZ : geometry::ProjectionPlane::YZ;
+}
+
+auto displayedCurrentsAt(const AnalysisResult& result, double frequencyMHz,
+    const model::AntennaModel& model) -> DisplayedCurrents
+{
+    std::vector<SegmentCurrentResult> currents;
+    for (const auto& current : result.currents)
+        if (nearlyEqual(current.frequencyMHz, frequencyMHz)) currents.push_back(current);
+    std::vector<FeedpointResult> feedpoints;
+    for (const auto& feed : result.feedpoints)
+        if (nearlyEqual(feed.frequencyMHz, frequencyMHz)) feedpoints.push_back(feed);
+    return displayedCurrents(currents, feedpoints, model);
 }
 
 }

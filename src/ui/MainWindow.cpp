@@ -53,6 +53,7 @@
 #include "ui/geometry/AutoSegmentationDialog.h"
 #include "ui/geometry/Geometry3DView.h"
 #include "ui/geometry/GeometryPlanes.h"
+#include "ui/geometry/GeometryWorkspace.h"
 #include "ui/geometry/GeometryPreview.h"
 #include "ui/geometry/GeometryView.h"
 #include "ui/geometry/GeometrySettingsDialog.h"
@@ -488,32 +489,6 @@ void MainWindow::createActions()
         "Open the multi-run segmentation convergence study window"));
     connect(convergenceAction_, &QAction::triggered, this, [this] { showConvergenceStudy(); });
 
-    fitGeometryAction_ = new QAction(tr("&Fit Geometry"), this);
-    fitGeometryAction_->setIcon(workbenchIcon("fit"));
-    fitGeometryAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
-    fitGeometryAction_->setStatusTip(tr("Fit geometry in all orthographic views"));
-    connect(fitGeometryAction_, &QAction::triggered, this, [this] { fitAllGeometryViews(); });
-
-    snapGridAction_ = new QAction(tr("Snap Grid"), this);
-    snapGridAction_->setCheckable(true);
-    snapGridAction_->setChecked(true);
-    snapGridAction_->setStatusTip(tr("Snap moved geometry to the fixed snap interval"));
-    connect(snapGridAction_, &QAction::toggled, this, [this](bool enabled) {
-        auto settings = geometrySettings_;
-        settings.gridSnapping = enabled;
-        applyGeometrySettings(settings);
-    });
-
-    snapEndpointsAction_ = new QAction(tr("Snap Endpoints"), this);
-    snapEndpointsAction_->setCheckable(true);
-    snapEndpointsAction_->setChecked(true);
-    snapEndpointsAction_->setStatusTip(tr("Snap moved geometry to nearby wire endpoints"));
-    connect(snapEndpointsAction_, &QAction::toggled, this, [this](bool enabled) {
-        auto settings = geometrySettings_;
-        settings.endpointSnapping = enabled;
-        applyGeometrySettings(settings);
-    });
-
     geometrySettingsAction_ = new QAction(tr("Geometry Settings…"), this);
     geometrySettingsAction_->setIcon(workbenchIcon("settings"));
     connect(geometrySettingsAction_, &QAction::triggered, this, [this] { showGeometrySettings(); });
@@ -643,52 +618,26 @@ void MainWindow::createWorkspace()
     QTimer::singleShot(0, this, [this] { refreshLatestRun(); });
 
 
-    workspace_ = new QTabWidget(windowHost_);
-    workspace_->setObjectName(QStringLiteral("geometryWorkspace"));
-    workspace_->setDocumentMode(true);
-    workspace_->setMovable(true);
-
-    auto* geometryPage = new QWidget(workspace_);
-    auto* geometryLayout = new QVBoxLayout(geometryPage);
-    geometryLayout->setContentsMargins(0, 0, 0, 0);
-    geometryLayout->setSpacing(0);
-    auto* geometryToolbar = new QToolBar(tr("Geometry"), geometryPage);
-    geometryToolbar->setIconSize({16, 16});
-    geometryToolbar->addWidget(new QLabel(tr("Orthographic Views"), geometryToolbar));
-    geometryToolbar->addSeparator();
-    geometryToolbar->addAction(fitGeometryAction_);
-    geometryPlanes_ = new GeometryPlanes(geometryPage);
-    geometryToolbar->addSeparator();
-    geometryToolbar->addAction(snapGridAction_);
-    geometryToolbar->addAction(snapEndpointsAction_);
-    geometryToolbar->addSeparator();
-    geometryToolbar->addWidget(new QLabel(tr("Units:"), geometryToolbar));
-    lengthUnitControl_ = new QComboBox(geometryToolbar);
-    lengthUnitControl_->addItem(tr("Meters"), static_cast<int>(model::LengthUnit::Meter));
-    lengthUnitControl_->addItem(tr("Centimeters"), static_cast<int>(model::LengthUnit::Centimeter));
-    lengthUnitControl_->addItem(tr("Millimeters"), static_cast<int>(model::LengthUnit::Millimeter));
-    lengthUnitControl_->addItem(tr("Inches"), static_cast<int>(model::LengthUnit::Inch));
-    lengthUnitControl_->addItem(tr("Feet"), static_cast<int>(model::LengthUnit::Foot));
-    geometryToolbar->addWidget(lengthUnitControl_);
-    geometryToolbar->addWidget(new QLabel(tr("Snap:"), geometryToolbar));
-    snapSpacingControl_ = new EngineeringSpinBox(geometryToolbar);
-    snapSpacingControl_->setDecimals(DisplayDecimalPlaces);
-    snapSpacingControl_->setRange(0.000001, 1.0e9);
-    snapSpacingControl_->setKeyboardTracking(false);
-    snapSpacingControl_->setValue(0.1);
-    snapSpacingControl_->setToolTip(tr("Snap interval in the active display unit; unit-change behavior is set in Geometry Settings"));
-    geometryToolbar->addWidget(snapSpacingControl_);
-    connect(lengthUnitControl_, &QComboBox::currentIndexChanged, this, [this] {
-        setDisplayLengthUnit(static_cast<model::LengthUnit>(lengthUnitControl_->currentData().toInt()));
-    });
-    connect(snapSpacingControl_, &QDoubleSpinBox::valueChanged, this, [this](double value) {
+    geometryWorkspace_ = new GeometryWorkspace(windowHost_);
+    connect(geometryWorkspace_, &GeometryWorkspace::lengthUnitChosen, this,
+        [this](model::LengthUnit unit) { setDisplayLengthUnit(unit); });
+    connect(geometryWorkspace_, &GeometryWorkspace::snapSpacingChosen, this, [this](double value) {
         setSnapSpacing(model::toMeters(value, geometrySettings_.lengthUnit));
     });
-    geometryToolbar->addAction(geometrySettingsAction_);
+    connect(geometryWorkspace_, &GeometryWorkspace::gridSnappingToggled, this, [this](bool enabled) {
+        auto settings = geometrySettings_;
+        settings.gridSnapping = enabled;
+        applyGeometrySettings(settings);
+    });
+    connect(geometryWorkspace_, &GeometryWorkspace::endpointSnappingToggled, this,
+        [this](bool enabled) {
+            auto settings = geometrySettings_;
+            settings.endpointSnapping = enabled;
+            applyGeometrySettings(settings);
+        });
+    connect(geometryWorkspace_, &GeometryWorkspace::settingsRequested, this,
+        [this] { showGeometrySettings(); });
     applyGeometrySettings(geometrySettings_);
-    geometryLayout->addWidget(geometryToolbar);
-    geometryLayout->addWidget(geometryPlanes_, 1);
-    geometryTabIndex_ = workspace_->addTab(geometryPage, tr("2D Geometry"));
     const auto connectAttachments = [this]<typename View>(View* view) {
         connect(view, &View::wireSelected, this,
             [this](int tag) { selectWireInProject(tag); });
@@ -754,35 +703,11 @@ void MainWindow::createWorkspace()
         connect(view, &GeometryView::deleteWireRequested, this,
             [this](int tag) { deleteWire(tag); });
     };
-    for (auto* view : geometryPlanes_->views()) {
+    for (auto* view : geometryWorkspace_->planes()->views()) {
         connectAttachments(view);
         connectEndpointEditing(view);
     }
-    auto* geometry3DPage = new QWidget(workspace_);
-    auto* geometry3DLayout = new QVBoxLayout(geometry3DPage);
-    geometry3DLayout->setContentsMargins(0, 0, 0, 0);
-    geometry3DLayout->setSpacing(0);
-    auto* geometry3DToolbar = new QToolBar(tr("3D Geometry"), geometry3DPage);
-    geometry3DToolbar->addWidget(new QLabel(tr("Interactive Model View"), geometry3DToolbar));
-    geometry3DToolbar->addSeparator();
-    auto* fit3DButton = new QToolButton(geometry3DToolbar);
-    fit3DButton->setText(tr("Fit"));
-    auto* isometricButton = new QToolButton(geometry3DToolbar);
-    isometricButton->setText(tr("Isometric"));
-    geometry3DToolbar->addWidget(fit3DButton);
-    geometry3DToolbar->addWidget(isometricButton);
-    geometry3DToolbar->addSeparator();
-    geometry3DToolbar->addWidget(new QLabel(
-        tr("Left-drag orbit  •  Shift/middle-drag pan  •  Wheel zoom"), geometry3DToolbar));
-    geometry3DView_ = new Geometry3DView(geometry3DPage);
-    geometry3DLayout->addWidget(geometry3DToolbar);
-    geometry3DLayout->addWidget(geometry3DView_, 1);
-    connect(fit3DButton, &QToolButton::clicked, geometry3DView_, &Geometry3DView::fitToView);
-    connect(isometricButton, &QToolButton::clicked, geometry3DView_, &Geometry3DView::setIsometricView);
-    connectAttachments(geometry3DView_);
-    geometry3DTabIndex_ = workspace_->addTab(geometry3DPage, tr("3D Geometry"));
-    workspace_->setTabIcon(geometryTabIndex_, workbenchIcon("geometry"));
-    workspace_->setTabIcon(geometry3DTabIndex_, workbenchIcon("3d-view"));
+    connectAttachments(geometryWorkspace_->view3D());
     parameterEditor_ = new ParameterEditor(windowHost_);
     connect(parameterEditor_, &ParameterEditor::parameterChanged, this,
         [this](std::size_t sourceLine, QString originalName, QString name, QString expression) {
@@ -851,7 +776,7 @@ void MainWindow::createWorkspace()
 
     deckView_ = new DeckView(editor_, windowHost_);
     deckView_->setBackCallback(
-        [this] { showEditor(EditorDestination::Geometry, workspace_->currentIndex()); });
+        [this] { showEditor(EditorDestination::Geometry, geometryWorkspace_->page()); });
 
     analysisSetupEditor_ = new AnalysisSetupEditor(windowHost_);
     connect(analysisSetupEditor_, &AnalysisSetupEditor::settingsChanged, this,
@@ -913,7 +838,7 @@ void MainWindow::createWorkspace()
     createOptimizationWorkspace();
     createResultsColumn();
     workbenchLayout_ = new WorkbenchLayout({.start = startPanel_, .leftColumn = modelColumn_,
-        .geometry = workspace_, .fullView = resultsController_->fullView(),
+        .geometry = geometryWorkspace_, .fullView = resultsController_->fullView(),
         .deck = deckView_, .rightColumn = resultsController_->column(),
         .bottomPanel = bottomPanel_}, this);
     setCentralWidget(workbenchLayout_);
@@ -935,9 +860,12 @@ void MainWindow::createResultsColumn()
     });
     resultsController_->setStatusCallback(
         [this](const QString& message) { statusBar()->showMessage(message, 5000); });
+    resultsController_->setColumnChangedCallback([this](const ResultState& state, bool stale) {
+        geometryWorkspace_->setResults(state, stale);
+    });
     resultsController_->setShowFullViewCallback([this](bool fullView) {
         if (fullView) workbenchLayout_->showFullView();
-        else showEditor(EditorDestination::Geometry, workspace_->currentIndex());
+        else showEditor(EditorDestination::Geometry, geometryWorkspace_->page());
     });
 }
 
@@ -1096,8 +1024,7 @@ void MainWindow::showEditor(EditorDestination destination, int geometryTab)
         showSetupPage(destination);
     } else {
         workbenchLayout_->showGeometry();
-        workspace_->setCurrentIndex(geometryTab);
-        workspace_->currentWidget()->setFocus();
+        geometryWorkspace_->showPage(geometryTab);
         raise();
         activateWindow();
     }
@@ -1258,28 +1185,7 @@ void MainWindow::applyGeometrySettings(const GeometrySettings& settings)
     geometrySettings_.snapSpacingMeters = std::max(geometrySettings_.snapSpacingMeters, 1.0e-12);
     geometrySettings_.minorGridDivisions = std::clamp(geometrySettings_.minorGridDivisions, 1, 10);
     geometrySettings_.endpointTolerancePixels = std::clamp(geometrySettings_.endpointTolerancePixels, 1.0, 50.0);
-    const auto symbol = model::lengthUnitSymbol(geometrySettings_.lengthUnit);
-    const auto suffix = QStringLiteral(" %1")
-        .arg(QString::fromLatin1(symbol.data(), static_cast<qsizetype>(symbol.size())));
-    {
-        const QSignalBlocker unitBlocker(lengthUnitControl_);
-        const QSignalBlocker blocker(snapSpacingControl_);
-        const QSignalBlocker gridBlocker(snapGridAction_);
-        const QSignalBlocker endpointBlocker(snapEndpointsAction_);
-        const auto unitIndex = lengthUnitControl_->findData(static_cast<int>(geometrySettings_.lengthUnit));
-        if (unitIndex >= 0) {
-            lengthUnitControl_->setCurrentIndex(unitIndex);
-        }
-        snapSpacingControl_->setSuffix(suffix);
-        snapSpacingControl_->setValue(model::fromMeters(
-            geometrySettings_.snapSpacingMeters, geometrySettings_.lengthUnit));
-        snapGridAction_->setChecked(geometrySettings_.gridSnapping);
-        snapEndpointsAction_->setChecked(geometrySettings_.endpointSnapping);
-    }
-    for (auto* view : geometryPlanes_->views()) view->setSettings(geometrySettings_);
-    if (geometry3DView_ != nullptr) {
-        geometry3DView_->setLengthUnit(geometrySettings_.lengthUnit);
-    }
+    geometryWorkspace_->setSettings(geometrySettings_);
 }
 
 void MainWindow::showGeometrySettings()
@@ -1424,7 +1330,7 @@ void MainWindow::createMenusAndToolbar()
     viewMenu->addSeparator();
     viewMenu->addAction(resetLayoutAction_);
     viewMenu->addSeparator();
-    viewMenu->addAction(fitGeometryAction_);
+    viewMenu->addActions(geometryWorkspace_->viewActions());
 
     auto* modelMenu = menuBar()->addMenu(tr("&Model"));
     modelMenu->setObjectName(QStringLiteral("modelMenu"));
@@ -1704,7 +1610,7 @@ void MainWindow::startModelSession()
     // A new model starts with nothing selected and the pane empty.
     selectWireInProject(-1);
     resetModelViews();
-    geometryPlanes_->showMainPlane(geometry::widestPlane(currentModel_));
+    geometryWorkspace_->showMainPlane(geometry::widestPlane(currentModel_));
     modelColumn_->variables()->markBaseline();
 }
 
@@ -1723,7 +1629,7 @@ void MainWindow::revertToSaved()
     }
     // One undo step, so Undo brings the discarded changes back.
     history_->replaceSource({tr("Revert to Saved"), static_cast<int>(EditorDestination::Geometry),
-        workspace_->currentIndex()}, QString::fromUtf8(file.readAll()));
+        geometryWorkspace_->page()}, QString::fromUtf8(file.readAll()));
     editor_->document()->setModified(false);
     // Reset still goes back to the model as opened.
     checkModel();
@@ -2297,11 +2203,6 @@ void MainWindow::selectInModel(const ModelSelection& selection)
 void MainWindow::synchronizeGeometrySelection(int tag)
 {
     for (auto* view : geometryViews()) view->selectWire(tag);
-}
-
-void MainWindow::fitAllGeometryViews()
-{
-    for (auto* view : geometryViews()) view->fitToView();
 }
 
 void MainWindow::previewEndpointMove(int tag, model::WireEndpoint endpoint, const model::Point3D& position)
@@ -4270,7 +4171,7 @@ void MainWindow::pushGeometrySourceEdit(const QString& description, QString upda
         return;
     }
     auto destination = EditorDestination::Geometry;
-    const auto geometryTab = workspace_->currentIndex();
+    const auto geometryTab = geometryWorkspace_->page();
     const auto* focus = QApplication::focusWidget();
     if (focus != nullptr && modelColumn_->isAncestorOf(focus)) {
         destination = paneDestination();
@@ -4319,8 +4220,7 @@ void MainWindow::showSymbolicGeometryEditBlocked()
 
 auto MainWindow::geometryViews() const -> std::array<GeometryInteractionView*, 4>
 {
-    const auto& planes = geometryPlanes_->views();
-    return {planes[0], planes[1], planes[2], geometry3DView_};
+    return geometryWorkspace_->views();
 }
 
 void MainWindow::resetModelViews()

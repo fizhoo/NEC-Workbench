@@ -203,6 +203,8 @@ if(NECWB_BUILD_GUI)
         src/ui/cards/WireCardEditor.h
         src/ui/cards/StructuredCardEditor.cpp
         src/ui/cards/StructuredCardEditor.h
+        src/ui/cards/RowHeightCap.cpp
+        src/ui/cards/RowHeightCap.h
         src/ui/cards/SymbolPrompt.cpp
         src/ui/cards/SymbolPrompt.h
         src/ui/editor/DeckView.cpp
@@ -217,6 +219,10 @@ if(NECWB_BUILD_GUI)
         src/ui/geometry/GeometryView.h
         src/ui/geometry/GeometryInteractionView.cpp
         src/ui/geometry/GeometryInteractionView.h
+        src/ui/ColorScale.cpp
+        src/ui/ColorScale.h
+        src/ui/geometry/GeometryWorkspace.cpp
+        src/ui/geometry/GeometryWorkspace.h
         src/ui/geometry/GeometryPlanes.cpp
         src/ui/geometry/GeometryPlanes.h
         src/ui/geometry/GeometryPreview.cpp
