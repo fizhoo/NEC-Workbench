@@ -85,6 +85,7 @@ add_library(necwb_core
     src/nec/NecSourceCache.h
     src/nec/NecSymbolEditor.cpp
     src/nec/NecSymbolResolver.cpp
+    src/nec/SegmentationEdit.cpp
     src/nec/SourcePositions.cpp
     src/nec/NecWriter.cpp
 )

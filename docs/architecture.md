@@ -148,7 +148,12 @@ their own archived artifacts; they are not inferred from static checks.
 Automatic Segmentation is an explicit preview-and-apply operation. It changes
 `GW` segment counts and remaps supported `EX`, `LD`, `TL`, and `NT` attachments by
 relative wire position in one undoable edit. Unsupported attachment forms block
-the operation rather than being guessed.
+the operation rather than being guessed. `nec::planSegmentationEdit`
+(`src/nec/SegmentationEdit.h`) builds the whole edit from the authored source once:
+which wires are skipped because a field they need is symbolic, the edited deck, and
+the attachments that deck gives. Marked sources are placed by resolving the edited
+deck, the same placement solving uses. The dialog previews that plan and Apply
+pushes its source unchanged, so the two cannot disagree.
 
 ## Symbols and Solver Decks
 

@@ -93,7 +93,8 @@ retain them.
 
 An expression in a NEC integer field (the leading integer fields of each card: tags,
 segment counts, segment numbers, counts and type codes) must resolve to a whole number,
-within 1e-9 of its value for rounding error, and fit a 32-bit integer; otherwise the
+within 1e-9 of its value for rounding error (never more than 1e-5, so a real fraction
+such as `1000000000.5` is refused at any size), and fit a 32-bit integer; otherwise the
 deck does not resolve and cannot be solved. Values are never rounded.
 
 4nec2 starts a comment with `'` anywhere in a deck (4nec2 help, "Notepad- and

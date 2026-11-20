@@ -382,12 +382,24 @@ additional NEC cards may appear afterward.
 
 Automatic Segmentation previews proposed segment counts using the highest modeled
 frequency and selected segments per wavelength. Applying the preview is one
-undoable model edit. Supported source, load, and transmission-line references are
-remapped by relative position; unsupported references block the operation. A source
-placed along its wire goes to its position on the new segmentation, which the preview
-may show one segment differently. Decks
-that use one tag number on more than one wire, or that refer to segments by absolute
-number (tag 0), are also blocked for now, as is segmentation convergence testing.
+undoable model edit, and it writes exactly the deck the preview describes. Supported
+source, load, transmission-line and network references are remapped by relative
+position; unsupported references block the operation. Decks that use one tag number
+on more than one wire, or that refer to segments by absolute number (tag 0), are also
+blocked for now, as is segmentation convergence testing.
+
+Fields written with a variable or an expression are never overwritten, and `SY`
+definitions are never changed. A wire is skipped, and keeps its segments, when its
+`GW` segment count is symbolic, or when one of its `EX`, `LD`, `TL` or `NT` segment
+references would have to move and that field is symbolic. For a `TL` or `NT` card each
+end protects only its own wire, so the other wire can still change. The **Changes**
+column says why each skipped wire was skipped, for example *Skipped: its segment count
+is nseg on line 3*; to change such a wire, change the variable under **Variables**.
+
+A source placed along its wire (see *Placing a Source on Its Wire*) follows its
+position rather than being remapped: a 25% source on a wire going from 11 to 21
+segments moves from segment 3 to segment 6, shown as *EX at 25%: 3 → 6*, and keeps its
+mark. Its segment field never causes a skip, since the mark decides where it goes.
 
 ### Average Gain Test
 

@@ -182,12 +182,25 @@ auto needsEvaluation(std::string_view token) -> bool
     });
 }
 
-// A value that is a whole number but for rounding error in its arithmetic, as an integer.
-auto wholeNumber(double value) -> std::optional<long long>
+// What an integer field's value comes to: a NEC integer, a value with a real fraction, or a
+// whole number too large for the field.
+enum class WholeNumberResult { Whole, Fractional, OutOfRange };
+
+// Whether `value` is a NEC integer but for rounding error in its arithmetic, and which one.
+// The bounds are checked on the double before it is converted. Rounding error grows with the
+// value, so the tolerance does too, but it stops at 1e-5: a fraction such as .5 is real at any
+// size, and 1e-5 is still about twenty times the spacing of doubles near the int32 limits.
+auto wholeNumber(double value, int& whole) -> WholeNumberResult
 {
+    if (!std::isfinite(value)) return WholeNumberResult::Fractional;
     const auto nearest = std::nearbyint(value);
-    if (std::abs(value - nearest) > 1e-9 * std::max(1.0, std::abs(nearest))) return std::nullopt;
-    return static_cast<long long>(nearest);
+    if (nearest < static_cast<double>(std::numeric_limits<int>::min())
+        || nearest > static_cast<double>(std::numeric_limits<int>::max()))
+        return WholeNumberResult::OutOfRange;
+    const auto tolerance = std::min(1e-9 * std::max(1.0, std::abs(nearest)), 1e-5);
+    if (std::abs(value - nearest) > tolerance) return WholeNumberResult::Fractional;
+    whole = static_cast<int>(nearest);
+    return WholeNumberResult::Whole;
 }
 
 // The card's fields, with each expression replaced by its value. The first
@@ -233,20 +246,20 @@ auto resolveCardLine(std::string_view fullLine, std::size_t lineNumber,
                 result += formatValue(value);
                 continue;
             }
-            const auto whole = wholeNumber(value);
+            auto whole = 0;
+            const auto kind = wholeNumber(value, whole);
             const auto name = std::string(mnemonic) + " field " + std::to_string(field + 1);
             const auto described = name + ", " + std::string(token) + " = " + formatValue(value) + ",";
-            if (!whole) {
+            if (kind == WholeNumberResult::Fractional) {
                 diagnostics.push_back({lineNumber, described + " must be a whole number: it is a "
                     "tag, segment, count or type code", true, name});
                 result.append(token);
-            } else if (*whole < std::numeric_limits<int>::min()
-                || *whole > std::numeric_limits<int>::max()) {
+            } else if (kind == WholeNumberResult::OutOfRange) {
                 diagnostics.push_back({lineNumber, described
                     + " is outside the range of a NEC integer field", true, name});
                 result.append(token);
             } else {
-                result += std::to_string(*whole);
+                result += std::to_string(whole);
             }
         } catch (const std::runtime_error& error) {
             diagnostics.push_back({lineNumber,

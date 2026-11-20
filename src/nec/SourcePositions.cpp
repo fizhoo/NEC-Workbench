@@ -146,7 +146,11 @@ auto placeMarkedSources(const NecDocument& resolved, const model::AntennaModel& 
 
 auto refreshSourcePositions(std::string_view source) -> std::string
 {
-    if (source.find("necwb:at=") == std::string_view::npos) return std::string(source);
+    // Marks are read in any case, so NECWB:AT=50% is found here too.
+    const auto marked = std::ranges::search(source, MarkPrefix, [](char first, char second) {
+        return std::tolower(static_cast<unsigned char>(first)) == second;
+    });
+    if (marked.empty()) return std::string(source);
     const auto resolution = NecSymbolResolver{}.resolve(source);
     if (!resolution.ok()) return std::string(source);
     const auto resolved = NecParser{}.parse(resolution.resolvedSource);

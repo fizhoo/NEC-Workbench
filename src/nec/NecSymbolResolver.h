@@ -36,8 +36,8 @@ struct SymbolResolution {
 };
 
 // Expands SY symbols. An expression in a NEC integer field must come to a whole number,
-// allowing for rounding error in its arithmetic (1e-9 of the value); a fractional or
-// out-of-range value is a diagnostic, never rounded. A voltage source marked to sit along its
+// allowing for rounding error in its arithmetic (1e-9 of the value, at most 1e-5); a
+// fractional or out-of-range value is a diagnostic, never rounded. A voltage source marked to sit along its
 // wire (SourcePositions.h) gets the segment at that point in the resolved geometry.
 class NecSymbolResolver {
 public:

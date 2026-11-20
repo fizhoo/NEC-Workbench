@@ -1344,87 +1344,24 @@ void MainWindow::showAutoSegmentation()
     }
     const auto maximumFrequencyMHz = std::max(currentSetup_.frequency->startMHz,
         model::frequencyEndMHz(*currentSetup_.frequency));
-    AutoSegmentationDialog dialog(currentModel_, currentSetup_.excitations,
-        currentSetup_.loads, currentSetup_.transmissionLines, currentSetup_.networks,
-        maximumFrequencyMHz, this);
+    AutoSegmentationDialog dialog(editor_->toPlainText().toStdString(), currentModel_,
+        currentSetup_, maximumFrequencyMHz, this);
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
-    const auto proposal = dialog.proposal();
-    auto lines = editor_->toPlainText().split(QLatin1Char('\n'), Qt::KeepEmptyParts);
-    auto changed = false;
-    auto replacementFailed = false;
-    const auto replaceFields = [&lines, &changed, &replacementFailed](std::size_t sourceLine,
-        std::span<const nec::NecFieldReplacement> replacements) {
-        const auto lineIndex = static_cast<int>(sourceLine) - 1;
-        if (lineIndex < 0 || lineIndex >= lines.size()) {
-            replacementFailed = true;
-            return;
-        }
-        const auto updated = nec::replaceNecCardFields(lines[lineIndex].toStdString(), replacements);
-        if (!updated) {
-            replacementFailed = true;
-            return;
-        }
-        lines[lineIndex] = QString::fromStdString(*updated);
-        changed = true;
-    };
-    for (const auto& wireProposal : proposal.wires) {
-        const auto* original = currentModel_.wireByTag(wireProposal.wireTag);
-        if (original == nullptr || original->segments == wireProposal.newSegments) {
-            continue;
-        }
-        const std::array replacements{
-            nec::NecFieldReplacement{1, std::to_string(wireProposal.newSegments)}};
-        replaceFields(original->sourceLine, replacements);
-    }
-    for (std::size_t index = 0; index < currentSetup_.excitations.size(); ++index) {
-        const auto& original = currentSetup_.excitations[index];
-        const auto& updated = proposal.remappedExcitations[index];
-        if (original.segment == updated.segment) {
-            continue;
-        }
-        const std::array replacements{
-            nec::NecFieldReplacement{2, std::to_string(updated.segment)}};
-        replaceFields(updated.sourceLine, replacements);
-    }
-    for (std::size_t index = 0; index < currentSetup_.loads.size(); ++index) {
-        const auto& original = currentSetup_.loads[index];
-        const auto& updated = proposal.remappedLoads[index];
-        if (original.firstSegment == updated.firstSegment
-            && original.lastSegment == updated.lastSegment) continue;
-        const std::array replacements{
-            nec::NecFieldReplacement{2, std::to_string(updated.firstSegment)},
-            nec::NecFieldReplacement{3, std::to_string(updated.lastSegment)}};
-        replaceFields(updated.sourceLine, replacements);
-    }
-    for (std::size_t index = 0; index < currentSetup_.transmissionLines.size(); ++index) {
-        const auto& original = currentSetup_.transmissionLines[index];
-        const auto& updated = proposal.remappedTransmissionLines[index];
-        if (original.segment1 == updated.segment1
-            && original.segment2 == updated.segment2) continue;
-        const std::array replacements{
-            nec::NecFieldReplacement{1, std::to_string(updated.segment1)},
-            nec::NecFieldReplacement{3, std::to_string(updated.segment2)}};
-        replaceFields(updated.sourceLine, replacements);
-    }
-    for (std::size_t index = 0; index < currentSetup_.networks.size(); ++index) {
-        const auto& original = currentSetup_.networks[index];
-        const auto& updated = proposal.remappedNetworks[index];
-        if (original.segment1 == updated.segment1
-            && original.segment2 == updated.segment2) continue;
-        const std::array replacements{
-            nec::NecFieldReplacement{1, std::to_string(updated.segment1)},
-            nec::NecFieldReplacement{3, std::to_string(updated.segment2)}};
-        replaceFields(updated.sourceLine, replacements);
-    }
-    if (replacementFailed) {
+    // The deck the dialog previewed, as it is: one shared plan decides what changes.
+    const auto& edit = dialog.edit();
+    if (!edit.error.empty()) {
         QMessageBox::warning(this, tr("Automatic Segmentation"), tr(
-            "A segment-reference field could not be updated safely. No source changes were applied."));
+            "%1. No source changes were applied.").arg(QString::fromStdString(edit.error)));
         return;
     }
-    if (changed) {
-        pushGeometrySourceEdit(tr("Automatically segment wires"), lines.join(QLatin1Char('\n')));
+    if (edit.changed) {
+        pushGeometrySourceEdit(tr("Automatically segment wires"),
+            QString::fromStdString(edit.source));
+    } else if (!edit.skipped.empty()) {
+        statusBar()->showMessage(tr("No wires changed: every proposed change needs a segment "
+            "field written with a variable or an expression."), 5000);
     } else {
         statusBar()->showMessage(tr("Wire segmentation already matches this recommendation."), 5000);
     }

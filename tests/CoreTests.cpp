@@ -36,6 +36,7 @@
 #include "nec/NecSymbolResolver.h"
 #include "nec/NecSymbolEditor.h"
 #include "nec/NecWriter.h"
+#include "nec/SegmentationEdit.h"
 #include "nec/SourcePositions.h"
 
 #include <algorithm>
@@ -3530,6 +3531,156 @@ void testAverageGainTestPreparation()
 }
 
 // Symbols in segment counts and segment numbers, and sources placed along their wires.
+void testIntegerFieldTolerance()
+{
+    using necwb::nec::NecSymbolResolver;
+    const auto resolvedTag = [](const std::string& value) {
+        const auto resolution = NecSymbolResolver{}.resolve(
+            "SY t=" + value + "\nGW t 1 0 0 0 1 0 0 .001\n");
+        const auto document = necwb::nec::NecParser{}.parse(resolution.resolvedSource);
+        return std::pair{resolution.ok() ? document.cards()[1].fields[0] : std::string{},
+            resolution.diagnostics.empty() ? std::string{} : resolution.diagnostics.front().message};
+    };
+    expect(resolvedTag("1000000000.5").second
+            == "GW field 1, t = 1000000000.5, must be a whole number: it is a tag, segment, count or type code",
+        "a real fraction on a large integer field is refused, not rounded");
+    expect(resolvedTag("2147483646.5").second.find("must be a whole number") != std::string::npos
+            && resolvedTag("-2147483647.5").second.find("must be a whole number") != std::string::npos
+            && resolvedTag("2147483646.9999").second.find("must be a whole number") != std::string::npos,
+        "fractions are refused next to both int32 bounds");
+    expect(resolvedTag("(2147483647+0.3)-0.3").first == "2147483647"
+            && resolvedTag("-((2147483648+0.3)-0.3)").first == "-2147483648"
+            && resolvedTag("2147483647.000001").first == "2147483647",
+        "rounding error in the arithmetic is still accepted at both int32 bounds");
+    expect(resolvedTag("2147483648").second.find("outside the range") != std::string::npos
+            && resolvedTag("-2147483649").second.find("outside the range") != std::string::npos
+            && resolvedTag("1e300").second.find("outside the range") != std::string::npos,
+        "a whole number past either int32 bound is refused before it is converted");
+}
+
+void testAutoSegmentationSymbols()
+{
+    using necwb::nec::NecParser;
+    using necwb::nec::NecSymbolResolver;
+    struct Planned {
+        necwb::nec::SegmentationEdit edit;
+        necwb::model::ModelSetup before;
+    };
+    const auto plan = [](const std::string& source) {
+        const auto resolution = NecSymbolResolver{}.resolve(source);
+        const auto resolved = NecParser{}.parse(resolution.resolvedSource);
+        auto setup = necwb::nec::NecSetupConverter{}.convert(resolved);
+        return Planned{necwb::nec::planSegmentationEdit(source,
+            necwb::nec::NecModelConverter{}.convert(resolved).model, setup, 30.0, {20, true}), setup};
+    };
+    const auto lineOf = [](const std::string& source, std::size_t number) {
+        const auto document = NecParser{}.parse(source);
+        return number <= document.cards().size() ? document.cards()[number - 1].sourceText : std::string{};
+    };
+    // What the preview shows is what the edited deck gives once resolved, and Apply's own refresh
+    // of source positions leaves the deck as planned.
+    const auto agrees = [](const necwb::nec::SegmentationEdit& edit) {
+        if (necwb::nec::refreshSourcePositions(edit.source) != edit.source) return false;
+        const auto resolution = NecSymbolResolver{}.resolve(edit.source);
+        if (!resolution.ok()) return false;
+        const auto resolved = NecParser{}.parse(resolution.resolvedSource);
+        const auto setup = necwb::nec::NecSetupConverter{}.convert(resolved);
+        const auto model = necwb::nec::NecModelConverter{}.convert(resolved).model;
+        for (const auto& wire : edit.proposal.wires) {
+            const auto* edited = model.wireByTag(wire.wireTag);
+            const auto expected = edit.skippedReason(wire.wireTag) ? wire.oldSegments : wire.newSegments;
+            if (edited == nullptr || edited->segments != expected) return false;
+        }
+        return setup.excitations == edit.proposal.remappedExcitations
+            && setup.loads == edit.proposal.remappedLoads
+            && setup.transmissionLines == edit.proposal.remappedTransmissionLines
+            && setup.networks == edit.proposal.remappedNetworks;
+    };
+    const std::string wires = "GW 1 11 0 -5 0 0 5 0 .001\n";
+    const std::string tail = "FR 0 1 0 0 30 0\nEN\n";
+
+    // A symbolic GW count: that wire is skipped, the SY definition and the field are kept, and
+    // the other wire and its source still change.
+    const std::string symbolicCount = "SY nseg=11\n" + wires + "GW 2 nseg 0 -5 1 0 5 1 .001\nGE 0\n"
+        "EX 0 1 6 0 1 0\n" + tail;
+    const auto count = plan(symbolicCount);
+    expect(count.edit.error.empty() && count.edit.changed && count.edit.skipped.size() == 1
+            && count.edit.skipped.front().wireTag == 2
+            && count.edit.skipped.front().reason == "its segment count is nseg on line 3",
+        "a wire whose GW segment count is symbolic is skipped, with the field named");
+    expect(lineOf(count.edit.source, 1) == "SY nseg=11"
+            && lineOf(count.edit.source, 2).starts_with("GW 1 21 ")
+            && lineOf(count.edit.source, 3) == "GW 2 nseg 0 -5 1 0 5 1 .001"
+            && lineOf(count.edit.source, 5).starts_with("EX 0 1 11 "),
+        "the skipped wire's symbolic count and SY definition are kept; the numeric wire changes");
+    expect(agrees(count.edit), "Apply's deck gives what the symbolic-count preview shows");
+
+    // A symbolic EX segment that must move: its wire is skipped and nothing is written.
+    const auto feed = plan("SY feed=6\n" + wires + "GE 0\nEX 0 1 feed 0 1 0\n" + tail);
+    expect(!feed.edit.changed && feed.edit.source == "SY feed=6\n" + wires + "GE 0\nEX 0 1 feed 0 1 0\n" + tail
+            && feed.edit.skipped.size() == 1
+            && feed.edit.skipped.front().reason == "EX on line 4 gives segment 6 as feed"
+            && feed.edit.proposal.remappedExcitations.front().segment == 6
+            && agrees(feed.edit),
+        "a wire whose source segment is symbolic is skipped, and the source keeps its segment");
+
+    // A symbolic LD segment: its wire is skipped, and the numeric last segment is not touched.
+    const std::string load = "SY ld=3\n" + wires + "GE 0\nEX 0 1 6 0 1 0\nLD 4 1 ld 9 50 0 0\n" + tail;
+    const auto loaded = plan(load);
+    expect(!loaded.edit.changed && loaded.edit.skipped.size() == 1
+            && loaded.edit.skipped.front().reason == "LD on line 5 gives segment 3 as ld"
+            && loaded.edit.proposal.remappedLoads.front() == loaded.before.loads.front()
+            && agrees(loaded.edit),
+        "a wire whose load range is symbolic is skipped with its load unchanged");
+
+    // A TL endpoint protects only its own wire: wire 2 is skipped, wire 1 and its endpoint change.
+    const std::string twoWires = wires + "GW 2 11 0 -5 1 0 5 1 .001\nGE 0\nEX 0 1 6 0 1 0\n";
+    const auto line = plan("SY s2=6\n" + twoWires + "TL 1 6 2 s2 50 0 0 0 0 0\n" + tail);
+    expect(line.edit.changed && line.edit.skipped.size() == 1 && line.edit.skipped.front().wireTag == 2
+            && line.edit.skipped.front().reason == "TL on line 6 gives segment 6 as s2"
+            && lineOf(line.edit.source, 2).starts_with("GW 1 21 ")
+            && lineOf(line.edit.source, 3).starts_with("GW 2 11 ")
+            && lineOf(line.edit.source, 6).starts_with("TL 1 11 2 s2 ")
+            && agrees(line.edit),
+        "a symbolic TL endpoint skips its own wire while the other endpoint is remapped");
+
+    // The same for NT, with the symbolic port on the first wire.
+    const auto network = plan("SY s1=6\n" + twoWires + "NT 1 s1 2 6 0 0 0 0 0 0\n" + tail);
+    expect(network.edit.changed && network.edit.skipped.size() == 1
+            && network.edit.skipped.front().wireTag == 1
+            && network.edit.skipped.front().reason == "NT on line 6 gives segment 6 as s1"
+            && lineOf(network.edit.source, 2).starts_with("GW 1 11 ")
+            && lineOf(network.edit.source, 3).starts_with("GW 2 21 ")
+            && lineOf(network.edit.source, 5).starts_with("EX 0 1 6 ")
+            && lineOf(network.edit.source, 6).starts_with("NT 1 s1 2 11 ")
+            && agrees(network.edit),
+        "a symbolic NT port skips its own wire, and that wire's source stays put");
+
+    // A source placed along its wire follows its mark, in preview and in the deck, whatever case
+    // the mark is written in and whether or not its segment field is symbolic.
+    for (const auto* mark : {"necwb:at=25%", "NECWB:AT=25%"}) {
+        const auto marked = plan(wires + "GE 0\nEX 0 1 3 0 1 0 ' " + mark + "\n" + tail);
+        expect(marked.edit.changed && marked.edit.skipped.empty()
+                && marked.edit.excitationMarks.front() == 25.0
+                && marked.edit.proposal.remappedExcitations.front().segment == 6
+                && lineOf(marked.edit.source, 3) == std::string("EX 0 1 6 0 1 0 ' ") + mark
+                && agrees(marked.edit),
+            "a 25% source on 11 to 21 segments goes to segment 6, not the proportional 5, and keeps its mark");
+    }
+    const auto symbolicMarked = plan("SY s=3\n" + wires + "GE 0\nEX 0 1 s 0 1 0 ' necwb:at=25%\n" + tail);
+    expect(symbolicMarked.edit.changed && symbolicMarked.edit.skipped.empty()
+            && lineOf(symbolicMarked.edit.source, 4) == "EX 0 1 s 0 1 0 ' necwb:at=25%"
+            && symbolicMarked.edit.proposal.remappedExcitations.front().segment == 6
+            && agrees(symbolicMarked.edit),
+        "a marked source's symbolic segment field does not block its wire and is kept");
+
+    // An uppercase mark keeps the saved segment field current, as a lowercase one does.
+    expect(necwb::nec::refreshSourcePositions(
+               "GW 1 21 0 -5 0 0 5 0 .001\nGE 0\nEX 0 1 6 0 1 0 ' NECWB:AT=50%\nEN\n")
+            == "GW 1 21 0 -5 0 0 5 0 .001\nGE 0\nEX 0 1 11 0 1 0 ' NECWB:AT=50%\nEN\n",
+        "an uppercase placement mark refreshes the source's segment field");
+}
+
 void testSymbolicSegments()
 {
     using necwb::nec::NecSymbolResolver;
@@ -4437,6 +4588,8 @@ auto main() -> int
     testAverageGainTestPreparation();
     testSegmentationConvergencePreparation();
     testSymbolicSegments();
+    testIntegerFieldTolerance();
+    testAutoSegmentationSymbols();
     testSharedTagReferences();
     testUnrenderedSegmentNumbering();
     testGainDirectionFormatting();

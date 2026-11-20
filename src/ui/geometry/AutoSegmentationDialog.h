@@ -1,8 +1,10 @@
 #pragma once
 
-#include "model/AutoSegmentation.h"
+#include "nec/SegmentationEdit.h"
 
 #include <QDialog>
+
+#include <string>
 
 class QCheckBox;
 class QLabel;
@@ -11,30 +13,23 @@ class QTableWidget;
 
 namespace necwb::ui {
 
+// Previews the edit Automatic Segmentation makes to the deck, which Apply takes as it is.
 class AutoSegmentationDialog final : public QDialog {
 public:
-    AutoSegmentationDialog(const model::AntennaModel& model,
-        const std::vector<model::Excitation>& excitations, double maximumFrequencyMHz,
-        QWidget* parent = nullptr);
-    AutoSegmentationDialog(const model::AntennaModel& model,
-        const std::vector<model::Excitation>& excitations,
-        const std::vector<model::LoadDefinition>& loads,
-        const std::vector<model::TransmissionLineDefinition>& transmissionLines,
-        const std::vector<model::NetworkDefinition>& networks,
-        double maximumFrequencyMHz, QWidget* parent = nullptr);
+    // `source` is the authored deck; `model` and `setup` come from its resolved form.
+    AutoSegmentationDialog(std::string source, const model::AntennaModel& model,
+        const model::ModelSetup& setup, double maximumFrequencyMHz, QWidget* parent = nullptr);
 
-    [[nodiscard]] auto proposal() const -> model::SegmentationProposal;
+    [[nodiscard]] auto edit() const -> const nec::SegmentationEdit&;
 
 private:
     void refreshProposal();
 
+    std::string source_;
     model::AntennaModel model_;
-    std::vector<model::Excitation> excitations_;
-    std::vector<model::LoadDefinition> loads_;
-    std::vector<model::TransmissionLineDefinition> transmissionLines_;
-    std::vector<model::NetworkDefinition> networks_;
+    model::ModelSetup setup_;
     double maximumFrequencyMHz_{};
-    model::SegmentationProposal proposal_;
+    nec::SegmentationEdit edit_;
     QSpinBox* segmentsPerWavelengthControl_{};
     QCheckBox* oddExcitedWiresControl_{};
     QLabel* summary_{};

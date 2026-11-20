@@ -1226,6 +1226,90 @@ auto main(int argc, char* argv[]) -> int
         else settings.remove(QStringLiteral("variables/live"));
         settings.sync();
     }
+    // Automatic Segmentation in the window: a wire with a symbolic count is skipped and says so,
+    // a 25% source goes to the segment its mark gives, Apply writes the deck the preview showed,
+    // and one Undo restores the deck.
+    auto segmentationPreviewApplied = false;
+    {
+        QSettings settings;
+        const auto savedRecent = settings.value(QStringLiteral("files/recentModels"));
+        QTemporaryDir directory;
+        const auto modelPath = directory.filePath(QStringLiteral("auto-segmentation.nec"));
+        const QByteArray original = "SY nseg=11\nGW 1 11 0 -5 0 0 5 0 .001\nGW 2 nseg 0 -5 1 0 5 1 .001\n"
+                                    "GE 0\nEX 0 1 3 0 1 0 ' necwb:at=25%\nFR 0 1 0 0 30 0\nEN\n";
+        QFile modelFile(modelPath);
+        if (directory.isValid() && modelFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            modelFile.write(original);
+            modelFile.close();
+        }
+        settings.setValue(QStringLiteral("files/recentModels"), QStringList{modelPath});
+        settings.sync();
+        necwb::ui::MainWindow mainWindow;
+        mainWindow.resize(1400, 900);
+        mainWindow.show();
+        application.processEvents();
+        if (auto* recent = mainWindow.findChild<QMenu*>(QStringLiteral("recentModelsMenu"))) {
+            for (auto* action : recent->actions()) {
+                if (action->data().toString() != modelPath) continue;
+                action->trigger();
+                break;
+            }
+        }
+        application.processEvents();
+        auto* deck = mainWindow.findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor"));
+        auto* undo = mainWindow.findChild<QAction*>(QStringLiteral("undoAction"));
+        QAction* segmentation = nullptr;
+        for (auto* found : mainWindow.findChildren<QAction*>())
+            if (found->text() == QString::fromUtf8("Automatic Segmentation…")) segmentation = found;
+        QString previewedSource;
+        QString skippedRow;
+        QString sourceRow;
+        QString summary;
+        if (deck != nullptr && undo != nullptr && segmentation != nullptr
+            && deck->toPlainText().toUtf8() == original) {
+            QTimer::singleShot(100, [&] {
+                auto* dialog = dynamic_cast<necwb::ui::AutoSegmentationDialog*>(
+                    QApplication::activeModalWidget());
+                if (dialog == nullptr) return;
+                auto* table = dialog->findChild<QTableWidget*>(QStringLiteral("segmentationTable"));
+                auto* label = dialog->findChild<QLabel*>(QStringLiteral("segmentationSummary"));
+                if (table != nullptr && table->rowCount() == 2) {
+                    sourceRow = table->item(0, 3)->text() + QLatin1Char('|') + table->item(0, 5)->text();
+                    skippedRow = table->item(1, 3)->text() + QLatin1Char('|') + table->item(1, 5)->text();
+                }
+                if (label != nullptr) summary = label->text();
+                previewedSource = QString::fromStdString(dialog->edit().source);
+                if (auto* apply = dialog->findChild<QPushButton*>(QStringLiteral("applySegmentationButton")))
+                    apply->click();
+                else dialog->reject();
+            });
+            segmentation->trigger();
+            application.processEvents();
+            const auto applied = deck->toPlainText();
+            const auto previewMatchesApply = !previewedSource.isEmpty() && applied == previewedSource
+                && applied.contains(QStringLiteral("GW 1 21 0 -5 0 0 5 0 .001\n"))
+                && applied.contains(QStringLiteral("GW 2 nseg 0 -5 1 0 5 1 .001\n"))
+                && applied.contains(QStringLiteral("SY nseg=11\n"))
+                && applied.contains(QStringLiteral("EX 0 1 6 0 1 0 ' necwb:at=25%\n"));
+            const auto previewShown = sourceRow == QString::fromUtf8("21|EX at 25%: 3 → 6")
+                && skippedRow == QString::fromUtf8("21 (skipped)|Skipped: its segment count is nseg on line 3")
+                && summary.startsWith(QStringLiteral("1 of 2 wire(s) will change."))
+                && summary.contains(QStringLiteral("1 wire(s) are skipped"));
+            undo->trigger();
+            application.processEvents();
+            const auto undone = deck->toPlainText().toUtf8() == original;
+            segmentationPreviewApplied = previewMatchesApply && previewShown && undone;
+            if (!segmentationPreviewApplied)
+                qWarning() << "automatic segmentation" << previewMatchesApply << previewShown << undone
+                           << sourceRow << skippedRow << summary << applied;
+        } else {
+            qWarning() << "automatic segmentation setup" << (deck != nullptr) << (undo != nullptr)
+                       << (segmentation != nullptr) << (deck ? deck->toPlainText() : QString{});
+        }
+        if (deck != nullptr) deck->document()->setModified(false);
+        settings.setValue(QStringLiteral("files/recentModels"), savedRecent);
+        settings.sync();
+    }
     // Variables live: the wires follow a drag with the deck untouched, a release is one undo
     // step, Ctrl+Z works from a value box and the tree, Reset and Revert are one step each,
     // and a live solve uses a one-frequency copy of the deck without adding to Runs history.
@@ -1878,6 +1962,8 @@ auto main(int argc, char* argv[]) -> int
         return NECWB_SMOKE_FAILURE("variable slider edits the SY card");
     if (!sourcePlacement)
         return NECWB_SMOKE_FAILURE("a source placed along its wire follows its segmentation");
+    if (!segmentationPreviewApplied)
+        return NECWB_SMOKE_FAILURE("automatic segmentation skips symbolic fields and applies its preview");
     if (!wirePaneKeepsSymbols)
         return NECWB_SMOKE_FAILURE("cell edits keep SY symbols and exact values");
     if (!openModelKeepsDeckClosed)
@@ -5871,7 +5957,9 @@ auto main(int argc, char* argv[]) -> int
     necwb::model::AntennaModel attachmentModel;
     attachmentModel.addWire({1, {-1.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, 11, 0.001, 1});
     attachmentModel.addWire({2, {-1.0, 1.0, 0.0}, {1.0, 1.0, 0.0}, 11, 0.001, 2});
-    necwb::ui::AutoSegmentationDialog segmentationDialog(attachmentModel, {}, 30.0);
+    necwb::ui::AutoSegmentationDialog segmentationDialog(
+        "GW 1 11 -1 0 0 1 0 0 0.001\nGW 2 11 -1 1 0 1 1 0 0.001\nGE 0\nEN\n",
+        attachmentModel, {}, 30.0);
     auto* applySegmentation = segmentationDialog.findChild<QPushButton*>(
         QStringLiteral("applySegmentationButton"));
     if (applySegmentation == nullptr)
