@@ -12,7 +12,6 @@
 #include <QColor>
 #include <QComboBox>
 #include <QHeaderView>
-#include <QIntValidator>
 #include <QLabel>
 #include <QLineEdit>
 #include <QHBoxLayout>
@@ -32,7 +31,6 @@
 #include <array>
 #include <complex>
 #include <numbers>
-#include <limits>
 
 namespace necwb::ui {
 namespace {
@@ -316,13 +314,8 @@ public:
             for (const auto& choice : choices) editor->addItem(choice.label, choice.value);
             return editor;
         }
-        // A number field takes a name or an expression, with the symbols offered.
-        if (fieldType(mnemonic, index.column()-2) == FieldType::Number)
-            return CompactNumberDelegate::createEditor(parent, option, index);
-        auto* editor = new QLineEdit(parent);
-        editor->setValidator(new QIntValidator(std::numeric_limits<int>::min(),
-            std::numeric_limits<int>::max(), editor));
-        return editor;
+        // Any other field takes a name or an expression, with the symbols offered.
+        return CompactNumberDelegate::createEditor(parent, option, index);
     }
 
     void setEditorData(QWidget* editor, const QModelIndex& index) const override
@@ -410,15 +403,14 @@ StructuredCardEditor::StructuredCardEditor(Families families, QWidget* parent)
     table_->setObjectName(QStringLiteral("structuredCardTable"));
     auto* delegate = new CardFieldDelegate(table_);
     table_->setItemDelegate(delegate);
-    // A number field takes symbols; type codes, tags, segments and counts do not.
+    // Every field takes symbols but the type codes and other fields chosen from a list.
     symbolCells_ = new SymbolCells(table_, [this](const QTableWidgetItem& item) -> std::optional<CellField> {
         const auto* line = table_->item(item.row(), 0);
         const auto* mnemonicItem = table_->item(item.row(), 1);
         if (item.column() < 2 || line == nullptr || mnemonicItem == nullptr) return std::nullopt;
         const auto mnemonic = mnemonicItem->text();
         const auto fieldIndex = item.column() - 2;
-        if (fieldType(mnemonic, fieldIndex) != FieldType::Number
-            || !cardFieldChoices(mnemonic, fieldIndex).empty()) return std::nullopt;
+        if (!cardFieldChoices(mnemonic, fieldIndex).empty()) return std::nullopt;
         return CellField{line->data(SourceLineRole).toULongLong(),
             static_cast<std::size_t>(fieldIndex), table_->horizontalHeaderItem(item.column())->text()};
     });
@@ -641,7 +633,8 @@ void StructuredCardEditor::refreshTable()
     updating_ = true;
     const QSignalBlocker blocker(table_);
     table_->setToolTip(family.description + tr(" Double-click a field to edit it: a number, a "
-        "name or an expression such as len/2. Right-click a number → Make Variable…"));
+        "name or an expression such as len/2, which must come to a whole number in a tag, segment "
+        "or count. Right-click a number → Make Variable…"));
     auto fieldCount = family.fields.size();
     for (const auto& card : document_.cards()) {
         if (belongsTo(card, family))
@@ -687,7 +680,7 @@ void StructuredCardEditor::refreshTable()
             const auto value = column < static_cast<int>(card.fields.size())
                 ? QString::fromStdString(card.fields[static_cast<std::size_t>(column)]) : QString{};
             auto* item = new QTableWidgetItem(value);
-            // An expression shows its value; one in a field that takes no symbols stays as written.
+            // An expression shows its value; one in a field chosen from a list stays as written.
             if (!value.isEmpty() && !nec::necCardFieldIsNumeric(
                     card.sourceText, static_cast<std::size_t>(column))) {
                 const auto resolvedCard = resolved_ && card.lineNumber <= resolved_->cards().size()
@@ -697,11 +690,10 @@ void StructuredCardEditor::refreshTable()
                     ? QString::fromStdString(resolvedCard->fields[static_cast<std::size_t>(column)])
                     : value;
                 SymbolCells::showExpression(item, table_, value, resolvedValue);
-                if (fieldType(QString::fromStdString(card.mnemonic), column) == FieldType::Integer
-                    || !cardFieldChoices(QString::fromStdString(card.mnemonic), column).empty()) {
+                if (!cardFieldChoices(QString::fromStdString(card.mnemonic), column).empty()) {
                     item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-                    item->setToolTip(tr("ƒx %1 = %2\nThis field takes a whole number; edit the "
-                        "expression in the raw NEC source.").arg(value, resolvedValue));
+                    item->setToolTip(tr("ƒx %1 = %2\nThis field is chosen from a list; edit the "
+                        "expression in the NEC Deck.").arg(value, resolvedValue));
                 }
             }
             table_->setItem(row, column+2, item);

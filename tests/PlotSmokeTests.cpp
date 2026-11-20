@@ -1410,6 +1410,30 @@ auto main(int argc, char* argv[]) -> int
                 if (!loadSymbols)
                     qWarning() << "load symbols" << typedKept << typedMenu << plainMenu << variableFollowed
                                << loadTable->item(0, 8)->text() << text();
+                // A load's segment takes a variable or an expression when it comes to a whole
+                // number, and refuses one that does not; the type code takes neither.
+                const auto segmentMenu = menuOffers(4);
+                const auto typeMenu = menuOffers(2);
+                loadTable->item(0, 4)->setText(QStringLiteral("r/25+1"));
+                const auto segmentTyped = waitFor([&] { return text().contains(QStringLiteral("LD 4 1 r/25+1 3 r 10 r*2")); })
+                    && waitFor([&] { return loadTable->item(0, 4)->text() == QStringLiteral("3"); });
+                QString refusal;
+                QTimer::singleShot(200, [&refusal] {
+                    if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                        refusal = box->text();
+                        box->close();
+                    }
+                });
+                loadTable->item(0, 5)->setText(QStringLiteral("r/20"));
+                waitFor([&] { return !refusal.isEmpty(); });
+                application.processEvents();
+                const auto segmentSymbols = segmentMenu == QStringList{QStringLiteral("Make Variable…")}
+                    && typeMenu.isEmpty() && segmentTyped
+                    && refusal == QStringLiteral("r/20 comes to 2.5, but this field takes a whole number.")
+                    && text().contains(QStringLiteral("LD 4 1 r/25+1 3 r 10 r*2"))
+                    && loadTable->item(0, 5)->text() == QStringLiteral("3");
+                if (!segmentSymbols)
+                    qWarning() << "segment symbols" << segmentMenu << typeMenu << segmentTyped << refusal << text();
                 // A click selects the load in the tree and keeps the table; Return opens nothing,
                 // and a double-click edits the cell.
                 selectGroup(QStringLiteral("Loads"));
@@ -1654,7 +1678,7 @@ auto main(int argc, char* argv[]) -> int
                                << foldedUnder << tree->geometry() << section->geometry();
                 cardTables = bottomPanelPlain && groupShows && widened && narrowedAgain && pageWidening
                     && familyRefits && treeAddOpensForm
-                    && symbolsKept && loadSymbols && rowSelects && lineOpensForm && geometrySelects
+                    && symbolsKept && loadSymbols && segmentSymbols && rowSelects && lineOpensForm && geometrySelects
                     && tableAddsPlaced && loadAdded && linePicked && namesTyped && boxInside && boxPastCell
                     && treeKeepsHeight && wireOpened && folded && unfolded && treeWholeRows && treeRows
                     && notesFollow && newEmpties;
@@ -4976,10 +5000,11 @@ auto main(int argc, char* argv[]) -> int
     const auto duplicateFrequencyBlocked = !structuredAdd->isEnabled();
     selectStructuredFamily(structuredFamilies, QStringLiteral("EX"));
     application.processEvents();
-    structuredTable->item(0, 4)->setText(QStringLiteral("not-an-integer"));
+    // A segment takes a name, but not a number that is not whole.
+    structuredTable->item(0, 4)->setText(QStringLiteral("2.5"));
     application.processEvents();
     const auto invalidEditBlocked = editedCard.isEmpty()
-        && !structuredTable->item(0, 4)->toolTip().isEmpty();
+        && structuredTable->item(0, 4)->toolTip() == QStringLiteral("Enter a whole number.");
     structuredTable->item(0, 4)->setText(QStringLiteral("7"));
     structuredCards.show(); application.processEvents();
     structuredTable->item(0, 8)->setText(QStringLiteral("2.5"));

@@ -1,8 +1,10 @@
 #include "ui/cards/SymbolPrompt.h"
 
+#include "nec/NecCardCatalog.h"
 #include "nec/NecParser.h"
 #include "nec/NecSymbolEditor.h"
 #include "nec/NecSymbolResolver.h"
+#include "nec/ParseNumber.h"
 
 #include <QDialog>
 #include <QDoubleValidator>
@@ -120,6 +122,19 @@ auto enterFieldExpression(QWidget* parent, const PromptPlace& place, std::string
     if (!check.ok()) {
         return {std::nullopt, QObject::tr("%1 cannot be used here: %2")
             .arg(expression.trimmed(), QString::fromStdString(check.diagnostics.front().message))};
+    }
+    // A tag, segment or count must come to a whole number. Each new SY card goes above the field.
+    const auto result = nec::NecParser{}.parse(check.resolvedSource);
+    const auto line = sourceLine + names.size();
+    if (line > 0 && line <= result.cards().size()) {
+        const auto& card = result.cards()[line - 1];
+        const auto* spec = nec::findNecCardSpec(card.mnemonic);
+        int whole{};
+        if (spec != nullptr && fieldIndex < spec->integerFieldCount && fieldIndex < card.fields.size()
+            && !nec::parseNumber(card.fields[fieldIndex], whole)) {
+            return {std::nullopt, QObject::tr("%1 comes to %2, but this field takes a whole number.")
+                .arg(expression.trimmed(), QString::fromStdString(card.fields[fieldIndex]))};
+        }
     }
     return {std::move(updated), {}};
 }

@@ -226,14 +226,17 @@ an expression such as `len/2`. Each one written as a number gets a slider under
 **Variables**, and the optimizer can search it. There are four ways to make one:
 
 - **Type it into a cell.** In any card table, type `len`, `len/2` or `2*h + 0.1` over a
-  number: a wire's segment count, coordinate or radius, a source voltage, a load's R, a
-  line's Z0 or length, a network admittance, or a number in Other. If `len` is new, a box
+  number: a wire's segment count, coordinate or radius, a source voltage, a load's R or
+  the segment it sits on, a line's Z0 or length, a network admittance, or a number in
+  Other. If `len` is new, a box
   under the cell asks for its value, filled in, when it can be worked out, with the value
   that keeps the field as it is. Enter adds `SY len=…` after the other `SY` cards at the top
   of the deck; Esc changes nothing. As you type a name, the variables containing it are
   offered with their values (`len` offers `len`, `dlen` and `rlen`); choosing one replaces
-  only the name being typed. Tags, segment numbers, type codes and counts take whole
-  numbers only.
+  only the name being typed. In a tag, segment number or count the expression must come
+  to a whole number, so `LD 0 1 mid mid 50` with `SY mid=6` loads segment 6, and
+  `mid=5.5` is refused. Type codes and other fields chosen from a list take plain numbers
+  only, and a wire's tag stays a plain number.
 - **Right-click a field** in any card table and choose **Make
   Variable…**: create a new variable for its value, or pick an existing one. A field that
   already uses a variable offers **Change Variable…** and **Replace With Current Numeric
