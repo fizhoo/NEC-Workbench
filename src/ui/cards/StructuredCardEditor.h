@@ -2,6 +2,7 @@
 
 #include "nec/NecDocument.h"
 #include "nec/NecSymbolResolver.h"
+#include "model/AntennaModel.h"
 #include "model/SegmentSharing.h"
 
 #include <QStringList>
@@ -39,8 +40,9 @@ public:
     void setDeckUnitLabel(QString unitLabel);
     // The symbols a number cell offers as you type.
     void setSymbols(const std::vector<nec::SymbolDefinition>& symbols);
-    // The model's shared segments, which the line under the table explains for a selected card.
-    void setSharedSegments(std::vector<model::SharedSegment> shared);
+    // The model and its shared segments, which the line under the table explains for a
+    // selected card: where a source sits on its wire, and the segments cards share.
+    void setModel(const model::AntennaModel& model, std::vector<model::SharedSegment> shared);
     // Symbols, Make Variable… and expressions typed into a cell.
     [[nodiscard]] auto symbolCells() const -> SymbolCells* { return symbolCells_; }
     auto selectCard(std::size_t sourceLine) -> bool;
@@ -62,6 +64,9 @@ private:
     // The headers and the line under the table, for the selected card.
     void showSelectedCard();
     [[nodiscard]] auto selectedCard() const -> const nec::NecCard*;
+    // Where a voltage source sits on its wire: the segment, or the position asked for and the
+    // segment there, and how far along the wire the segment's middle is.
+    [[nodiscard]] auto sourcePlacement(const nec::NecCard& card) const -> QString;
     [[nodiscard]] auto validateRow(int row) -> bool;
     [[nodiscard]] auto wireDefaults() const -> std::vector<std::pair<int, int>>;
     [[nodiscard]] auto defaultCard(int familyIndex) const -> QString;
@@ -81,6 +86,7 @@ private:
     // The family's own headers, which a selected card's type relabels.
     QStringList headers_;
     std::vector<model::SharedSegment> shared_;
+    model::AntennaModel model_;
     QString deckUnitLabel_{QStringLiteral("m")};
     bool updating_{};
 };

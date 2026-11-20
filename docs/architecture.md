@@ -159,8 +159,19 @@ earlier symbol references, parentheses, and arithmetic operators. A run archives
 - `model.nec` — the generated numeric deck sent to the solver
 
 Workbench-only compatibility cards are normalized or removed at this boundary
-when required by a strict NEC-2 backend. The active source is never replaced by
-the generated deck.
+when required by a strict NEC-2 backend, and so are 4nec2 `'` comments. The active
+source is never replaced by the generated deck.
+
+The resolver (`nec/NecSymbolResolver`) requires an expression in a card's NEC integer
+fields to come to a whole number, and places voltage sources marked `' necwb:at=P%`
+(`nec/SourcePositions`): it converts the resolved geometry, finds the segment at that
+point with `model::placeAlongWire`, and writes it into the resolved and generated decks.
+Every consumer of a resolution, including optimizer candidates and convergence studies,
+therefore sees the same segment. Model Check reports a mark that cannot be placed.
+`MainWindow::applyGeometrySource` passes each edit through `refreshSourcePositions`, so
+the authored segment field stays current for other programs in the same undo step. The
+optimizer finds variables that reach integer fields with `wholeNumberFieldReached` and
+allows them only in a Parameter Sweep whose values keep those fields whole.
 
 Quick sweeps and custom pattern-frequency plans also operate at this boundary.
 They alter only the generated deck and retain the authored model unchanged.

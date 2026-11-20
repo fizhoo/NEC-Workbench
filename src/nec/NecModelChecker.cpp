@@ -1,5 +1,7 @@
 #include "nec/NecModelChecker.h"
 
+#include "nec/SourcePositions.h"
+
 #include "nec/NecCardCatalog.h"
 #include "nec/NecModelConverter.h"
 #include "nec/NecSetupConverter.h"
@@ -1277,7 +1279,9 @@ void checkExcitation(const NecCard& card, ModelCheckResult& result)
     parseNumber(card.fields[0], excitationType);
     parseNumber(card.fields[1], wireTag);
     parseNumber(card.fields[2], segment);
-    if (excitationType == 0) {
+    // Types 0 and 5 are voltage sources on a segment; for types 1 to 3 the second and third
+    // integers count plane-wave angles, and type 4 is placed by coordinates.
+    if (excitationType == 0 || excitationType == 5) {
         // Tag 0 selects an absolute segment number; other tags count through every wire
         // that carries them.
         const auto count = model::referencedSegmentCount(result.model, wireTag);
@@ -1885,6 +1889,11 @@ auto NecModelChecker::check(const NecDocument& document, ModelCheckOptions optio
         default:
             break;
         }
+    }
+    for (const auto& placed : placeMarkedSources(document, result.model)) {
+        if (!placed.error.empty())
+            result.diagnostics.push_back({DiagnosticSeverity::Error, placed.lineNumber,
+                placed.error, "Card validation"});
     }
     for (const auto& card : document.cards()) {
         if (card.mnemonic != "GH") continue;

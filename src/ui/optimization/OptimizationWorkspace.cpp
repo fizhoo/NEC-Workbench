@@ -356,6 +356,19 @@ void OptimizationWorkspace::populateVariables(const nec::SymbolResolution& resol
     const QSignalBlocker blocker(variablesTable_);
     definitions_ = resolution.definitions;
     symbolsResolved_ = resolution.ok();
+    wholeNumberFields_.clear();
+    sweepStepsChecked_ = {};
+    if (symbolsResolved_) {
+        for (const auto& definition : definitions_) {
+            if (const auto reached = nec::wholeNumberFieldReached(source_.toStdString(), definition))
+                wholeNumberFields_.emplace(definition.name, tr("%1 on line %2")
+                    .arg(QString::fromStdString(reached->field)).arg(reached->lineNumber));
+        }
+    }
+    // The first variable is checked to start with, unless it sets a whole-number field.
+    auto firstChecked = std::ranges::find_if(definitions_, [this](const auto& definition) {
+        return !wholeNumberFields_.contains(definition.name);
+    });
     variablesTable_->setRowCount(static_cast<int>(definitions_.size()));
     selectedValueSuffix_.clear();
     for (std::size_t index = 0; index < definitions_.size(); ++index) {
@@ -364,7 +377,12 @@ void OptimizationWorkspace::populateVariables(const nec::SymbolResolution& resol
         const auto name = QString::fromStdString(definition.name);
         auto* useItem = new QTableWidgetItem;
         useItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable | Qt::ItemIsSelectable);
-        useItem->setCheckState(index == 0 ? Qt::Checked : Qt::Unchecked);
+        useItem->setCheckState(firstChecked != definitions_.end()
+                && &*firstChecked == &definition ? Qt::Checked : Qt::Unchecked);
+        if (const auto field = wholeNumberFields_.find(definition.name); field != wholeNumberFields_.end())
+            useItem->setToolTip(tr("%1 sets a whole number: %2. Parameter Sweep can step it through "
+                "whole numbers; the other searches try fractional values and cannot vary it.")
+                .arg(name, field->second));
         variablesTable_->setItem(row, 0, useItem);
         auto* nameItem = new QTableWidgetItem(name);
         nameItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
@@ -794,6 +812,7 @@ auto OptimizationWorkspace::readinessBlocker(const StudySetup& setup) const -> Q
     });
     if (!boundsValid)
         return tr("Each checked parameter needs Minimum below Maximum and a positive Tolerance.");
+    if (const auto blocker = wholeNumberBlocker(setup); !blocker.isEmpty()) return blocker;
     if (setup.searchMethod == SearchMethod::DifferentialEvolution
         && (setup.populationSize < 4 || setup.maximumGenerations < 1))
         return tr("Use a population of at least four and at least one generation.");
@@ -819,6 +838,40 @@ auto OptimizationWorkspace::readinessBlocker(const StudySetup& setup) const -> Q
     const auto executable = QFileInfo(executable_);
     if (!executable.exists() || !executable.isFile() || !executable.isExecutable())
         return tr("Solver executable not found. Check the solver settings.");
+    return {};
+}
+
+auto OptimizationWorkspace::wholeNumberBlocker(const StudySetup& setup) const -> QString
+{
+    for (const auto& variable : setup.variables) {
+        const auto field = wholeNumberFields_.find(variable.name.toStdString());
+        if (field == wholeNumberFields_.end()) continue;
+        if (setup.searchMethod != SearchMethod::ParameterSweep) {
+            return tr("%1 sets a whole number (%2), and %3 tries fractional values. Vary it with "
+                "Parameter Sweep in whole-number steps, or change it by hand.")
+                .arg(variable.name, field->second, searchMethodName(setup.searchMethod));
+        }
+        // Every value the sweep tries must keep the whole-number fields whole.
+        const auto key = QStringLiteral("%1 %2 %3 %4").arg(variable.name)
+            .arg(variable.minimum, 0, 'g', 17).arg(variable.maximum, 0, 'g', 17).arg(setup.candidateLimit);
+        if (sweepStepsChecked_.first == key) return sweepStepsChecked_.second;
+        QString blocker;
+        const auto count = std::max(setup.candidateLimit, 1);
+        for (auto index = 0; index < count && blocker.isEmpty(); ++index) {
+            const auto fraction = count == 1 ? 0.0 : static_cast<double>(index) / (count - 1);
+            const auto value = variable.minimum + fraction * (variable.maximum - variable.minimum);
+            if (const auto found = nec::wholeNumberFieldAt(source_.toStdString(),
+                    variable.name.toStdString(), value)) {
+                blocker = tr("At %1 = %2 the sweep makes %3 on line %4 fractional. Choose a Minimum, "
+                    "Maximum and evaluation count that step through whole numbers: 5 to 21 in 9 "
+                    "evaluations tries the odd counts 5, 7, … 21.")
+                    .arg(variable.name).arg(value, 0, 'g', 6)
+                    .arg(QString::fromStdString(found->field)).arg(found->lineNumber);
+            }
+        }
+        sweepStepsChecked_ = {key, blocker};
+        if (!blocker.isEmpty()) return blocker;
+    }
     return {};
 }
 

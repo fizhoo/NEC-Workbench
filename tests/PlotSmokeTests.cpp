@@ -1055,6 +1055,177 @@ auto main(int argc, char* argv[]) -> int
         resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
         resultWindowSettings.sync();
     }
+    // A source placed along its wire: typed as 50% in the Sources table, kept in the EX card's
+    // 4nec2 comment, moved by a segment-count variable, undone and redone, saved and reopened,
+    // and put back on an exact segment; the optimizer will only sweep the count in whole steps.
+    auto sourcePlacement = false;
+    {
+        QSettings settings;
+        const auto savedRecent = settings.value(QStringLiteral("files/recentModels"));
+        const auto savedLive = settings.value(QStringLiteral("variables/live"));
+        settings.setValue(QStringLiteral("variables/live"), false);
+        QTemporaryDir directory;
+        const auto modelPath = directory.filePath(QStringLiteral("placed-source.nec"));
+        QFile modelFile(modelPath);
+        if (directory.isValid() && modelFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            modelFile.write("SY segments=11, len=5\nGW 1 segments 0 -len 0 0 len 0 .001\nGE 0\n"
+                            "EX 0 1 3 0 1 0\nFR 0 1 0 0 14 0\nEN\n");
+            modelFile.close();
+        }
+        settings.setValue(QStringLiteral("files/recentModels"), QStringList{modelPath});
+        settings.sync();
+        const auto openModel = [&](necwb::ui::MainWindow& window) {
+            window.resize(1400, 900);
+            window.show();
+            application.processEvents();
+            // Opening rebuilds the menu, so nothing after the trigger reads it.
+            if (auto* recent = window.findChild<QMenu*>(QStringLiteral("recentModelsMenu"))) {
+                for (auto* action : recent->actions()) {
+                    if (action->data().toString() != modelPath) continue;
+                    action->trigger();
+                    break;
+                }
+            }
+            application.processEvents();
+        };
+        const auto waitFor = [&](const auto& done) {
+            QElapsedTimer waited;
+            waited.start();
+            while (!done() && waited.elapsed() < 3000) application.processEvents(QEventLoop::AllEvents, 20);
+            return done();
+        };
+        const auto action = [](necwb::ui::MainWindow& window, const QString& prefix) -> QAction* {
+            for (auto* found : window.findChildren<QAction*>())
+                if (found->text().startsWith(prefix)) return found;
+            return nullptr;
+        };
+        necwb::ui::MainWindow mainWindow;
+        openModel(mainWindow);
+        auto* deck = mainWindow.findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor"));
+        auto* sources = mainWindow.findChild<QWidget*>(QStringLiteral("cardsEX"));
+        auto* table = sources == nullptr ? nullptr
+            : sources->findChild<QTableWidget*>(QStringLiteral("structuredCardTable"));
+        auto* note = sources == nullptr ? nullptr
+            : sources->findChild<QLabel*>(QStringLiteral("cardRowNote"));
+        auto* undo = action(mainWindow, QStringLiteral("&Undo"));
+        auto* redo = action(mainWindow, QStringLiteral("&Redo"));
+        auto* save = action(mainWindow, QStringLiteral("&Save"));
+        auto* segmentsValue = mainWindow.findChild<QDoubleSpinBox*>(QStringLiteral("variableValue"));
+        if (deck != nullptr && table != nullptr && note != nullptr && undo != nullptr && redo != nullptr
+            && save != nullptr && segmentsValue != nullptr && table->rowCount() == 1) {
+            const auto text = [deck] { return deck->toPlainText(); };
+            table->selectRow(0);
+            const auto exactNote = note->text().contains(
+                QStringLiteral("Segment 3 of 11, its middle 22.73% from End 1"));
+            // Right-click on the segment offers the placements.
+            QStringList offered;
+            QTimer::singleShot(100, [&offered] {
+                if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
+                    for (const auto* item : menu->actions())
+                        if (!item->isSeparator()) offered << item->text();
+                    menu->close();
+                }
+            });
+            emit table->customContextMenuRequested(table->visualItemRect(table->item(0, 4)).center());
+            application.processEvents();
+            const auto menuOffers = offered == QStringList{QStringLiteral("Make Variable…"),
+                QStringLiteral("Center of Wire (50%)"), QStringLiteral("Along Wire…")};
+            table->item(0, 4)->setText(QStringLiteral("50%"));
+            const auto centered = waitFor([&] {
+                    return text().contains(QStringLiteral("EX 0 1 6 0 1 0 ' necwb:at=50%\n")); })
+                && text().startsWith(QStringLiteral("SY segments=11, len=5\nGW 1 segments 0 -len 0 0 len 0 .001\n"))
+                && waitFor([&] { return table->item(0, 4)->text() == QStringLiteral("6"); })
+                && table->item(0, 4)->data(necwb::ui::CellExpressionRole).toString() == QStringLiteral("50%");
+            table->selectRow(0);
+            const auto centeredNote = note->text().contains(
+                QStringLiteral("50% along wire 1 → segment 6 of 11, its middle 50% from End 1"));
+            // Ten segments: the source moves, and the line says no segment is centered.
+            segmentsValue->setValue(10.0);
+            emit segmentsValue->editingFinished();
+            const auto followed = waitFor([&] {
+                    return text().contains(QStringLiteral("SY segments=10, len=5\n"))
+                        && text().contains(QStringLiteral("EX 0 1 5 0 1 0 ' necwb:at=50%\n")); });
+            table->selectRow(0);
+            const auto evenNote = note->text().contains(QStringLiteral("segment 5 of 10, its middle 45% "
+                "from End 1 · with an even number of equal segments no segment is centered"));
+            undo->trigger();
+            application.processEvents();
+            const auto undone = text().contains(QStringLiteral("SY segments=11, len=5\n"))
+                && text().contains(QStringLiteral("EX 0 1 6 0 1 0 ' necwb:at=50%\n"));
+            redo->trigger();
+            application.processEvents();
+            const auto redone = text().contains(QStringLiteral("EX 0 1 5 0 1 0 ' necwb:at=50%\n"));
+            save->trigger();
+            application.processEvents();
+            QFile saved(modelPath);
+            const auto savedText = saved.open(QIODevice::ReadOnly | QIODevice::Text)
+                ? QString::fromUtf8(saved.readAll()) : QString{};
+            saved.close();
+            // Reopened, it is still placed along the wire, not fixed on segment 5.
+            auto reopened = false;
+            {
+                necwb::ui::MainWindow again;
+                openModel(again);
+                auto* againSources = again.findChild<QWidget*>(QStringLiteral("cardsEX"));
+                auto* againTable = againSources == nullptr ? nullptr
+                    : againSources->findChild<QTableWidget*>(QStringLiteral("structuredCardTable"));
+                reopened = againTable != nullptr && againTable->rowCount() == 1
+                    && againTable->item(0, 4)->text() == QStringLiteral("5")
+                    && againTable->item(0, 4)->data(necwb::ui::CellExpressionRole).toString()
+                        == QStringLiteral("50%");
+            }
+            // A segment number fixes it there again, without the mark.
+            table->item(0, 4)->setText(QStringLiteral("4"));
+            const auto fixed = waitFor([&] { return text().contains(QStringLiteral("EX 0 1 4 0 1 0\nFR")); })
+                && !text().contains(QStringLiteral("necwb"));
+            // The optimizer leaves segments unchecked and sweeps it only in whole steps.
+            auto* variables = mainWindow.findChild<QTableWidget*>(QStringLiteral("optimizationVariablesTable"));
+            auto* method = mainWindow.findChild<QComboBox*>(QStringLiteral("optimizationSearchMethod"));
+            auto* points = mainWindow.findChild<QSpinBox*>(QStringLiteral("optimizationCandidateCount"));
+            auto* run = mainWindow.findChild<QPushButton*>(QStringLiteral("optimizationRun"));
+            auto optimizerGuarded = false;
+            if (variables != nullptr && method != nullptr && points != nullptr && run != nullptr
+                && variables->rowCount() == 2) {
+                const auto segmentsUnchecked = variables->item(0, 1)->text() == QStringLiteral("segments")
+                    && variables->item(0, 0)->checkState() == Qt::Unchecked
+                    && variables->item(1, 0)->checkState() == Qt::Checked
+                    && variables->item(0, 0)->toolTip().contains(QStringLiteral("GW field 2 on line 2"));
+                variables->item(1, 0)->setCheckState(Qt::Unchecked);
+                variables->item(0, 0)->setCheckState(Qt::Checked);
+                method->setCurrentIndex(method->findText(QStringLiteral("Adaptive Optimize")));
+                application.processEvents();
+                const auto searchRefused = !run->isEnabled() && run->toolTip().startsWith(
+                    QStringLiteral("segments sets a whole number (GW field 2 on line 2), and Adaptive"));
+                method->setCurrentIndex(method->findText(QStringLiteral("Parameter Sweep")));
+                variables->item(0, 3)->setText(QStringLiteral("5"));
+                variables->item(0, 4)->setText(QStringLiteral("21"));
+                points->setValue(8);
+                application.processEvents();
+                const auto halfStepsRefused = run->toolTip().startsWith(
+                    QStringLiteral("At segments = 7.28571 the sweep makes GW field 2 on line 2 fractional"));
+                points->setValue(9);
+                application.processEvents();
+                const auto wholeStepsAllowed = !run->toolTip().contains(QStringLiteral("whole"))
+                    && !run->toolTip().contains(QStringLiteral("fractional"));
+                optimizerGuarded = segmentsUnchecked && searchRefused && halfStepsRefused && wholeStepsAllowed;
+                if (!optimizerGuarded)
+                    qWarning() << "optimizer guard" << segmentsUnchecked << searchRefused << halfStepsRefused
+                               << wholeStepsAllowed << run->toolTip();
+            }
+            sourcePlacement = exactNote && menuOffers && centered && centeredNote && followed && evenNote
+                && undone && redone && savedText.contains(QStringLiteral("EX 0 1 5 0 1 0 ' necwb:at=50%\n"))
+                && reopened && fixed && optimizerGuarded;
+            if (!sourcePlacement)
+                qWarning() << "source placement" << exactNote << menuOffers << offered << centered
+                           << centeredNote << followed << evenNote << undone << redone << reopened << fixed
+                           << note->text() << text();
+            deck->document()->setModified(false);
+        }
+        settings.setValue(QStringLiteral("files/recentModels"), savedRecent);
+        if (savedLive.isValid()) settings.setValue(QStringLiteral("variables/live"), savedLive);
+        else settings.remove(QStringLiteral("variables/live"));
+        settings.sync();
+    }
     // Variables live: the wires follow a drag with the deck untouched, a release is one undo
     // step, Ctrl+Z works from a value box and the tree, Reset and Revert are one step each,
     // and a live solve uses a one-frequency copy of the deck without adding to Runs history.
@@ -1429,7 +1600,8 @@ auto main(int argc, char* argv[]) -> int
                 application.processEvents();
                 const auto segmentSymbols = segmentMenu == QStringList{QStringLiteral("Make Variable…")}
                     && typeMenu.isEmpty() && segmentTyped
-                    && refusal == QStringLiteral("r/20 comes to 2.5, but this field takes a whole number.")
+                    && refusal == QStringLiteral("r/20 cannot be used here: LD field 4, r/20 = 2.5, must be a whole "
+                        "number: it is a tag, segment, count or type code")
                     && text().contains(QStringLiteral("LD 4 1 r/25+1 3 r 10 r*2"))
                     && loadTable->item(0, 5)->text() == QStringLiteral("3");
                 if (!segmentSymbols)
@@ -1704,6 +1876,8 @@ auto main(int argc, char* argv[]) -> int
         return NECWB_SMOKE_FAILURE("card tables in the pane, expand, placement and folding");
     if (!variableSliderEdits)
         return NECWB_SMOKE_FAILURE("variable slider edits the SY card");
+    if (!sourcePlacement)
+        return NECWB_SMOKE_FAILURE("a source placed along its wire follows its segmentation");
     if (!wirePaneKeepsSymbols)
         return NECWB_SMOKE_FAILURE("cell edits keep SY symbols and exact values");
     if (!openModelKeepsDeckClosed)
@@ -5754,7 +5928,7 @@ auto main(int argc, char* argv[]) -> int
             necwb::nec::NecSymbolResolver{}.resolve(cardSource).resolvedSource);
         necwb::ui::StructuredCardEditor loadCards({{QStringLiteral("LD")}});
         loadCards.setDocument(cardDocument, &cardResolved);
-        loadCards.setSharedSegments(necwb::model::describeSharedSegments(attachmentModel, sharedSetup));
+        loadCards.setModel(attachmentModel, necwb::model::describeSharedSegments(attachmentModel, sharedSetup));
         loadCards.show();
         application.processEvents();
         QStringList edited;

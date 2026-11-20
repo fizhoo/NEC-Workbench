@@ -78,6 +78,8 @@ read-only outside Raw Source and the card tables.
 | `Z0` | Workbench/xnec2c reference impedance | Structured Editable |
 | `ZO` | Legacy spelling of reference impedance | Structured Editable |
 | `CM`, `CE` | Comments and comment boundary | Understood; Raw Source editing |
+| `'` | 4nec2 comment, anywhere on a line | Understood; kept in the authored deck, removed from solver decks |
+| `' necwb:at=P%` | Workbench position of an `EX` voltage source along its wire | Structured Editable (Sources table) |
 
 `NT` and `TL` cards follow NEC-2's group rule (NEC-2 User's Guide, Part III, NT and TL
 card notes; nec2c `main.c`): the first `NT` or `TL` card after any other card except `PT`
@@ -88,6 +90,21 @@ Check reports. Workbench records which group each line and network belongs to.
 `SY`, `Z0`, and `ZO` are normalized or removed as appropriate when Workbench creates a
 numeric deck for a strict NEC-2 backend. The authored source and archived source snapshot
 retain them.
+
+An expression in a NEC integer field (the leading integer fields of each card: tags,
+segment counts, segment numbers, counts and type codes) must resolve to a whole number,
+within 1e-9 of its value for rounding error, and fit a 32-bit integer; otherwise the
+deck does not resolve and cannot be solved. Values are never rounded.
+
+4nec2 starts a comment with `'` anywhere in a deck (4nec2 help, "Notepad- and
+Nec-edit"). Workbench reads fields up to it and keeps the comment text. It uses one such
+comment as an extension: `EX 0 1 11 0 1 0 ' necwb:at=50%` places a type 0 or 5 voltage
+source at 50% of its wire's length from End 1. Each resolution puts the source on the
+segment containing that point, and on a joint between two segments on the one nearer
+End 1. The segment field is rewritten to match with each Workbench edit, so programs that
+ignore the comment still read the segment Workbench uses. The position is refused for tag
+0, a tag carried by several wires, a flat spiral, and other `EX` types. See the
+[User Guide](user-guide.md#placing-a-source-on-its-wire).
 
 For direct **4nec2 NEC2dXS** execution, Workbench additionally rewrites recognized numeric
 cards in the generated `model.nec` with single-space field separators. NEC2dXS inherits

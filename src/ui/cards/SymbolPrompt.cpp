@@ -1,10 +1,12 @@
 #include "ui/cards/SymbolPrompt.h"
 
-#include "nec/NecCardCatalog.h"
+#include "nec/NecCardFieldEditor.h"
+#include "nec/NecModelConverter.h"
 #include "nec/NecParser.h"
+#include "nec/NecSourceEditor.h"
 #include "nec/NecSymbolEditor.h"
 #include "nec/NecSymbolResolver.h"
-#include "nec/ParseNumber.h"
+#include "nec/SourcePositions.h"
 
 #include <QDialog>
 #include <QDoubleValidator>
@@ -17,6 +19,8 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <vector>
 
 namespace necwb::ui {
@@ -84,11 +88,61 @@ auto askValues(QWidget* parent, const PromptPlace& place, const std::vector<std:
     return result;
 }
 
+// A voltage source placed `percent` along its wire, from End 1: the card's mark is set and
+// its segment field written as the segment there.
+auto placeAlongWire(std::string_view source, const nec::NecCard& card, const QString& typed)
+    -> FieldExpressionEdit
+{
+    bool numeric{};
+    const auto percent = typed.chopped(1).trimmed().toDouble(&numeric);
+    if (!numeric || !std::isfinite(percent) || percent < 0.0 || percent > 100.0)
+        return {std::nullopt, QObject::tr("Type a position from 0% to 100% along the wire.")};
+    // A segment written as an expression gives way to the segment the mark gives.
+    auto line = nec::withSourcePositionMark(card.sourceText, percent);
+    if (!nec::necCardFieldIsNumeric(line, 2)) {
+        if (auto numbered = nec::replaceNecCardFields(line, std::array{nec::NecFieldReplacement{2, "1"}}))
+            line = std::move(*numbered);
+    }
+    const auto marked = nec::replaceSourceLine(source, card.lineNumber, line);
+    if (!marked) return {};
+    auto updated = nec::refreshSourcePositions(*marked);
+    const auto check = nec::NecSymbolResolver{}.resolve(updated);
+    if (!check.ok())
+        return {std::nullopt, QString::fromStdString(check.diagnostics.front().message)};
+    const auto resolved = nec::NecParser{}.parse(check.resolvedSource);
+    for (const auto& placed : nec::placeMarkedSources(resolved, nec::NecModelConverter{}.convert(resolved).model))
+        if (placed.lineNumber == card.lineNumber && !placed.error.empty())
+            return {std::nullopt, QString::fromStdString(placed.error)};
+    return {std::move(updated), {}};
 }
 
-auto enterFieldExpression(QWidget* parent, const PromptPlace& place, std::string_view source,
+}
+
+auto enterFieldExpression(QWidget* parent, const PromptPlace& place, std::string_view authored,
     std::size_t sourceLine, std::size_t fieldIndex, const QString& expression) -> FieldExpressionEdit
 {
+    // A voltage source's segment takes a percentage along its wire; a segment number or an
+    // expression puts a source placed that way back on a fixed segment.
+    std::string unmarked;
+    auto source = authored;
+    const auto document = nec::NecParser{}.parse(authored);
+    if (sourceLine > 0 && sourceLine <= document.cards().size()) {
+        const auto& card = document.cards()[sourceLine - 1];
+        const auto sourceSegment = card.kind == nec::NecCardKind::Excitation && fieldIndex == 2;
+        if (expression.trimmed().endsWith(QLatin1Char('%'))) {
+            if (!sourceSegment)
+                return {std::nullopt, QObject::tr("A percentage places a voltage source along its wire, "
+                    "so it goes only in an EX card's segment field.")};
+            return placeAlongWire(authored, card, expression.trimmed());
+        }
+        if (sourceSegment && nec::sourcePositionMark(card.sourceText)) {
+            if (auto replaced = nec::replaceSourceLine(authored, sourceLine,
+                    nec::withSourcePositionMark(card.sourceText, std::nullopt))) {
+                unmarked = std::move(*replaced);
+                source = unmarked;
+            }
+        }
+    }
     const auto text = expression.trimmed().toStdString();
     if (text.empty()) return {};
     const auto resolution = nec::NecSymbolResolver{}.resolve(source);
@@ -122,19 +176,6 @@ auto enterFieldExpression(QWidget* parent, const PromptPlace& place, std::string
     if (!check.ok()) {
         return {std::nullopt, QObject::tr("%1 cannot be used here: %2")
             .arg(expression.trimmed(), QString::fromStdString(check.diagnostics.front().message))};
-    }
-    // A tag, segment or count must come to a whole number. Each new SY card goes above the field.
-    const auto result = nec::NecParser{}.parse(check.resolvedSource);
-    const auto line = sourceLine + names.size();
-    if (line > 0 && line <= result.cards().size()) {
-        const auto& card = result.cards()[line - 1];
-        const auto* spec = nec::findNecCardSpec(card.mnemonic);
-        int whole{};
-        if (spec != nullptr && fieldIndex < spec->integerFieldCount && fieldIndex < card.fields.size()
-            && !nec::parseNumber(card.fields[fieldIndex], whole)) {
-            return {std::nullopt, QObject::tr("%1 comes to %2, but this field takes a whole number.")
-                .arg(expression.trimmed(), QString::fromStdString(card.fields[fieldIndex]))};
-        }
     }
     return {std::move(updated), {}};
 }

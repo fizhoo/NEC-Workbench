@@ -121,10 +121,11 @@ auto CardTables::selectCard(std::size_t sourceLine) -> std::optional<Table>
     return std::nullopt;
 }
 
-void CardTables::setSharedSegments(const std::vector<model::SharedSegment>& shared)
+void CardTables::setModel(const model::AntennaModel& model,
+    const std::vector<model::SharedSegment>& shared)
 {
     wires_->setSharedSegments(shared);
-    for (auto* cards : cards_) cards->setSharedSegments(shared);
+    for (auto* cards : cards_) cards->setModel(model, shared);
 }
 
 void CardTables::focusParameterizableField(Table table)

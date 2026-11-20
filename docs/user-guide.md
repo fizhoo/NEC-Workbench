@@ -248,12 +248,53 @@ an expression such as `len/2`. Each one written as a number gets a slider under
 The Parameters table lists every `SY` name with its expression; Resolved Value is the
 evaluated number, not an inferred physical unit.
 
-Parameter-controlled cells are marked and retain their source expressions. Integer
-and categorical fields are not currently optimization variables. Parameterizing a
+Parameter-controlled cells are marked and retain their source expressions. Type codes
+and other fields chosen from a list take no variables, and a variable that sets a
+whole-number field can only be swept in whole steps (see
+[Segment Counts and Segment Numbers](#segment-counts-and-segment-numbers)). Parameterizing a
 negative numeric field creates a positive parameter magnitude and preserves the field
 sign in the reference. Linking an existing parameter similarly preserves an equal or
 opposite current value, which supports symmetric geometry such as `-half_length` and
 `half_length` without changing the model.
+
+### Segment Counts and Segment Numbers
+
+A wire's segment count and the segment a source, load, line or network uses can be
+variables or expressions, like any other number:
+
+```
+SY segments=21, feed=(segments+1)/2
+GW 1 segments 0 -5 0 0 5 0 .001
+EX 0 1 feed 0 1 0
+TL 1 feed 2 feed 50 0 0 0 0 0
+```
+
+`segments` and `feed` are names this deck defines, not NEC keywords; any valid name
+works. The tables show the value (21, 11) with the expression in the cell's tooltip and
+editor, and the solver gets the numbers. Change `segments` and everything that uses
+`feed` follows it: the `EX` source and the `TL` end above stay on the same segment.
+
+These fields are NEC integers, so an expression there must come to a whole number:
+
+- Rounding error in the arithmetic is allowed: `(a+b)*10` with `a=0.1, b=0.2` is 3,
+  although the computer gets 3.0000000000000004.
+- A fractional value is an error at that field, and is never rounded: with
+  `segments=20`, `feed` is 10.5 and Model Check reports `EX field 3, feed = 10.5, must be
+  a whole number`. A count too large for a NEC integer, or an expression that does not
+  give a finite number, is an error too. NEC Workbench has no `int()` or `fix()`
+  function: 4nec2 lists both, but its help does not say how they round, so they are not
+  guessed at.
+- NEC's special values keep their meaning: tag 0 with segments 0 on an `LD` loads every
+  segment, and segment -1 on the first `TL` or `NT` of a group clears earlier ones,
+  however they are written.
+- A segment past the end of its wire is reported, not moved to the last segment.
+
+The same checks apply to a deck opened from a file. It still opens with all of its
+cards, so it can be corrected; it cannot be solved until the error is fixed.
+
+To keep `feed` in the middle as `segments` changes, keep `segments` odd. In Optimize,
+only a Parameter Sweep in whole steps can vary it: see
+[Variables and Bounds](#variables-and-bounds).
 
 ### NEC Deck and Cards
 
@@ -279,6 +320,11 @@ The NEC Deck's raw source and the card tables operate on the same document.
   changes the 2D and 3D views, their grid and rulers.
 - Selecting a row selects its source, load, line, or network everywhere, or moves the
   raw-source cursor to the card.
+
+A `'` starts a 4nec2 comment anywhere on a card, as in `GW 1 21 0 0 0 0 0 5 .001 '
+radiator`. NEC Workbench keeps it as written, reads the card's fields up to it, and
+leaves it out of the deck it gives the solver; a line that is only a comment is not a
+card. In `CM` and `CE` cards an apostrophe is ordinary text.
 
 Unknown cards and formatting are preserved. Recognition does not imply that every
 card has a dedicated editor or graphical representation; see
@@ -337,7 +383,9 @@ additional NEC cards may appear afterward.
 Automatic Segmentation previews proposed segment counts using the highest modeled
 frequency and selected segments per wavelength. Applying the preview is one
 undoable model edit. Supported source, load, and transmission-line references are
-remapped by relative position; unsupported references block the operation. Decks
+remapped by relative position; unsupported references block the operation. A source
+placed along its wire goes to its position on the new segmentation, which the preview
+may show one segment differently. Decks
 that use one tag number on more than one wire, or that refer to segments by absolute
 number (tag 0), are also blocked for now, as is segmentation convergence testing.
 
@@ -351,7 +399,9 @@ also archived in the Runs tab.
 ### Segmentation Convergence
 
 Convergence runs progressively refined versions of the same model and compares
-successive impedance and available gain results. Tolerances describe numerical
+successive impedance and available gain results. A source placed along its wire takes
+its position on each refined wire; it cannot be placed along a tapered, arc or helix
+wire in a convergence study yet. Tolerances describe numerical
 stability between levels, not universal model correctness.
 
 ## Setup
@@ -371,6 +421,54 @@ ones, since NEC-2 discards earlier networks and lines when other cards separate 
 
 References are validated against available wire tags and segments. Units shown in
 the interface are converted to the NEC values stored in source.
+
+#### Placing a Source on Its Wire
+
+A voltage source (`EX` type 0 or 5) can sit on an exact segment, or at a position along
+its wire that holds as the wire's segmentation changes:
+
+- **Exact segment:** type a segment number, or a variable or expression such as `feed`,
+  in the Sources table's Seg cell. This is how every source starts, and how existing
+  decks stay. NEC Workbench never turns one into a position by itself.
+- **Along wire:** type a percentage from End 1, such as `30%`, in the Seg cell, or
+  right-click it and choose **Along Wire…**, which opens the cell on the percentage.
+- **Center:** right-click the Seg cell and choose **Center of Wire (50%)**.
+
+A source placed along its wire shows the segment it is on, styled like an expression,
+with the percentage in its tooltip and editor. Right-click it and choose **Exact
+Segment** to fix it on that segment, or type a segment number. The line under the table
+says what was asked for and what it gives, for example `50% along wire 1 → segment 11
+of 21, its middle 50% from End 1`; for an exact segment it reads `Segment 6 of 11, its
+middle 50% from End 1`.
+
+How the segment is chosen:
+
+- The position is measured along the wire from End 1, by length, so arcs, helices and
+  tapered segments are placed by where their segments really are.
+- The source goes on the segment that contains that point. With equal segments this is
+  also the segment whose middle is nearest. 0% gives the first segment and 100% the last.
+- A point exactly on the joint between two segments goes to the one nearer End 1.
+- With an even number of equal segments, no segment is centered: 50% falls on a joint, so
+  10 segments give segment 5, whose middle is at 45%. The line under the table says so.
+  Use an odd count to put the source in the middle.
+
+The position is kept in the `EX` card as a 4nec2 comment, after the segment it gives:
+
+```
+EX 0 1 11 0 1 0 ' necwb:at=50%
+```
+
+`necwb:at` is a NEC Workbench extension. Each time the deck changes, NEC Workbench puts
+the source on the segment at that point and writes the segment number in the field. A
+variable, Undo, Auto Segmentation, the optimizer and convergence studies all move it.
+The solver gets the number without the comment. 4nec2 and other programs read the
+comment as a comment and use the segment written there; that number is updated with
+any edit made in NEC Workbench, though not while you type in the NEC Deck. The comment is
+kept through save and reopen and through Undo and Redo.
+
+A position is refused, with the reason in Problems, for a tag carried by more than one
+wire or tag 0 (NEC counts those segments across wires), a flat spiral (not drawn), and
+`EX` types that do not sit on a segment.
 
 When one segment carries more than one source, load, transmission-line end, or network
 port, Workbench explains how NEC connects them. NEC-2 puts `EX` sources, `TL` ends, and
@@ -725,6 +823,15 @@ different quantities.
 
 Parameter Sweep varies exactly one parameter: checking a row in Sweep mode replaces
 the previous choice. The other methods change every checked parameter together.
+
+A variable that sets a whole-number field, such as a segment count, or a segment
+through another variable, is not checked to start with. Its **Use** tooltip names the
+field. Adaptive Optimize, Nelder–Mead and Differential Evolution try fractional values,
+so they refuse it. A Parameter Sweep can vary it if every value it tries keeps those
+fields whole: Min 5, Max 21 and 9 evaluations try 5, 7, … 21, the odd counts that keep
+a centered feed. 8 evaluations would try 7.29 and are refused. A variable that only
+reaches decimal fields, such as a length, is unaffected, even when other expressions
+use it.
 
 When the run button is unavailable, the status line under the progress bar states
 the first thing that must be fixed. An incomplete objective, such as a directional

@@ -20,6 +20,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <unordered_map>
 #include <vector>
 
 class QComboBox;
@@ -206,6 +207,8 @@ private:
         -> analysis::OptimizationBaselineRequirements;
     void updateReadiness();
     [[nodiscard]] auto readinessBlocker(const StudySetup& setup) const -> QString;
+    // Why a checked variable that sets a whole-number field cannot be varied this way, or empty.
+    [[nodiscard]] auto wholeNumberBlocker(const StudySetup& setup) const -> QString;
     void populateModelFrequencies(const model::FrequencyDefinition& frequency);
     void setExplicitFrequencies(const std::vector<double>& frequenciesMHz);
     void addExplicitFrequency(double frequencyMHz);
@@ -350,6 +353,11 @@ private:
     std::function<void()> cancelBaselineRunCallback_;
     std::function<bool(double)> findMaximumGainCallback_;
     std::vector<nec::SymbolDefinition> definitions_;
+    // The variables that set a NEC whole-number field, such as a segment count, with that
+    // field: no search but a sweep in whole-number steps can vary them.
+    std::unordered_map<std::string, QString> wholeNumberFields_;
+    // The last Parameter Sweep checked for whole-number steps, and why it cannot run.
+    mutable std::pair<QString, QString> sweepStepsChecked_;
     std::vector<Candidate> candidates_;
     std::vector<double> modelFrequenciesMHz_;
     std::vector<analysis::RadiationSample> latestRadiation_;

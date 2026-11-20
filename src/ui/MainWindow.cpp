@@ -30,6 +30,7 @@
 #include "nec/NecSymbolResolver.h"
 #include "nec/NecWriter.h"
 #include "nec/ParseNumber.h"
+#include "nec/SourcePositions.h"
 #include "ui/modeltree/ModelColumn.h"
 #include "ui/modeltree/ModelTree.h"
 #include "ui/modeltree/PropertiesPane.h"
@@ -2001,7 +2002,7 @@ void MainWindow::checkModel(bool presentReport)
     updateWireCardEditor();
     // Edits keep the zoom; opening a model fits it (resetModelViews).
     const auto sharedSegments = model::describeSharedSegments(currentModel_, currentSetup_);
-    cardTables_->setSharedSegments(sharedSegments);
+    cardTables_->setModel(currentModel_, sharedSegments);
     for (auto* view : geometryViews()) {
         view->updateModel(currentModel_);
         view->setExcitations(currentSetup_.excitations);
@@ -4345,7 +4346,9 @@ void MainWindow::pushGeometrySourceEdit(const QString& description, QString upda
 void MainWindow::applyGeometrySource(const QString& description, const QString& source,
     EditorDestination destination, int geometryTab)
 {
-    history_->replaceSource({description, static_cast<int>(destination), geometryTab}, source);
+    // A source placed along its wire keeps its segment field current for other programs.
+    history_->replaceSource({description, static_cast<int>(destination), geometryTab},
+        QString::fromStdString(nec::refreshSourcePositions(source.toStdString())));
     editor_->document()->setModified(true);
     checkModel();
     showEditor(destination, geometryTab);

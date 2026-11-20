@@ -33,24 +33,26 @@ auto parseLine(std::string line, std::size_t lineNumber) -> NecCard
     auto contentStart = std::size_t{};
     if (lineNumber == 1 && card.sourceText.starts_with("\xEF\xBB\xBF")) contentStart = 3;
     const auto first = card.sourceText.find_first_not_of(" \t", contentStart);
-    if (first == std::string::npos) {
+    const auto commentStart = necCommentStart(card.sourceText);
+    if (first == std::string::npos || first >= commentStart) {
         card.kind = NecCardKind::Blank;
         return card;
     }
+    const auto contentEnd = std::min(commentStart, card.sourceText.size());
 
     const auto mnemonicLength = std::min<std::size_t>(2, card.sourceText.size() - first);
     card.mnemonic = upper(card.sourceText.substr(first, mnemonicLength));
     card.kind = classify(card.mnemonic);
 
-    auto position = first + mnemonicLength;
-    while (position < card.sourceText.size()) {
-        while (position < card.sourceText.size()
+    auto position = std::min(first + mnemonicLength, contentEnd);
+    while (position < contentEnd) {
+        while (position < contentEnd
             && (std::isspace(static_cast<unsigned char>(card.sourceText[position]))
                 || card.sourceText[position] == ',')) {
             ++position;
         }
         const auto fieldStart = position;
-        while (position < card.sourceText.size()
+        while (position < contentEnd
             && !std::isspace(static_cast<unsigned char>(card.sourceText[position]))
             && card.sourceText[position] != ',') {
             ++position;
@@ -61,6 +63,18 @@ auto parseLine(std::string line, std::size_t lineNumber) -> NecCard
     return card;
 }
 
+}
+
+auto necCommentStart(std::string_view line) noexcept -> std::size_t
+{
+    auto first = line.starts_with("\xEF\xBB\xBF") ? std::size_t{3} : std::size_t{};
+    first = line.find_first_not_of(" \t", first);
+    if (first != std::string_view::npos && line.size() - first >= 2) {
+        const auto c = static_cast<char>(std::toupper(static_cast<unsigned char>(line[first])));
+        const auto m = static_cast<char>(std::toupper(static_cast<unsigned char>(line[first + 1])));
+        if (c == 'C' && (m == 'M' || m == 'E')) return std::string_view::npos;
+    }
+    return line.find('\'');
 }
 
 auto NecParser::parse(std::string_view source) const -> NecDocument

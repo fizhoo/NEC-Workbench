@@ -20,6 +20,7 @@
 #include "model/AutoSegmentation.h"
 #include "model/LengthUnit.h"
 #include "model/ModelSummary.h"
+#include "model/SegmentPlacement.h"
 #include "model/SegmentSharing.h"
 #include "model/WireGeometry.h"
 #include "model/WireGauge.h"
@@ -35,6 +36,7 @@
 #include "nec/NecSymbolResolver.h"
 #include "nec/NecSymbolEditor.h"
 #include "nec/NecWriter.h"
+#include "nec/SourcePositions.h"
 
 #include <algorithm>
 #include <array>
@@ -3527,6 +3529,209 @@ void testAverageGainTestPreparation()
         "AGT integration recovers perfect-ground hemisphere average gain");
 }
 
+// Symbols in segment counts and segment numbers, and sources placed along their wires.
+void testSymbolicSegments()
+{
+    using necwb::nec::NecSymbolResolver;
+    const auto lineOf = [](const std::string& source, std::size_t number) {
+        const auto document = necwb::nec::NecParser{}.parse(source);
+        return number <= document.cards().size() ? document.cards()[number - 1].sourceText : std::string{};
+    };
+    const auto errorsOf = [](const std::string& resolved) {
+        const auto checked = necwb::nec::NecModelChecker{}.check(necwb::nec::NecParser{}.parse(resolved));
+        std::vector<std::string> errors;
+        for (const auto& diagnostic : checked.diagnostics)
+            if (diagnostic.severity == necwb::nec::DiagnosticSeverity::Error) errors.push_back(diagnostic.message);
+        return errors;
+    };
+    // `segments` and `feed` are names the deck defines, not NEC keywords.
+    const std::string deck =
+        "SY segments=11, feed=(segments+1)/2\n"
+        "GW 1 segments 0 -5 0 0 5 0 .001\n"
+        "GW 2 segments 1 -5 0 1 5 0 .001\n"
+        "GE 0\n"
+        "EX 0 1 feed 0 1 0\n"
+        "TL 1 feed 2 feed 50 0 0 0 0 0\n"
+        "NT 1 feed 2 feed 0.02 0 -0.02 0 0.02 0\n"
+        "LD 0 2 feed feed 10 0 0\n"
+        "FR 0 1 0 0 14 0\n"
+        "EN\n";
+    const auto resolved = NecSymbolResolver{}.resolve(deck);
+    expect(resolved.ok() && lineOf(resolved.resolvedSource, 2) == "GW 1 11 0 -5 0 0 5 0 .001"
+            && lineOf(resolved.resolvedSource, 5) == "EX 0 1 6 0 1 0"
+            && lineOf(resolved.resolvedSource, 6) == "TL 1 6 2 6 50 0 0 0 0 0"
+            && lineOf(resolved.resolvedSource, 7) == "NT 1 6 2 6 0.02 0 -0.02 0 0.02 0"
+            && lineOf(resolved.resolvedSource, 8) == "LD 0 2 6 6 10 0 0"
+            && errorsOf(resolved.resolvedSource).empty(),
+        "a segment count and the segment an EX, TL, NT and LD use resolve from the same expression");
+    expect(resolved.generatedDeck.find("segments") == std::string::npos
+            && resolved.generatedDeck.find("feed") == std::string::npos
+            && resolved.generatedDeck.find("EX 0 1 6 0 1 0") != std::string::npos,
+        "the solver deck has numbers where the authored deck has expressions");
+    const auto refined = NecSymbolResolver{}.resolve(deck, {{"segments", 21.0}});
+    expect(refined.ok() && lineOf(refined.resolvedSource, 2) == "GW 1 21 0 -5 0 0 5 0 .001"
+            && lineOf(refined.resolvedSource, 5) == "EX 0 1 11 0 1 0"
+            && lineOf(refined.resolvedSource, 6) == "TL 1 11 2 11 50 0 0 0 0 0"
+            && lineOf(refined.resolvedSource, 7) == "NT 1 11 2 11 0.02 0 -0.02 0 0.02 0",
+        "a segment expression follows the variable it depends on, the same in EX, TL and NT");
+
+    // A fractional value is an error at that field, never rounded.
+    const auto even = NecSymbolResolver{}.resolve(deck, {{"segments", 10.0}});
+    const auto fractional = std::ranges::find_if(even.diagnostics,
+        &necwb::nec::SymbolDiagnostic::wholeNumberField);
+    expect(!even.ok() && fractional != even.diagnostics.end() && fractional->lineNumber == 5
+            && fractional->field == "EX field 3"
+            && fractional->message == "EX field 3, feed = 5.5, must be a whole number: it is a tag, "
+                "segment, count or type code"
+            && lineOf(even.resolvedSource, 5) == "EX 0 1 feed 0 1 0",
+        "a segment number that comes to 5.5 is reported and left as written, not rounded");
+    {
+        // Opened from a file, the deck is all there to correct; only its resolution fails.
+        necwb::nec::NecSourceCache opened;
+        opened.update("SY segments=10\nGW 1 segments 0 0 0 1 0 0 .001\nGE 0\nEX 0 1 segments/4 0 1 0\n"
+                      "FR 0 1 0 0 14 0\nEN\n");
+        expect(opened.document().cards().size() == 6 && !opened.resolution().ok()
+                && opened.resolvedDocument() == nullptr
+                && opened.resolution().diagnostics.front().field == "EX field 3",
+            "a deck whose segment comes to 2.5 opens in full, with the error at that field");
+    }
+    expect(lineOf(NecSymbolResolver{}.resolve(
+                "SY a=0.1, b=0.2\nGW 1 (a+b)*10 0 0 0 1 0 0 .001\n").resolvedSource, 2)
+            == "GW 1 3 0 0 0 1 0 0 .001",
+        "rounding error in the arithmetic, 3.0000000000000004, still counts as a whole number");
+    expect(NecSymbolResolver{}.resolve("SY n=3e9\nGW 1 n 0 0 0 1 0 0 .001\n").diagnostics.front().message
+            == "GW field 2, n = 3000000000, is outside the range of a NEC integer field",
+        "a whole number too large for a NEC integer field is refused");
+    const auto infinite = NecSymbolResolver{}.resolve("SY n=10^400\nGW 1 n 0 0 0 1 0 0 .001\n");
+    expect(!infinite.ok() && infinite.diagnostics.front().message.find("non-finite") != std::string::npos,
+        "a non-finite segment count is refused");
+    expect(errorsOf(NecSymbolResolver{}.resolve(deck, {{"feed", 12.0}}).resolvedSource)
+            == std::vector<std::string>{"EX segment is outside the referenced wire",
+                "TL endpoint references an invalid wire or segment",
+                "NT port references an invalid wire or segment", "LD segment range is invalid"},
+        "a segment past the end of its wire is reported, not clamped");
+
+    // NEC's special values still mean what they do when written as expressions.
+    const std::string special =
+        "SY clear=-1, none=0\n"
+        "GW 1 11 0 -5 0 0 5 0 .001\n"
+        "GW 2 11 1 -5 0 1 5 0 .001\n"
+        "GE 0\n"
+        "EX 0 1 6 0 1 0\n"
+        "LD 5 none none none 5.8e7\n"
+        "TL 1 clear 2 6 50 0 0 0 0 0\n"
+        "TL 1 6 2 6 50 0 0 0 0 0\n"
+        "FR 0 1 0 0 14 0\n"
+        "EN\n";
+    const auto specialResolved = NecSymbolResolver{}.resolve(special);
+    expect(specialResolved.ok() && lineOf(specialResolved.resolvedSource, 6) == "LD 5 0 0 0 58000000"
+            && lineOf(specialResolved.resolvedSource, 7) == "TL 1 -1 2 6 50 0 0 0 0 0"
+            && errorsOf(specialResolved.resolvedSource).empty(),
+        "tag 0 with segments 0 loads every segment and segment -1 clears, from expressions too");
+    expect(errorsOf("GW 1 11 0 -5 0 0 5 0 .001\nGE 0\nEX 5 1 12 0 1 0\nFR 0 1 0 0 14 0\nEN\n")
+            == std::vector<std::string>{"EX segment is outside the referenced wire"},
+        "an EX type 5 voltage source is checked against its wire like type 0");
+    const auto planeWave = NecSymbolResolver{}.resolve("SY count=19\nGW 1 11 0 -5 0 0 5 0 .001\nGE 0\n"
+        "EX 1 count 37 0 90 0 0 5 5 0\nFR 0 1 0 0 14 0\nEN\n");
+    expect(planeWave.ok() && lineOf(planeWave.resolvedSource, 4) == "EX 1 19 37 0 90 0 0 5 5 0"
+            && errorsOf(planeWave.resolvedSource).empty(),
+        "a plane wave's angle counts take expressions and are not read as tags and segments");
+
+    // Percentage placement along a wire.
+    necwb::model::Wire wire(1, {0, 0, 0}, {10, 0, 0}, 11, 0.001, 1);
+    const auto at = [&wire](double fraction) { return necwb::model::placeAlongWire(wire, fraction); };
+    expect(at(0.0)->segment == 1 && at(0.5)->segment == 6 && !at(0.5)->onJoint
+            && std::abs(at(0.5)->actualFraction - 0.5) < 1e-12 && at(1.0)->segment == 11
+            && std::abs(at(1.0)->actualFraction - 21.0 / 22.0) < 1e-12,
+        "0%, 50% and 100% of an odd number of segments give the first, middle and last segments");
+    wire.segments = 10;
+    expect(at(0.0)->segment == 1 && at(0.5)->segment == 5 && at(0.5)->onJoint
+            && std::abs(at(0.5)->actualFraction - 0.45) < 1e-12 && at(1.0)->segment == 10
+            && at(0.55)->segment == 6 && !at(0.55)->onJoint && !at(-0.1) && !at(1.1),
+        "50% of an even number of segments is a joint, and the segment nearer End 1 is used");
+    necwb::model::Wire tapered(2, {0, 0, 0}, {3, 0, 0}, 2, 0.001, 1);
+    tapered.path = {{0, 0, 0}, {1, 0, 0}, {3, 0, 0}};
+    expect(necwb::model::placeAlongWire(tapered, 0.4)->segment == 2
+            && necwb::model::placeAlongWire(tapered, 1.0 / 3.0)->segment == 1
+            && necwb::model::placeAlongWire(tapered, 1.0 / 3.0)->onJoint
+            && std::abs(*necwb::model::segmentMiddleFraction(tapered, 2) - 2.0 / 3.0) < 1e-12,
+        "unequal segments are placed by length along the wire");
+
+    // The mark in the EX card's comment.
+    using necwb::nec::withSourcePositionMark;
+    expect(withSourcePositionMark("EX 0 1 6 0 1 0", 50.0) == "EX 0 1 6 0 1 0 ' necwb:at=50%"
+            && withSourcePositionMark("EX 0 1 6 0 1 0 ' feed", 37.5) == "EX 0 1 6 0 1 0 ' feed necwb:at=37.5%"
+            && withSourcePositionMark("EX 0 1 6 0 1 0 ' feed necwb:at=37.5%", 25.0)
+                == "EX 0 1 6 0 1 0 ' feed necwb:at=25%"
+            && withSourcePositionMark("EX 0 1 6 0 1 0 ' feed necwb:at=37.5%", std::nullopt)
+                == "EX 0 1 6 0 1 0 ' feed"
+            && withSourcePositionMark("EX 0 1 6 0 1 0 ' necwb:at=50%", std::nullopt) == "EX 0 1 6 0 1 0"
+            && necwb::nec::sourcePositionMark("EX 0 1 6 0 1 0 ' NECWB:AT=12.5%") == 12.5
+            && !necwb::nec::sourcePositionMark("EX 0 1 6 0 1 0 necwb:at=50%"),
+        "a source's position is written in, read from and removed from its 4nec2 comment");
+    const std::string marked =
+        "CM placed source\n"
+        "CE\n"
+        "SY segments=11\n"
+        "GW 1 segments 0 -5 0 0 5 0 .001\n"
+        "GE   0\n"
+        "EX 0 1 6 0 1 0 ' necwb:at=50%\n"
+        "FR 0 1 0 0 14 0\n"
+        "EN\n";
+    const auto placed = NecSymbolResolver{}.resolve(marked, {{"segments", 21.0}});
+    const auto solverDeck = necwb::analysis::normalizeSolverDeck(placed.generatedDeck);
+    expect(placed.ok() && lineOf(placed.resolvedSource, 6) == "EX 0 1 11 0 1 0 ' necwb:at=50%"
+            && solverDeck.find("EX 0 1 11 0 1 0\n") != std::string::npos
+            && solverDeck.find('\'') == std::string::npos,
+        "a source at 50% moves to the middle segment of 21, and the solver gets plain numbers");
+    const auto refreshed = necwb::nec::refreshSourcePositions(
+        "CM placed source\nCE\nSY segments=11\nGW 1 21 0 -5 0 0 5 0 .001\nGE   0\n"
+        "EX 0 1 6 0 1 0 ' necwb:at=50%\nFR 0 1 0 0 14 0\nEN\n");
+    expect(refreshed == "CM placed source\nCE\nSY segments=11\nGW 1 21 0 -5 0 0 5 0 .001\nGE   0\n"
+                        "EX 0 1 11 0 1 0 ' necwb:at=50%\nFR 0 1 0 0 14 0\nEN\n"
+            && necwb::nec::refreshSourcePositions(refreshed) == refreshed
+            && necwb::nec::refreshSourcePositions(marked) == marked,
+        "the segment written follows the wire's segmentation, and nothing else in the deck changes");
+    expect(errorsOf(lineOf(marked, 1) + "\nCE\nGW 1 11 0 -5 0 0 5 0 .001\nGW 1 11 1 -5 0 1 5 0 .001\nGE 0\n"
+                    "EX 0 1 6 0 1 0 ' necwb:at=50%\nFR 0 1 0 0 14 0\nEN\n").size() == 1
+            && errorsOf("GW 1 11 0 -5 0 0 5 0 .001\nGE 0\nEX 0 0 6 0 1 0 ' necwb:at=50%\n"
+                        "FR 0 1 0 0 14 0\nEN\n").front().starts_with("Tag 0 numbers segments")
+            && errorsOf("GW 1 11 0 -5 0 0 5 0 .001\nGE 0\nEX 1 1 6 0 90 0 0 5 5 0 ' necwb:at=50%\n"
+                        "FR 0 1 0 0 14 0\nEN\n").front().starts_with("Only an EX voltage source")
+            && errorsOf("GW 1 11 0 -5 0 0 5 0 .001\nGE 0\nEX 0 1 6 0 1 0 ' necwb:at=120%\n"
+                        "FR 0 1 0 0 14 0\nEN\n").front().starts_with("The position along the wire, 120%"),
+        "a position along a shared tag, tag 0, a plane wave or past the wire is refused with the reason");
+
+    // 4nec2 comments.
+    const auto commented = necwb::nec::NecParser{}.parse(
+        "' a 4nec2 note\nSY len=10 ' half-wave\nGW 1 11 0 0 -len/2 0 0 len/2 .001 ' radiator\nCM don't split\n");
+    expect(commented.cards()[0].kind == necwb::nec::NecCardKind::Blank
+            && commented.cards()[2].fields.size() == 9
+            && commented.cards()[3].kind == necwb::nec::NecCardKind::Comment
+            && NecSymbolResolver{}.resolve("SY len=10 ' half-wave\nGW 1 11 0 0 -len/2 0 0 len/2 .001 ' radiator\n").ok(),
+        "a 4nec2 ' comment ends a card's fields, a line of one is not a card, and CM text is untouched");
+
+    // Convergence refines a placed source by its position, not by remapping its segment.
+    const auto convergence = necwb::analysis::prepareSegmentationConvergenceInput(
+        "GW 1 10 0 -5 0 0 5 0 .001\nGE 0\nEX 0 1 1 0 1 0 ' necwb:at=0%\nFR 0 1 0 0 14 0\nEN\n", 14.0, 3.0);
+    const auto refinedSetup = necwb::nec::NecSetupConverter{}.convert(
+        necwb::nec::NecParser{}.parse(convergence.deck));
+    expect(convergence.ok() && refinedSetup.excitations.size() == 1
+            && refinedSetup.excitations.front().segment == 1,
+        "a source at 0% stays on the first segment of 30, where remapping segment 1 of 10 gives 2");
+
+    // Which variables reach a whole-number field.
+    const auto reached = [&deck](std::string_view name) {
+        const auto definitions = NecSymbolResolver{}.resolve(deck + "SY len=10\n").definitions;
+        const auto found = std::ranges::find(definitions, name, &necwb::nec::SymbolDefinition::name);
+        return necwb::nec::wholeNumberFieldReached(deck, *found);
+    };
+    expect(reached("segments") && reached("segments")->field == "GW field 2" && reached("feed")
+            && !necwb::nec::wholeNumberFieldReached(
+                "SY len=10\nGW 1 11 0 0 -len/2 0 0 len/2 .001\n", {"len", "10", 10.0, 1}),
+        "a variable that sets a segment count or segment, directly or through another, is found");
+}
+
 void testSegmentationConvergencePreparation()
 {
     const std::string source =
@@ -4231,6 +4436,7 @@ auto main() -> int
     testFrequencyPlans();
     testAverageGainTestPreparation();
     testSegmentationConvergencePreparation();
+    testSymbolicSegments();
     testSharedTagReferences();
     testUnrenderedSegmentNumbering();
     testGainDirectionFormatting();

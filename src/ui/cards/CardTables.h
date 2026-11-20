@@ -48,8 +48,8 @@ public:
     void setDeckUnitLabel(const QString& unitLabel);
     // Selects the card's row in whichever table has it, and says which.
     auto selectCard(std::size_t sourceLine) -> std::optional<Table>;
-    // The model's shared segments, for the line under each table.
-    void setSharedSegments(const std::vector<model::SharedSegment>& shared);
+    // The model and its shared segments, for the line under each table.
+    void setModel(const model::AntennaModel& model, const std::vector<model::SharedSegment>& shared);
     void focusParameterizableField(Table table);
     // The card a table's Add would add; empty for the wire table, which adds its own way.
     [[nodiscard]] auto newCard(Table table) const -> QString;

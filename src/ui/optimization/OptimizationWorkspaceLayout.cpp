@@ -1151,7 +1151,11 @@ void OptimizationWorkspace::connectObjectiveSignals()
 
 void OptimizationWorkspace::connectSearchSignals()
 {
-    connect(pointsControl_, &QSpinBox::valueChanged, this, [this] { updateWorkload(); });
+    // The sweep's count sets the values it tries, which a whole-number variable must allow.
+    connect(pointsControl_, &QSpinBox::valueChanged, this, [this] {
+        updateWorkload();
+        updateReadiness();
+    });
     connect(searchMethodControl_, &QComboBox::currentIndexChanged,
         this, [this] { updateSearchMethodControls(); });
     connect(adaptiveMaximumEvaluationsControl_, &QSpinBox::valueChanged,

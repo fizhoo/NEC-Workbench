@@ -120,7 +120,15 @@ auto normalizedDeck(std::string_view source, bool keepStrippedLines) -> std::str
         const auto inlineComment = card.mnemonic == "CM" && !openingCommentBlock;
         const auto compatibilityMetadata = card.kind == nec::NecCardKind::ReferenceImpedance;
         const auto stripped = inlineComment || compatibilityMetadata;
-        if (!stripped) output << card.sourceText;
+        // NEC-2 solvers do not read 4nec2 ' comments; a line that is only one stays, empty.
+        if (!stripped) {
+            auto text = std::string_view(card.sourceText);
+            if (const auto comment = nec::necCommentStart(text); comment != std::string_view::npos) {
+                text = text.substr(0, comment);
+                text = text.substr(0, text.find_last_not_of(" \t") + 1);
+            }
+            output << text;
+        }
         if (card.mnemonic == "CE"
             || (card.kind != nec::NecCardKind::Blank && card.mnemonic != "CM")) {
             openingCommentBlock = false;

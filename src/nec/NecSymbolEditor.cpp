@@ -34,6 +34,7 @@ auto lower(std::string_view value) -> std::string
 
 auto assignments(std::string_view line) -> std::vector<std::string>
 {
+    line = line.substr(0, necCommentStart(line));
     const auto firstSpace = line.find_first_of(" \t");
     auto body = firstSpace == std::string_view::npos
         ? std::string_view{} : line.substr(firstSpace + 1);
@@ -77,6 +78,19 @@ auto symbolLine(std::string_view name, std::string_view expression) -> std::stri
     return "SY " + std::string(trim(name)) + '=' + std::string(trim(expression));
 }
 
+// An SY card of these assignments, keeping the ' comment of the card it replaces.
+auto symbolCard(const std::vector<std::string>& values, std::string_view replaced) -> std::string
+{
+    std::string line = "SY ";
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        if (index != 0) line += ", ";
+        line += values[index];
+    }
+    if (const auto comment = necCommentStart(replaced); comment != std::string_view::npos)
+        line += ' ' + std::string(replaced.substr(comment));
+    return line;
+}
+
 auto identifierCharacter(char character) -> bool
 {
     return std::isalnum(static_cast<unsigned char>(character)) || character == '_';
@@ -90,13 +104,16 @@ auto isOperator(char character) -> bool
 
 // Rewrites whole-word uses of target (lower case) after the card mnemonic. Runs that
 // start with a digit or '.' are numbers, so exponents such as 1e5 are never matched.
-auto substituteSymbol(std::string_view line, std::string_view target,
+auto substituteSymbol(std::string_view fullLine, std::string_view target,
     std::string_view replacement, std::size_t& count) -> std::string
 {
+    // A ' comment is kept as written.
+    const auto comment = std::min(necCommentStart(fullLine), fullLine.size());
+    const auto line = fullLine.substr(0, comment);
     std::string result;
     auto position = line.find_first_not_of(" \t");
     position = position == std::string_view::npos ? line.size() : line.find_first_of(" \t", position);
-    if (position == std::string_view::npos) return std::string(line);
+    if (position == std::string_view::npos) return std::string(fullLine);
     result.append(line.substr(0, position));
     while (position < line.size()) {
         if (!identifierCharacter(line[position]) && line[position] != '.') {
@@ -125,6 +142,7 @@ auto substituteSymbol(std::string_view line, std::string_view target,
         result.append(replacement);
         if (bracket) result += ')';
     }
+    result.append(fullLine.substr(comment));
     return result;
 }
 
@@ -185,11 +203,7 @@ auto replaceSymbolDefinition(std::string_view source,
     if (found == values.end()) return std::nullopt;
     *found = std::string(trim(name)) + '=' + std::string(trim(expression));
     auto lines = sourceLines(document);
-    lines[lineNumber - 1] = "SY ";
-    for (std::size_t index = 0; index < values.size(); ++index) {
-        if (index != 0) lines[lineNumber - 1] += ", ";
-        lines[lineNumber - 1] += values[index];
-    }
+    lines[lineNumber - 1] = symbolCard(values, card.sourceText);
     return joinSource(lines, document);
 }
 
@@ -211,11 +225,7 @@ auto removeSymbolDefinition(std::string_view source,
     if (values.empty()) {
         lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(lineNumber - 1));
     } else {
-        lines[lineNumber - 1] = "SY ";
-        for (std::size_t index = 0; index < values.size(); ++index) {
-            if (index != 0) lines[lineNumber - 1] += ", ";
-            lines[lineNumber - 1] += values[index];
-        }
+        lines[lineNumber - 1] = symbolCard(values, card.sourceText);
     }
     return joinSource(lines, document);
 }
@@ -259,9 +269,19 @@ auto replaceNecCardFieldExpression(std::string_view source, std::size_t lineNumb
         if (!std::isspace(static_cast<unsigned char>(character))) compact.push_back(character);
     if (compact.empty() || compact.find(',') != std::string::npos
         || card.kind == NecCardKind::Symbol) return std::nullopt;
-    // A field past the card's last one follows zeros, as NEC reads a missing field.
+    // A field past the card's last one follows zeros, as NEC reads a missing field; a '
+    // comment stays at the end, after the same space.
     auto text = card.sourceText;
-    for (auto missing = card.fields.size(); missing <= fieldIndex; ++missing) text += " 0";
+    if (card.fields.size() <= fieldIndex) {
+        const auto comment = std::min(necCommentStart(text), text.size());
+        const auto trailing = text.substr(comment);
+        text.resize(comment);
+        const auto content = text.find_last_not_of(" \t") + 1;
+        const auto gap = text.substr(content);
+        text.resize(content);
+        for (auto missing = card.fields.size(); missing <= fieldIndex; ++missing) text += " 0";
+        if (!trailing.empty()) text += (gap.empty() ? std::string(" ") : gap) + trailing;
+    }
     const auto replacement = replaceNecCardFields(text,
         std::array{NecFieldReplacement{fieldIndex, std::move(compact)}});
     if (!replacement) return std::nullopt;

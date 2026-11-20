@@ -5,6 +5,7 @@
 #include "ui/cards/VariableMenu.h"
 
 #include <QAbstractItemView>
+#include <QApplication>
 #include <QCompleter>
 #include <QLineEdit>
 #include <QScrollBar>
@@ -42,6 +43,15 @@ auto popupRect(const QCompleter& completer, const QLineEdit& editor) -> QRect
     const auto width = popup->sizeHintForColumn(0) + 2 * popup->frameWidth()
         + popup->verticalScrollBar()->sizeHint().width();
     return {0, 0, std::max(editor.width(), width), editor.height()};
+}
+
+// The cell and the table's viewport on screen, where a box about the cell goes.
+auto placeOf(const QTableWidget& table, const QTableWidgetItem& item) -> PromptPlace
+{
+    const auto* viewport = table.viewport();
+    const auto cell = table.visualItemRect(&item);
+    return {QRect(viewport->mapToGlobal(cell.topLeft()), cell.size()),
+        QRect(viewport->mapToGlobal(QPoint(0, 0)), viewport->size())};
 }
 
 }
@@ -107,10 +117,7 @@ auto SymbolCells::takeExpressionEdit(QTableWidgetItem* item, std::function<void(
     const auto typed = item->text().trimmed();
     const auto written = item->data(CellExpressionRole).toString();
     if (written.isEmpty() && parsesAs<double>(typed)) return false;
-    const auto* viewport = table_->viewport();
-    const PromptPlace place{
-        QRect(viewport->mapToGlobal(table_->visualItemRect(item).topLeft()), table_->visualItemRect(item).size()),
-        QRect(viewport->mapToGlobal(QPoint(0, 0)), viewport->size())};
+    const auto place = placeOf(*table_, *item);
     QTimer::singleShot(0, this, [this, field = *field, typed, written, place,
                                     restore = std::move(restore)] {
         if (typed != written && !typed.isEmpty())
@@ -137,20 +144,44 @@ auto SymbolCells::usesExpression(const QTableWidgetItem& item) -> bool
 
 void SymbolCells::showMenu(QPoint position)
 {
-    const auto* item = table_->itemAt(position);
+    auto* item = table_->itemAt(position);
     if (item == nullptr) return;
     const auto field = fieldOf_(*item);
     if (!field) return;
     const auto expression = usesExpression(*item);
     if (!expression && (!(item->flags() & Qt::ItemIsEditable) || item->text().trimmed().isEmpty()))
         return;
-    switch (execVariableMenu(table_, table_->viewport()->mapToGlobal(position), expression)) {
+    const auto enter = [this, field = *field, item](const QString& text) {
+        emit fieldExpressionEntered(field.sourceLine, field.fieldIndex, field.label, text,
+            placeOf(*table_, *item));
+    };
+    switch (execVariableMenu(table_, table_->viewport()->mapToGlobal(position), expression,
+        field->placing)) {
     case VariableChoice::Make:
         emit fieldParameterizationRequested(field->sourceLine, field->fieldIndex, field->label);
         break;
     case VariableChoice::Detach:
         emit fieldDetachmentRequested(field->sourceLine, field->fieldIndex, field->label);
         break;
+    case VariableChoice::Center:
+        enter(QStringLiteral("50%"));
+        break;
+    case VariableChoice::ExactSegment:
+        // The segment it is on now.
+        enter(item->text().trimmed());
+        break;
+    case VariableChoice::AlongWire: {
+        // The cell opens on its percentage, or 50%, with the number selected to type over.
+        const auto percent = field->placing == SourcePlacing::AlongWire
+            ? item->data(CellExpressionRole).toString() : QStringLiteral("50%");
+        table_->setCurrentItem(item);
+        table_->editItem(item);
+        if (auto* editor = qobject_cast<QLineEdit*>(QApplication::focusWidget())) {
+            editor->setText(percent);
+            editor->setSelection(0, static_cast<int>(percent.size()) - 1);
+        }
+        break;
+    }
     case VariableChoice::None: break;
     }
 }

@@ -58,6 +58,7 @@ add_library(necwb_core
     src/geometry/OrthographicProjection.cpp
     src/model/AntennaModel.cpp
     src/model/SurfacePatch.h
+    src/model/SegmentPlacement.cpp
     src/model/WireGeometry.cpp
     src/model/AutoSegmentation.cpp
     src/model/LengthUnit.cpp
@@ -84,6 +85,7 @@ add_library(necwb_core
     src/nec/NecSourceCache.h
     src/nec/NecSymbolEditor.cpp
     src/nec/NecSymbolResolver.cpp
+    src/nec/SourcePositions.cpp
     src/nec/NecWriter.cpp
 )
 

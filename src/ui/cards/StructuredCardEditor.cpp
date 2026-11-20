@@ -2,6 +2,10 @@
 
 #include "nec/NecCardCatalog.h"
 #include "nec/NecCardFieldEditor.h"
+#include "nec/NecParser.h"
+#include "nec/ParseNumber.h"
+#include "nec/SourcePositions.h"
+#include "model/SegmentPlacement.h"
 #include "ui/cards/CardFields.h"
 #include "ui/cards/CompactNumberDelegate.h"
 #include "ui/cards/SymbolCells.h"
@@ -299,6 +303,12 @@ auto semanticFieldError(const QString& mnemonic, const QStringList& fields, int 
     return {};
 }
 
+// A source's segment cell placed along its wire shows its percentage as the expression.
+auto placedAlongWire(const QTableWidgetItem& item) -> bool
+{
+    return item.data(CellExpressionRole).toString().endsWith(QLatin1Char('%'));
+}
+
 class CardFieldDelegate final : public CompactNumberDelegate {
 public:
     using CompactNumberDelegate::CompactNumberDelegate;
@@ -411,8 +421,14 @@ StructuredCardEditor::StructuredCardEditor(Families families, QWidget* parent)
         const auto mnemonic = mnemonicItem->text();
         const auto fieldIndex = item.column() - 2;
         if (!cardFieldChoices(mnemonic, fieldIndex).empty()) return std::nullopt;
-        return CellField{line->data(SourceLineRole).toULongLong(),
+        CellField field{line->data(SourceLineRole).toULongLong(),
             static_cast<std::size_t>(fieldIndex), table_->horizontalHeaderItem(item.column())->text()};
+        // A voltage source's segment can also be placed along its wire.
+        const auto* type = table_->item(item.row(), 2);
+        if (mnemonic == QStringLiteral("EX") && fieldIndex == 2 && type != nullptr
+            && (type->text() == QStringLiteral("0") || type->text() == QStringLiteral("5")))
+            field.placing = placedAlongWire(item) ? SourcePlacing::AlongWire : SourcePlacing::Segment;
+        return field;
     });
     delegate->setSymbolCells(symbolCells_);
     table_->setAlternatingRowColors(true);
@@ -489,8 +505,10 @@ void StructuredCardEditor::setSymbols(const std::vector<nec::SymbolDefinition>& 
     symbolCells_->setSymbols(symbols);
 }
 
-void StructuredCardEditor::setSharedSegments(std::vector<model::SharedSegment> shared)
+void StructuredCardEditor::setModel(const model::AntennaModel& model,
+    std::vector<model::SharedSegment> shared)
 {
+    model_ = model;
     shared_ = std::move(shared);
     showSelectedCard();
 }
@@ -533,6 +551,8 @@ void StructuredCardEditor::showSelectedCard()
             parts << tr("%1 V ∠ %2°").arg(std::abs(volts), 0, 'g', 6)
                          .arg(std::arg(volts) * 180.0 / std::numbers::pi, 0, 'g', 6);
         }
+        if (mnemonic == QStringLiteral("EX") && (type == 0 || type == 5))
+            if (const auto placement = sourcePlacement(*card); !placement.isEmpty()) parts << placement;
         for (const auto& segment : shared_) {
             if (std::ranges::any_of(segment.objects,
                     [card](const auto& object) { return object.sourceLine == card->lineNumber; }))
@@ -541,6 +561,49 @@ void StructuredCardEditor::showSelectedCard()
     }
     note_->setText(parts.join(QStringLiteral(" · ")));
     note_->setToolTip(parts.join(QLatin1Char('\n')));
+}
+
+auto StructuredCardEditor::sourcePlacement(const nec::NecCard& card) const -> QString
+{
+    const auto* resolved = resolved_ && card.lineNumber <= resolved_->cards().size()
+        ? &resolved_->cards()[card.lineNumber - 1] : &card;
+    const auto percentOf = [](double fraction) { return QString::number(fraction * 100.0, 'g', 4); };
+    if (const auto mark = nec::sourcePositionMark(card.sourceText)) {
+        const auto placements = nec::placeMarkedSources(resolved_ ? *resolved_ : document_, model_);
+        const auto placed = std::ranges::find(placements, card.lineNumber, &nec::SourcePlacement::lineNumber);
+        if (placed == placements.end()) return {};
+        if (!placed->placement) return QString::fromStdString(placed->error);
+        const auto& at = *placed->placement;
+        const auto asked = QString::fromStdString(nec::sourcePositionText(*mark));
+        auto text = tr("%1% along wire %2 → segment %3 of %4, its middle %5% from End 1")
+            .arg(asked).arg(placed->wireTag).arg(at.segment).arg(at.segmentCount)
+            .arg(percentOf(at.actualFraction));
+        if (at.onJoint) {
+            text += *mark == 50.0 && at.segmentCount % 2 == 0
+                ? tr(" · with an even number of equal segments no segment is centered, so segment %1, "
+                     "the one nearer End 1, is used").arg(at.segment)
+                : tr(" · %1% is the joint between segments %2 and %3, so segment %2, nearer End 1, "
+                     "is used").arg(asked).arg(at.segment).arg(at.segment + 1);
+        }
+        return text;
+    }
+    int tag{};
+    int segment{};
+    if (resolved->fields.size() < 3 || !nec::parseNumber(resolved->fields[1], tag)
+        || !nec::parseNumber(resolved->fields[2], segment)) return {};
+    const auto reference = model::referencedSegment(model_, tag, segment);
+    if (!reference || reference->wire == nullptr) return {};
+    const auto written = card.fields.size() > 2 ? QString::fromStdString(card.fields[2]) : QString{};
+    auto text = written == QString::number(segment)
+        ? tr("Segment %1").arg(segment) : tr("Segment %1 = %2").arg(written).arg(segment);
+    // Tag 0, or a tag several wires share, counts segments across wires.
+    text += tag == 0 || reference->segment != segment
+        ? tr(": segment %1 of %2 on wire %3").arg(reference->segment)
+              .arg(reference->wire->segments).arg(reference->wire->tag)
+        : tr(" of %1").arg(reference->wire->segments);
+    if (const auto middle = model::segmentMiddleFraction(*reference->wire, reference->segment))
+        text += tr(", its middle %1% from End 1").arg(percentOf(*middle));
+    return text;
 }
 
 void StructuredCardEditor::focusParameterizableField()
@@ -680,11 +743,23 @@ void StructuredCardEditor::refreshTable()
             const auto value = column < static_cast<int>(card.fields.size())
                 ? QString::fromStdString(card.fields[static_cast<std::size_t>(column)]) : QString{};
             auto* item = new QTableWidgetItem(value);
+            const auto resolvedCard = resolved_ && card.lineNumber <= resolved_->cards().size()
+                ? &resolved_->cards()[card.lineNumber - 1] : nullptr;
+            // A source placed along its wire shows the segment there, with the percentage to edit.
+            const auto percent = card.kind == nec::NecCardKind::Excitation && column == 2
+                ? nec::sourcePositionMark(card.sourceText) : std::nullopt;
+            if (percent) {
+                const auto segment = resolvedCard != nullptr && resolvedCard->fields.size() > 2
+                    ? QString::fromStdString(resolvedCard->fields[2]) : value;
+                const auto written = QString::fromStdString(nec::sourcePositionText(*percent)) + QLatin1Char('%');
+                SymbolCells::showExpression(item, table_, written, segment);
+                item->setToolTip(tr("%1 along the wire from End 1, on segment %2 with its present "
+                    "segmentation.\nType a segment number or an expression to fix the source there, or "
+                    "another percentage.").arg(written, segment));
+            }
             // An expression shows its value; one in a field chosen from a list stays as written.
-            if (!value.isEmpty() && !nec::necCardFieldIsNumeric(
+            else if (!value.isEmpty() && !nec::necCardFieldIsNumeric(
                     card.sourceText, static_cast<std::size_t>(column))) {
-                const auto resolvedCard = resolved_ && card.lineNumber <= resolved_->cards().size()
-                    ? &resolved_->cards()[card.lineNumber - 1] : nullptr;
                 const auto resolvedValue = resolvedCard != nullptr
                         && static_cast<std::size_t>(column) < resolvedCard->fields.size()
                     ? QString::fromStdString(resolvedCard->fields[static_cast<std::size_t>(column)])
@@ -776,7 +851,7 @@ void StructuredCardEditor::commitCell(QTableWidgetItem* item)
     QStringList fields;
     for (auto column = 2; column < table_->columnCount(); ++column) {
         const auto* cell = table_->item(item->row(), column);
-        fields.push_back(cell != item && SymbolCells::usesExpression(*cell)
+        fields.push_back(cell != item && SymbolCells::usesExpression(*cell) && !placedAlongWire(*cell)
             ? cell->data(CellExpressionRole).toString() : cell->text().trimmed());
     }
     while (!fields.empty() && fields.back().isEmpty()) fields.removeLast();
@@ -785,6 +860,8 @@ void StructuredCardEditor::commitCell(QTableWidgetItem* item)
         if (field.isEmpty()) field = QStringLiteral("0");
     auto text = QString::fromStdString(card.mnemonic);
     for (const auto& field : fields) text += QLatin1Char(' ') + field;
+    if (const auto comment = nec::necCommentStart(card.sourceText); comment != std::string::npos)
+        text += QLatin1Char(' ') + QString::fromStdString(card.sourceText.substr(comment));
     emitEdited(std::move(text));
 }
 

@@ -8,6 +8,8 @@
 #include "nec/NecParser.h"
 #include "nec/NecSetupConverter.h"
 #include "nec/NecWriter.h"
+#include "nec/SourcePositions.h"
+#include "model/SegmentPlacement.h"
 
 #include <algorithm>
 #include <cmath>
@@ -43,6 +45,9 @@ auto prepareSegmentationConvergenceInput(std::string_view source, double frequen
     }
 
     const auto document = nec::NecParser{}.parse(normalizeSolverDeck(source));
+    // The deck as given, line for line with the solver copy, for the positions marked in
+    // its comments.
+    const auto marks = nec::NecParser{}.parse(source);
     const auto conversion = nec::NecModelConverter{}.convert(document);
     const auto setup = nec::NecSetupConverter{}.convert(document);
     if (conversion.model.wires().empty()) {
@@ -131,6 +136,20 @@ auto prepareSegmentationConvergenceInput(std::string_view source, double frequen
                 &model::Excitation::sourceLine);
             auto updated = *excitation;
             updated.segment = remap(updated.wireTag, updated.segment);
+            // A source placed along its wire takes the segment at that point of the refined wire.
+            const auto percent = card.lineNumber <= marks.cards().size()
+                ? nec::sourcePositionMark(marks.cards()[card.lineNumber - 1].sourceText) : std::nullopt;
+            if (const auto* wire = conversion.model.wireByTag(updated.wireTag); percent && wire != nullptr) {
+                if (!wire->path.empty()) {
+                    result.error = "A source placed along a tapered, arc or helix wire cannot yet be "
+                        "refined for convergence testing.";
+                    return result;
+                }
+                auto refined = *wire;
+                refined.segments = segmentCounts.at(wire->tag);
+                if (const auto placed = model::placeAlongWire(refined, *percent / 100.0))
+                    updated.segment = placed->segment;
+            }
             append(writer.writeExcitationCard(updated));
         } else if (card.kind == nec::NecCardKind::Load) {
             const auto load = std::ranges::find(setup.loads, card.lineNumber,

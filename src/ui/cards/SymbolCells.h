@@ -2,6 +2,7 @@
 
 #include "nec/NecSymbolResolver.h"
 #include "ui/cards/SymbolPrompt.h"
+#include "ui/cards/VariableMenu.h"
 
 #include <QList>
 #include <QObject>
@@ -29,12 +30,16 @@ struct CellField {
     std::size_t sourceLine{};
     std::size_t fieldIndex{};
     QString label;
+    // A voltage source's segment, which can also be placed along its wire.
+    SourcePlacing placing{SourcePlacing::None};
 };
 
 // Symbols in a card table, the same in every table: a number cell takes a name or an
 // expression such as len/2, offering the model's symbols for the word being typed; an
 // expression cell shows its value, styled, and edits as written; right-click makes a variable
-// or, on a cell written as an expression, replaces it with its value.
+// or, on a cell written as an expression, replaces it with its value. A voltage source's
+// segment can be placed at the center of its wire, a percentage along it (typed as 30%), or
+// back on an exact segment, each of which goes to the deck as fieldExpressionEntered.
 class SymbolCells final : public QObject {
     Q_OBJECT
 

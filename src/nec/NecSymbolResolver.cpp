@@ -1,12 +1,18 @@
 #include "nec/NecSymbolResolver.h"
 
+#include "nec/NecCardCatalog.h"
+#include "nec/NecCardFieldEditor.h"
+#include "nec/NecModelConverter.h"
 #include "nec/NecParser.h"
+#include "nec/SourcePositions.h"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <cctype>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -176,17 +182,33 @@ auto needsEvaluation(std::string_view token) -> bool
     });
 }
 
-auto resolveCardLine(std::string_view line, std::size_t lineNumber,
-    const std::unordered_map<std::string, double>& symbols,
+// A value that is a whole number but for rounding error in its arithmetic, as an integer.
+auto wholeNumber(double value) -> std::optional<long long>
+{
+    const auto nearest = std::nearbyint(value);
+    if (std::abs(value - nearest) > 1e-9 * std::max(1.0, std::abs(nearest))) return std::nullopt;
+    return static_cast<long long>(nearest);
+}
+
+// The card's fields, with each expression replaced by its value. The first
+// `integerFieldCount` fields are NEC integers (tags, segments, counts, type codes), so an
+// expression there must come to a whole number. A ' comment is copied as written.
+auto resolveCardLine(std::string_view fullLine, std::size_t lineNumber,
+    const std::unordered_map<std::string, double>& symbols, std::size_t integerFieldCount,
     std::vector<SymbolDiagnostic>& diagnostics) -> std::string
 {
+    const auto comment = std::min(necCommentStart(fullLine), fullLine.size());
+    const auto line = fullLine.substr(0, comment);
     std::string result;
-    result.reserve(line.size());
+    result.reserve(fullLine.size());
     auto position = std::size_t{};
     while (position < line.size() && std::isspace(static_cast<unsigned char>(line[position])))
         result.push_back(line[position++]);
+    const auto mnemonicStart = position;
     while (position < line.size() && !std::isspace(static_cast<unsigned char>(line[position])))
         result.push_back(line[position++]);
+    const auto mnemonic = line.substr(mnemonicStart, position - mnemonicStart);
+    auto fieldIndex = std::size_t{};
     while (position < line.size()) {
         if (std::isspace(static_cast<unsigned char>(line[position]))
             || line[position] == ',') {
@@ -200,18 +222,39 @@ auto resolveCardLine(std::string_view line, std::size_t lineNumber,
             ++position;
         }
         const auto token = line.substr(start, position - start);
+        const auto field = fieldIndex++;
         if (!needsEvaluation(token)) {
             result.append(token);
             continue;
         }
         try {
-            result += formatValue(ExpressionParser(token, symbols).parse());
+            const auto value = ExpressionParser(token, symbols).parse();
+            if (field >= integerFieldCount) {
+                result += formatValue(value);
+                continue;
+            }
+            const auto whole = wholeNumber(value);
+            const auto name = std::string(mnemonic) + " field " + std::to_string(field + 1);
+            const auto described = name + ", " + std::string(token) + " = " + formatValue(value) + ",";
+            if (!whole) {
+                diagnostics.push_back({lineNumber, described + " must be a whole number: it is a "
+                    "tag, segment, count or type code", true, name});
+                result.append(token);
+            } else if (*whole < std::numeric_limits<int>::min()
+                || *whole > std::numeric_limits<int>::max()) {
+                diagnostics.push_back({lineNumber, described
+                    + " is outside the range of a NEC integer field", true, name});
+                result.append(token);
+            } else {
+                result += std::to_string(*whole);
+            }
         } catch (const std::runtime_error& error) {
             diagnostics.push_back({lineNumber,
                 "Cannot resolve field '" + std::string(token) + "': " + error.what()});
             result.append(token);
         }
     }
+    result.append(fullLine.substr(comment));
     return result;
 }
 
@@ -235,9 +278,9 @@ auto generatedCardLine(const NecCard& card, std::string resolvedLine) -> std::st
 void readDefinitions(const NecCard& card, std::unordered_map<std::string, double>& symbols,
     const std::unordered_map<std::string, double>& overrides, SymbolResolution& resolution)
 {
-    const auto firstSpace = card.sourceText.find_first_of(" \t");
-    auto body = firstSpace == std::string::npos
-        ? std::string_view{} : std::string_view(card.sourceText).substr(firstSpace + 1);
+    const auto text = std::string_view(card.sourceText).substr(0, necCommentStart(card.sourceText));
+    const auto firstSpace = text.find_first_of(" \t");
+    auto body = firstSpace == std::string::npos ? std::string_view{} : text.substr(firstSpace + 1);
     while (!body.empty()) {
         const auto comma = body.find(',');
         const auto assignment = trim(body.substr(0, comma));
@@ -297,6 +340,41 @@ auto NecSymbolResolver::resolve(std::string_view source,
     std::unordered_map<std::string, double> symbols;
     std::unordered_map<std::string, double> normalizedOverrides;
     for (const auto& [name, value] : overrides) normalizedOverrides.insert_or_assign(lower(name), value);
+    // Each card's resolved line; an SY card's is empty.
+    std::vector<std::string> lines;
+    lines.reserve(document.cards().size());
+    auto marked = false;
+    for (const auto& card : document.cards()) {
+        if (card.kind == NecCardKind::Symbol) {
+            readDefinitions(card, symbols, normalizedOverrides, resolution);
+            lines.emplace_back();
+            continue;
+        }
+        const auto* spec = findNecCardSpec(card.mnemonic);
+        lines.push_back(card.kind == NecCardKind::Comment || card.kind == NecCardKind::Blank
+                || card.kind == NecCardKind::Unknown
+            ? card.sourceText
+            : resolveCardLine(card.sourceText, card.lineNumber, symbols,
+                spec == nullptr ? 0 : spec->integerFieldCount, resolution.diagnostics));
+        marked = marked || (card.kind == NecCardKind::Excitation
+            && sourcePositionMark(card.sourceText).has_value());
+    }
+    // A source placed along its wire takes the segment there in the resolved geometry.
+    if (marked && resolution.ok()) {
+        std::string joined;
+        for (std::size_t index = 0; index < lines.size(); ++index) {
+            if (index != 0) joined += '\n';
+            joined += lines[index];
+        }
+        const auto resolved = NecParser{}.parse(joined);
+        for (const auto& placed : placeMarkedSources(resolved, NecModelConverter{}.convert(resolved).model)) {
+            if (!placed.placement) continue;
+            auto& line = lines[placed.lineNumber - 1];
+            if (auto updated = replaceNecCardFields(line,
+                    std::array{NecFieldReplacement{2, std::to_string(placed.placement->segment)}}))
+                line = std::move(*updated);
+        }
+    }
     auto wroteResolvedLine = false;
     auto wroteGeneratedLine = false;
     const auto appendLine = [&document](std::string& target, bool& wroteLine,
@@ -306,24 +384,35 @@ auto NecSymbolResolver::resolve(std::string_view source,
         wroteLine = true;
     };
     for (const auto& card : document.cards()) {
-        if (card.kind == NecCardKind::Symbol) {
-            readDefinitions(card, symbols, normalizedOverrides, resolution);
-            appendLine(resolution.resolvedSource, wroteResolvedLine, {});
-            continue;
-        }
-        const auto line = card.kind == NecCardKind::Comment || card.kind == NecCardKind::Blank
-                || card.kind == NecCardKind::Unknown
-            ? card.sourceText
-            : resolveCardLine(card.sourceText, card.lineNumber, symbols, resolution.diagnostics);
+        const auto& line = lines[card.lineNumber - 1];
         appendLine(resolution.resolvedSource, wroteResolvedLine, line);
-        appendLine(resolution.generatedDeck, wroteGeneratedLine,
-            generatedCardLine(card, line));
+        if (card.kind != NecCardKind::Symbol)
+            appendLine(resolution.generatedDeck, wroteGeneratedLine, generatedCardLine(card, line));
     }
     if (document.hasFinalLineEnding() && wroteResolvedLine)
         resolution.resolvedSource += document.lineEnding();
     if (document.hasFinalLineEnding() && wroteGeneratedLine)
         resolution.generatedDeck += document.lineEnding();
     return resolution;
+}
+
+auto wholeNumberFieldAt(std::string_view source, std::string_view name, double value)
+    -> std::optional<SymbolDiagnostic>
+{
+    const auto resolution = NecSymbolResolver{}.resolve(source, {{std::string(name), value}});
+    const auto found = std::ranges::find_if(resolution.diagnostics, &SymbolDiagnostic::wholeNumberField);
+    return found == resolution.diagnostics.end() ? std::nullopt : std::optional{*found};
+}
+
+auto wholeNumberFieldReached(std::string_view source, const SymbolDefinition& definition)
+    -> std::optional<SymbolDiagnostic>
+{
+    const auto scale = std::max(1.0, std::abs(definition.value));
+    for (const auto step : {0.318309886, 0.707106781}) {
+        if (auto found = wholeNumberFieldAt(source, definition.name, definition.value + step * scale))
+            return found;
+    }
+    return std::nullopt;
 }
 
 auto undefinedSymbols(std::string_view expression,

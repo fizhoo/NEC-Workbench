@@ -1,5 +1,7 @@
 #include "nec/NecCardFieldEditor.h"
 
+#include "nec/NecParser.h"
+
 #include <algorithm>
 #include <charconv>
 #include <cctype>
@@ -20,6 +22,8 @@ auto separator(char character) -> bool
 
 auto dataFields(std::string_view source) -> std::vector<FieldSpan>
 {
+    // A ' comment ends the fields.
+    source = source.substr(0, necCommentStart(source));
     std::vector<FieldSpan> fields;
     auto position = std::size_t{};
     while (position < source.size() && std::isspace(static_cast<unsigned char>(source[position])))
