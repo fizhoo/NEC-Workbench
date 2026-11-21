@@ -4,6 +4,7 @@
 #include "ui/DetachablePanel.h"
 #include "ui/MainWindow.h"
 #include "ui/analysis/SweepPlotsView.h"
+#include "ui/WorkbenchLayout.h"
 #include "ui/WorkbenchToolBar.h"
 #include "ui/results/ResultFullView.h"
 #include "ui/results/ResultsColumn.h"
@@ -839,17 +840,107 @@ auto main(int argc, char* argv[]) -> int
         window.resize(window.minimumSizeHint().width(), 900);
         application.processEvents();
         const auto narrowKeepsLabels = toolbar != nullptr && noStrandedLabel();
-        if (!unitsAt1280 || !narrowKeepsLabels)
+        // What overflows is in the ›› menu as working controls, kept in step with the toolbar's.
+        const auto inOverflow = [&](const std::function<void(QMenu*)>& use) {
+            auto* extension = toolbar->findChild<QToolButton*>(QStringLiteral("qt_toolbar_ext_button"));
+            if (extension == nullptr || !extension->isVisible() || extension->menu() == nullptr)
+                return false;
+            auto opened = false;
+            QTimer::singleShot(50, [&] {
+                auto* menu = extension->menu();
+                opened = menu->isVisible();
+                if (opened) use(menu);
+                menu->close();
+            });
+            extension->click();
+            application.processEvents();
+            return opened;
+        };
+        const auto overflowCopy = [](QMenu* menu, const QString& name) -> QWidget* {
+            auto* copy = menu->findChild<QWidget*>(name + QStringLiteral("Overflow"));
+            return copy != nullptr && copy->isVisible() ? copy : nullptr;
+        };
+        auto* mainUnits = window.findChild<QComboBox*>(QStringLiteral("geometryLengthUnit"));
+        auto* mainSpacing = window.findChild<QDoubleSpinBox*>(QStringLiteral("geometrySnapSpacing"));
+        auto unitsInMenu = false;
+        const auto openedAtMinimum = inOverflow([&](QMenu* menu) {
+            auto* units = qobject_cast<QComboBox*>(overflowCopy(menu, QStringLiteral("geometryLengthUnit")));
+            unitsInMenu = units != nullptr && units->currentText() == QStringLiteral("ft")
+                && overflowCopy(menu, QStringLiteral("geometryUnitsItem")) != nullptr
+                && !unitsItem->isVisible();
+            if (units != nullptr) units->setCurrentIndex(units->findText(QStringLiteral("cm")));
+        });
+        const auto overflowUnitApplied = mainUnits->currentText() == QStringLiteral("cm")
+            && mainSpacing->suffix() == QStringLiteral(" cm");
+        // A change on the toolbar shows in the menu's copy. Snap, the first item, stays on the
+        // toolbar however narrow it is.
+        mainUnits->setCurrentIndex(mainUnits->findText(QStringLiteral("ft")));
+        application.processEvents();
+        auto toolbarUnitShown = false;
+        const auto openedAgain = inOverflow([&](QMenu* menu) {
+            auto* units = qobject_cast<QComboBox*>(overflowCopy(menu, QStringLiteral("geometryLengthUnit")));
+            toolbarUnitShown = units != nullptr && units->currentText() == QStringLiteral("ft");
+        });
+        toolbar->setMaximumWidth(80);
+        application.processEvents();
+        const auto snapStays = mainSpacing->isVisible()
+            && window.findChild<QToolButton*>(QStringLiteral("geometrySnapButton"))->isVisible();
+        toolbar->setMaximumWidth(QWIDGETSIZE_MAX);
+        const auto overflowWorks = openedAtMinimum && unitsInMenu && overflowUnitApplied
+            && openedAgain && toolbarUnitShown && snapStays;
+        if (!unitsAt1280 || !narrowKeepsLabels || !overflowWorks)
             qWarning() << "units toolbar" << unitsAt1280 << narrowKeepsLabels << window.width()
-                       << (toolbar ? toolbar->width() : -1);
+                       << (toolbar ? toolbar->width() : -1) << openedAtMinimum << unitsInMenu
+                       << overflowUnitApplied << openedAgain << toolbarUnitShown << snapStays;
         window.resize(1400, 900);
         application.processEvents();
+
+        // Top, Front, Side, 3D and Fit bring the geometry forward from the Deck and the full
+        // results view, keeping the 2D or 3D page.
+        auto* layout = dynamic_cast<necwb::ui::WorkbenchLayout*>(window.centralWidget());
+        auto* workspace = window.findChild<QWidget*>(QStringLiteral("geometryWorkspace"));
+        auto* geometryPage = qobject_cast<necwb::ui::GeometryWorkspace*>(workspace);
+        const auto trigger = [&](const char* name) {
+            if (auto* action = window.findChild<QAction*>(QString::fromLatin1(name))) action->trigger();
+            application.processEvents();
+        };
+        const auto shows = [&](int page) {
+            return workspace->isVisible() && geometryPage->page() == page;
+        };
+        using Page = necwb::ui::GeometryWorkspace::Page;
+        trigger("necDeckAction");
+        const auto deckShown = !workspace->isVisible();
+        trigger("geometry3DView");
+        const auto threeDFromDeck = deckShown && shows(Page::ThreeD);
+        trigger("necDeckAction");
+        trigger("geometryFit");
+        const auto fitFromDeckKeeps3D = shows(Page::ThreeD);
+        layout->showFullView();
+        application.processEvents();
+        const auto fullShown = layout->fullViewShown() && !workspace->isVisible();
+        trigger("geometryFrontView");
+        const auto frontFromFull = fullShown && shows(Page::Planes)
+            && planes->mainPlane() == Plane::XZ;
+        layout->showFullView();
+        application.processEvents();
+        trigger("geometryFit");
+        const auto fitFromFullKeepsPlanes = shows(Page::Planes) && planes->mainPlane() == Plane::XZ;
+        trigger("necDeckAction");
+        trigger("geometrySideView");
+        const auto sideFromDeck = shows(Page::Planes) && planes->mainPlane() == Plane::YZ;
+        const auto broughtForward = threeDFromDeck && fitFromDeckKeeps3D && frontFromFull
+            && fitFromFullKeepsPlanes && sideFromDeck;
+        if (!broughtForward)
+            qWarning() << "view actions bring geometry forward" << deckShown << threeDFromDeck
+                       << fitFromDeckKeeps3D << fullShown << frontFromFull
+                       << fitFromFullKeepsPlanes << sideFromDeck;
         for (std::size_t index = 0; index < planeKeys.size(); ++index) {
             if (savedPlane[index].isValid()) planeSettings.setValue(planeKeys[index], savedPlane[index]);
             else planeSettings.remove(planeKeys[index]);
         }
         if (!widestFirst || !swapped || !keptAfterEdit || !tableInDeckUnits
-            || !madeVariable || !choseAgain || !unitsAt1280 || !narrowKeepsLabels) {
+            || !madeVariable || !choseAgain || !unitsAt1280 || !narrowKeepsLabels
+            || !overflowWorks || !broughtForward) {
             qWarning() << "planes/units/variables" << widestFirst << swapped << keptAfterEdit
                        << tableInDeckUnits
                        << (wireCells ? wireCells->horizontalHeaderItem(2)->text() : QString{})
@@ -983,6 +1074,14 @@ auto main(int argc, char* argv[]) -> int
             return std::abs(a.red() - b.red()) <= 10 && std::abs(a.green() - b.green()) <= 10
                 && std::abs(a.blue() - b.blue()) <= 10;
         };
+        // The device pixel holding a point of the view: grab() is at the screen's pixel ratio,
+        // and the pixel that contains the point lies wholly inside a stroke centred on it, so it
+        // is not an antialiased edge.
+        const auto pixelAt = [](const QImage& image, QPointF point) {
+            const auto ratio = image.devicePixelRatio();
+            return image.pixelColor(QPoint(static_cast<int>(std::floor(point.x() * ratio)),
+                static_cast<int>(std::floor(point.y() * ratio))));
+        };
         // The colour of each wire 1 segment at its middle, against the Currents view's table.
         const auto matchesCurrentsView = [&](double frequency) {
             necwb::ui::CurrentDistributionView currentsView;
@@ -1000,10 +1099,10 @@ auto main(int argc, char* argv[]) -> int
                 const auto segment = table->item(row, 1)->text().toInt();
                 const auto endpoints = necwb::model::wireSegmentEndpoints(*pair.wireByTag(1), segment);
                 const auto middle = xy->screenPoint({(endpoints->first.x + endpoints->second.x) / 2.0,
-                    0.0, 0.0}).toPoint();
+                    0.0, 0.0});
                 const auto expected = necwb::ui::currentColor(table->item(row, 3)->text().toDouble(), largest);
-                if (near(image.pixelColor(middle), expected)) ++matched;
-                else qWarning() << "segment" << segment << image.pixelColor(middle) << expected;
+                if (near(pixelAt(image, middle), expected)) ++matched;
+                else qWarning() << "segment" << segment << pixelAt(image, middle) << expected;
             }
             return matched == 4;
         };
@@ -1012,12 +1111,12 @@ auto main(int argc, char* argv[]) -> int
             && workspace->planes()->panes()[0]->colorScale()->isVisible()
             && workspace->planes()->panes()[0]->colorScale()->maximumText() == QStringLiteral("1.000 A")
             && xyInfo->text().contains(QStringLiteral("14.000 MHz"));
-        const auto firstSegment = xy->screenPoint({-1.5, 0.0, 0.0}).toPoint();
-        const auto lowColour = xy->grab().toImage().pixelColor(firstSegment);
+        const auto firstSegment = xy->screenPoint({-1.5, 0.0, 0.0});
+        const auto lowColour = pixelAt(xy->grab().toImage(), firstSegment);
         results.setFrequency(14.2);
         application.processEvents();
         const auto followsFrequency = matchesCurrentsView(14.2)
-            && !near(xy->grab().toImage().pixelColor(firstSegment), lowColour);
+            && !near(pixelAt(xy->grab().toImage(), firstSegment), lowColour);
 
         // The selected wire keeps an outline that does not rely on hue.
         const auto beside = xy->screenPoint({-1.5, 0.0, 0.0}) + QPointF(0.0, 4.0);
@@ -1026,15 +1125,15 @@ auto main(int argc, char* argv[]) -> int
         application.processEvents();
         const auto selectedImage = xy->grab().toImage();
         const auto selectionShows = selectedImage != unselected
-            && near(selectedImage.pixelColor(beside.toPoint()), xy->palette().color(QPalette::Text))
-            && !near(unselected.pixelColor(beside.toPoint()), xy->palette().color(QPalette::Text));
+            && near(pixelAt(selectedImage, beside), xy->palette().color(QPalette::Text))
+            && !near(pixelAt(unselected, beside), xy->palette().color(QPalette::Text));
         for (auto* view : workspace->views()) view->selectWire(-1);
 
         // Stale results: plain wires, and the info line says why.
         results.setStale(true);
         application.processEvents();
         const auto stalePlain = !xy->showsCurrents() && !workspace->view3D()->showsCurrents()
-            && near(xy->grab().toImage().pixelColor(firstSegment), QColor(40, 105, 170))
+            && near(pixelAt(xy->grab().toImage(), firstSegment), QColor(40, 105, 170))
             && xyInfo->text().contains(QStringLiteral("out of date"))
             && !workspace->planes()->panes()[0]->colorScale()->isVisible();
         // A live solve brings currents back at its frequency.
@@ -2111,14 +2210,15 @@ auto main(int argc, char* argv[]) -> int
                 auto realColumn = -1;
                 for (auto column = 0; column < sourceTable->columnCount(); ++column)
                     if (sourceTable->horizontalHeaderItem(column)->text() == QStringLiteral("Real V")) realColumn = column;
-                QRect boxShown, createShown, viewportShown;
+                QRect boxShown, createShown, viewportShown, cellShown;
                 auto boxPastCell = false;
                 if (realColumn >= 0) {
                     sourceTable->scrollToItem(sourceTable->item(0, realColumn));
                     viewportShown = QRect(sourceTable->viewport()->mapToGlobal(QPoint(0, 0)),
                         sourceTable->viewport()->size());
-                    const auto cellLeft = sourceTable->viewport()->mapToGlobal(
-                        sourceTable->visualItemRect(sourceTable->item(0, realColumn)).topLeft()).x();
+                    const auto cell = sourceTable->visualItemRect(sourceTable->item(0, realColumn));
+                    cellShown = QRect(sourceTable->viewport()->mapToGlobal(cell.topLeft()), cell.size());
+                    const auto cellLeft = cellShown.left();
                     QTimer::singleShot(100, [&] {
                         auto* box = qobject_cast<QDialog*>(QApplication::activePopupWidget());
                         if (box == nullptr) return;
@@ -2131,15 +2231,16 @@ auto main(int argc, char* argv[]) -> int
                     sourceTable->item(0, realColumn)->setText(QStringLiteral("newname/2"));
                     application.processEvents();
                 }
-                // Inside the table from side to side and under the cell; a short table leaves
-                // the box hanging below its last row.
+                // Inside the table from side to side, and under the cell, or over it when the
+                // screen has no room below; a short table leaves the box hanging past its rows.
                 const auto across = [&viewportShown](const QRect& shown) {
                     return shown.left() >= viewportShown.left() && shown.right() <= viewportShown.right();
                 };
                 const auto boxInside = !boxShown.isEmpty() && across(boxShown) && across(createShown)
-                    && boxShown.top() > viewportShown.top() && !text().contains(QStringLiteral("newname"));
+                    && (boxShown.top() > cellShown.bottom() || boxShown.bottom() < cellShown.top())
+                    && !text().contains(QStringLiteral("newname"));
                 if (!boxInside || !boxPastCell)
-                    qWarning() << "symbol box" << boxShown << createShown << viewportShown << boxPastCell;
+                    qWarning() << "symbol box" << boxShown << createShown << viewportShown << cellShown << boxPastCell;
                 // Clicking rows in Wires and Sources selects their items in the tree, which keeps
                 // the height it opened with, and the table stays where it was.
                 const auto clickRows = [&](QTableWidget* table) {

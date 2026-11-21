@@ -637,6 +637,9 @@ void MainWindow::createWorkspace()
         });
     connect(geometryWorkspace_, &GeometryWorkspace::settingsRequested, this,
         [this] { showGeometrySettings(); });
+    connect(geometryWorkspace_, &GeometryWorkspace::viewRequested, this, [this] {
+        if (necDeckAction_->isEnabled()) showEditor(EditorDestination::Geometry, geometryWorkspace_->page());
+    });
     applyGeometrySettings(geometrySettings_);
     const auto connectAttachments = [this]<typename View>(View* view) {
         connect(view, &View::wireSelected, this,

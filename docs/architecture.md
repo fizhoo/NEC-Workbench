@@ -84,7 +84,9 @@ its `SY` card with `nec::insertSymbolDefinition`, and writes only that field. Th
 shows the geometry editor (`GeometryWorkspace`: a compact toolbar for snapping, units and
 settings over either the 2D views in `GeometryPlanes`, which puts `geometry::widestPlane` in
 the big view when a model opens and swaps on request, or the 3D view; the big view's title
-line holds the Top, Front, Side, 3D, Fit and Currents buttons, which the View menu shares,
+line holds the Top, Front, Side, 3D, Fit and Currents buttons, which the View menu shares
+and which bring the geometry forward from the Deck or a result view, keeping its 2D or 3D
+page; Units builds its control per place, so a narrow toolbar's ›› menu gets a working copy;
 and each view's counts, grid and cursor go in a thin info line under it, never over the
 drawing), or one full result view, or the NEC
 Deck (`DeckView`: raw source), each non-geometry view under the same

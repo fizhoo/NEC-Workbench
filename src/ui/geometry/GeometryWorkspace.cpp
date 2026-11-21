@@ -21,12 +21,33 @@
 #include <QToolBar>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QWidgetAction>
 
 #include <algorithm>
+#include <functional>
 #include <memory>
 #include <tuple>
 
 namespace necwb::ui {
+
+// A toolbar item that builds its widget for each place it is shown: the toolbar itself, and
+// the ›› menu when the toolbar is too narrow, which leaves out widgets added as plain widgets.
+class ToolbarItemAction final : public QWidgetAction {
+public:
+    using Factory = std::function<QWidget*(QWidget* parent)>;
+    ToolbarItemAction(Factory factory, QObject* parent)
+        : QWidgetAction(parent), factory_(std::move(factory)) {}
+
+    // Each copy: the toolbar's, then the ›› menu's once it has been shown.
+    [[nodiscard]] auto items() const -> QList<QWidget*> { return createdWidgets(); }
+
+protected:
+    auto createWidget(QWidget* parent) -> QWidget* override { return factory_(parent); }
+
+private:
+    Factory factory_;
+};
+
 namespace {
 
 const auto ShowCurrentsKey = QStringLiteral("geometry/showCurrents");
@@ -42,6 +63,14 @@ auto labeled(const QString& text, QWidget* control, QWidget* parent) -> QWidget*
     control->setParent(item);
     layout->addWidget(control);
     return item;
+}
+
+// The toolbar copy keeps the plain name; the ›› menu's copy is named with "Overflow".
+auto objectNamer(const QWidget* parent)
+{
+    return [overflow = qobject_cast<const QMenu*>(parent) != nullptr](const QString& name) {
+        return overflow ? name + QStringLiteral("Overflow") : name;
+    };
 }
 
 auto unitSymbol(model::LengthUnit unit) -> QString
@@ -87,12 +116,26 @@ void GeometryWorkspace::createToolbar()
     snapEndpointsAction_->setStatusTip(tr("Snap moved geometry to nearby wire endpoints"));
     connect(snapEndpointsAction_, &QAction::toggled, this,
         &GeometryWorkspace::endpointSnappingToggled);
+    toolbar_->addWidget(createSnapItem());
+    toolbar_->addSeparator();
+    unitsAction_ = new ToolbarItemAction([this](QWidget* parent) { return createUnitsItem(parent); }, this);
+    unitsAction_->setText(tr("Units"));
+    toolbar_->addAction(unitsAction_);
 
-    auto* snapItem = new QWidget(toolbar_);
-    auto* snapLayout = new QHBoxLayout(snapItem);
-    snapLayout->setContentsMargins(0, 0, 4, 0);
-    snapLayout->setSpacing(2);
-    snapButton_ = new QToolButton(snapItem);
+    auto* settings = toolbar_->addAction(workbenchIcon("settings"), tr("Geometry Settings…"));
+    settings->setObjectName(QStringLiteral("geometryToolbarSettings"));
+    connect(settings, &QAction::triggered, this, &GeometryWorkspace::settingsRequested);
+}
+
+// The first toolbar item, which stays when the toolbar is narrow: its width is part of the
+// toolbar's minimum.
+auto GeometryWorkspace::createSnapItem() -> QWidget*
+{
+    auto* item = new QWidget(toolbar_);
+    auto* layout = new QHBoxLayout(item);
+    layout->setContentsMargins(0, 0, 4, 0);
+    layout->setSpacing(2);
+    snapButton_ = new QToolButton(item);
     snapButton_->setObjectName(QStringLiteral("geometrySnapButton"));
     snapButton_->setText(tr("Snap"));
     snapButton_->setPopupMode(QToolButton::InstantPopup);
@@ -101,7 +144,7 @@ void GeometryWorkspace::createToolbar()
     snapMenu->addAction(snapGridAction_);
     snapMenu->addAction(snapEndpointsAction_);
     snapButton_->setMenu(snapMenu);
-    snapSpacing_ = new EngineeringSpinBox(snapItem);
+    snapSpacing_ = new EngineeringSpinBox(item);
     snapSpacing_->setObjectName(QStringLiteral("geometrySnapSpacing"));
     snapSpacing_->setDecimals(DisplayDecimalPlaces);
     snapSpacing_->setRange(0.000001, 1.0e9);
@@ -111,33 +154,53 @@ void GeometryWorkspace::createToolbar()
         tr("Snap interval in the active display unit; unit-change behavior is set in Geometry Settings"));
     connect(snapSpacing_, &QDoubleSpinBox::valueChanged, this,
         &GeometryWorkspace::snapSpacingChosen);
-    snapLayout->addWidget(snapButton_);
-    snapLayout->addWidget(snapSpacing_);
-    toolbar_->addWidget(snapItem);
-    toolbar_->addSeparator();
+    layout->addWidget(snapButton_);
+    layout->addWidget(snapSpacing_);
+    return item;
+}
 
-    lengthUnit_ = new QComboBox;
-    lengthUnit_->setObjectName(QStringLiteral("geometryLengthUnit"));
-    lengthUnit_->setToolTip(tr("Display unit for lengths in the geometry views and the wire form"));
+auto GeometryWorkspace::createUnitsItem(QWidget* parent) -> QWidget*
+{
+    const auto name = objectNamer(parent);
+    auto* unit = new QComboBox;
+    unit->setObjectName(name(QStringLiteral("geometryLengthUnit")));
+    unit->setToolTip(tr("Display unit for lengths in the geometry views and the wire form"));
     const std::array units{std::pair{model::LengthUnit::Meter, tr("Meters")},
         std::pair{model::LengthUnit::Centimeter, tr("Centimeters")},
         std::pair{model::LengthUnit::Millimeter, tr("Millimeters")},
         std::pair{model::LengthUnit::Inch, tr("Inches")},
         std::pair{model::LengthUnit::Foot, tr("Feet")}};
-    for (const auto& [unit, name] : units) {
-        lengthUnit_->addItem(unitSymbol(unit), static_cast<int>(unit));
-        lengthUnit_->setItemData(lengthUnit_->count() - 1, name, Qt::ToolTipRole);
+    for (const auto& [value, text] : units) {
+        unit->addItem(unitSymbol(value), static_cast<int>(value));
+        unit->setItemData(unit->count() - 1, text, Qt::ToolTipRole);
     }
-    connect(lengthUnit_, &QComboBox::currentIndexChanged, this, [this] {
-        emit lengthUnitChosen(static_cast<model::LengthUnit>(lengthUnit_->currentData().toInt()));
+    showUnit(unit);
+    connect(unit, &QComboBox::currentIndexChanged, this, [this, unit](int index) {
+        for (auto* other : lengthUnits()) {
+            if (other == unit) continue;
+            const QSignalBlocker blocker(other);
+            other->setCurrentIndex(index);
+        }
+        emit lengthUnitChosen(static_cast<model::LengthUnit>(unit->currentData().toInt()));
     });
-    auto* unitsItem = labeled(tr("Units"), lengthUnit_, toolbar_);
-    unitsItem->setObjectName(QStringLiteral("geometryUnitsItem"));
-    toolbar_->addWidget(unitsItem);
+    auto* item = labeled(tr("Units"), unit, parent);
+    item->setObjectName(name(QStringLiteral("geometryUnitsItem")));
+    return item;
+}
 
-    auto* settings = toolbar_->addAction(workbenchIcon("settings"), tr("Geometry Settings…"));
-    settings->setObjectName(QStringLiteral("geometryToolbarSettings"));
-    connect(settings, &QAction::triggered, this, &GeometryWorkspace::settingsRequested);
+auto GeometryWorkspace::lengthUnits() const -> QList<QComboBox*>
+{
+    QList<QComboBox*> found;
+    for (auto* item : unitsAction_->items())
+        if (auto* unit = item->findChild<QComboBox*>()) found.push_back(unit);
+    return found;
+}
+
+void GeometryWorkspace::showUnit(QComboBox* unit) const
+{
+    const QSignalBlocker blocker(unit);
+    const auto index = unit->findData(static_cast<int>(settings_.lengthUnit));
+    if (index >= 0) unit->setCurrentIndex(index);
 }
 
 void GeometryWorkspace::createViewActions()
@@ -160,6 +223,7 @@ void GeometryWorkspace::createViewActions()
         connect(action, &QAction::triggered, this, [this, plane] {
             stack_->setCurrentIndex(Planes);
             planes_->showMainPlane(plane);
+            emit viewRequested();
         });
         planeActions_[index] = action;
     }
@@ -169,14 +233,21 @@ void GeometryWorkspace::createViewActions()
     view3DAction_->setCheckable(true);
     view3DAction_->setToolTip(tr("Interactive 3D view: drag to orbit, Shift/middle-drag to pan, "
                                  "wheel to zoom"));
-    connect(view3DAction_, &QAction::triggered, this, [this] { showPage(ThreeD); });
+    connect(view3DAction_, &QAction::triggered, this, [this] {
+        showPage(ThreeD);
+        emit viewRequested();
+    });
 
     fitAction_ = new QAction(workbenchIcon("fit"), tr("&Fit"), this);
     fitAction_->setObjectName(QStringLiteral("geometryFit"));
     fitAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
     fitAction_->setToolTip(tr("Fit the geometry in every view on screen (Ctrl+0)"));
     fitAction_->setStatusTip(tr("Fit the geometry in every view on screen"));
-    connect(fitAction_, &QAction::triggered, this, &GeometryWorkspace::fitVisible);
+    // Bringing the geometry forward keeps its page, so Fit fits the planes or the 3D view as left.
+    connect(fitAction_, &QAction::triggered, this, [this] {
+        emit viewRequested();
+        fitVisible();
+    });
 
     currentsAction_ = new QAction(tr("Currents"), this);
     currentsAction_->setObjectName(QStringLiteral("geometryCurrents"));
@@ -246,18 +317,17 @@ auto GeometryWorkspace::viewActions() const -> QList<QAction*>
 
 void GeometryWorkspace::setSettings(const GeometrySettings& settings)
 {
+    settings_ = settings;
     {
-        const QSignalBlocker unitBlocker(lengthUnit_);
         const QSignalBlocker spacingBlocker(snapSpacing_);
         const QSignalBlocker gridBlocker(snapGridAction_);
         const QSignalBlocker endpointBlocker(snapEndpointsAction_);
-        const auto unitIndex = lengthUnit_->findData(static_cast<int>(settings.lengthUnit));
-        if (unitIndex >= 0) lengthUnit_->setCurrentIndex(unitIndex);
         snapSpacing_->setSuffix(QStringLiteral(" %1").arg(unitSymbol(settings.lengthUnit)));
         snapSpacing_->setValue(model::fromMeters(settings.snapSpacingMeters, settings.lengthUnit));
         snapGridAction_->setChecked(settings.gridSnapping);
         snapEndpointsAction_->setChecked(settings.endpointSnapping);
     }
+    for (auto* unit : lengthUnits()) showUnit(unit);
     const auto onOff = [this](bool on) { return on ? tr("on") : tr("off"); };
     snapButton_->setToolTip(tr("Snapping: grid %1, endpoints %2")
         .arg(onOff(settings.gridSnapping), onOff(settings.endpointSnapping)));

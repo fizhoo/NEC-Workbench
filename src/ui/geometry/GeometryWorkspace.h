@@ -23,11 +23,14 @@ class Geometry3DView;
 class GeometryInteractionView;
 class GeometryPane;
 class GeometryPlanes;
+class ToolbarItemAction;
 
 // The geometry editor in the center: a compact toolbar (snapping, units, settings) over either
 // the three 2D planes or the 3D view. The big view's title line carries one-click buttons for
 // Top, Front, Side and 3D, Fit, and Currents, which colours the wires by the current at the
-// results column's selected frequency.
+// results column's selected frequency. Units is an action that builds its control, so the ››
+// menu of a narrow toolbar gets a working copy, kept in step with the toolbar's. Snap is the
+// first item, which a toolbar never moves into ››.
 class GeometryWorkspace final : public QWidget {
     Q_OBJECT
 
@@ -64,18 +67,28 @@ signals:
     void gridSnappingToggled(bool enabled);
     void endpointSnappingToggled(bool enabled);
     void settingsRequested();
+    // Top, Front, Side, 3D or Fit was used: the geometry should be on screen.
+    void viewRequested();
 
 private:
     void createToolbar();
     void createViewActions();
+    auto createSnapItem() -> QWidget*;
+    // The Units item, on the toolbar or in its ›› menu.
+    auto createUnitsItem(QWidget* parent) -> QWidget*;
+    // Every copy of the unit box: the toolbar's, and the ›› menu's while it has one.
+    [[nodiscard]] auto lengthUnits() const -> QList<QComboBox*>;
+    // Shows settings_ in one copy, without signalling a change.
+    void showUnit(QComboBox* unit) const;
     void applyCurrents();
 
+    GeometrySettings settings_;
     QToolBar* toolbar_{};
-    QToolButton* snapButton_{};
     QAction* snapGridAction_{};
     QAction* snapEndpointsAction_{};
+    QToolButton* snapButton_{};
     QDoubleSpinBox* snapSpacing_{};
-    QComboBox* lengthUnit_{};
+    ToolbarItemAction* unitsAction_{};
     QStackedWidget* stack_{};
     GeometryPlanes* planes_{};
     GeometryPane* pane3D_{};
