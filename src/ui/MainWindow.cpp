@@ -3,7 +3,7 @@
 #include "ui/DisplayFormat.h"
 #include "ui/BottomPanel.h"
 #include "ui/CenterViewHeader.h"
-#include "ui/DetachablePanel.h"
+#include "ui/SettingsCleanup.h"
 #include "ui/WorkbenchLayout.h"
 #include "ui/WorkbenchStatusBar.h"
 #include "ui/bottom/ProblemsView.h"
@@ -137,8 +137,6 @@
 
 namespace necwb::ui {
 namespace {
-
-constexpr QSize kValidationWindowSize{520, 380};
 
 auto modelSegmentCount(const model::AntennaModel& model) -> int
 {
@@ -569,7 +567,7 @@ void MainWindow::createActions()
 
 void MainWindow::createWorkspace()
 {
-    // Parent of the panels that still open in their own windows.
+    // Parent of the pages and editors while they are not on screen.
     windowHost_ = new QWidget(this);
     windowHost_->hide();
     bottomPanel_ = new BottomPanel(this);
@@ -4241,6 +4239,7 @@ void MainWindow::setCurrentFile(QString path)
 
 void MainWindow::restoreWorkspaceLayout()
 {
+    retireOldSettings();
     QSettings settings;
     // First start: 85% of the screen's available area, centered.
     if (!restoreGeometry(settings.value(QStringLiteral("mainWindow/v2/geometry")).toByteArray())
@@ -4283,16 +4282,10 @@ void MainWindow::restoreWorkspaceLayout()
     applyGeometrySettings(geometrySettings);
     solverBackendId_ = settings.value(QStringLiteral("analysis/backendId"), QStringLiteral("nec2")).toString();
     statusBar_->setBackend(solverBackendId_);
-    const auto legacyExecutablePath = settings.value(
-        QStringLiteral("analysis/executablePath")).toString();
     for (const auto& backendId : {QStringLiteral("nec2"), QStringLiteral("opennec"),
              QStringLiteral("nec2dxs")}) {
         solverExecutablePaths_.insert(backendId, settings.value(
             QStringLiteral("analysis/executables/%1").arg(backendId)).toString());
-    }
-    if (solverExecutablePaths_.value(solverBackendId_).isEmpty()
-        && !legacyExecutablePath.isEmpty()) {
-        solverExecutablePaths_.insert(solverBackendId_, legacyExecutablePath);
     }
     solverTimeoutSeconds_ = settings.value(QStringLiteral("analysis/timeoutSeconds"), 120).toInt();
     if (solverExecutablePaths_.value(QStringLiteral("nec2")).isEmpty())
@@ -4338,7 +4331,6 @@ void MainWindow::saveWorkspaceLayout()
         settings.setValue(QStringLiteral("analysis/executables/%1").arg(iterator.key()),
             iterator.value());
     }
-    settings.remove(QStringLiteral("analysis/executablePath"));
     settings.setValue(QStringLiteral("analysis/timeoutSeconds"), solverTimeoutSeconds_);
 }
 

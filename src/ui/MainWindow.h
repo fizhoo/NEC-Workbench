@@ -60,7 +60,6 @@ class ModelColumn;
 class WorkbenchToolBar;
 class OptimizationWorkspace;
 class ParameterEditor;
-class DetachablePanel;
 class ResultsController;
 class WorkbenchStatusBar;
 class BottomPanel;

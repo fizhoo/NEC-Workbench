@@ -111,8 +111,8 @@ if(NECWB_BUILD_GUI)
         src/ui/BottomPanel.h
         src/ui/CenterViewHeader.cpp
         src/ui/CenterViewHeader.h
-        src/ui/DetachablePanel.cpp
-        src/ui/DetachablePanel.h
+        src/ui/SettingsCleanup.cpp
+        src/ui/SettingsCleanup.h
         src/ui/WorkbenchLayout.cpp
         src/ui/WorkbenchLayout.h
         src/ui/WorkbenchStatusBar.cpp
@@ -268,7 +268,6 @@ if(NECWB_BUILD_GUI)
             resources/icons/check.svg
             resources/icons/currents.svg
             resources/icons/delete.svg
-            resources/icons/detach.svg
             resources/icons/edit.svg
             resources/icons/environment.svg
             resources/icons/export.svg

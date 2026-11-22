@@ -1,7 +1,6 @@
 #include "analysis/AnalysisResult.h"
 #include "analysis/FrequencyComparison.h"
 #include "ui/DisplayFormat.h"
-#include "ui/DetachablePanel.h"
 #include "ui/MainWindow.h"
 #include "ui/analysis/SweepPlotsView.h"
 #include "ui/WorkbenchLayout.h"
@@ -43,6 +42,7 @@
 #include "ui/setup/SetupEditor.h"
 #include "ui/start/RecentModels.h"
 #include "ui/start/StartPanel.h"
+#include "ui/SettingsCleanup.h"
 #include "nec/NecParser.h"
 #include "model/WireGauge.h"
 
@@ -267,6 +267,40 @@ auto main(int argc, char* argv[]) -> int
             return NECWB_SMOKE_FAILURE("historical overlay visibility persistence");
     }
     QSettings{}.remove(QStringLiteral("smoke/overlayVisible"));
+    // Settings that earlier layouts saved go once, gated by ui/layoutVersion; the single solver
+    // path of early versions moves to the selected backend first.
+    {
+        QSettings settings;
+        const auto savedBackend = settings.value(QStringLiteral("analysis/backendId"));
+        const auto savedPath = settings.value(QStringLiteral("analysis/executables/opennec"));
+        settings.remove(QStringLiteral("ui/layoutVersion"));
+        settings.remove(QStringLiteral("analysis/executables/opennec"));
+        settings.setValue(QStringLiteral("analysis/backendId"), QStringLiteral("opennec"));
+        settings.setValue(QStringLiteral("analysis/executablePath"), QStringLiteral("/opt/onec"));
+        const QStringList retired{QStringLiteral("workspaceWindows/optimization/geometry"),
+            QStringLiteral("resultWindows/impedance/visible"), QStringLiteral("mainWindow/geometry"),
+            QStringLiteral("mainWindow/normalGeometry"), QStringLiteral("mainWindow/state"),
+            QStringLiteral("modelCheckWindow/geometry"), QStringLiteral("runMonitorWindow/geometry")};
+        for (const auto& key : retired) settings.setValue(key, 1);
+        settings.setValue(QStringLiteral("mainWindow/v2/leftColumnWidth"), 420);
+        necwb::ui::retireOldSettings();
+        const auto retiredGone = std::ranges::none_of(retired,
+            [&settings](const QString& key) { return settings.contains(key); });
+        const auto cleaned = retiredGone && !settings.contains(QStringLiteral("analysis/executablePath"))
+            && settings.value(QStringLiteral("analysis/executables/opennec")).toString()
+                == QStringLiteral("/opt/onec")
+            && settings.value(QStringLiteral("mainWindow/v2/leftColumnWidth")).toInt() == 420
+            && settings.value(QStringLiteral("ui/layoutVersion")).toInt() == 1;
+        settings.setValue(QStringLiteral("mainWindow/state"), 1);
+        necwb::ui::retireOldSettings();
+        const auto ranOnce = settings.contains(QStringLiteral("mainWindow/state"));
+        settings.remove(QStringLiteral("mainWindow"));
+        settings.setValue(QStringLiteral("analysis/backendId"), savedBackend);
+        if (savedBackend.isNull()) settings.remove(QStringLiteral("analysis/backendId"));
+        settings.setValue(QStringLiteral("analysis/executables/opennec"), savedPath);
+        if (savedPath.isNull()) settings.remove(QStringLiteral("analysis/executables/opennec"));
+        if (!cleaned || !ranOnce) return NECWB_SMOKE_FAILURE("retired settings removed once");
+    }
     auto consolidatedSetupNavigation = false;
     auto linkedParameterDeleted = false;
     auto resultsColumnNavigation = false;
@@ -281,8 +315,6 @@ auto main(int argc, char* argv[]) -> int
     QSettings resultWindowSettings;
     resultWindowSettings.remove(QStringLiteral("resultsColumn"));
     resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
-    resultWindowSettings.remove(QStringLiteral("workspaceWindows/validation"));
-    resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
     resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
     resultWindowSettings.sync();
     {
@@ -635,8 +667,6 @@ auto main(int argc, char* argv[]) -> int
         }
     }
     resultWindowSettings.remove(QStringLiteral("resultsColumn"));
-    resultWindowSettings.remove(QStringLiteral("workspaceWindows/validation"));
-    resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
     resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
     resultWindowSettings.sync();
     // Launch: with no model the workspace shows the start panel in its center; reopening the
@@ -5690,148 +5720,6 @@ auto main(int argc, char* argv[]) -> int
         }
         QSettings{}.remove(QStringLiteral("resultsColumn"));
     }
-    QSettings detachableSettings;
-    detachableSettings.remove(QStringLiteral("workspaceWindows/smoke-test"));
-    detachableSettings.sync();
-    auto resultPanelDetached = false;
-    auto resultPanelHiddenButLive = false;
-    auto resultPanelRaisedWithUpdate = false;
-    {
-        necwb::ui::DetachablePanel detachablePanel(
-            QStringLiteral("smoke-test"), QStringLiteral("Smoke Results"), nullptr,
-            {QStringLiteral("workspaceWindows")});
-        auto* detachableContent = new QLabel(QStringLiteral("Live result content"));
-        detachablePanel.setContent(detachableContent);
-        detachablePanel.show();
-        application.processEvents();
-        // Floating windows cannot be attached back: there is no Pop Out/Attach toggle.
-        for (auto* button : detachablePanel.findChildren<QPushButton*>())
-            if (button->text().contains(QStringLiteral("Attach"))
-                || button->text() == QStringLiteral("Pop Out"))
-                return NECWB_SMOKE_FAILURE("detachable panel offers attach");
-        detachablePanel.showWindow();
-        application.processEvents();
-        auto* resultWindow = topLevelDialog(QStringLiteral("smoke-testResultWindow"));
-        resultPanelDetached = detachablePanel.isDetached()
-            && detachablePanel.isWindowVisible()
-            && resultWindow != nullptr && resultWindow->isVisible()
-            && resultWindow->parentWidget() == nullptr
-            && !resultWindow->testAttribute(Qt::WA_QuitOnClose)
-            && detachableContent->window() == resultWindow;
-        resultWindow->close();
-        application.processEvents();
-        detachableContent->setText(QStringLiteral("Updated while hidden"));
-        detachablePanel.setStatusText(QStringLiteral("Stale — model changed"));
-        detachableSettings.sync();
-        resultPanelHiddenButLive = detachablePanel.isDetached()
-            && !detachablePanel.isWindowVisible()
-            && detachableContent->window() == resultWindow
-            && !detachableSettings.value(
-                QStringLiteral("workspaceWindows/smoke-test/visible"), true).toBool();
-        detachablePanel.showWindow();
-        application.processEvents();
-        auto* windowStatus = resultWindow->findChild<QLabel*>(
-            QStringLiteral("smoke-testWindowStatusLabel"));
-        resultPanelRaisedWithUpdate = detachablePanel.isWindowVisible()
-            && detachableContent->text() == QStringLiteral("Updated while hidden")
-            && windowStatus != nullptr
-            && windowStatus->text() == QStringLiteral("Stale — model changed");
-        resultWindow->close();
-        application.processEvents();
-    }
-    auto resultPanelRestoredHidden = false;
-    auto resultPanelOpenStateSaved = false;
-    {
-        necwb::ui::DetachablePanel restoredPanel(
-            QStringLiteral("smoke-test"), QStringLiteral("Smoke Results"), nullptr,
-            {QStringLiteral("workspaceWindows")});
-        auto* restoredContent = new QLabel(QStringLiteral("Restored content"));
-        restoredPanel.setContent(restoredContent);
-        restoredPanel.show();
-        application.processEvents();
-        resultPanelRestoredHidden = restoredPanel.isDetached()
-            && !restoredPanel.isWindowVisible()
-            && restoredContent->window() != &restoredPanel;
-        restoredPanel.showWindow();
-        application.processEvents();
-        resultPanelOpenStateSaved = restoredPanel.isWindowVisible();
-    }
-    auto resultPanelRestoredVisible = false;
-    {
-        necwb::ui::DetachablePanel restoredPanel(
-            QStringLiteral("smoke-test"), QStringLiteral("Smoke Results"), nullptr,
-            {QStringLiteral("workspaceWindows")});
-        restoredPanel.setContent(new QLabel(QStringLiteral("Visible restored content")));
-        restoredPanel.show();
-        application.processEvents();
-        resultPanelRestoredVisible = restoredPanel.isDetached()
-            && restoredPanel.isWindowVisible();
-    }
-    detachableSettings.remove(QStringLiteral("workspaceWindows/offscreen"));
-    QDialog offscreenGeometry;
-    offscreenGeometry.resize(420, 300);
-    offscreenGeometry.move(50000, 50000);
-    detachableSettings.setValue(
-        QStringLiteral("workspaceWindows/offscreen/geometry"), offscreenGeometry.saveGeometry());
-    detachableSettings.setValue(QStringLiteral("workspaceWindows/offscreen/detached"), true);
-    detachableSettings.setValue(QStringLiteral("workspaceWindows/offscreen/visible"), true);
-    detachableSettings.sync();
-    auto offscreenWindowRecovered = false;
-    {
-        necwb::ui::DetachablePanel restoredPanel(
-            QStringLiteral("offscreen"), QStringLiteral("Off-screen Results"), nullptr,
-            {QStringLiteral("workspaceWindows")});
-        restoredPanel.setContent(new QLabel(QStringLiteral("Recovered content")));
-        restoredPanel.show();
-        application.processEvents();
-        const auto* restoredWindow = topLevelDialog(QStringLiteral("offscreenResultWindow"));
-        if (restoredWindow != nullptr) {
-            offscreenWindowRecovered = std::ranges::any_of(
-                QGuiApplication::screens(), [restoredWindow](const QScreen* screen) {
-                    const auto intersection = restoredWindow->frameGeometry().intersected(
-                        screen->availableGeometry());
-                    return intersection.width() >= 100 && intersection.height() >= 60;
-                });
-        }
-    }
-    detachableSettings.remove(QStringLiteral("workspaceWindows/oversized"));
-    QDialog oversizedGeometry;
-    oversizedGeometry.resize(50000, 50000);
-    oversizedGeometry.move(0, 0);
-    detachableSettings.setValue(
-        QStringLiteral("workspaceWindows/oversized/geometry"), oversizedGeometry.saveGeometry());
-    detachableSettings.setValue(QStringLiteral("workspaceWindows/oversized/detached"), true);
-    detachableSettings.setValue(QStringLiteral("workspaceWindows/oversized/visible"), true);
-    detachableSettings.sync();
-    auto oversizedWindowClamped = false;
-    {
-        necwb::ui::DetachablePanel restoredPanel(
-            QStringLiteral("oversized"), QStringLiteral("Oversized Results"), nullptr,
-            {QStringLiteral("workspaceWindows")});
-        restoredPanel.setContent(new QLabel(QStringLiteral("Recovered content")));
-        restoredPanel.show();
-        application.processEvents();
-        const auto* restoredWindow = topLevelDialog(QStringLiteral("oversizedResultWindow"));
-        if (restoredWindow != nullptr) {
-            oversizedWindowClamped = std::ranges::any_of(
-                QGuiApplication::screens(), [restoredWindow](const QScreen* screen) {
-                    const auto available = screen->availableGeometry();
-                    const auto frame = restoredWindow->frameGeometry();
-                    const auto intersection = available.intersected(frame);
-                    return restoredWindow->width() <= available.width()
-                        && restoredWindow->height() <= available.height()
-                        && intersection.width() >= 100 && intersection.height() >= 60;
-                });
-        }
-    }
-    detachableSettings.remove(QStringLiteral("workspaceWindows/offscreen"));
-    detachableSettings.remove(QStringLiteral("workspaceWindows/oversized"));
-    detachableSettings.remove(QStringLiteral("workspaceWindows/smoke-test"));
-    detachableSettings.sync();
-    if (!offscreenWindowRecovered)
-        return NECWB_SMOKE_FAILURE("off-screen window recovery");
-    if (!oversizedWindowClamped)
-        return NECWB_SMOKE_FAILURE("oversized result window clamping");
     // The start panel: its buttons trigger New, Open and Open Example, its recent list shows
     // file, folder and when each was opened, opens a row when activated, and is no taller
     // than its rows.
@@ -6878,9 +6766,6 @@ auto main(int argc, char* argv[]) -> int
         && !summaryImage.isNull()
         && !fieldImage.isNull() && !currentImage.isNull()
         && !modelTreeImage.isNull() && modelTreeStateVisible
-        && resultPanelDetached && resultPanelHiddenButLive
-        && resultPanelRaisedWithUpdate && resultPanelRestoredHidden
-        && resultPanelOpenStateSaved && resultPanelRestoredVisible
         && startPanelValid && storeValid
         && runReviewValid
         && runReviewSwitchesCleanly
