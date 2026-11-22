@@ -467,6 +467,7 @@ StructuredCardEditor::StructuredCardEditor(Families families, QWidget* parent)
                 families_->setCurrentItem(current->child(0));
                 return;
             }
+            familyPicked_ = true;
             refreshTable();
         });
     connect(table_, &QTableWidget::itemSelectionChanged, this, [this] {
@@ -560,6 +561,7 @@ void StructuredCardEditor::showSelectedCard()
         }
         if (mnemonic == QStringLiteral("EX") && (type == 0 || type == 5))
             if (const auto placement = sourcePlacement(*card); !placement.isEmpty()) parts << placement;
+        if (const auto made = generatedBy(*card); !made.isEmpty()) parts << made;
         for (const auto& segment : shared_) {
             if (std::ranges::any_of(segment.objects,
                     [card](const auto& object) { return object.sourceLine == card->lineNumber; }))
@@ -568,6 +570,36 @@ void StructuredCardEditor::showSelectedCard()
     }
     note_->setText(parts.join(QStringLiteral(" · ")));
     note_->setToolTip(parts.join(QLatin1Char('\n')));
+}
+
+// What a GX, GM or GR card does, and the wires it makes.
+auto StructuredCardEditor::generatedBy(const nec::NecCard& card) const -> QString
+{
+    const auto mnemonic = QString::fromStdString(card.mnemonic);
+    if (mnemonic != QStringLiteral("GX") && mnemonic != QStringLiteral("GM")
+        && mnemonic != QStringLiteral("GR")) return {};
+    QStringList made;
+    for (const auto& wire : model_.wires())
+        if (wire.sourceLine == card.lineNumber) made << QString::number(wire.tag);
+    QString what;
+    if (mnemonic == QStringLiteral("GX")) {
+        int flags{};
+        QStringList planes;
+        if (card.fields.size() > 1 && nec::parseNumber(card.fields[1], flags)) {
+            if ((flags / 100) % 10 != 0) planes << QStringLiteral("YZ");
+            if ((flags / 10) % 10 != 0) planes << QStringLiteral("XZ");
+            if (flags % 10 != 0) planes << QStringLiteral("XY");
+        }
+        what = planes.isEmpty() ? tr("Mirrors the structure above it")
+            : tr("Mirrors the structure above it in the %1 plane").arg(planes.join(tr(" and ")));
+    } else if (mnemonic == QStringLiteral("GM")) {
+        what = tr("Moves or copies the structure above it");
+    } else {
+        what = tr("Copies the structure above it around the Z axis");
+    }
+    if (made.isEmpty()) return what;
+    return made.size() == 1 ? tr("%1 · makes wire %2").arg(what, made.front())
+                            : tr("%1 · makes wires %2").arg(what, made.join(QStringLiteral(", ")));
 }
 
 auto StructuredCardEditor::sourcePlacement(const nec::NecCard& card) const -> QString
@@ -660,6 +692,9 @@ void StructuredCardEditor::refreshFamilies()
     auto previous = currentFamilyIndex();
     const QSignalBlocker blocker(families_);
     families_->clear();
+    auto firstShown = -1;
+    auto firstWithCards = -1;
+    std::vector<int> withCards;
     for (std::size_t index = 0; index < families().size(); ++index) {
         if (!shows(static_cast<int>(index))) continue;
         const auto& family = families()[index];
@@ -678,8 +713,14 @@ void StructuredCardEditor::refreshFamilies()
             {QStringLiteral("%1 (%2)").arg(family.title).arg(count)});
         item->setData(0, FamilyIndexRole, static_cast<int>(index));
         item->setToolTip(0, family.description);
-        if (previous < 0) previous = static_cast<int>(index);
+        if (firstShown < 0) firstShown = static_cast<int>(index);
+        if (count > 0) {
+            if (firstWithCards < 0) firstWithCards = static_cast<int>(index);
+            withCards.push_back(static_cast<int>(index));
+        }
     }
+    if (previous < 0 || (!familyPicked_ && std::ranges::find(withCards, previous) == withCards.end()))
+        previous = firstWithCards >= 0 ? firstWithCards : firstShown;
     families_->expandAll();
     families_->setCurrentItem(familyItem(previous));
 }

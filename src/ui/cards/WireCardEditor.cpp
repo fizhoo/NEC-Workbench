@@ -258,7 +258,8 @@ auto WireCardEditor::readOnlyReason(const model::Wire& wire) const -> QString
 {
     if (const auto card = generatingCards_.find(wire.sourceLine); card != generatingCards_.end())
         return tr("Made by the %1 card on line %2 from another wire. Edit that wire, or the %1 "
-                  "card in the Other card table or in Raw Source.").arg(card->second).arg(wire.sourceLine);
+                  "card: Other → Other NEC-2 Geometry Cards, or Raw Source.")
+            .arg(card->second).arg(wire.sourceLine);
     return tr("This GW uses a following GC taper card. Edit the GC card in the Other card table "
               "or in Raw Source.");
 }

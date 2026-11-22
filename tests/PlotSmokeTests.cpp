@@ -1400,6 +1400,40 @@ auto main(int argc, char* argv[]) -> int
                     && wireCells->item(0, 2)->data(necwb::ui::CellExpressionRole).toString() == QStringLiteral("-half")
                     && !wireCells->item(0, 2)->icon().isNull();
             }
+            // Other opens on the family that holds the GX card, with its fields named and
+            // the line under the table saying what it makes.
+            auto gxShown = false;
+            QStringList gxSeen;
+            if (auto* other = tree->findItems(QStringLiteral("Other"), Qt::MatchExactly | Qt::MatchRecursive).value(0)) {
+                tree->setCurrentItem(other);
+                emit tree->itemClicked(other, 0);
+                application.processEvents();
+                auto* otherPage = mainWindow.findChild<QWidget*>(QStringLiteral("cardsOther"));
+                auto* otherCells = otherPage->findChild<QTableWidget*>(QStringLiteral("structuredCardTable"));
+                auto* families = otherPage->findChild<QTreeWidget*>();
+                auto gxRow = -1;
+                for (auto row = 0; row < otherCells->rowCount(); ++row)
+                    if (otherCells->item(row, 1)->text() == QStringLiteral("GX")) gxRow = row;
+                if (gxRow >= 0) otherCells->selectRow(gxRow);
+                application.processEvents();
+                const auto* note = otherPage->findChild<QLabel*>(QStringLiteral("cardRowNote"));
+                const auto header = [otherCells](int column) {
+                    auto* item = otherCells->horizontalHeaderItem(column);
+                    return item != nullptr ? item->text() : QString{};
+                };
+                const auto noteText = note != nullptr ? note->toolTip() : QString{};
+                gxSeen << (families->currentItem() ? families->currentItem()->text(0) : QString{})
+                       << QString::number(gxRow) << header(2) << header(3) << noteText;
+                gxShown = otherCells->isVisible() && gxRow >= 0
+                    && families->currentItem() != nullptr
+                    && families->currentItem()->text(0).startsWith(QStringLiteral("Other NEC-2 Geometry Cards"))
+                    && header(2) == QStringLiteral("Tag increment")
+                    && header(3) == QStringLiteral("Mirror in YZ XZ XY")
+                    && noteText.contains(QStringLiteral("in the YZ plane"))
+                    && noteText.contains(QStringLiteral("makes wire 2"));
+            }
+            if (!gxShown) qWarning() << "GX in Other" << gxSeen;
+            generatedWirePlain = generatedWirePlain && gxShown;
             if (!generatedWirePlain)
                 qWarning() << "generated wire" << (wireCells ? wireCells->rowCount() : -1) << marked << tips.value(2);
             mainWindow.close();
