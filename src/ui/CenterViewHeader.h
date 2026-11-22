@@ -25,4 +25,16 @@ private:
     std::function<void()> back_;
 };
 
+// A view shown in the center in place of the geometry: the header over its content.
+class CenterView final : public QWidget {
+public:
+    // objectName names the view and prefixes its header's back button and title.
+    CenterView(const QString& objectName, QWidget* content, QWidget* parent = nullptr);
+
+    [[nodiscard]] auto header() const -> CenterViewHeader* { return header_; }
+
+private:
+    CenterViewHeader* header_{};
+};
+
 }

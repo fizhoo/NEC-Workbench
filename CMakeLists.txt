@@ -86,6 +86,7 @@ add_library(necwb_core
     src/nec/NecSymbolEditor.cpp
     src/nec/NecSymbolResolver.cpp
     src/nec/SegmentationEdit.cpp
+    src/nec/SourceChanges.cpp
     src/nec/SourcePositions.cpp
     src/nec/NecWriter.cpp
 )
@@ -207,8 +208,6 @@ if(NECWB_BUILD_GUI)
         src/ui/cards/RowHeightCap.h
         src/ui/cards/SymbolPrompt.cpp
         src/ui/cards/SymbolPrompt.h
-        src/ui/editor/DeckView.cpp
-        src/ui/editor/DeckView.h
         src/ui/editor/NecEditor.cpp
         src/ui/editor/NecEditor.h
         src/ui/editor/NecHighlighter.cpp

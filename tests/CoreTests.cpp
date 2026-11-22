@@ -37,6 +37,7 @@
 #include "nec/NecSymbolEditor.h"
 #include "nec/NecWriter.h"
 #include "nec/SegmentationEdit.h"
+#include "nec/SourceChanges.h"
 #include "nec/SourcePositions.h"
 
 #include <algorithm>
@@ -4484,6 +4485,29 @@ void testPatternRequestPresets()
         "ground detection and default cut elevation");
 }
 
+void testSourceChanges()
+{
+    const std::string before = "CM yagi\nSY len=5, gap=0.1\nGW 1 11 0 0 -len 0 0 len 0.001\n"
+        "GE 0\nEX 0 1 6 0 1 0\nFR 0 1 0 0 14.1 0\nEN\n";
+    expect(necwb::nec::describeSourceChanges(before, before).empty(),
+        "an unchanged deck has no changes");
+    // The optimized variable's value, comments and spacing are not changes.
+    auto applied = before;
+    applied.replace(applied.find("len=5"), 5, "len=5.2");
+    applied.replace(applied.find("CM yagi"), 7, "CM yagi, tuned");
+    applied.replace(applied.find("GE 0"), 4, "GE  0");
+    expect(necwb::nec::describeSourceChanges(before, applied, {"LEN"}).empty(),
+        "an applied value of an optimized variable is not a change");
+    auto edited = applied;
+    edited.replace(edited.find("0.001"), 5, "0.002");
+    edited.replace(edited.find("gap=0.1"), 7, "gap=0.2, h=3");
+    edited.replace(edited.find("FR 0 1 0 0 14.1 0\n"), 18, "");
+    const auto changes = necwb::nec::describeSourceChanges(before, edited, {"len"});
+    const std::vector<std::string> expected{"Variable gap: 0.1 → 0.2", "Variable h added (= 3)",
+        "GW (line 3), field 9: 0.001 → 0.002", "FR (line 6) removed"};
+    expect(changes == expected, "changed variables and fields and a removed card are listed");
+}
+
 void testRearBoundaryAndHighAngleSteps()
 {
     using necwb::analysis::RadiationSample;
@@ -4610,6 +4634,7 @@ auto main() -> int
     testFrontToRearDefinitions();
     testPatternRequestPresets();
     testRearBoundaryAndHighAngleSteps();
+    testSourceChanges();
 
     if (failures != 0) {
         std::cerr << failures << " test assertion(s) failed\n";

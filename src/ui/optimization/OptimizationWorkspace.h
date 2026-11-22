@@ -53,6 +53,8 @@ public:
     void setContext(QString source, QString sourceFile, QString backend,
         QString executable, int timeoutSeconds, bool modelValid);
     void setModelValid(bool valid);
+    // Forgets the candidates, for a model newly opened or started.
+    void clearStudy();
     void setExternalRunActive(bool active);
     void setRunsChangedCallback(std::function<void()> callback);
     // The search range of a variable ticked Use; nothing for one the search leaves alone.
@@ -82,6 +84,11 @@ public:
     void restoreCandidateDetailsWindow();
     void cancel();
     void cancelAndWait();
+
+protected:
+    // Below the width of the setup and results side by side, they stack and the view
+    // scrolls vertically instead of sideways.
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     enum class FrequencyMode {
@@ -197,6 +204,9 @@ private:
     [[nodiscard]] auto candidateParameterValues(int row) const
         -> std::vector<std::pair<QString, double>>;
     void applyCandidate(int row, bool runAfterApply);
+    // True when the model is as the study ran on it, apart from the optimized values, or
+    // when asked, listing what differs, the person applies anyway.
+    auto confirmApplyToChangedModel() -> bool;
     void updateCandidateRowToolTip(int row);
     auto ensureCandidateAnalysisLoaded(Candidate& candidate) -> bool;
     void updateCandidatePlots();
@@ -393,7 +403,12 @@ private:
     std::optional<analysis::AnalysisResult> baselineResult_;
     analysis::OptimizationBaselineCompatibility baselineCompatibility_;
     std::optional<FrequencySelectionState> activeFrequencySelection_;
+    QSplitter* workspaceSplitter_{};
+    QWidget* resultsPanel_{};
     QString source_;
+    // The model as it is now, which source_ lags while a study runs, and as the study ran on it.
+    QString latestSource_;
+    QString studySource_;
     // The resolved deck and its fingerprint, computed once per source change in setContext;
     // readiness checks compare them with the baseline many times per edit.
     std::optional<std::string> resolvedDeck_;

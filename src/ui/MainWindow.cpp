@@ -2,6 +2,7 @@
 
 #include "ui/DisplayFormat.h"
 #include "ui/BottomPanel.h"
+#include "ui/CenterViewHeader.h"
 #include "ui/DetachablePanel.h"
 #include "ui/WorkbenchLayout.h"
 #include "ui/WorkbenchStatusBar.h"
@@ -45,7 +46,6 @@
 #include "ui/analysis/FieldResultsViews.h"
 #include "ui/analysis/QuickSweepDialog.h"
 #include "ui/analysis/RunReviewWindow.h"
-#include "ui/editor/DeckView.h"
 #include "ui/editor/NecEditor.h"
 #include "ui/editor/SourceHistory.h"
 #include "ui/editor/NecHighlighter.h"
@@ -341,7 +341,7 @@ MainWindow::MainWindow()
         saveAction_->setEnabled(modified);
         revertAction_->setEnabled(modified && !currentFile_.isEmpty());
         setWindowModified(modified);
-        deckView_->setModified(modified);
+        deckView_->header()->setTitle(modified ? tr("NEC Deck *") : tr("NEC Deck"));
     });
 
     restoreWorkspaceLayout();
@@ -564,9 +564,8 @@ void MainWindow::createActions()
     optimizeModuleAction_->setObjectName(QStringLiteral("optimizeModuleAction"));
     optimizeModuleAction_->setIcon(workbenchIcon("optimize"));
     optimizeModuleAction_->setEnabled(false);
-    connect(optimizeModuleAction_, &QAction::triggered, this, [this] {
-        optimizationPanel_->showWindow();
-    });
+    connect(optimizeModuleAction_, &QAction::triggered,
+        this, [this] { showEditor(EditorDestination::Optimize); });
 }
 
 void MainWindow::createWorkspace()
@@ -777,9 +776,8 @@ void MainWindow::createWorkspace()
             detachFieldParameter(sourceLine, fieldIndex, fieldLabel);
         });
 
-    deckView_ = new DeckView(editor_, windowHost_);
-    deckView_->setBackCallback(
-        [this] { showEditor(EditorDestination::Geometry, geometryWorkspace_->page()); });
+    deckView_ = new CenterView(QStringLiteral("necDeckView"), editor_, windowHost_);
+    deckView_->header()->setTitle(tr("NEC Deck"));
 
     analysisSetupEditor_ = new AnalysisSetupEditor(windowHost_);
     connect(analysisSetupEditor_, &AnalysisSetupEditor::settingsChanged, this,
@@ -841,10 +839,15 @@ void MainWindow::createWorkspace()
     createOptimizationWorkspace();
     createResultsColumn();
     workbenchLayout_ = new WorkbenchLayout({.start = startPanel_, .leftColumn = modelColumn_,
-        .geometry = geometryWorkspace_, .fullView = resultsController_->fullView(),
-        .deck = deckView_, .rightColumn = resultsController_->column(),
+        .geometry = geometryWorkspace_, .views = {resultsController_->fullView(), deckView_,
+            optimizationView_},
+        .rightColumn = resultsController_->column(),
         .bottomPanel = bottomPanel_}, this);
     setCentralWidget(workbenchLayout_);
+    const auto backToGeometry = [this] {
+        showEditor(EditorDestination::Geometry, geometryWorkspace_->page());
+    };
+    for (auto* view : {deckView_, optimizationView_}) view->header()->setBackCallback(backToGeometry);
     preserveControlHeights(this);
 }
 
@@ -867,7 +870,7 @@ void MainWindow::createResultsColumn()
         geometryWorkspace_->setResults(state, stale);
     });
     resultsController_->setShowFullViewCallback([this](bool fullView) {
-        if (fullView) workbenchLayout_->showFullView();
+        if (fullView) workbenchLayout_->showView(resultsController_->fullView());
         else showEditor(EditorDestination::Geometry, geometryWorkspace_->page());
     });
 }
@@ -943,22 +946,17 @@ void MainWindow::createValidationWindow()
 
 void MainWindow::createOptimizationWorkspace()
 {
-    optimizationPanel_ = new DetachablePanel(QStringLiteral("optimization"),
-        tr("Optimization"), windowHost_, {QStringLiteral("workspaceWindows"),
-            QStringLiteral("optimizationWindow")});
-    optimizationPanel_->setStatusText(tr("No model loaded"));
-    optimizationWorkspace_ = new OptimizationWorkspace(optimizationPanel_);
+    optimizationWorkspace_ = new OptimizationWorkspace;
     optimizationWorkspace_->setObjectName(QStringLiteral("optimizationWorkspace"));
+    optimizationView_ = new CenterView(
+        QStringLiteral("optimizationView"), optimizationWorkspace_, windowHost_);
     optimizationWorkspace_->setRunsChangedCallback([this] {
         bottomPanel_->runs()->reload();
         refreshLatestRun();
     });
     optimizationWorkspace_->setRunningChangedCallback([this] {
         synchronizeRunnerState();
-        const auto modelName = currentFile_.isEmpty()
-            ? tr("Untitled model.nec") : QFileInfo(currentFile_).fileName();
-        optimizationPanel_->setStatusText(tr("%1 · %2").arg(modelName,
-            optimizationWorkspace_->isRunning() ? tr("Running") : tr("Ready")));
+        updateOptimizationStatus();
     });
     optimizationWorkspace_->setParameterizationHelpCallback([this] {
         selectInModel({ModelNode::Wires});
@@ -1010,13 +1008,28 @@ void MainWindow::createOptimizationWorkspace()
         });
     optimizationWorkspace_->setVariableRangesChangedCallback(
         [this] { modelColumn_->variables()->refreshRanges(); });
-    optimizationPanel_->setContent(optimizationWorkspace_);
+    updateOptimizationStatus();
+}
+
+void MainWindow::updateOptimizationStatus()
+{
+    const auto running = optimizationWorkspace_->isRunning();
+    const auto modelName = currentFile_.isEmpty()
+        ? tr("Untitled model.nec") : QFileInfo(currentFile_).fileName();
+    optimizationView_->header()->setTitle(
+        tr("Optimize · %1 · %2").arg(modelName, running ? tr("Running") : tr("Ready")));
+    // The toolbar shows a running search from any view, and keeps the way back to it open.
+    optimizeModuleAction_->setIconText(running ? tr("Optimizing…") : tr("Optimize"));
+    optimizeModuleAction_->setToolTip(running
+        ? tr("An optimization is running: show its progress") : tr("Optimize the model's variables"));
 }
 
 void MainWindow::showEditor(EditorDestination destination, int geometryTab)
 {
-    if (destination == EditorDestination::RawSource) {
-        workbenchLayout_->showDeck();
+    if (destination == EditorDestination::Optimize) {
+        workbenchLayout_->showView(optimizationView_);
+    } else if (destination == EditorDestination::RawSource) {
+        workbenchLayout_->showView(deckView_);
         editor_->setFocus();
         raise();
         activateWindow();
@@ -1371,6 +1384,8 @@ void MainWindow::createMenusAndToolbar()
     runMenu->addAction(quickSweepAction_);
     runMenu->addAction(stopAction_);
     runMenu->addSeparator();
+    runMenu->addAction(optimizeModuleAction_);
+    runMenu->addSeparator();
     auto* reviewRunsAction = runMenu->addAction(tr("Review Run History"));
     reviewRunsAction->setObjectName(QStringLiteral("reviewRunHistoryAction"));
     connect(reviewRunsAction, &QAction::triggered, this, [this] {
@@ -1609,6 +1624,7 @@ void MainWindow::startLiveSolve(std::optional<double> frequencyMHz)
 
 void MainWindow::startModelSession()
 {
+    optimizationWorkspace_->clearStudy();
     checkModel();
     // A new model starts with nothing selected and the pane empty.
     selectWireInProject(-1);
@@ -2530,18 +2546,9 @@ auto MainWindow::applyOptimizedParameters(
     const auto updatedResolution = nec::NecSymbolResolver{}.resolve(source);
     if (!updatedResolution.ok()) return false;
     if (QString::fromStdString(source) == editor_->toPlainText()) return false;
-    pushGeometrySourceEdit(tr("Apply optimized parameters"), QString::fromStdString(source));
-    showEditor(EditorDestination::Parameters);
-    if (values.size() == 1) {
-        const auto found = std::ranges::find_if(updatedResolution.definitions,
-            [&values](const auto& definition) {
-                return QString::fromStdString(definition.name).compare(
-                    values.front().first, Qt::CaseInsensitive) == 0;
-            });
-        if (found != updatedResolution.definitions.end())
-            parameterEditor_->selectParameter(found->lineNumber,
-                QString::fromStdString(found->name));
-    }
+    // The optimizer stays in the center; Undo comes back to it.
+    applyGeometrySource(tr("Apply optimized parameters"), QString::fromStdString(source),
+        EditorDestination::Optimize, geometryWorkspace_->page());
     statusBar()->showMessage(tr("Applied optimized values to %1. Use Undo to restore them.")
         .arg(names.join(QStringLiteral(", "))), 5000);
     return true;
@@ -2848,7 +2855,8 @@ void MainWindow::updateAnalysisReadiness()
     convergenceAction_->setEnabled(modelChecked_ && modelErrorCount_ == 0
         && !solverRunner_->isRunning() && !optimizationWorkspace_->isRunning()
         && !convergenceWorkspace_->isRunning());
-    optimizeModuleAction_->setEnabled(modelChecked_ && modelErrorCount_ == 0);
+    optimizeModuleAction_->setEnabled(
+        (modelChecked_ && modelErrorCount_ == 0) || optimizationWorkspace_->isRunning());
 }
 
 void MainWindow::synchronizeRunnerState()
@@ -4284,9 +4292,7 @@ void MainWindow::setCurrentFile(QString path)
     const auto modelName = currentFile_.isEmpty() ? tr("Untitled model.nec") : name;
     statusBar_->setFileStatus(tr("Model: %1").arg(modelName),
         currentFile_.isEmpty() ? tr("This model has not been saved yet.") : currentFile_);
-    if (optimizationPanel_ != nullptr) optimizationPanel_->setStatusText(
-        tr("%1 · %2").arg(modelName,
-            optimizationWorkspace_->isRunning() ? tr("Running") : tr("Ready")));
+    if (optimizationView_ != nullptr) updateOptimizationStatus();
 }
 
 void MainWindow::restoreWorkspaceLayout()

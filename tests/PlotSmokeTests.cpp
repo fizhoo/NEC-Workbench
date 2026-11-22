@@ -451,26 +451,53 @@ auto main(int argc, char* argv[]) -> int
                 && frequencyPage->isVisible() && functionKeysReachWindow
                 && topLevelDialog(QStringLiteral("analysisSetupWindow")) == nullptr;
         }
+        // Optimize opens in the center under ← Geometry, beside the model tree and the results
+        // column, and fits a 1400×900 window without scrolling sideways; Esc and ← Geometry
+        // go back, and opening it again finds it as it was.
         if (optimizationWorkspace != nullptr && optimizeModuleAction != nullptr) {
+            mainWindow.resize(1400, 900);
+            mainWindow.show();
             optimizeModuleAction->setEnabled(true);
             optimizeModuleAction->trigger();
             application.processEvents();
-            const auto* optimizationWindow = topLevelDialog(
-                QStringLiteral("optimizationWindow"));
-            const auto* unexpectedRadiationWindow = topLevelDialog(
-                QStringLiteral("radiationResultWindow"));
-            const auto* unexpectedCandidateWindow = topLevelDialog(
+            auto* split = mainWindow.findChild<QSplitter*>(QStringLiteral("workbenchSplit"));
+            auto* geometry = mainWindow.findChild<QWidget*>(QStringLiteral("geometryWorkspace"));
+            auto* method = optimizationWorkspace->findChild<QComboBox*>(
+                QStringLiteral("optimizationSearchMethod"));
+            const auto* candidateWindow = topLevelDialog(
                 QStringLiteral("optimizationCandidateDetailsWindow"));
-            resultWindowSettings.sync();
-            optimizationWindowNavigation = optimizationWindow != nullptr
-                && optimizationWindow->isVisible()
-                && optimizationWorkspace->window() == optimizationWindow
-                && (unexpectedRadiationWindow == nullptr
-                    || !unexpectedRadiationWindow->isVisible())
-                && (unexpectedCandidateWindow == nullptr
-                    || !unexpectedCandidateWindow->isVisible())
-                && resultWindowSettings.value(
-                    QStringLiteral("workspaceWindows/optimization/detached"), false).toBool();
+            // Stacked in the narrow center: nothing is wider than the scroll area's viewport.
+            auto* scroll = optimizationWorkspace->findChild<QScrollArea*>(
+                QStringLiteral("optimizationScrollArea"));
+            auto* stack = optimizationWorkspace->findChild<QSplitter*>(
+                QStringLiteral("optimizationWorkspaceSplitter"));
+            const auto center = split == nullptr ? 0 : split->sizes().value(1);
+            const auto fits = scroll != nullptr && stack != nullptr
+                && stack->orientation() == Qt::Vertical
+                && scroll->widget()->minimumSizeHint().width() <= scroll->viewport()->width()
+                && scroll->horizontalScrollBarPolicy() == Qt::ScrollBarAlwaysOff;
+            const auto inCenter = split != nullptr && split->isAncestorOf(optimizationWorkspace)
+                && optimizationWorkspace->isVisible() && geometry != nullptr
+                && !geometry->isVisible() && split->sizes().value(0) > 0
+                && split->sizes().value(2) > 0
+                && topLevelDialog(QStringLiteral("optimizationWindow")) == nullptr
+                && (candidateWindow == nullptr || !candidateWindow->isVisible());
+            if (method != nullptr) method->setCurrentIndex(2);
+            QTest::keyClick(optimizationWorkspace, Qt::Key_Escape);
+            application.processEvents();
+            const auto escapeBack = geometry->isVisible() && !optimizationWorkspace->isVisible();
+            optimizeModuleAction->trigger();
+            application.processEvents();
+            const auto keptState = optimizationWorkspace->isVisible() && method != nullptr
+                && method->currentIndex() == 2;
+            if (auto* back = mainWindow.findChild<QToolButton*>(QStringLiteral("optimizationViewBack")))
+                back->click();
+            application.processEvents();
+            optimizationWindowNavigation = inCenter && fits && escapeBack && keptState
+                && geometry->isVisible();
+            if (!optimizationWindowNavigation)
+                qWarning() << "optimize in center" << inCenter << fits << center
+                           << optimizationWorkspace->minimumSizeHint() << escapeBack << keptState;
         }
         // Results live in the main window's right column: no result windows, no Result
         // Windows menu, one overlay control, and View › Results Column collapses the column.
@@ -919,13 +946,14 @@ auto main(int argc, char* argv[]) -> int
         trigger("necDeckAction");
         trigger("geometryFit");
         const auto fitFromDeckKeeps3D = shows(Page::ThreeD);
-        layout->showFullView();
+        auto* fullView = window.findChild<QWidget*>(QStringLiteral("resultFullView"));
+        layout->showView(fullView);
         application.processEvents();
-        const auto fullShown = layout->fullViewShown() && !workspace->isVisible();
+        const auto fullShown = layout->isShown(fullView) && !workspace->isVisible();
         trigger("geometryFrontView");
         const auto frontFromFull = fullShown && shows(Page::Planes)
             && planes->mainPlane() == Plane::XZ;
-        layout->showFullView();
+        layout->showView(fullView);
         application.processEvents();
         trigger("geometryFit");
         const auto fitFromFullKeepsPlanes = shows(Page::Planes) && planes->mainPlane() == Plane::XZ;
@@ -3900,6 +3928,68 @@ auto main(int argc, char* argv[]) -> int
         if (!toleranceRecorded) {
             qWarning() << "optimization tolerance" << session << candidate;
             return NECWB_SMOKE_FAILURE("optimization metadata tolerance");
+        }
+        // A study runs on the model as it was when it started; applying a candidate after the
+        // model changed asks first, listing what differs, while the applied values themselves
+        // are not a change.
+        necwb::ui::OptimizationWorkspace changedWorkspace;
+        changedWorkspace.setContext(optimizationSource, QStringLiteral("changed.nec"),
+            QStringLiteral("nec2"), nec2c, 60, true);
+        changedWorkspace.setOptimizationBaseline(toleranceRecord, toleranceBaseline);
+        auto applied = 0;
+        changedWorkspace.setApplyParameterCallback(
+            [&applied](const std::vector<std::pair<QString, double>>&) { return ++applied, true; });
+        auto* points = changedWorkspace.findChild<QSpinBox*>(
+            QStringLiteral("optimizationCandidateCount"));
+        auto* changedRun = changedWorkspace.findChild<QPushButton*>(QStringLiteral("optimizationRun"));
+        auto* applyBest = changedWorkspace.findChild<QPushButton*>(
+            QStringLiteral("optimizationApplyBest"));
+        if (points == nullptr || changedRun == nullptr || applyBest == nullptr)
+            return NECWB_SMOKE_FAILURE("optimization apply-after-change controls");
+        points->setValue(points->minimum());
+        changedRun->click();
+        const auto runningAtEdit = changedWorkspace.isRunning();
+        auto edited = optimizationSource;
+        edited.replace(QStringLiteral("0.001"), QStringLiteral("0.002"));
+        changedWorkspace.setContext(edited, QStringLiteral("changed.nec"),
+            QStringLiteral("nec2"), nec2c, 60, true);
+        QElapsedTimer changedWait;
+        changedWait.start();
+        while (changedWorkspace.isRunning() && changedWait.elapsed() < 30000)
+            application.processEvents(QEventLoop::AllEvents, 50);
+        QString promptText;
+        const auto answer = [&promptText](QMessageBox::StandardButton button) {
+            QTimer::singleShot(0, [&promptText, button] {
+                if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                    promptText = box->text() + QLatin1Char('\n') + box->informativeText();
+                    box->button(button)->click();
+                }
+            });
+        };
+        answer(QMessageBox::No);
+        applyBest->click();
+        const auto declined = applied == 0
+            && promptText.startsWith(QStringLiteral("The model changed since this optimization started"))
+            && promptText.contains(QStringLiteral("GW (line 4), field 9: 0.001 → 0.002"));
+        answer(QMessageBox::Yes);
+        applyBest->click();
+        const auto appliedAnyway = applied == 1;
+        // Back to the model the study ran on, with a different optimized value: no question.
+        promptText.clear();
+        auto revalued = optimizationSource;
+        revalued.replace(QStringLiteral("LONG_FT=95"), QStringLiteral("LONG_FT=97"));
+        changedWorkspace.setContext(revalued, QStringLiteral("changed.nec"),
+            QStringLiteral("nec2"), nec2c, 60, true);
+        applyBest->click();
+        application.processEvents();
+        const auto unchangedApplies = applied == 2 && promptText.isEmpty();
+        for (const auto& record : toleranceStore.load())
+            if (record.sourceFile == QStringLiteral("changed.nec") && record.parentId.isEmpty())
+                toleranceStore.removeGroup(record.id, record.directory);
+        if (!runningAtEdit || !declined || !appliedAnyway || !unchangedApplies) {
+            qWarning() << "apply after change" << runningAtEdit << declined << appliedAnyway
+                       << unchangedApplies << applied << promptText;
+            return NECWB_SMOKE_FAILURE("optimization asks before applying to a changed model");
         }
     }
     necwb::ui::OptimizationWorkspace directionalBaselineWorkspace;

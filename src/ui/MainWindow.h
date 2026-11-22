@@ -57,7 +57,7 @@ class WireCardEditor;
 class StartPanel;
 class SourceHistory;
 class GeometryPreview;
-class DeckView;
+class CenterView;
 class ModelColumn;
 class WorkbenchToolBar;
 class OptimizationWorkspace;
@@ -104,7 +104,8 @@ private:
         Environment,
         Requests,
         Solver,
-        ReferenceImpedance
+        ReferenceImpedance,
+        Optimize
     };
 
     void createActions();
@@ -113,6 +114,8 @@ private:
     void createResultsColumn();
     void createValidationWindow();
     void createOptimizationWorkspace();
+    // The optimizer's title and the toolbar's Optimize button follow its running state.
+    void updateOptimizationStatus();
     void createMenusAndToolbar();
     void resetWorkspaceLayout();
     void setWorkspaceDensity(WorkspaceDensity density);
@@ -304,8 +307,8 @@ private:
     QWidget* windowHost_{};
     WorkbenchLayout* workbenchLayout_{};
     DetachablePanel* validationPanel_{};
-    DeckView* deckView_{};
-    DetachablePanel* optimizationPanel_{};
+    CenterView* deckView_{};
+    CenterView* optimizationView_{};
     ModelColumn* modelColumn_{};
     WorkbenchToolBar* toolBar_{};
     StartPanel* startPanel_{};

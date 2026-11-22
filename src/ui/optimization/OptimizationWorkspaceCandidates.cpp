@@ -8,17 +8,20 @@
 #include "analysis/AnalysisResult.h"
 #include "analysis/FrequencyComparison.h"
 #include "analysis/OptimizationObjective.h"
+#include "nec/SourceChanges.h"
 
 #include <QDialog>
 #include <QHeaderView>
 #include <QLabel>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QTabWidget>
 
 #include <algorithm>
 #include <cmath>
+#include <ranges>
 #include <utility>
 
 namespace necwb::ui {
@@ -421,7 +424,7 @@ auto OptimizationWorkspace::candidateParameterValues(int row) const
 void OptimizationWorkspace::applyCandidate(int row, bool runAfterApply)
 {
     const auto values = candidateParameterValues(row);
-    if (values.empty()) return;
+    if (values.empty() || !confirmApplyToChangedModel()) return;
     if (runAfterApply) {
         if (!applyAndRunCallback_) return;
         preserveStudyOnNextContextUpdate_ = true;
@@ -446,6 +449,29 @@ void OptimizationWorkspace::applyCandidate(int row, bool runAfterApply)
                     .arg(appliedText)
                 : appliedText);
     }
+}
+
+auto OptimizationWorkspace::confirmApplyToChangedModel() -> bool
+{
+    if (studySource_.isEmpty() || latestSource_ == studySource_) return true;
+    std::vector<std::string> optimized;
+    for (const auto& variable : activeVariables_) optimized.push_back(variable.name.toStdString());
+    const auto changes = nec::describeSourceChanges(
+        studySource_.toStdString(), latestSource_.toStdString(), optimized);
+    if (changes.empty()) return true;
+    constexpr auto Listed = std::size_t{8};
+    QStringList lines;
+    for (const auto& change : changes | std::views::take(Listed))
+        lines.append(QStringLiteral("• ") + QString::fromStdString(change));
+    if (changes.size() > Listed)
+        lines.append(tr("… and %1 more").arg(changes.size() - Listed));
+    QMessageBox prompt(QMessageBox::Question, tr("Apply Candidate"),
+        tr("The model changed since this optimization started. Apply anyway?"),
+        QMessageBox::Yes | QMessageBox::No, this);
+    prompt.setObjectName(QStringLiteral("optimizationModelChangedPrompt"));
+    prompt.setInformativeText(lines.join(QLatin1Char('\n')));
+    prompt.setDefaultButton(QMessageBox::No);
+    return prompt.exec() == QMessageBox::Yes;
 }
 
 void OptimizationWorkspace::updateCandidateRowToolTip(int row)
