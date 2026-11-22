@@ -841,6 +841,10 @@ auto main(int argc, char* argv[]) -> int
         application.processEvents();
         const auto narrowKeepsLabels = toolbar != nullptr && noStrandedLabel();
         // What overflows is in the ›› menu as working controls, kept in step with the toolbar's.
+        // The toolbar is narrowed to its minimum, Snap and ››, so Units overflows whatever the
+        // fonts; at the window's minimum it may still fit.
+        toolbar->setMaximumWidth(toolbar->minimumSizeHint().width());
+        application.processEvents();
         const auto inOverflow = [&](const std::function<void(QMenu*)>& use) {
             auto* extension = toolbar->findChild<QToolButton*>(QStringLiteral("qt_toolbar_ext_button"));
             if (extension == nullptr || !extension->isVisible() || extension->menu() == nullptr)
@@ -863,7 +867,7 @@ auto main(int argc, char* argv[]) -> int
         auto* mainUnits = window.findChild<QComboBox*>(QStringLiteral("geometryLengthUnit"));
         auto* mainSpacing = window.findChild<QDoubleSpinBox*>(QStringLiteral("geometrySnapSpacing"));
         auto unitsInMenu = false;
-        const auto openedAtMinimum = inOverflow([&](QMenu* menu) {
+        const auto openedNarrow = inOverflow([&](QMenu* menu) {
             auto* units = qobject_cast<QComboBox*>(overflowCopy(menu, QStringLiteral("geometryLengthUnit")));
             unitsInMenu = units != nullptr && units->currentText() == QStringLiteral("ft")
                 && overflowCopy(menu, QStringLiteral("geometryUnitsItem")) != nullptr
@@ -886,11 +890,11 @@ auto main(int argc, char* argv[]) -> int
         const auto snapStays = mainSpacing->isVisible()
             && window.findChild<QToolButton*>(QStringLiteral("geometrySnapButton"))->isVisible();
         toolbar->setMaximumWidth(QWIDGETSIZE_MAX);
-        const auto overflowWorks = openedAtMinimum && unitsInMenu && overflowUnitApplied
+        const auto overflowWorks = openedNarrow && unitsInMenu && overflowUnitApplied
             && openedAgain && toolbarUnitShown && snapStays;
         if (!unitsAt1280 || !narrowKeepsLabels || !overflowWorks)
             qWarning() << "units toolbar" << unitsAt1280 << narrowKeepsLabels << window.width()
-                       << (toolbar ? toolbar->width() : -1) << openedAtMinimum << unitsInMenu
+                       << (toolbar ? toolbar->width() : -1) << openedNarrow << unitsInMenu
                        << overflowUnitApplied << openedAgain << toolbarUnitShown << snapStays;
         window.resize(1400, 900);
         application.processEvents();
@@ -974,6 +978,9 @@ auto main(int argc, char* argv[]) -> int
                 const QRect area(view->mapToGlobal(QPoint(0, 0)), view->size());
                 for (auto* other : workspace->findChildren<QWidget*>()) {
                     if (!other->isVisible() || other == view || other->isAncestorOf(view)) continue;
+                    // A splitter handle is between the panes, though rounding at a fractional
+                    // pixel ratio can make it touch one.
+                    if (qobject_cast<QSplitterHandle*>(other) != nullptr) continue;
                     if (QRect(other->mapToGlobal(QPoint(0, 0)), other->size()).intersects(area))
                         return false;
                 }
