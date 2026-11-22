@@ -4243,11 +4243,18 @@ void MainWindow::refreshGeometryViews()
 
 void MainWindow::updateWireCardEditor()
 {
+    // Expressions are read from a wire's own GW card; a wire GX, GM or GR made has none.
     nec::NecParameterFieldMap symbolicFields;
+    std::map<std::size_t, QString> generatingCards;
     for (const auto& wire : currentModel_.wires()) {
         const auto block = editor_->document()->findBlockByNumber(
             static_cast<int>(wire.sourceLine) - 1);
         if (!block.isValid()) continue;
+        const auto mnemonic = block.text().trimmed().left(2).toUpper();
+        if (mnemonic != QStringLiteral("GW")) {
+            generatingCards[wire.sourceLine] = mnemonic;
+            continue;
+        }
         const auto source = block.text().toStdString();
         for (auto field = std::size_t{0}; field <= 8; ++field) {
             if (!nec::necCardFieldIsNumeric(source, field))
@@ -4255,6 +4262,7 @@ void MainWindow::updateWireCardEditor()
         }
     }
     wireCardEditor_->setSymbolicGeometryFields(std::move(symbolicFields));
+    wireCardEditor_->setGeneratingCards(std::move(generatingCards));
     wireCardEditor_->setModel(currentModel_);
 }
 

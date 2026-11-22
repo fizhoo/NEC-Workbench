@@ -1347,6 +1347,69 @@ auto main(int argc, char* argv[]) -> int
         resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
         resultWindowSettings.sync();
     }
+    // A wire GX made is read-only: no ƒx from the GX card's fields, and its tooltip names GX,
+    // not a GC taper. Wire 1's own expression still shows.
+    {
+        const auto savedRecentModels = resultWindowSettings.value(
+            QStringLiteral("files/recentModels"));
+        QTemporaryDir modelDirectory;
+        const auto modelPath = modelDirectory.filePath(QStringLiteral("mirrored-dipole.nec"));
+        QFile modelFile(modelPath);
+        auto generatedWirePlain = false;
+        if (modelDirectory.isValid() && modelFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            modelFile.write("SY half=16.5\nGW 1 11 -half 0 30 0 0 30 0.0033\nGX 1 100\n"
+                "GS 0 0 0.3048\nGE 0\nEX 0 1 11 0 1 0\nFR 0 1 0 0 14.175 0\nEN\n");
+            modelFile.close();
+            resultWindowSettings.setValue(QStringLiteral("files/recentModels"),
+                QStringList{modelPath});
+            resultWindowSettings.sync();
+            necwb::ui::MainWindow mainWindow;
+            mainWindow.resize(1400, 900);
+            mainWindow.show();
+            application.processEvents();
+            if (auto* recentModelsMenu = mainWindow.findChild<QMenu*>(
+                    QStringLiteral("recentModelsMenu"))) {
+                for (auto* action : recentModelsMenu->actions()) {
+                    if (action->data().toString() != modelPath) continue;
+                    action->trigger();
+                    break;
+                }
+            }
+            application.processEvents();
+            auto* tree = mainWindow.findChild<QTreeWidget*>(QStringLiteral("modelTree"));
+            auto* wireCells = mainWindow.findChild<QTableWidget*>(QStringLiteral("wireCardTable"));
+            auto* item = tree->findItems(QStringLiteral("Wire 2"), Qt::MatchExactly | Qt::MatchRecursive).value(0);
+            if (item != nullptr) tree->setCurrentItem(item);
+            application.processEvents();
+            QStringList marked, tips;
+            if (wireCells != nullptr && wireCells->rowCount() == 2) {
+                for (auto column = 0; column <= 8; ++column) {
+                    auto* cell = wireCells->item(1, column);
+                    if (cell == nullptr) continue;
+                    // What shows ƒx: the expression, its icon and italics.
+                    if (!cell->data(necwb::ui::CellExpressionRole).toString().isEmpty()
+                        || !cell->icon().isNull() || cell->font().italic())
+                        marked << QString::number(column);
+                    tips << cell->toolTip();
+                }
+                generatedWirePlain = item != nullptr && marked.isEmpty() && tips.size() == 9
+                    && std::ranges::all_of(tips, [](const QString& tip) {
+                           return tip.contains(QStringLiteral("GX card on line 3")) && !tip.contains(QStringLiteral("GC"));
+                       })
+                    && !(wireCells->item(1, 2)->flags() & Qt::ItemIsEditable)
+                    && wireCells->item(0, 2)->data(necwb::ui::CellExpressionRole).toString() == QStringLiteral("-half")
+                    && !wireCells->item(0, 2)->icon().isNull();
+            }
+            if (!generatedWirePlain)
+                qWarning() << "generated wire" << (wireCells ? wireCells->rowCount() : -1) << marked << tips.value(2);
+            mainWindow.close();
+        }
+        resultWindowSettings.setValue(QStringLiteral("files/recentModels"), savedRecentModels);
+        resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
+        resultWindowSettings.sync();
+        if (!generatedWirePlain)
+            return NECWB_SMOKE_FAILURE("a GX wire shows no expressions and names its card");
+    }
     // Dragging a variable's slider rewrites its SY card once, on release, as one undo entry;
     // selecting Variables shows the Parameters table in the properties pane.
     auto variableSliderEdits = false;

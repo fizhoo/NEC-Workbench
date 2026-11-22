@@ -152,8 +152,7 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
             item->setData(WireTagRole, wire.tag);
             if (!wire.editable) {
                 item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-                item->setToolTip(tr(
-                    "This GW uses a following GC taper card. Edit the GC card in the Other card table or in Raw Source."));
+                item->setToolTip(readOnlyReason(wire));
             }
             // An expression shows its value and opens for editing as written.
             const auto symbolicLine = symbolicGeometryFields_.find(wire.sourceLine);
@@ -164,8 +163,7 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
                   }();
             if (symbolic != nullptr) {
                 SymbolCells::showExpression(item, table_, QString::fromStdString(*symbolic), values[column]);
-                if (!wire.editable) item->setToolTip(tr(
-                    "This GW uses a following GC taper card. Edit the GC card in the Other card table or in Raw Source."));
+                if (!wire.editable) item->setToolTip(readOnlyReason(wire));
             }
             table_->setItem(row, column, item);
         }
@@ -248,6 +246,21 @@ void WireCardEditor::describeSelectedWire()
 void WireCardEditor::setSymbolicGeometryFields(nec::NecParameterFieldMap sourceFields)
 {
     symbolicGeometryFields_ = std::move(sourceFields);
+}
+
+void WireCardEditor::setGeneratingCards(std::map<std::size_t, QString> cards)
+{
+    generatingCards_ = std::move(cards);
+}
+
+// A read-only row is a wire another card made, or a GW whose GC card tapers it.
+auto WireCardEditor::readOnlyReason(const model::Wire& wire) const -> QString
+{
+    if (const auto card = generatingCards_.find(wire.sourceLine); card != generatingCards_.end())
+        return tr("Made by the %1 card on line %2 from another wire. Edit that wire, or the %1 "
+                  "card in the Other card table or in Raw Source.").arg(card->second).arg(wire.sourceLine);
+    return tr("This GW uses a following GC taper card. Edit the GC card in the Other card table "
+              "or in Raw Source.");
 }
 
 void WireCardEditor::setSymbols(const std::vector<nec::SymbolDefinition>& symbols)
