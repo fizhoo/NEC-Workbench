@@ -1,6 +1,7 @@
 #pragma once
 
 #include "model/Point3D.h"
+#include "ui/ColorScale.h"
 
 #include <QColor>
 #include <QPen>
@@ -15,9 +16,6 @@ class QPainter;
 namespace necwb::ui {
 
 enum class SurfaceStyle { ShadedGrid, Shaded, Wireframe };
-
-// Turbo: dark blue at 0 (the floor) through green and yellow to dark red at 1 (the peak).
-[[nodiscard]] auto turboColor(double ratio) -> QColor;
 
 // An orbit view: turned by yaw about Z, tilted by pitch, drawn `scale` pixels per unit.
 struct SurfaceView {

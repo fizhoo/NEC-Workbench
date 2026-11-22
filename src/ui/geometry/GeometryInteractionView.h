@@ -1,5 +1,6 @@
 #pragma once
 
+#include "analysis/SegmentCurrentDisplay.h"
 #include "model/AntennaModel.h"
 #include "model/ModelSetup.h"
 #include "model/SegmentSharing.h"
@@ -7,6 +8,7 @@
 #include <QWidget>
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <utility>
 
@@ -14,6 +16,7 @@ class QContextMenuEvent;
 class QMouseEvent;
 class QResizeEvent;
 class QPainter;
+class QPen;
 
 namespace necwb::ui {
 
@@ -37,6 +40,9 @@ struct GeometryWireMenuOptions {
     bool allowDelete{};
     bool allowFit{};
 };
+
+// "2 wires", or "2 wires · 6 patches" when the model has patches, for a view's info line.
+[[nodiscard]] auto geometryCounts(const model::AntennaModel& model) -> QString;
 
 class GeometryInteractionView : public QWidget {
     Q_OBJECT
@@ -62,8 +68,16 @@ public:
     void selectLoad(std::size_t sourceLine);
     void selectTransmissionLine(std::size_t sourceLine);
     void selectNetwork(std::size_t sourceLine);
+    [[nodiscard]] auto model() const -> const model::AntennaModel& { return model_; }
+    // Colours each segment by its current, or draws the wires plain when currents is null.
+    // The note ("currents out of date") goes in the info line either way.
+    void setCurrents(std::shared_ptr<const analysis::DisplayedCurrents> currents, QString note);
+    [[nodiscard]] auto showsCurrents() const -> bool { return currents_ != nullptr; }
+    // The line under the view: counts, grid, cursor, and the currents note.
+    [[nodiscard]] virtual auto infoText() const -> QString = 0;
 
 signals:
+    void infoChanged();
     void wireSelected(int tag);
     void wirePropertiesRequested(int tag);
     void excitationSelected(std::size_t sourceLine);
@@ -106,6 +120,10 @@ protected:
     void drawConnectors(QPainter& painter,
         const std::function<QPointF(const model::Point3D&)>& toScreen) const;
     void setInteractionModel(const model::AntennaModel& model, bool resetWireSelection);
+    // A selection outline that does not rely on hue, since the current colours include the
+    // selection orange: the text colour, wider than the stroke it surrounds.
+    [[nodiscard]] auto selectionHaloPen(double width) const -> QPen;
+    [[nodiscard]] auto currentsNote() const -> const QString& { return currentsNote_; }
 
     model::AntennaModel model_;
     std::vector<model::Excitation> excitations_;
@@ -122,6 +140,10 @@ protected:
     // A fitted view fits again whenever it is resized, as the window and splitters settle,
     // until the user zooms, pans or orbits it.
     bool keepFitted_{true};
+    std::shared_ptr<const analysis::DisplayedCurrents> currents_;
+
+private:
+    QString currentsNote_;
 };
 
 }

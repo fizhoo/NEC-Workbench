@@ -3998,6 +3998,19 @@ void testSegmentCurrentDisplay()
             && std::abs(dipoleShown.segments[0].relativePhaseDegrees - 10.0) < 1.0e-9
             && std::abs(dipoleShown.segments[1].relativePhaseDegrees - 10.0) < 1.0e-9,
         "without a feed, phases are absolute and joined halves agree");
+    // One frequency's currents are what the Currents view and the geometry views both show.
+    necwb::analysis::AnalysisResult twoFrequencies;
+    for (const auto frequency : {14.0, 14.2}) {
+        for (auto current : dipoleCurrents) {
+            current.frequencyMHz = frequency;
+            current.magnitude = frequency == 14.0 ? 1.0 : 2.0;
+            twoFrequencies.currents.push_back(current);
+        }
+    }
+    const auto atHigh = necwb::analysis::displayedCurrentsAt(twoFrequencies, 14.2, dipole);
+    expect(atHigh.segments.size() == 2 && std::abs(atHigh.maximumMagnitude - 2.0) < 1.0e-12
+            && necwb::analysis::displayedCurrentsAt(twoFrequencies, 14.1, dipole).segments.empty(),
+        "displayed currents are those at the chosen frequency only");
 
     necwb::analysis::DisplayedSegmentCurrent instant;
     instant.magnitude = 2.0;

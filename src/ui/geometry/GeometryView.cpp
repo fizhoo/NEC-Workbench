@@ -1,5 +1,6 @@
 #include "ui/geometry/GeometryView.h"
 
+#include "ui/ColorScale.h"
 #include "ui/DisplayFormat.h"
 #include "model/WireGeometry.h"
 
@@ -9,6 +10,7 @@
 #include <QPainter>
 #include <QPalette>
 #include <QLineF>
+#include <QStringList>
 #include <QWheelEvent>
 
 #include <algorithm>
@@ -42,13 +44,29 @@ auto verticalAxis(geometry::ProjectionPlane plane) -> QString
     return plane == geometry::ProjectionPlane::XY ? QStringLiteral("Y") : QStringLiteral("Z");
 }
 
-// Stepping across the grid accumulates rounding, so the tick at zero can arrive as
-// -2.776e-16; anything that close to zero is zero.
-auto tickLabel(double meters, double spacing, model::LengthUnit unit) -> QString
+// Enough decimals to tell neighbouring ticks apart and no more: the fewest that write the
+// step exactly, or one past its first significant digit when none does.
+auto tickDecimals(double step) -> int
 {
-    if (std::abs(meters) < 1.0e-6 * spacing) meters = 0.0;
-    return formatDecimal(model::fromMeters(meters, unit));
+    for (auto decimals = 0; decimals <= 6; ++decimals) {
+        const auto scaled = step * std::pow(10.0, decimals);
+        if (std::abs(scaled - std::round(scaled)) <= 1.0e-6 * scaled) return decimals;
+    }
+    return std::clamp(static_cast<int>(std::ceil(-std::log10(step))) + 1, 0, 9);
 }
+
+}
+
+auto gridTickLabel(double meters, double spacingMeters, model::LengthUnit unit) -> QString
+{
+    // Stepping across the grid accumulates rounding, so the tick at zero can arrive as
+    // -2.776e-16; anything that close to zero is zero.
+    if (std::abs(meters) < 1.0e-6 * spacingMeters) meters = 0.0;
+    return QString::number(model::fromMeters(meters, unit), 'f',
+        tickDecimals(model::fromMeters(spacingMeters, unit)));
+}
+
+namespace {
 
 auto wireLabel(const model::Wire& wire) -> QString
 {
@@ -81,7 +99,7 @@ void GeometryView::setModel(const model::AntennaModel& model)
 void GeometryView::updateModel(const model::AntennaModel& model)
 {
     setInteractionModel(model, false);
-    update();
+    changed();
 }
 
 void GeometryView::fitToView()
@@ -91,32 +109,35 @@ void GeometryView::fitToView()
     if (!bounds) {
         worldCenter_ = {};
         pixelsPerMeter_ = 50.0;
-        update();
+        changed();
         return;
     }
 
     const auto center = bounds->center();
     worldCenter_ = {center.horizontal, center.vertical};
-    const auto largestExtent = std::max({bounds->width(), bounds->height(), 1.0e-6});
+    // A plane that sees the model end-on, as XZ sees a wire along Y, shows it at the scale of
+    // the whole model rather than zooming in on a point.
+    const auto largestExtent = std::max({bounds->width(), bounds->height(),
+        geometry::modelExtent(model_), 1.0e-6});
     const auto horizontalExtent = std::max(bounds->width(), largestExtent * 0.1);
     const auto verticalExtent = std::max(bounds->height(), largestExtent * 0.1);
     const auto availableWidth = std::max(100, width() - 100);
     const auto availableHeight = std::max(100, height() - 100);
     pixelsPerMeter_ = std::clamp(std::min(availableWidth / horizontalExtent, availableHeight / verticalExtent),
         0.02, 1.0e6);
-    update();
+    changed();
 }
 
 void GeometryView::setLengthUnit(model::LengthUnit unit)
 {
     settings_.lengthUnit = unit;
-    update();
+    changed();
 }
 
 void GeometryView::setSnapSpacing(double meters)
 {
     settings_.snapSpacingMeters = std::max(meters, 1.0e-12);
-    update();
+    changed();
 }
 
 void GeometryView::setSettings(const GeometrySettings& settings)
@@ -125,7 +146,7 @@ void GeometryView::setSettings(const GeometrySettings& settings)
     settings_.manualGridSpacingMeters = std::max(settings_.manualGridSpacingMeters, 1.0e-12);
     settings_.snapSpacingMeters = std::max(settings_.snapSpacingMeters, 1.0e-12);
     settings_.minorGridDivisions = std::max(settings_.minorGridDivisions, 1);
-    update();
+    changed();
 }
 
 auto GeometryView::wireMenuOptions(int tag, const QPointF& position) const
@@ -190,7 +211,7 @@ void GeometryView::mouseMoveEvent(QMouseEvent* event)
         keepFitted_ = false;
         lastMousePosition_ = event->position();
         cursorWorld_ = mapToWorld(event->position());
-        update();
+        changed();
         event->accept();
         return;
     }
@@ -204,14 +225,14 @@ void GeometryView::mouseMoveEvent(QMouseEvent* event)
     } else {
         setCursor(Qt::CrossCursor);
     }
-    update();
+    changed();
     QWidget::mouseMoveEvent(event);
 }
 
 void GeometryView::leaveEvent(QEvent* event)
 {
     cursorWorld_.reset();
-    update();
+    changed();
     QWidget::leaveEvent(event);
 }
 
@@ -259,7 +280,7 @@ void GeometryView::mousePressEvent(QMouseEvent* event)
             dragOriginal_ = *draggedEndpoint_ == model::WireEndpoint::Start ? wire->start : wire->end;
             setCursor(Qt::ClosedHandCursor);
             emit wireSelected(draggedWireTag_);
-            update();
+            changed();
             event->accept();
             return;
         }
@@ -280,7 +301,7 @@ void GeometryView::mousePressEvent(QMouseEvent* event)
             dragPressPosition_ = event->position();
             setCursor(Qt::ClosedHandCursor);
             emit wireSelected(draggedWireTag_);
-            update();
+            changed();
             event->accept();
             return;
         }
@@ -335,7 +356,7 @@ void GeometryView::paintEvent(QPaintEvent*)
     drawWires(painter);
     drawAttachments(painter);
     drawExcitations(painter);
-    drawOverlay(painter);
+    drawEmptyMessage(painter);
 }
 
 void GeometryView::wheelEvent(QWheelEvent* event)
@@ -347,7 +368,7 @@ void GeometryView::wheelEvent(QWheelEvent* event)
     const auto worldAfterZoom = mapToWorld(event->position());
     worldCenter_.rx() += worldBeforeZoom.horizontal - worldAfterZoom.horizontal;
     worldCenter_.ry() += worldBeforeZoom.vertical - worldAfterZoom.vertical;
-    update();
+    changed();
     event->accept();
 }
 
@@ -380,6 +401,43 @@ auto GeometryView::formattedDistance(double meters) const -> QString
         .arg(QString::fromLatin1(symbol.data(), static_cast<qsizetype>(symbol.size())));
 }
 
+auto GeometryView::labelledTicks(Qt::Orientation orientation) const -> std::vector<Tick>
+{
+    std::vector<Tick> ticks;
+    if (!settings_.showGrid || !settings_.showLabels) return ticks;
+    const auto topLeft = mapToWorld({0.0, 0.0});
+    const auto bottomRight = mapToWorld({static_cast<double>(width()), static_cast<double>(height())});
+    const auto spacing = gridSpacing();
+    if (orientation == Qt::Horizontal) {
+        for (auto horizontal = std::floor(topLeft.horizontal / spacing) * spacing;
+             horizontal <= bottomRight.horizontal; horizontal += spacing) {
+            const auto x = mapToScreen({horizontal, 0.0}).x();
+            if (x >= 4.0 && x <= width() - 40.0)
+                ticks.push_back({x, gridTickLabel(horizontal, spacing, settings_.lengthUnit)});
+        }
+    } else {
+        for (auto vertical = std::floor(bottomRight.vertical / spacing) * spacing;
+             vertical <= topLeft.vertical; vertical += spacing) {
+            const auto y = mapToScreen({0.0, vertical}).y();
+            if (y >= 15.0 && y <= height() - 8.0)
+                ticks.push_back({y, gridTickLabel(vertical, spacing, settings_.lengthUnit)});
+        }
+    }
+    return ticks;
+}
+
+auto GeometryView::tickLabels(Qt::Orientation orientation) const -> QStringList
+{
+    QStringList labels;
+    for (const auto& tick : labelledTicks(orientation)) labels << tick.label;
+    return labels;
+}
+
+auto GeometryView::screenPoint(const model::Point3D& point) const -> QPointF
+{
+    return mapToScreen(geometry::project(point, plane_));
+}
+
 void GeometryView::drawGrid(QPainter& painter) const
 {
     const auto topLeft = mapToWorld({0.0, 0.0});
@@ -408,23 +466,16 @@ void GeometryView::drawGrid(QPainter& painter) const
         for (auto horizontal = firstHorizontal; horizontal <= bottomRight.horizontal; horizontal += spacing) {
             const auto x = mapToScreen({horizontal, 0.0}).x();
             painter.drawLine(QPointF{x, 0.0}, QPointF{x, static_cast<double>(height())});
-            if (settings_.showLabels && x >= 4.0 && x <= width() - 40.0) {
-                painter.setPen(palette().placeholderText().color());
-                painter.drawText(QPointF{x + 3.0, height() - 7.0},
-                    tickLabel(horizontal, spacing, settings_.lengthUnit));
-                painter.setPen(QPen(palette().midlight().color(), 1.0));
-            }
         }
         for (auto vertical = firstVertical; vertical <= topLeft.vertical; vertical += spacing) {
             const auto y = mapToScreen({0.0, vertical}).y();
             painter.drawLine(QPointF{0.0, y}, QPointF{static_cast<double>(width()), y});
-            if (settings_.showLabels && y >= 15.0 && y <= height() - 8.0) {
-                painter.setPen(palette().placeholderText().color());
-                painter.drawText(QPointF{5.0, y - 3.0},
-                    tickLabel(vertical, spacing, settings_.lengthUnit));
-                painter.setPen(QPen(palette().midlight().color(), 1.0));
-            }
         }
+        painter.setPen(palette().placeholderText().color());
+        for (const auto& tick : labelledTicks(Qt::Horizontal))
+            painter.drawText(QPointF{tick.screen + 3.0, height() - 7.0}, tick.label);
+        for (const auto& tick : labelledTicks(Qt::Vertical))
+            painter.drawText(QPointF{5.0, tick.screen - 3.0}, tick.label);
     }
 
     if (settings_.showAxes) {
@@ -467,21 +518,46 @@ void GeometryView::drawWires(QPainter& painter) const
 {
     const QColor wireColor(40, 105, 170);
     const QColor selectedColor(230, 126, 34);
+    const auto currents = showsCurrents();
+    // Under the current colours the wires are a neutral base, so a segment without a current
+    // still shows; the selected wire gets a halo instead of a hue.
+    auto plainColor = palette().color(QPalette::Mid);
+    const auto colorOf = [&](bool selected) {
+        return currents ? plainColor : selected ? selectedColor : wireColor;
+    };
+    const auto drawPath = [&](const model::Wire& wire) {
+        const auto pointCount = model::wirePathPointCount(wire);
+        for (auto point = std::size_t{1}; point < pointCount; ++point)
+            painter.drawLine(mapToScreen(geometry::project(model::wirePathPoint(wire, point - 1), plane_)),
+                mapToScreen(geometry::project(model::wirePathPoint(wire, point), plane_)));
+    };
+    for (const auto& wire : model_.wires()) {
+        const bool selected = selectedWireTag_ == wire.tag;
+        if (selected && currents) {
+            painter.setPen(selectionHaloPen(10.0));
+            drawPath(wire);
+        }
+        painter.setPen(QPen(colorOf(selected), selected ? 4.0 : 2.5, Qt::SolidLine, Qt::RoundCap));
+        drawPath(wire);
+    }
+    if (currents) {
+        for (const auto& segment : currents_->segments) {
+            const auto selected = selectedWireTag_ == segment.wireTag;
+            painter.setPen(QPen(currentColor(segment.magnitude, currents_->maximumMagnitude),
+                selected ? 5.0 : 4.0, Qt::SolidLine, Qt::FlatCap));
+            painter.drawLine(mapToScreen(geometry::project(segment.start, plane_)),
+                mapToScreen(geometry::project(segment.end, plane_)));
+        }
+    }
     auto index = 0;
     for (const auto& wire : model_.wires()) {
         const bool selected = selectedWireTag_ == wire.tag;
-        const auto color = selected ? selectedColor : wireColor;
-        painter.setPen(QPen(color, selected ? 4.0 : 2.5, Qt::SolidLine, Qt::RoundCap));
+        const auto color = currents && selected ? palette().color(QPalette::Text) : colorOf(selected);
         const auto pointCount = model::wirePathPointCount(wire);
-        for (auto point = std::size_t{1}; point < pointCount; ++point) {
-            const auto start = mapToScreen(geometry::project(
-                model::wirePathPoint(wire, point - 1), plane_));
-            const auto end = mapToScreen(geometry::project(model::wirePathPoint(wire, point), plane_));
-            painter.drawLine(start, end);
-        }
         const auto start = mapToScreen(geometry::project(model::wirePathPoint(wire, 0), plane_));
         const auto end = mapToScreen(geometry::project(
             model::wirePathPoint(wire, pointCount - 1), plane_));
+        painter.setPen(QPen(color, 1.0));
         painter.setBrush(color);
         painter.drawEllipse(start, selected ? 4.5 : 3.5, selected ? 4.5 : 3.5);
         painter.drawEllipse(end, selected ? 4.5 : 3.5, selected ? 4.5 : 3.5);
@@ -494,6 +570,11 @@ void GeometryView::drawWires(QPainter& painter) const
         auto labelRectangle = QRectF(labelBounds);
         labelRectangle.moveTopLeft(midpoint);
         painter.fillRect(labelRectangle, palette().base().color());
+        if (selected && currents) {
+            painter.setPen(selectionHaloPen(1.5));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRect(labelRectangle);
+        }
         painter.setPen(color);
         painter.drawText(labelRectangle, Qt::AlignCenter, label);
         ++index;
@@ -512,6 +593,10 @@ void GeometryView::drawExcitations(QPainter& painter) const
         const auto radius = selected ? 9.0 : 7.0;
         const QPolygonF diamond{screen + QPointF{0.0, -radius}, screen + QPointF{radius, 0.0},
             screen + QPointF{0.0, radius}, screen + QPointF{-radius, 0.0}};
+        if (selected && showsCurrents()) {
+            painter.setPen(selectionHaloPen(7.0));
+            painter.drawPolygon(diamond);
+        }
         painter.setPen(QPen(selected ? QColor(230, 100, 25) : QColor(190, 45, 55), selected ? 3.0 : 2.0));
         painter.setBrush(QColor(255, 235, 120));
         painter.drawPolygon(diamond);
@@ -533,6 +618,11 @@ void GeometryView::drawAttachments(QPainter& painter) const
         const auto halfSize = selected ? 8.0 : 6.0;
         const QRectF marker(screen.x() - halfSize, screen.y() - halfSize,
             halfSize * 2.0, halfSize * 2.0);
+        if (selected && showsCurrents()) {
+            painter.setPen(selectionHaloPen(7.0));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRect(marker);
+        }
         painter.setPen(QPen(selected ? QColor(225, 105, 25) : QColor(45, 145, 115),
             selected ? 3.0 : 2.0));
         painter.setBrush(QColor(205, 245, 225));
@@ -621,42 +711,38 @@ auto GeometryView::segmentAt(int wireTag, const QPointF& position) const -> int
     return std::clamp(static_cast<int>(parameter * wire->segments) + 1, 1, wire->segments);
 }
 
-void GeometryView::drawOverlay(QPainter& painter) const
+void GeometryView::drawEmptyMessage(QPainter& painter) const
 {
-    if (model_.empty()) {
-        painter.setPen(palette().placeholderText().color());
-        painter.drawText(rect(), Qt::AlignCenter,
-            tr("No valid geometry\nOpen a NEC file or add geometry cards, then run Check Model."));
-        return;
+    if (!model_.empty()) return;
+    painter.setPen(palette().placeholderText().color());
+    painter.drawText(rect(), Qt::AlignCenter,
+        tr("No valid geometry\nOpen a NEC file or add geometry cards, then run Check Model."));
+}
+
+auto GeometryView::infoText() const -> QString
+{
+    if (model_.empty()) return {};
+    QStringList parts{geometryCounts(model_)};
+    parts << tr("Grid %1").arg(formattedDistance(gridSpacing()))
+          << tr("Snap %1").arg(formattedDistance(settings_.snapSpacingMeters));
+    // A model this plane sees as a single point, shown at the whole model's scale.
+    if (const auto bounds = geometry::projectedBounds(model_, plane_)) {
+        const auto flat = 1.0e-6 * std::max(geometry::modelExtent(model_), 1.0e-12);
+        if (std::max(bounds->width(), bounds->height()) <= flat) parts << tr("seen end-on");
     }
+    // Before the cursor, which is the first to go when the line is too long.
+    if (!currentsNote().isEmpty()) parts << currentsNote();
+    parts << (cursorWorld_
+        ? tr("%1 %2  %3 %4").arg(horizontalAxis(plane_), formattedDistance(cursorWorld_->horizontal),
+              verticalAxis(plane_), formattedDistance(cursorWorld_->vertical))
+        : tr("Cursor —"));
+    return parts.join(QStringLiteral(" · "));
+}
 
-    const auto summary = tr("%1 View  •  %2 wires  •  %3 patches  •  Grid %4  •  Snap %5")
-        .arg(planeName(plane_))
-        .arg(static_cast<qulonglong>(model_.wireCount()))
-        .arg(static_cast<qulonglong>(model_.surfacePatchCount()))
-        .arg(formattedDistance(gridSpacing()))
-        .arg(formattedDistance(settings_.snapSpacingMeters));
-    const auto coordinates = cursorWorld_
-        ? tr("Cursor  %1 %2  •  %3 %4")
-              .arg(horizontalAxis(plane_))
-              .arg(formattedDistance(cursorWorld_->horizontal))
-              .arg(verticalAxis(plane_))
-              .arg(formattedDistance(cursorWorld_->vertical))
-        : tr("Cursor  —");
-    const auto summaryWidth = painter.fontMetrics().horizontalAdvance(summary);
-    const auto coordinateWidth = painter.fontMetrics().horizontalAdvance(coordinates);
-    const auto lineHeight = painter.fontMetrics().height();
-    auto summaryRectangle = QRectF(0.0, 0.0,
-        static_cast<double>(std::max(summaryWidth, coordinateWidth) + 14),
-        static_cast<double>(lineHeight * 2 + 10));
-    summaryRectangle.moveTopLeft({12.0, 12.0});
-    painter.fillRect(summaryRectangle, palette().window().color());
-    painter.setPen(palette().windowText().color());
-    painter.drawText(summaryRectangle.adjusted(7.0, 3.0, -7.0, -lineHeight - 2.0),
-        Qt::AlignLeft | Qt::AlignVCenter, summary);
-    painter.drawText(summaryRectangle.adjusted(7.0, lineHeight + 2.0, -7.0, -3.0),
-        Qt::AlignLeft | Qt::AlignVCenter, coordinates);
-
+void GeometryView::changed()
+{
+    update();
+    emit infoChanged();
 }
 
 void GeometryView::selectAt(const QPointF& position)
@@ -680,7 +766,7 @@ void GeometryView::selectAt(const QPointF& position)
         selectedExcitationLine_.reset();
         selectedLoadLine_.reset();
         selectedTransmissionLine_.reset();
-        update();
+        changed();
         emit wireSelected(-1);
         return;
     }
@@ -700,7 +786,7 @@ void GeometryView::selectAt(const QPointF& position)
     selectedExcitationLine_.reset();
     selectedLoadLine_.reset();
     selectedTransmissionLine_.reset();
-    update();
+    changed();
     emit wireSelected(selected);
 }
 
@@ -840,7 +926,7 @@ void GeometryView::updateDraggedEndpoint(const QPointF& position)
         wire->end = updated;
     }
     emit endpointPreviewed(draggedWireTag_, *draggedEndpoint_, updated);
-    update();
+    changed();
 }
 
 void GeometryView::updateDraggedWire(const QPointF& position)
@@ -896,7 +982,7 @@ void GeometryView::updateDraggedWire(const QPointF& position)
     wire->start = geometry::withProjectedCoordinates(wireDragOriginalStart_, movedStart, plane_);
     wire->end = geometry::withProjectedCoordinates(wireDragOriginalEnd_, movedEnd, plane_);
     emit wirePreviewed(draggedWireTag_, wire->start, wire->end);
-    update();
+    changed();
 }
 
 }

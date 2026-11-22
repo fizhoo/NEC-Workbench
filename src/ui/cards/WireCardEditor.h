@@ -8,6 +8,8 @@
 
 #include <QWidget>
 
+#include <map>
+
 #include <vector>
 
 class QPushButton;
@@ -31,6 +33,9 @@ public:
     void setDeckScale(double scaleToMeters, QString unitLabel);
     // The fields written as expressions, by deck line and field, with their text.
     void setSymbolicGeometryFields(nec::NecParameterFieldMap sourceFields);
+    // The card that made each generated wire (GX, GM, GR), by its deck line, so a read-only
+    // row says where its values come from.
+    void setGeneratingCards(std::map<std::size_t, QString> cards);
     // The symbols a cell offers as you type.
     void setSymbols(const std::vector<nec::SymbolDefinition>& symbols);
     // The model's shared segments, which the line under the table explains for a selected wire.
@@ -54,6 +59,7 @@ private:
     [[nodiscard]] auto selectedTag() const -> int;
     void setCellError(QTableWidgetItem* item, const QString& message);
     void applyGauge(int tag, int gauge);
+    [[nodiscard]] auto readOnlyReason(const model::Wire& wire) const -> QString;
 
     QTableWidget* table_{};
     QPushButton* duplicateButton_{};
@@ -62,6 +68,7 @@ private:
     std::vector<model::SharedSegment> shared_;
     model::AntennaModel model_;
     nec::NecParameterFieldMap symbolicGeometryFields_;
+    std::map<std::size_t, QString> generatingCards_;
     SymbolCells* symbolCells_{};
     double scaleToMeters_{1.0};
     QString unitLabel_{QStringLiteral("m")};

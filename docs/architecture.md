@@ -81,9 +81,14 @@ written, offers the symbols for the word being typed, owns the Make Variable… 
 menu, and sends a typed name or expression to `enterFieldExpression`
 (`ui/cards/SymbolPrompt`), which asks under the cell for the value of each new name, adds
 its `SY` card with `nec::insertSymbolDefinition`, and writes only that field. The center
-shows the geometry editor (2D views in `GeometryPlanes`, which puts
-`geometry::widestPlane` in the big view when a model opens and swaps on request, and the
-3D view), or one full result view, or the NEC
+shows the geometry editor (`GeometryWorkspace`: a compact toolbar for snapping, units and
+settings over either the 2D views in `GeometryPlanes`, which puts `geometry::widestPlane` in
+the big view when a model opens and swaps on request, or the 3D view; the big view's title
+line holds the Top, Front, Side, 3D, Fit and Currents buttons, which the View menu shares
+and which bring the geometry forward from the Deck or a result view, keeping its 2D or 3D
+page; Units builds its control per place, so a narrow toolbar's ›› menu gets a working copy;
+and each view's counts, grid and cursor go in a thin info line under it, never over the
+drawing), or one full result view, or the NEC
 Deck (`DeckView`: raw source), each non-geometry view under the same
 `CenterViewHeader`; the collapsible results column is on the right. The results (`ui/results`) are:
 
@@ -105,7 +110,10 @@ the others catch up when they are shown. The 3D pattern's surface is drawn by
 `RadiationSurfaceMesh` with `QPainter`, not OpenGL: one flat-lit patch per θ×φ grid cell in
 Turbo colours, sorted far to near with the axis, wire and current lines cut into short
 pieces among them, coarser while dragging a dense pattern;
-`fitSurfaceView` fits the view to the pattern's projected bounds. `FlowLayout` wraps a
+`fitSurfaceView` fits the view to the pattern's projected bounds. `patternPlacement` centres
+the pattern on the middle of the antenna's bounding box and sizes it by the antenna's largest
+half-dimension, so an antenna raised or moved sideways keeps the same picture, and the fit
+covers the pattern and antenna, not the origin. `FlowLayout` wraps a
 row of controls that would otherwise widen a narrow view. The remaining workspaces are separate
 top-level windows:
 
@@ -233,8 +241,13 @@ radiation records. Views consume these records rather than reparsing output.
   `analysis/SegmentCurrentDisplay` prepares them for drawing: it orients straight
   wires toward +X, +Y, or +Z (adding 180° where NEC's end-1-to-end-2 direction runs
   the other way), references phase to the first feed current, and computes the
-  instantaneous current over the RF cycle. The Currents window's Antenna tab and the
-  table's relative-phase column both consume this core result.
+  instantaneous current over the RF cycle. `displayedCurrentsAt` picks one frequency's
+  currents; the Currents view (Antenna tab and table) and the geometry views' Currents
+  colouring all consume it. The geometry views take the results column's state through
+  `ResultsController::setColumnChangedCallback`, so they follow the selected frequency and
+  live points, and draw the wires plain while that frequency is stale.
+- `ui/ColorScale` holds the one magnitude scale (Turbo) and its legend, used for radiation
+  gain and for current on the wires in the 3D pattern and the geometry views.
 - Radiation datasets retain their frequency and request identity.
 - `analysis/GainDirection` turns NEC θ/φ into elevation/azimuth and formats every
   displayed gain, cut name, reference level, and F/B or F/R definition, so widgets

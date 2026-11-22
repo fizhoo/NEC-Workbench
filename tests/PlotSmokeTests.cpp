@@ -4,6 +4,7 @@
 #include "ui/DetachablePanel.h"
 #include "ui/MainWindow.h"
 #include "ui/analysis/SweepPlotsView.h"
+#include "ui/WorkbenchLayout.h"
 #include "ui/WorkbenchToolBar.h"
 #include "ui/results/ResultFullView.h"
 #include "ui/results/ResultsColumn.h"
@@ -30,7 +31,10 @@
 #include "ui/analysis/RadiationSurfaceMesh.h"
 #include "ui/FlowLayout.h"
 #include "ui/geometry/AutoSegmentationDialog.h"
+#include "ui/ColorScale.h"
 #include "ui/geometry/GeometryPlanes.h"
+#include "ui/geometry/GeometryWorkspace.h"
+#include "model/WireGeometry.h"
 #include "ui/geometry/GeometryView.h"
 #include "ui/geometry/Geometry3DView.h"
 #include "ui/optimization/OptimizationWorkspace.h"
@@ -380,7 +384,7 @@ auto main(int argc, char* argv[]) -> int
             necDeckAction->trigger();
             application.processEvents();
             auto* split = mainWindow.findChild<QWidget*>(QStringLiteral("workbenchSplit"));
-            auto* geometryWorkspace = mainWindow.findChild<QTabWidget*>(
+            auto* geometryWorkspace = mainWindow.findChild<QWidget*>(
                 QStringLiteral("geometryWorkspace"));
             const auto deckShown = deckWorkspace->window() == &mainWindow && split != nullptr
                 && split->isAncestorOf(deckWorkspace) && deckWorkspace->isVisible()
@@ -727,7 +731,7 @@ auto main(int argc, char* argv[]) -> int
         QWidget* xyHeader = nullptr;
         for (auto* header : planes->findChildren<QWidget*>(QStringLiteral("geometryPaneHeader")))
             for (const auto* label : header->findChildren<QLabel*>())
-                if (label->text() == QStringLiteral("XY Plane")) xyHeader = header;
+                if (label->text() == QStringLiteral("XY Top")) xyHeader = header;
         if (xyHeader != nullptr) {
             QMouseEvent doubleClick(QEvent::MouseButtonDblClick, QPointF(5, 5),
                 xyHeader->mapToGlobal(QPointF(5, 5)), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
@@ -744,8 +748,8 @@ auto main(int argc, char* argv[]) -> int
         auto keptAfterEdit = false;
 
         // Units: Geometry in feet; the Wires table stays in the deck's meters.
-        for (auto* units : window.findChildren<QComboBox*>())
-            if (units->count() == 5 && units->itemText(4) == QStringLiteral("Feet")) units->setCurrentIndex(4);
+        if (auto* units = window.findChild<QComboBox*>(QStringLiteral("geometryLengthUnit")))
+            units->setCurrentIndex(units->findText(QStringLiteral("ft")));
         application.processEvents();
         const auto clickTree = [&](const QString& name) {
             auto* item = tree->findItems(name, Qt::MatchExactly | Qt::MatchRecursive).value(0);
@@ -813,17 +817,387 @@ auto main(int argc, char* argv[]) -> int
         if (reopenDelta != nullptr) reopenDelta->trigger();
         application.processEvents();
         const auto choseAgain = planes->mainPlane() == Plane::XZ;
+        // Units stays on the geometry toolbar at 1280 px with the left column at its width;
+        // narrower, an item that overflows takes its label with it.
+        auto* toolbar = window.findChild<QToolBar*>(QStringLiteral("geometryToolbar"));
+        auto* unitsItem = window.findChild<QWidget*>(QStringLiteral("geometryUnitsItem"));
+        const auto onToolbar = [toolbar](QWidget* item) {
+            return item->isVisible() && toolbar->rect().contains(QRect(item->mapTo(toolbar, QPoint(0, 0)), item->size()));
+        };
+        const auto noStrandedLabel = [toolbar] {
+            for (auto* label : toolbar->findChildren<QLabel*>()) {
+                if (!label->isVisible()) continue;
+                for (auto* sibling : label->parentWidget()->findChildren<QWidget*>(Qt::FindDirectChildrenOnly))
+                    if (sibling != label && !sibling->isVisible()) return false;
+                if (label->parentWidget() == toolbar) return false;
+            }
+            return true;
+        };
+        window.resize(1280, 900);
+        application.processEvents();
+        const auto unitsAt1280 = toolbar != nullptr && unitsItem != nullptr && onToolbar(unitsItem)
+            && noStrandedLabel();
+        window.resize(window.minimumSizeHint().width(), 900);
+        application.processEvents();
+        const auto narrowKeepsLabels = toolbar != nullptr && noStrandedLabel();
+        // What overflows is in the ›› menu as working controls, kept in step with the toolbar's.
+        // The toolbar is narrowed to its minimum, Snap and ››, so Units overflows whatever the
+        // fonts; at the window's minimum it may still fit.
+        toolbar->setMaximumWidth(toolbar->minimumSizeHint().width());
+        application.processEvents();
+        const auto inOverflow = [&](const std::function<void(QMenu*)>& use) {
+            auto* extension = toolbar->findChild<QToolButton*>(QStringLiteral("qt_toolbar_ext_button"));
+            if (extension == nullptr || !extension->isVisible() || extension->menu() == nullptr)
+                return false;
+            auto opened = false;
+            QTimer::singleShot(50, [&] {
+                auto* menu = extension->menu();
+                opened = menu->isVisible();
+                if (opened) use(menu);
+                menu->close();
+            });
+            extension->click();
+            application.processEvents();
+            return opened;
+        };
+        const auto overflowCopy = [](QMenu* menu, const QString& name) -> QWidget* {
+            auto* copy = menu->findChild<QWidget*>(name + QStringLiteral("Overflow"));
+            return copy != nullptr && copy->isVisible() ? copy : nullptr;
+        };
+        auto* mainUnits = window.findChild<QComboBox*>(QStringLiteral("geometryLengthUnit"));
+        auto* mainSpacing = window.findChild<QDoubleSpinBox*>(QStringLiteral("geometrySnapSpacing"));
+        auto unitsInMenu = false;
+        const auto openedNarrow = inOverflow([&](QMenu* menu) {
+            auto* units = qobject_cast<QComboBox*>(overflowCopy(menu, QStringLiteral("geometryLengthUnit")));
+            unitsInMenu = units != nullptr && units->currentText() == QStringLiteral("ft")
+                && overflowCopy(menu, QStringLiteral("geometryUnitsItem")) != nullptr
+                && !unitsItem->isVisible();
+            if (units != nullptr) units->setCurrentIndex(units->findText(QStringLiteral("cm")));
+        });
+        const auto overflowUnitApplied = mainUnits->currentText() == QStringLiteral("cm")
+            && mainSpacing->suffix() == QStringLiteral(" cm");
+        // A change on the toolbar shows in the menu's copy. Snap, the first item, stays on the
+        // toolbar however narrow it is.
+        mainUnits->setCurrentIndex(mainUnits->findText(QStringLiteral("ft")));
+        application.processEvents();
+        auto toolbarUnitShown = false;
+        const auto openedAgain = inOverflow([&](QMenu* menu) {
+            auto* units = qobject_cast<QComboBox*>(overflowCopy(menu, QStringLiteral("geometryLengthUnit")));
+            toolbarUnitShown = units != nullptr && units->currentText() == QStringLiteral("ft");
+        });
+        toolbar->setMaximumWidth(80);
+        application.processEvents();
+        const auto snapStays = mainSpacing->isVisible()
+            && window.findChild<QToolButton*>(QStringLiteral("geometrySnapButton"))->isVisible();
+        toolbar->setMaximumWidth(QWIDGETSIZE_MAX);
+        const auto overflowWorks = openedNarrow && unitsInMenu && overflowUnitApplied
+            && openedAgain && toolbarUnitShown && snapStays;
+        if (!unitsAt1280 || !narrowKeepsLabels || !overflowWorks)
+            qWarning() << "units toolbar" << unitsAt1280 << narrowKeepsLabels << window.width()
+                       << (toolbar ? toolbar->width() : -1) << openedNarrow << unitsInMenu
+                       << overflowUnitApplied << openedAgain << toolbarUnitShown << snapStays;
+        window.resize(1400, 900);
+        application.processEvents();
+
+        // Top, Front, Side, 3D and Fit bring the geometry forward from the Deck and the full
+        // results view, keeping the 2D or 3D page.
+        auto* layout = dynamic_cast<necwb::ui::WorkbenchLayout*>(window.centralWidget());
+        auto* workspace = window.findChild<QWidget*>(QStringLiteral("geometryWorkspace"));
+        auto* geometryPage = qobject_cast<necwb::ui::GeometryWorkspace*>(workspace);
+        const auto trigger = [&](const char* name) {
+            if (auto* action = window.findChild<QAction*>(QString::fromLatin1(name))) action->trigger();
+            application.processEvents();
+        };
+        const auto shows = [&](int page) {
+            return workspace->isVisible() && geometryPage->page() == page;
+        };
+        using Page = necwb::ui::GeometryWorkspace::Page;
+        trigger("necDeckAction");
+        const auto deckShown = !workspace->isVisible();
+        trigger("geometry3DView");
+        const auto threeDFromDeck = deckShown && shows(Page::ThreeD);
+        trigger("necDeckAction");
+        trigger("geometryFit");
+        const auto fitFromDeckKeeps3D = shows(Page::ThreeD);
+        layout->showFullView();
+        application.processEvents();
+        const auto fullShown = layout->fullViewShown() && !workspace->isVisible();
+        trigger("geometryFrontView");
+        const auto frontFromFull = fullShown && shows(Page::Planes)
+            && planes->mainPlane() == Plane::XZ;
+        layout->showFullView();
+        application.processEvents();
+        trigger("geometryFit");
+        const auto fitFromFullKeepsPlanes = shows(Page::Planes) && planes->mainPlane() == Plane::XZ;
+        trigger("necDeckAction");
+        trigger("geometrySideView");
+        const auto sideFromDeck = shows(Page::Planes) && planes->mainPlane() == Plane::YZ;
+        const auto broughtForward = threeDFromDeck && fitFromDeckKeeps3D && frontFromFull
+            && fitFromFullKeepsPlanes && sideFromDeck;
+        if (!broughtForward)
+            qWarning() << "view actions bring geometry forward" << deckShown << threeDFromDeck
+                       << fitFromDeckKeeps3D << fullShown << frontFromFull
+                       << fitFromFullKeepsPlanes << sideFromDeck;
         for (std::size_t index = 0; index < planeKeys.size(); ++index) {
             if (savedPlane[index].isValid()) planeSettings.setValue(planeKeys[index], savedPlane[index]);
             else planeSettings.remove(planeKeys[index]);
         }
         if (!widestFirst || !swapped || !keptAfterEdit || !tableInDeckUnits
-            || !madeVariable || !choseAgain) {
+            || !madeVariable || !choseAgain || !unitsAt1280 || !narrowKeepsLabels
+            || !overflowWorks || !broughtForward) {
             qWarning() << "planes/units/variables" << widestFirst << swapped << keptAfterEdit
                        << tableInDeckUnits
                        << (wireCells ? wireCells->horizontalHeaderItem(2)->text() : QString{})
                        << madeVariable << choseAgain;
             return NECWB_SMOKE_FAILURE("geometry planes, deck units and Make Variable");
+        }
+    }
+    // The geometry views: nothing drawn over a plane but the model, distinct axis labels on a
+    // plane that sees the model end-on, and wires coloured by the Currents view's values.
+    {
+        QSettings{}.setValue(QStringLiteral("geometry/showCurrents"), true);
+        necwb::model::AntennaModel pair;
+        pair.addWire({1, {-2.0, 0.0, 0.0}, {2.0, 0.0, 0.0}, 4, 0.001, 1});
+        pair.addWire({2, {-2.0, 1.5, 0.0}, {2.0, 1.5, 0.0}, 4, 0.001, 2});
+        QWidget host;
+        auto* hostLayout = new QHBoxLayout(&host);
+        auto* workspace = new necwb::ui::GeometryWorkspace(&host);
+        hostLayout->addWidget(workspace);
+        host.resize(1100, 760);
+        host.show();
+        application.processEvents();
+        for (auto* view : workspace->views()) view->setModel(pair);
+        application.processEvents();
+        auto* xy = workspace->planes()->views()[0];
+        auto* xz = workspace->planes()->views()[1];
+
+        // No widget over any view: the title and info lines sit above and below it.
+        const auto clearOver = [&] {
+            for (auto* view : workspace->views()) {
+                if (!view->isVisible()) continue;
+                const QRect area(view->mapToGlobal(QPoint(0, 0)), view->size());
+                for (auto* other : workspace->findChildren<QWidget*>()) {
+                    if (!other->isVisible() || other == view || other->isAncestorOf(view)) continue;
+                    // A splitter handle is between the panes, though rounding at a fractional
+                    // pixel ratio can make it touch one.
+                    if (qobject_cast<QSplitterHandle*>(other) != nullptr) continue;
+                    if (QRect(other->mapToGlobal(QPoint(0, 0)), other->size()).intersects(area))
+                        return false;
+                }
+            }
+            return true;
+        };
+        auto* xyInfo = workspace->planes()->panes()[0]->info();
+        const auto infoUnder = xyInfo->isVisible()
+            && xyInfo->mapTo(workspace, QPoint(0, 0)).y() >= xy->mapTo(workspace, QPoint(0, xy->height())).y()
+            && xyInfo->text().contains(QStringLiteral("2 wires"))
+            && xyInfo->text().contains(QStringLiteral("Grid"));
+        auto* to3D = workspace->findChild<QAction*>(QStringLiteral("geometry3DView"));
+        auto* toFront = workspace->findChild<QAction*>(QStringLiteral("geometryFrontView"));
+        auto* toTop = workspace->findChild<QAction*>(QStringLiteral("geometryTopView"));
+        const auto planesClear = clearOver();
+        to3D->trigger();
+        application.processEvents();
+        const auto clear3D = workspace->page() == necwb::ui::GeometryWorkspace::ThreeD
+            && workspace->view3D()->isVisible() && clearOver();
+        toFront->trigger();
+        application.processEvents();
+        const auto frontMain = workspace->page() == necwb::ui::GeometryWorkspace::Planes
+            && workspace->planes()->mainPlane() == necwb::geometry::ProjectionPlane::XZ
+            && toFront->isChecked();
+        toTop->trigger();
+        application.processEvents();
+
+        // Fit fits every plane on screen, not only the big one.
+        auto* fit = workspace->findChild<QAction*>(QStringLiteral("geometryFit"));
+        const auto unfit = [&](necwb::ui::GeometryView* view) {
+            QWheelEvent wheel(QPointF(50, 50), view->mapToGlobal(QPointF(50, 50)), {}, {0, 240},
+                Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+            QApplication::sendEvent(view, &wheel);
+        };
+        const auto shownImages = [&] {
+            std::vector<QImage> images;
+            for (auto* view : workspace->planes()->views()) images.push_back(view->grab().toImage());
+            return images;
+        };
+        const auto fitted = shownImages();
+        for (auto* view : workspace->planes()->views()) unfit(view);
+        application.processEvents();
+        const auto zoomed = shownImages();
+        fit->trigger();
+        application.processEvents();
+        const auto refitted = shownImages();
+        auto fitsAll = true;
+        for (std::size_t index = 0; index < fitted.size(); ++index)
+            fitsAll = fitsAll && zoomed[index] != fitted[index] && refitted[index] == fitted[index];
+
+        // A wire along Y seen from the front is a point: XZ keeps the model's scale and its
+        // labels stay distinct and plain.
+        necwb::model::AntennaModel alongY;
+        alongY.addWire({1, {10.0, -2.0, 0.0}, {10.0, 2.0, 0.0}, 9, 0.001, 1});
+        for (auto* view : workspace->views()) view->setModel(alongY);
+        application.processEvents();
+        const auto distinctLabels = [](const QStringList& labels) {
+            auto unique = labels;
+            unique.removeDuplicates();
+            return labels.size() >= 2 && unique.size() == labels.size()
+                && std::ranges::none_of(labels, [](const QString& label) {
+                       return label.contains(QLatin1Char('e'));
+                   });
+        };
+        const auto flatLabels = distinctLabels(xz->tickLabels(Qt::Horizontal))
+            && distinctLabels(xz->tickLabels(Qt::Vertical))
+            && xz->infoText().contains(QStringLiteral("end-on"));
+        if (!flatLabels) qWarning() << "flat labels" << xz->tickLabels(Qt::Horizontal) << xz->tickLabels(Qt::Vertical) << xz->infoText();
+        for (auto* view : workspace->views()) view->setModel(pair);
+        application.processEvents();
+
+        // Currents: the run's values at the column's frequency, as the Currents view shows them.
+        necwb::analysis::AnalysisResult run;
+        const auto current = [](double frequency, int tag, int segment, double magnitude) {
+            return necwb::analysis::SegmentCurrentResult{.frequencyMHz = frequency,
+                .segment = segment, .wireTag = tag, .current = {magnitude, 0.0},
+                .magnitude = magnitude, .phaseDegrees = 0.0};
+        };
+        const std::array low{0.25, 0.5, 1.0, 0.75};
+        const std::array high{1.0, 0.125, 0.25, 0.5};
+        for (auto segment = 1; segment <= 4; ++segment) {
+            run.currents.push_back(current(14.0, 1, segment, low[segment - 1]));
+            run.currents.push_back(current(14.0, 2, segment, 0.05));
+            run.currents.push_back(current(14.2, 1, segment, high[segment - 1]));
+            run.currents.push_back(current(14.2, 2, segment, 0.05));
+        }
+        necwb::ui::ResultsController results(&host);
+        results.setColumnChangedCallback([workspace](const necwb::ui::ResultState& state, bool stale) {
+            workspace->setResults(state, stale);
+        });
+        auto* currentsAction = workspace->currentsAction();
+        const auto offWithoutResults = !currentsAction->isEnabled() && !xy->showsCurrents();
+        const auto data = necwb::ui::ResultData::make(run);
+        results.setResults(data, QStringLiteral("currents-run"), pair);
+        results.setFrequency(14.0);
+        application.processEvents();
+        const auto near = [](const QColor& a, const QColor& b) {
+            return std::abs(a.red() - b.red()) <= 10 && std::abs(a.green() - b.green()) <= 10
+                && std::abs(a.blue() - b.blue()) <= 10;
+        };
+        // The device pixel holding a point of the view: grab() is at the screen's pixel ratio,
+        // and the pixel that contains the point lies wholly inside a stroke centred on it, so it
+        // is not an antialiased edge.
+        const auto pixelAt = [](const QImage& image, QPointF point) {
+            const auto ratio = image.devicePixelRatio();
+            return image.pixelColor(QPoint(static_cast<int>(std::floor(point.x() * ratio)),
+                static_cast<int>(std::floor(point.y() * ratio))));
+        };
+        // The colour of each wire 1 segment at its middle, against the Currents view's table.
+        const auto matchesCurrentsView = [&](double frequency) {
+            necwb::ui::CurrentDistributionView currentsView;
+            currentsView.setModel(pair);
+            currentsView.setResults(data, QStringLiteral("currents-run"));
+            currentsView.setSelectedFrequency(frequency);
+            auto* table = currentsView.findChild<QTableWidget*>();
+            auto largest = 0.0;
+            for (auto row = 0; row < table->rowCount(); ++row)
+                largest = std::max(largest, table->item(row, 3)->text().toDouble());
+            const auto image = xy->grab().toImage();
+            auto matched = 0;
+            for (auto row = 0; row < table->rowCount(); ++row) {
+                if (table->item(row, 0)->text() != QStringLiteral("1")) continue;
+                const auto segment = table->item(row, 1)->text().toInt();
+                const auto endpoints = necwb::model::wireSegmentEndpoints(*pair.wireByTag(1), segment);
+                const auto middle = xy->screenPoint({(endpoints->first.x + endpoints->second.x) / 2.0,
+                    0.0, 0.0});
+                const auto expected = necwb::ui::currentColor(table->item(row, 3)->text().toDouble(), largest);
+                if (near(pixelAt(image, middle), expected)) ++matched;
+                else qWarning() << "segment" << segment << pixelAt(image, middle) << expected;
+            }
+            return matched == 4;
+        };
+        const auto colouredLow = currentsAction->isEnabled() && currentsAction->isChecked()
+            && xy->showsCurrents() && matchesCurrentsView(14.0)
+            && workspace->planes()->panes()[0]->colorScale()->isVisible()
+            && workspace->planes()->panes()[0]->colorScale()->maximumText() == QStringLiteral("1.000 A")
+            && xyInfo->text().contains(QStringLiteral("14.000 MHz"));
+        const auto firstSegment = xy->screenPoint({-1.5, 0.0, 0.0});
+        const auto lowColour = pixelAt(xy->grab().toImage(), firstSegment);
+        results.setFrequency(14.2);
+        application.processEvents();
+        const auto followsFrequency = matchesCurrentsView(14.2)
+            && !near(pixelAt(xy->grab().toImage(), firstSegment), lowColour);
+
+        // The selected wire keeps an outline that does not rely on hue.
+        const auto beside = xy->screenPoint({-1.5, 0.0, 0.0}) + QPointF(0.0, 4.0);
+        const auto unselected = xy->grab().toImage();
+        for (auto* view : workspace->views()) view->selectWire(1);
+        application.processEvents();
+        const auto selectedImage = xy->grab().toImage();
+        const auto selectionShows = selectedImage != unselected
+            && near(pixelAt(selectedImage, beside), xy->palette().color(QPalette::Text))
+            && !near(pixelAt(unselected, beside), xy->palette().color(QPalette::Text));
+        for (auto* view : workspace->views()) view->selectWire(-1);
+
+        // Stale results: plain wires, and the info line says why.
+        results.setStale(true);
+        application.processEvents();
+        const auto stalePlain = !xy->showsCurrents() && !workspace->view3D()->showsCurrents()
+            && near(pixelAt(xy->grab().toImage(), firstSegment), QColor(40, 105, 170))
+            && xyInfo->text().contains(QStringLiteral("out of date"))
+            && !workspace->planes()->panes()[0]->colorScale()->isVisible();
+        // A live solve brings currents back at its frequency.
+        necwb::analysis::AnalysisResult livePoint;
+        for (auto segment = 1; segment <= 4; ++segment)
+            livePoint.currents.push_back(current(14.1, 1, segment, 0.5));
+        results.setLivePoint(livePoint, 14.1);
+        results.setFrequency(14.1);
+        application.processEvents();
+        const auto liveShown = xy->showsCurrents() && xyInfo->text().contains(QStringLiteral("14.100"));
+        // Turning Currents off is remembered.
+        currentsAction->setChecked(false);
+        application.processEvents();
+        const auto offRemembered = !xy->showsCurrents()
+            && !QSettings{}.value(QStringLiteral("geometry/showCurrents")).toBool();
+        currentsAction->setChecked(true);
+        if (!infoUnder || !planesClear || !clear3D || !frontMain || !fitsAll || !flatLabels
+            || !offWithoutResults || !colouredLow || !followsFrequency || !selectionShows
+            || !stalePlain || !liveShown || !offRemembered) {
+            qWarning() << "geometry extras" << infoUnder << planesClear << clear3D << frontMain
+                       << fitsAll << flatLabels << offWithoutResults << colouredLow
+                       << followsFrequency << selectionShows << stalePlain << liveShown
+                       << offRemembered << xyInfo->text();
+            return NECWB_SMOKE_FAILURE("geometry info lines, view buttons, labels and currents");
+        }
+    }
+    // The line under a card table sits under its last row, or at the bottom, visible, when
+    // the table is taller than the pane.
+    {
+        necwb::ui::WireCardEditor wires;
+        wires.resize(600, 420);
+        necwb::model::AntennaModel few;
+        for (auto tag = 1; tag <= 3; ++tag)
+            few.addWire({tag, {0.0, 0.0, tag * 1.0}, {4.0, 0.0, tag * 1.0}, 5, 0.001, static_cast<std::size_t>(tag)});
+        wires.setModel(few);
+        wires.show();
+        application.processEvents();
+        application.processEvents();
+        auto* table = wires.findChild<QTableWidget*>(QStringLiteral("wireCardTable"));
+        auto* note = wires.findChild<QLabel*>(QStringLiteral("cardRowNote"));
+        wires.selectWire(1);
+        application.processEvents();
+        const auto lastRow = table->mapTo(&wires, table->visualItemRect(table->item(2, 0)).bottomLeft()).y()
+            + table->viewport()->y();
+        const auto shortUnder = note->isVisible() && note->y() >= table->geometry().bottom()
+            && note->y() - lastRow <= 12 && note->text().contains(QStringLiteral("long"));
+        necwb::model::AntennaModel many;
+        for (auto tag = 1; tag <= 60; ++tag)
+            many.addWire({tag, {0.0, 0.0, tag * 1.0}, {4.0, 0.0, tag * 1.0}, 5, 0.001, static_cast<std::size_t>(tag)});
+        wires.setModel(many);
+        application.processEvents();
+        application.processEvents();
+        const auto tallVisible = note->isVisible() && note->geometry().bottom() <= wires.height()
+            && table->geometry().bottom() < note->y() && table->verticalScrollBar()->isVisible();
+        if (!shortUnder || !tallVisible) {
+            qWarning() << "row note" << shortUnder << tallVisible << note->geometry() << table->geometry() << lastRow;
+            return NECWB_SMOKE_FAILURE("the line under a table follows its last row");
         }
     }
     // Opening an existing model shows it in the main window without raising the NEC Deck
@@ -979,6 +1353,103 @@ auto main(int argc, char* argv[]) -> int
         resultWindowSettings.setValue(QStringLiteral("files/recentModels"), savedRecentModels);
         resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
         resultWindowSettings.sync();
+    }
+    // A wire GX made is read-only: no ƒx from the GX card's fields, and its tooltip names GX,
+    // not a GC taper. Wire 1's own expression still shows.
+    {
+        const auto savedRecentModels = resultWindowSettings.value(
+            QStringLiteral("files/recentModels"));
+        QTemporaryDir modelDirectory;
+        const auto modelPath = modelDirectory.filePath(QStringLiteral("mirrored-dipole.nec"));
+        QFile modelFile(modelPath);
+        auto generatedWirePlain = false;
+        if (modelDirectory.isValid() && modelFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            modelFile.write("SY half=16.5\nGW 1 11 -half 0 30 0 0 30 0.0033\nGX 1 100\n"
+                "GS 0 0 0.3048\nGE 0\nEX 0 1 11 0 1 0\nFR 0 1 0 0 14.175 0\nEN\n");
+            modelFile.close();
+            resultWindowSettings.setValue(QStringLiteral("files/recentModels"),
+                QStringList{modelPath});
+            resultWindowSettings.sync();
+            necwb::ui::MainWindow mainWindow;
+            mainWindow.resize(1400, 900);
+            mainWindow.show();
+            application.processEvents();
+            if (auto* recentModelsMenu = mainWindow.findChild<QMenu*>(
+                    QStringLiteral("recentModelsMenu"))) {
+                for (auto* action : recentModelsMenu->actions()) {
+                    if (action->data().toString() != modelPath) continue;
+                    action->trigger();
+                    break;
+                }
+            }
+            application.processEvents();
+            auto* tree = mainWindow.findChild<QTreeWidget*>(QStringLiteral("modelTree"));
+            auto* wireCells = mainWindow.findChild<QTableWidget*>(QStringLiteral("wireCardTable"));
+            auto* item = tree->findItems(QStringLiteral("Wire 2"), Qt::MatchExactly | Qt::MatchRecursive).value(0);
+            if (item != nullptr) tree->setCurrentItem(item);
+            application.processEvents();
+            QStringList marked, tips;
+            if (wireCells != nullptr && wireCells->rowCount() == 2) {
+                for (auto column = 0; column <= 8; ++column) {
+                    auto* cell = wireCells->item(1, column);
+                    if (cell == nullptr) continue;
+                    // What shows ƒx: the expression, its icon and italics.
+                    if (!cell->data(necwb::ui::CellExpressionRole).toString().isEmpty()
+                        || !cell->icon().isNull() || cell->font().italic())
+                        marked << QString::number(column);
+                    tips << cell->toolTip();
+                }
+                generatedWirePlain = item != nullptr && marked.isEmpty() && tips.size() == 9
+                    && std::ranges::all_of(tips, [](const QString& tip) {
+                           return tip.contains(QStringLiteral("GX card on line 3")) && !tip.contains(QStringLiteral("GC"));
+                       })
+                    && !(wireCells->item(1, 2)->flags() & Qt::ItemIsEditable)
+                    && wireCells->item(0, 2)->data(necwb::ui::CellExpressionRole).toString() == QStringLiteral("-half")
+                    && !wireCells->item(0, 2)->icon().isNull();
+            }
+            // Other opens on the family that holds the GX card, with its fields named and
+            // the line under the table saying what it makes.
+            auto gxShown = false;
+            QStringList gxSeen;
+            if (auto* other = tree->findItems(QStringLiteral("Other"), Qt::MatchExactly | Qt::MatchRecursive).value(0)) {
+                tree->setCurrentItem(other);
+                emit tree->itemClicked(other, 0);
+                application.processEvents();
+                auto* otherPage = mainWindow.findChild<QWidget*>(QStringLiteral("cardsOther"));
+                auto* otherCells = otherPage->findChild<QTableWidget*>(QStringLiteral("structuredCardTable"));
+                auto* families = otherPage->findChild<QTreeWidget*>();
+                auto gxRow = -1;
+                for (auto row = 0; row < otherCells->rowCount(); ++row)
+                    if (otherCells->item(row, 1)->text() == QStringLiteral("GX")) gxRow = row;
+                if (gxRow >= 0) otherCells->selectRow(gxRow);
+                application.processEvents();
+                const auto* note = otherPage->findChild<QLabel*>(QStringLiteral("cardRowNote"));
+                const auto header = [otherCells](int column) {
+                    auto* item = otherCells->horizontalHeaderItem(column);
+                    return item != nullptr ? item->text() : QString{};
+                };
+                const auto noteText = note != nullptr ? note->toolTip() : QString{};
+                gxSeen << (families->currentItem() ? families->currentItem()->text(0) : QString{})
+                       << QString::number(gxRow) << header(2) << header(3) << noteText;
+                gxShown = otherCells->isVisible() && gxRow >= 0
+                    && families->currentItem() != nullptr
+                    && families->currentItem()->text(0).startsWith(QStringLiteral("Other NEC-2 Geometry Cards"))
+                    && header(2) == QStringLiteral("Tag increment")
+                    && header(3) == QStringLiteral("Mirror in YZ XZ XY")
+                    && noteText.contains(QStringLiteral("in the YZ plane"))
+                    && noteText.contains(QStringLiteral("makes wire 2"));
+            }
+            if (!gxShown) qWarning() << "GX in Other" << gxSeen;
+            generatedWirePlain = generatedWirePlain && gxShown;
+            if (!generatedWirePlain)
+                qWarning() << "generated wire" << (wireCells ? wireCells->rowCount() : -1) << marked << tips.value(2);
+            mainWindow.close();
+        }
+        resultWindowSettings.setValue(QStringLiteral("files/recentModels"), savedRecentModels);
+        resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
+        resultWindowSettings.sync();
+        if (!generatedWirePlain)
+            return NECWB_SMOKE_FAILURE("a GX wire shows no expressions and names its card");
     }
     // Dragging a variable's slider rewrites its SY card once, on release, as one undo entry;
     // selecting Variables shows the Parameters table in the properties pane.
@@ -1843,14 +2314,15 @@ auto main(int argc, char* argv[]) -> int
                 auto realColumn = -1;
                 for (auto column = 0; column < sourceTable->columnCount(); ++column)
                     if (sourceTable->horizontalHeaderItem(column)->text() == QStringLiteral("Real V")) realColumn = column;
-                QRect boxShown, createShown, viewportShown;
+                QRect boxShown, createShown, viewportShown, cellShown;
                 auto boxPastCell = false;
                 if (realColumn >= 0) {
                     sourceTable->scrollToItem(sourceTable->item(0, realColumn));
                     viewportShown = QRect(sourceTable->viewport()->mapToGlobal(QPoint(0, 0)),
                         sourceTable->viewport()->size());
-                    const auto cellLeft = sourceTable->viewport()->mapToGlobal(
-                        sourceTable->visualItemRect(sourceTable->item(0, realColumn)).topLeft()).x();
+                    const auto cell = sourceTable->visualItemRect(sourceTable->item(0, realColumn));
+                    cellShown = QRect(sourceTable->viewport()->mapToGlobal(cell.topLeft()), cell.size());
+                    const auto cellLeft = cellShown.left();
                     QTimer::singleShot(100, [&] {
                         auto* box = qobject_cast<QDialog*>(QApplication::activePopupWidget());
                         if (box == nullptr) return;
@@ -1863,10 +2335,16 @@ auto main(int argc, char* argv[]) -> int
                     sourceTable->item(0, realColumn)->setText(QStringLiteral("newname/2"));
                     application.processEvents();
                 }
-                const auto boxInside = !boxShown.isEmpty() && viewportShown.contains(boxShown)
-                    && viewportShown.contains(createShown) && !text().contains(QStringLiteral("newname"));
+                // Inside the table from side to side, and under the cell, or over it when the
+                // screen has no room below; a short table leaves the box hanging past its rows.
+                const auto across = [&viewportShown](const QRect& shown) {
+                    return shown.left() >= viewportShown.left() && shown.right() <= viewportShown.right();
+                };
+                const auto boxInside = !boxShown.isEmpty() && across(boxShown) && across(createShown)
+                    && (boxShown.top() > cellShown.bottom() || boxShown.bottom() < cellShown.top())
+                    && !text().contains(QStringLiteral("newname"));
                 if (!boxInside || !boxPastCell)
-                    qWarning() << "symbol box" << boxShown << createShown << viewportShown << boxPastCell;
+                    qWarning() << "symbol box" << boxShown << createShown << viewportShown << cellShown << boxPastCell;
                 // Clicking rows in Wires and Sources selects their items in the tree, which keeps
                 // the height it opened with, and the table stays where it was.
                 const auto clickRows = [&](QTableWidget* table) {
@@ -3796,6 +4274,97 @@ auto main(int argc, char* argv[]) -> int
                 && hoverText.contains(QStringLiteral("Phase 0.0°"));
         }
         if (!antennaValid) return NECWB_SMOKE_FAILURE("currents antenna view");
+    }
+    // The 3D pattern is centred on the antenna and sized by it: a three-element beam moved
+    // up and sideways draws exactly as it does at the origin, in free space and over ground
+    // and in both scales, and the antenna shows in it.
+    {
+        const auto beam = [](necwb::model::Point3D offset) {
+            necwb::model::AntennaModel model;
+            const std::array<std::pair<double, double>, 3> elements{{{-1.5, 5.4}, {0.0, 5.1}, {1.2, 4.8}}};
+            for (auto index = 0; index < 3; ++index) {
+                const auto [x, half] = elements[static_cast<std::size_t>(index)];
+                model.addWire({index + 1, {x + offset.x, -half + offset.y, offset.z},
+                    {x + offset.x, half + offset.y, offset.z}, 11, 0.001, static_cast<std::size_t>(index + 1)});
+            }
+            return model;
+        };
+        const necwb::model::Point3D shift{3.0, -2.0, 10.0};
+        const auto atOrigin = beam({});
+        const auto moved = beam(shift);
+        const auto placed = necwb::ui::patternPlacement(atOrigin);
+        const auto placedMoved = necwb::ui::patternPlacement(moved);
+        const auto close = [](const necwb::model::Point3D& a, const necwb::model::Point3D& b) {
+            return std::abs(a.x - b.x) < 1e-9 && std::abs(a.y - b.y) < 1e-9 && std::abs(a.z - b.z) < 1e-9;
+        };
+        // Centred on the bounding box, the same size wherever it is, and only shifted and
+        // uniformly scaled; with no antenna, at the origin.
+        const auto placementFollows = close(placed.centre, {-0.15, 0.0, 0.0})
+            && std::abs(placed.halfSize - 5.4) < 1e-9
+            && close(placedMoved.centre, {-0.15 + shift.x, shift.y, shift.z})
+            && std::abs(placedMoved.halfSize - placed.halfSize) < 1e-9
+            && close(placedMoved.toDisplay({1.2 + shift.x, 4.8 + shift.y, shift.z}, 0.32),
+                placed.toDisplay({1.2, 4.8, 0.0}, 0.32))
+            && close(placed.toDisplay({-0.15, 5.4, 0.0}, 0.32), {0.0, 0.32, 0.0})
+            && close(placedMoved.toDisplay({-0.15 + shift.x, shift.y, 0.0}, 0.32),
+                {0.0, 0.0, -shift.z * 0.32 / 5.4});
+        const auto empty = necwb::ui::patternPlacement(necwb::model::AntennaModel{});
+        const auto patternOnly = close(empty.centre, {}) && empty.halfSize == 1.0;
+
+        // A forward lobe, over the whole sphere or only above the horizon.
+        const auto pattern = [](bool overGround) {
+            necwb::analysis::AnalysisResult result;
+            for (auto theta = 0; theta <= (overGround ? 90 : 180); theta += 10)
+                for (auto phi = 0; phi < 360; phi += 10) {
+                    const auto t = theta * std::numbers::pi / 180.0, f = phi * std::numbers::pi / 180.0;
+                    const auto gain = 7.0 + 10.0 * std::log10(std::max(1e-3,
+                        (1.0 + std::sin(t) * std::cos(f)) / 2.0 * (overGround ? std::sin(2.0 * t) + 0.05 : 1.0)));
+                    result.radiation.push_back({14.2, double(theta), double(phi), gain - 3.0, gain - 3.0, gain});
+                }
+            return necwb::ui::ResultData::make(result);
+        };
+        const auto render = [&](const necwb::model::AntennaModel& model, bool overGround,
+                                necwb::analysis::RadiationScale scale) {
+            necwb::ui::Radiation3DView view;
+            view.resize(800, 600);
+            view.setModel(model);
+            view.setResults(pattern(overGround), QStringLiteral("beam"));
+            view.setDisplaySettings({.frequencyMHz = 14.2, .scale = scale});
+            view.show();
+            application.processEvents();
+            auto* surface = view.findChild<QWidget*>(QStringLiteral("radiation3DSurface"));
+            return surface != nullptr ? surface->grab().toImage() : QImage{};
+        };
+        // Pixels that differ by more than a rounding step.
+        const auto differing = [](const QImage& a, const QImage& b) {
+            if (a.size() != b.size() || a.isNull()) return std::numeric_limits<int>::max();
+            auto count = 0;
+            for (auto y = 0; y < a.height(); ++y)
+                for (auto x = 0; x < a.width(); ++x) {
+                    const auto p = a.pixelColor(x, y), q = b.pixelColor(x, y);
+                    if (std::abs(p.red() - q.red()) + std::abs(p.green() - q.green())
+                            + std::abs(p.blue() - q.blue()) > 24) ++count;
+                }
+            return count;
+        };
+        QStringList seen;
+        auto followsAntenna = true;
+        for (const auto overGround : {false, true})
+            for (const auto scale : {necwb::analysis::RadiationScale::Normalized,
+                     necwb::analysis::RadiationScale::Absolute}) {
+                const auto here = render(atOrigin, overGround, scale);
+                const auto there = render(moved, overGround, scale);
+                const auto bare = render({}, overGround, scale);
+                const auto same = differing(here, there);
+                const auto antennaShows = differing(here, bare);
+                seen << QStringLiteral("%1/%2: moved %3 px, antenna %4 px").arg(overGround ? "ground" : "free")
+                            .arg(static_cast<int>(scale)).arg(same).arg(antennaShows);
+                followsAntenna = followsAntenna && same <= 20 && antennaShows > 200;
+            }
+        if (!placementFollows || !patternOnly || !followsAntenna) {
+            qWarning() << "pattern on antenna" << placementFollows << patternOnly << seen;
+            return NECWB_SMOKE_FAILURE("3D pattern centred on and sized by the antenna");
+        }
     }
     necwb::ui::CurrentDistributionView currents;
     necwb::ui::RadiationPatternView radiation2D;

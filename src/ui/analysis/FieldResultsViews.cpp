@@ -18,7 +18,6 @@
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QLinearGradient>
 #include <QLineF>
 #include <QContextMenuEvent>
 #include <QMenu>
@@ -242,6 +241,35 @@ auto resultModelExtentFromOrigin(const model::AntennaModel& model) -> double
             extent = std::max({extent, std::abs(point.x), std::abs(point.y), std::abs(point.z)});
     }
     return extent;
+}
+
+auto PatternPlacement::toDisplay(const model::Point3D& point, double size) const -> model::Point3D
+{
+    const auto factor = size / halfSize;
+    return {(point.x - centre.x) * factor, (point.y - centre.y) * factor,
+        (point.z - centre.z) * factor};
+}
+
+auto patternPlacement(const model::AntennaModel& model) -> PatternPlacement
+{
+    std::optional<model::Point3D> low, high;
+    const auto include = [&](const model::Point3D& point) {
+        if (!low) {
+            low = high = point;
+            return;
+        }
+        low = model::Point3D{std::min(low->x, point.x), std::min(low->y, point.y), std::min(low->z, point.z)};
+        high = model::Point3D{std::max(high->x, point.x), std::max(high->y, point.y), std::max(high->z, point.z)};
+    };
+    for (const auto& wire : model.wires())
+        for (auto index = std::size_t{}; index < model::wirePathPointCount(wire); ++index)
+            include(model::wirePathPoint(wire, index));
+    for (const auto& patch : model.surfacePatches())
+        for (const auto& point : patch.corners) include(point);
+    if (!low) return {};
+    const auto halfSize = std::max({(high->x - low->x) / 2.0, (high->y - low->y) / 2.0,
+        (high->z - low->z) / 2.0, 1.0e-12});
+    return {{(low->x + high->x) / 2.0, (low->y + high->y) / 2.0, (low->z + high->z) / 2.0}, halfSize};
 }
 
 auto radiationAnglesCoverCircle(const std::vector<QPointF>& samples) -> bool
@@ -982,11 +1010,12 @@ protected:
         const auto hasRadiation = maximum.has_value();
         const auto maxGain = maximum.value_or(0.0);
         const auto maximumCurrent = showCurrents_ ? currentMaximum() : std::nullopt;
-        const auto modelExtent = resultModelExtentFromOrigin(model_);
-        // The antenna is drawn small inside a pattern, or large on its own.
+        // The pattern is centred on the antenna, which is drawn small inside it, or large on
+        // its own.
+        const auto placement = patternPlacement(model_);
         const auto antennaSize = hasRadiation ? 0.32 : 1.7;
-        const auto lines = modelLines(antennaSize, modelExtent, maximumCurrent);
-        if (showAntenna_) drawPatches(painter, scale * antennaSize, modelExtent);
+        const auto lines = modelLines(antennaSize, placement, maximumCurrent);
+        if (showAntenna_) drawPatches(painter, scale, antennaSize, placement);
         // Shaded, the lines are sorted in with the surface so it hides what is behind it;
         // a single cut has no surface to fill and is drawn as lines.
         const auto shaded = hasRadiation && style_ != SurfaceStyle::Wireframe
@@ -1002,7 +1031,7 @@ protected:
         }
         drawAxisLabels(painter, scale * 0.34);
         const auto readoutText = maximumCurrent
-            ? highlightHoveredCurrent(painter, scale * antennaSize, modelExtent) : QString{};
+            ? highlightHoveredCurrent(painter, scale, antennaSize, placement) : QString{};
         if (!readoutText.isEmpty()) {
             const QRectF readout(8, height()-31, width()-16, 23);
             painter.fillRect(readout, palette().brush(QPalette::AlternateBase));
@@ -1105,12 +1134,7 @@ private:
         const QRectF legend(10, top, 285, 50);
         painter.fillRect(legend, palette().brush(QPalette::AlternateBase));
         const QRectF colorBar(legend.left() + 8, legend.top() + 19, 185, 10);
-        QLinearGradient gradient(colorBar.topLeft(), colorBar.topRight());
-        for (auto index = 0; index <= 4; ++index) {
-            const auto ratio = index / 4.0;
-            gradient.setColorAt(ratio, gainColor(ratio));
-        }
-        painter.fillRect(colorBar, gradient);
+        painter.fillRect(colorBar, turboGradient(colorBar));
         painter.setPen(palette().color(QPalette::Mid));
         painter.drawRect(colorBar);
         painter.setPen(palette().color(QPalette::Text));
@@ -1203,13 +1227,15 @@ private:
             const auto gain = analysis::radiationGainDb(sample, settings_.component);
             if (std::isfinite(gain) && gain > -900.0) points.push_back(samplePoint(sample, gain, reference));
         }
+        // The axes and the antenna are about the pattern's centre, so the fit does not reach
+        // back to the model's origin.
         if (showAntenna_ && !model_.empty()) {
-            const auto extent = resultModelExtentFromOrigin(model_);
+            const auto placement = patternPlacement(model_);
             for (const auto& wire : model_.wires())
-                for (auto index = std::size_t{0}; index < model::wirePathPointCount(wire); ++index) {
-                    const auto point = normalized(model::wirePathPoint(wire, index), extent);
-                    points.push_back({point.x * 0.32, point.y * 0.32, point.z * 0.32});
-                }
+                for (auto index = std::size_t{0}; index < model::wirePathPointCount(wire); ++index)
+                    points.push_back(placement.toDisplay(model::wirePathPoint(wire, index), 0.32));
+            for (const auto& patch : model_.surfacePatches())
+                for (const auto& point : patch.corners) points.push_back(placement.toDisplay(point, 0.32));
         }
         const auto legends = showCurrents_ && currentMaximum() ? 158.0 : 100.0;
         const QRectF area(16.0, legends, width() - 32.0, height() - legends - 16.0);
@@ -1240,8 +1266,6 @@ private:
         return drawRadiationSurface(painter, points, surfaceView(scale),
             style_ == SurfaceStyle::ShadedGrid, seeThrough_, dragging_ ? 6000 : 40000, lines);
     }
-    static auto normalized(const model::Point3D& point, double extent) -> model::Point3D
-    { return {point.x/extent, point.y/extent, point.z/extent}; }
     void drawAxisLabels(QPainter& painter, double scale)
     {
         const std::array labels{std::pair{model::Point3D{1.0, 0.0, 0.0}, tr("X")},
@@ -1300,17 +1324,14 @@ private:
     }
     // The axes, wires and currents as lines, in units of the view scale, with the antenna
     // `size` across, so a shaded surface can hide the parts behind it.
-    [[nodiscard]] auto modelLines(double size, double extent,
+    [[nodiscard]] auto modelLines(double size, const PatternPlacement& placement,
         std::optional<double> maximumCurrent) const -> std::vector<SurfaceLine>
     {
         std::vector<SurfaceLine> lines{
             {{}, {0.34, 0.0, 0.0}, QPen(QColor(210, 70, 65), 2)},
             {{}, {0.0, 0.34, 0.0}, QPen(QColor(65, 175, 90), 2)},
             {{}, {0.0, 0.0, 0.34}, QPen(QColor(55, 125, 220), 2)}};
-        const auto place = [&](const model::Point3D& point) {
-            const auto unit = normalized(point, extent);
-            return model::Point3D{unit.x * size, unit.y * size, unit.z * size};
-        };
+        const auto place = [&](const model::Point3D& point) { return placement.toDisplay(point, size); };
         if (showAntenna_) {
             for (const auto& wire : model_.wires())
                 for (auto index = std::size_t{1}; index < model::wirePathPointCount(wire); ++index)
@@ -1326,24 +1347,25 @@ private:
                 if (!endpoints) continue;
                 const auto ratio = current.magnitude / std::max(*maximumCurrent, 1.0e-30);
                 lines.push_back({place(endpoints->first), place(endpoints->second),
-                    QPen(gainColor(ratio), 3.0 + 4.0 * ratio), 1});
+                    QPen(currentColor(current.magnitude, *maximumCurrent), 3.0 + 4.0 * ratio), 1});
             }
         }
         return lines;
     }
-    void drawPatches(QPainter& painter, double scale, double extent)
+    void drawPatches(QPainter& painter, double scale, double size, const PatternPlacement& placement)
     {
         painter.setPen(QPen(QColor(210, 155, 35), 1.5));
         painter.setBrush(QColor(245, 190, 45, 75));
         for (const auto& patch : model_.surfacePatches()) {
             QPolygonF polygon;
             for (const auto& point : patch.corners)
-                polygon << project(normalized(point, extent), scale);
+                polygon << project(placement.toDisplay(point, size), scale);
             if (polygon.size() >= 3) painter.drawPolygon(polygon);
         }
     }
     // Highlights the current segment under the pointer and returns its readout.
-    auto highlightHoveredCurrent(QPainter& painter, double scale, double extent) -> QString
+    auto highlightHoveredCurrent(QPainter& painter, double scale, double size,
+        const PatternPlacement& placement) -> QString
     {
         if (!tracking_) return {};
         const analysis::SegmentCurrentResult* hovered{};
@@ -1355,8 +1377,8 @@ private:
             const auto endpoints = location
                 ? model::wireSegmentEndpoints(*location->wire, location->segment) : std::nullopt;
             if (!endpoints) continue;
-            const QLineF line(project(normalized(endpoints->first, extent), scale),
-                project(normalized(endpoints->second, extent), scale));
+            const QLineF line(project(placement.toDisplay(endpoints->first, size), scale),
+                project(placement.toDisplay(endpoints->second, size), scale));
             const auto distance = pointToSegmentDistance(cursor_, line.p1(), line.p2());
             if (distance < hoverDistance) {
                 hoverDistance = distance; hovered = &current; hoveredLine = line;
@@ -1469,10 +1491,7 @@ void CurrentDistributionView::refresh()
             .arg(formatDecimal(selectedFrequency(frequency_)), runContext_)
         : tr("%1 MHz · %2 current segment(s) · %3")
             .arg(formatDecimal(selectedFrequency(frequency_))).arg(values.size()).arg(runContext_));
-    std::vector<analysis::FeedpointResult> feedpoints;
-    for (const auto& feed : result.feedpoints)
-        if (nearlyEqual(feed.frequencyMHz, selectedFrequency(frequency_))) feedpoints.push_back(feed);
-    auto displayed = analysis::displayedCurrents(values, feedpoints, model_);
+    auto displayed = analysis::displayedCurrentsAt(result, selectedFrequency(frequency_), model_);
     std::map<std::pair<std::size_t, int>, double> displayedPhase;
     for (const auto& segment : displayed.segments)
         displayedPhase[{segment.wireIndex, segment.segment}] = segment.relativePhaseDegrees;

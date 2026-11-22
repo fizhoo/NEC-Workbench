@@ -287,6 +287,32 @@ void GeometryInteractionView::mouseDoubleClickEvent(QMouseEvent* event)
     QWidget::mouseDoubleClickEvent(event);
 }
 
+auto geometryCounts(const model::AntennaModel& model) -> QString
+{
+    const auto wires = model.wireCount();
+    auto text = wires == 1 ? QObject::tr("1 wire") : QObject::tr("%1 wires").arg(wires);
+    if (const auto patches = model.surfacePatchCount(); patches > 0)
+        text += patches == 1 ? QObject::tr(" · 1 patch") : QObject::tr(" · %1 patches").arg(patches);
+    return text;
+}
+
+void GeometryInteractionView::setCurrents(
+    std::shared_ptr<const analysis::DisplayedCurrents> currents, QString note)
+{
+    if (currents && currents->segments.empty()) currents.reset();
+    if (currents == currents_ && note == currentsNote_) return;
+    currents_ = std::move(currents);
+    currentsNote_ = std::move(note);
+    update();
+    emit infoChanged();
+}
+
+auto GeometryInteractionView::selectionHaloPen(double width) const -> QPen
+{
+    return QPen(palette().color(QPalette::Text), width, Qt::SolidLine, Qt::RoundCap,
+        Qt::RoundJoin);
+}
+
 void GeometryInteractionView::drawConnectors(QPainter& painter,
     const std::function<QPointF(const model::Point3D&)>& toScreen) const
 {
@@ -299,6 +325,13 @@ void GeometryInteractionView::drawConnectors(QPainter& painter,
         const auto start = toScreen(*first);
         const auto end = toScreen(*second);
         const auto radius = selected ? 5.0 : 4.0;
+        if (selected && showsCurrents()) {
+            painter.setPen(selectionHaloPen(7.0));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawLine(start, end);
+            painter.drawEllipse(start, radius, radius);
+            painter.drawEllipse(end, radius, radius);
+        }
         painter.setPen(QPen(selected ? QColor(225, 105, 25) : color, selected ? 3.0 : 2.0, style));
         painter.setBrush(palette().base());
         painter.drawLine(start, end);

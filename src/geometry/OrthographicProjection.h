@@ -41,6 +41,8 @@ struct Bounds2D {
     -> std::optional<Bounds2D>;
 [[nodiscard]] auto projectedBounds(const model::AntennaModel& model, ProjectionPlane plane)
     -> std::optional<Bounds2D>;
+// The longest side of the model's bounding box, 0 when it has no geometry.
+[[nodiscard]] auto modelExtent(const model::AntennaModel& model) -> double;
 // The plane the model spreads out most in: the largest projected area, each side floored at
 // a twentieth of the model's size so a flat antenna still compares. Ties go to XY, then XZ.
 [[nodiscard]] auto widestPlane(const model::AntennaModel& model) -> ProjectionPlane;

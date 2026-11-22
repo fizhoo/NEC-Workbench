@@ -81,6 +81,14 @@ auto labels(const QString& mnemonic, int type) -> QStringList
                 QObject::tr("C F/m")};
         return where + QStringList{QObject::tr("R Ω"), QObject::tr("L H"), QObject::tr("C F")};
     }
+    if (mnemonic == QStringLiteral("GX"))
+        return {QObject::tr("Tag increment"), QObject::tr("Mirror in YZ XZ XY")};
+    if (mnemonic == QStringLiteral("GR"))
+        return {QObject::tr("Tag increment"), QObject::tr("Copies around Z")};
+    if (mnemonic == QStringLiteral("GM"))
+        return {QObject::tr("Tag increment"), QObject::tr("New copies"), QObject::tr("Rotate X °"),
+            QObject::tr("Rotate Y °"), QObject::tr("Rotate Z °"), QObject::tr("Move X"),
+            QObject::tr("Move Y"), QObject::tr("Move Z"), QObject::tr("From tag")};
     const QStringList ports{QObject::tr("Wire 1"), QObject::tr("Segment 1"),
         QObject::tr("Wire 2"), QObject::tr("Segment 2")};
     if (mnemonic == QStringLiteral("TL"))

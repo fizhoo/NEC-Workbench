@@ -3,6 +3,7 @@
 #include "ui/DisplayFormat.h"
 #include "ui/ElidedLabel.h"
 #include "ui/cards/CompactNumberDelegate.h"
+#include "ui/cards/RowHeightCap.h"
 #include "ui/cards/SymbolCells.h"
 #include "ui/cards/VariableMenu.h"
 
@@ -96,6 +97,8 @@ WireCardEditor::WireCardEditor(QWidget* parent)
     layout->addLayout(actions);
     layout->addWidget(table_, 1);
     layout->addWidget(note_);
+    layout->addStretch();
+    new RowHeightCap(table_, table_);
     connect(addButton, &QPushButton::clicked, this, [this] { emit addWireRequested(); });
     connect(duplicateButton_, &QPushButton::clicked, this, [this] {
         if (const auto tag = selectedTag(); tag >= 0) {
@@ -149,8 +152,7 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
             item->setData(WireTagRole, wire.tag);
             if (!wire.editable) {
                 item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-                item->setToolTip(tr(
-                    "This GW uses a following GC taper card. Edit the GC card in the Other card table or in Raw Source."));
+                item->setToolTip(readOnlyReason(wire));
             }
             // An expression shows its value and opens for editing as written.
             const auto symbolicLine = symbolicGeometryFields_.find(wire.sourceLine);
@@ -161,8 +163,7 @@ void WireCardEditor::setModel(const model::AntennaModel& model)
                   }();
             if (symbolic != nullptr) {
                 SymbolCells::showExpression(item, table_, QString::fromStdString(*symbolic), values[column]);
-                if (!wire.editable) item->setToolTip(tr(
-                    "This GW uses a following GC taper card. Edit the GC card in the Other card table or in Raw Source."));
+                if (!wire.editable) item->setToolTip(readOnlyReason(wire));
             }
             table_->setItem(row, column, item);
         }
@@ -245,6 +246,22 @@ void WireCardEditor::describeSelectedWire()
 void WireCardEditor::setSymbolicGeometryFields(nec::NecParameterFieldMap sourceFields)
 {
     symbolicGeometryFields_ = std::move(sourceFields);
+}
+
+void WireCardEditor::setGeneratingCards(std::map<std::size_t, QString> cards)
+{
+    generatingCards_ = std::move(cards);
+}
+
+// A read-only row is a wire another card made, or a GW whose GC card tapers it.
+auto WireCardEditor::readOnlyReason(const model::Wire& wire) const -> QString
+{
+    if (const auto card = generatingCards_.find(wire.sourceLine); card != generatingCards_.end())
+        return tr("Made by the %1 card on line %2 from another wire. Edit that wire, or the %1 "
+                  "card: Other → Other NEC-2 Geometry Cards, or Raw Source.")
+            .arg(card->second).arg(wire.sourceLine);
+    return tr("This GW uses a following GC taper card. Edit the GC card in the Other card table "
+              "or in Raw Source.");
 }
 
 void WireCardEditor::setSymbols(const std::vector<nec::SymbolDefinition>& symbols)

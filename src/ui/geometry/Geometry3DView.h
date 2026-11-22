@@ -26,6 +26,7 @@ public:
     void setLengthUnit(model::LengthUnit unit);
     void fitToView() override;
     void setIsometricView();
+    [[nodiscard]] auto infoText() const -> QString override;
 
 protected:
     void mouseMoveEvent(QMouseEvent* event) override;

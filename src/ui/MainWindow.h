@@ -46,7 +46,7 @@ class NecEditor;
 class AnalysisSetupEditor;
 class AnalysisRequestEditor;
 class Geometry3DView;
-class GeometryPlanes;
+class GeometryWorkspace;
 class GeometryView;
 class GeometryInteractionView;
 class RunReviewWindow;
@@ -168,7 +168,6 @@ private:
     void refreshEngine();
     void discardPendingEdits(QWidget* page);
     void synchronizeGeometrySelection(int tag);
-    void fitAllGeometryViews();
     void previewEndpointMove(int tag, model::WireEndpoint endpoint, const model::Point3D& position);
     void commitEndpointMove(int tag, model::WireEndpoint endpoint,
         const model::Point3D& original, const model::Point3D& updated);
@@ -288,9 +287,6 @@ private:
     QAction* stopAction_{};
     QAction* averageGainAction_{};
     QAction* convergenceAction_{};
-    QAction* fitGeometryAction_{};
-    QAction* snapGridAction_{};
-    QAction* snapEndpointsAction_{};
     QAction* geometrySettingsAction_{};
     QAction* autoSegmentationAction_{};
     QAction* necDeckAction_{};
@@ -305,9 +301,6 @@ private:
     QAction* userGuideAction_{};
     QAction* aboutAction_{};
     QMenu* recentModelsMenu_{};
-    QComboBox* lengthUnitControl_{};
-    QDoubleSpinBox* snapSpacingControl_{};
-    QTabWidget* workspace_{};
     QWidget* windowHost_{};
     WorkbenchLayout* workbenchLayout_{};
     DetachablePanel* validationPanel_{};
@@ -322,8 +315,7 @@ private:
     SourceHistory* history_{};
     GeometryPreview* geometryPreview_{};
     QAction* revertAction_{};
-    GeometryPlanes* geometryPlanes_{};
-    Geometry3DView* geometry3DView_{};
+    GeometryWorkspace* geometryWorkspace_{};
     SetupEditor* setupEditor_{};
     AnalysisSetupEditor* analysisSetupEditor_{};
     AnalysisRequestEditor* analysisRequestEditor_{};
@@ -375,8 +367,6 @@ private:
     double currentPeakSearchFrequencyMHz_{};
     // SWR reference requested by the optimization study whose baseline is running.
     double currentBaselineReferenceImpedanceOhms_{50.0};
-    int geometryTabIndex_{};
-    int geometry3DTabIndex_{};
     int validationOverviewTabIndex_{};
     int averageGainValidationTabIndex_{};
     int convergenceValidationTabIndex_{};

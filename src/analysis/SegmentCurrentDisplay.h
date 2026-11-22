@@ -78,6 +78,11 @@ private:
     std::span<const FeedpointResult> feedpoints, const model::AntennaModel& model)
     -> DisplayedCurrents;
 
+// The run's currents and feedpoints at one frequency, displayed on the model. The Currents
+// view and the geometry views both use this, so they show the same values.
+[[nodiscard]] auto displayedCurrentsAt(const AnalysisResult& result, double frequencyMHz,
+    const model::AntennaModel& model) -> DisplayedCurrents;
+
 // Current at one moment of the RF cycle: |I| cos(phase + cycle angle). At 0° the feed
 // current is at its positive peak.
 [[nodiscard]] auto instantaneousCurrent(const DisplayedSegmentCurrent& current,

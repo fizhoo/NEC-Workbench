@@ -66,6 +66,7 @@ private:
     [[nodiscard]] auto selectedCard() const -> const nec::NecCard*;
     // Where a voltage source sits on its wire: the segment, or the position asked for and the
     // segment there, and how far along the wire the segment's middle is.
+    [[nodiscard]] auto generatedBy(const nec::NecCard& card) const -> QString;
     [[nodiscard]] auto sourcePlacement(const nec::NecCard& card) const -> QString;
     [[nodiscard]] auto validateRow(int row) -> bool;
     [[nodiscard]] auto wireDefaults() const -> std::vector<std::pair<int, int>>;
@@ -89,6 +90,9 @@ private:
     model::AntennaModel model_;
     QString deckUnitLabel_{QStringLiteral("m")};
     bool updating_{};
+    // A family chosen by a click or a selected card stays, even with no cards; otherwise the
+    // list opens on the first family that has cards.
+    bool familyPicked_{};
 };
 
 }
