@@ -292,6 +292,19 @@ void ConvergenceWorkspace::updateReadiness()
         control->setEnabled(!isRunning() && !historicalSession_);
 }
 
+auto ConvergenceWorkspace::start() -> bool
+{
+    if (!settingsSeen_) return false;
+    startStudy();
+    return true;
+}
+
+void ConvergenceWorkspace::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    settingsSeen_ = true;
+}
+
 void ConvergenceWorkspace::startStudy()
 {
     if (!runButton_->isEnabled()) return;
@@ -384,6 +397,7 @@ void ConvergenceWorkspace::cancel()
 void ConvergenceWorkspace::clearResults()
 {
     if (isRunning()) return;
+    settingsSeen_ = false;
     hasResults_ = false;
     resetTable(0);
     conclusionLabel_->setText(tr("No convergence study is loaded."));

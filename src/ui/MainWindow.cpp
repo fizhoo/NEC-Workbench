@@ -113,7 +113,6 @@
 #include <QStyle>
 #include <QStandardPaths>
 #include <QTableView>
-#include <QTabWidget>
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTextEdit>
@@ -479,7 +478,7 @@ void MainWindow::createActions()
     averageGainAction_->setEnabled(false);
     averageGainAction_->setStatusTip(tr(
         "Run a single-frequency lossless Average Gain Test without modifying the source model"));
-    connect(averageGainAction_, &QAction::triggered, this, [this] { startAverageGainTest(); });
+    connect(averageGainAction_, &QAction::triggered, this, [this] { startAverageGainTest(true); });
 
     convergenceAction_ = new QAction(tr("Segmentation &Convergence…"), this);
     convergenceAction_->setObjectName(QStringLiteral("segmentationConvergenceAction"));
@@ -835,19 +834,20 @@ void MainWindow::createWorkspace()
             deleteSetupCard(tr("Delete radiation pattern"), sourceLine);
         });
 
-    createValidationWindow();
+    createValidationViews();
     createOptimizationWorkspace();
     createResultsColumn();
     workbenchLayout_ = new WorkbenchLayout({.start = startPanel_, .leftColumn = modelColumn_,
         .geometry = geometryWorkspace_, .views = {resultsController_->fullView(), deckView_,
-            optimizationView_},
+            optimizationView_, averageGainView_, convergenceView_},
         .rightColumn = resultsController_->column(),
         .bottomPanel = bottomPanel_}, this);
     setCentralWidget(workbenchLayout_);
     const auto backToGeometry = [this] {
         showEditor(EditorDestination::Geometry, geometryWorkspace_->page());
     };
-    for (auto* view : {deckView_, optimizationView_}) view->header()->setBackCallback(backToGeometry);
+    for (auto* view : {deckView_, optimizationView_, averageGainView_, convergenceView_})
+        view->header()->setBackCallback(backToGeometry);
     preserveControlHeights(this);
 }
 
@@ -875,70 +875,24 @@ void MainWindow::createResultsColumn()
     });
 }
 
-void MainWindow::createValidationWindow()
+void MainWindow::createValidationViews()
 {
-    validationPanel_ = new DetachablePanel(QStringLiteral("validation"),
-        tr("Validation"), windowHost_, {QStringLiteral("workspaceWindows"),
-            QStringLiteral("validationWindow"), kValidationWindowSize});
-    validationWorkspace_ = new QTabWidget(validationPanel_);
-    validationWorkspace_->setObjectName(QStringLiteral("validationWorkspace"));
-    validationWorkspace_->setDocumentMode(true);
-    auto* validationOverview = new QWidget(validationWorkspace_);
-    validationOverview->setObjectName(QStringLiteral("validationOverview"));
-    auto* validationOverviewLayout = new QVBoxLayout(validationOverview);
-    validationOverviewLayout->setContentsMargins(8, 8, 8, 8);
-    validationOverviewLayout->setSpacing(6);
-    auto* validationOverviewHeading = new QLabel(tr("Static Model Check"), validationOverview);
-    auto validationOverviewFont = validationOverviewHeading->font();
-    validationOverviewFont.setBold(true);
-    validationOverviewHeading->setFont(validationOverviewFont);
-    validationOverviewSummary_ = new QLabel(
-        tr("Run Check Model to evaluate the current source."), validationOverview);
-    validationOverviewSummary_->setObjectName(QStringLiteral("validationOverviewSummary"));
-    validationOverviewScope_ = new QLabel(tr(
-        "Checks NEC syntax, backend compatibility, references, geometry, and model adequacy. "
-        "Average Gain Test and convergence are separate solver-backed studies."),
-        validationOverview);
-    validationOverviewScope_->setObjectName(QStringLiteral("validationOverviewScope"));
-    validationOverviewScope_->setWordWrap(true);
-    auto* validationOverviewButtons = new QHBoxLayout;
-    auto* checkFromValidationButton = new QPushButton(tr("Check Model…"), validationOverview);
-    checkFromValidationButton->setObjectName(QStringLiteral("checkModelFromValidationButton"));
-    auto* openModelCheckButton = new QPushButton(tr("Show Problems"), validationOverview);
-    openModelCheckButton->setObjectName(QStringLiteral("showProblemsButton"));
-    auto* changeValidationSolverButton = new QPushButton(tr("Change Solver…"), validationOverview);
-    changeValidationSolverButton->setObjectName(QStringLiteral("changeValidationSolverButton"));
-    validationOverviewButtons->addWidget(checkFromValidationButton);
-    validationOverviewButtons->addWidget(openModelCheckButton);
-    validationOverviewButtons->addStretch();
-    validationOverviewButtons->addWidget(changeValidationSolverButton);
-    validationOverviewLayout->addWidget(validationOverviewHeading);
-    validationOverviewLayout->addWidget(validationOverviewSummary_);
-    validationOverviewLayout->addWidget(validationOverviewScope_);
-    validationOverviewLayout->addLayout(validationOverviewButtons);
-    validationOverviewLayout->addStretch();
-    connect(checkFromValidationButton, &QPushButton::clicked,
-        this, [this] { checkModel(true); });
-    connect(openModelCheckButton, &QPushButton::clicked, problemsAction_, &QAction::trigger);
-    connect(changeValidationSolverButton, &QPushButton::clicked,
-        this, [this] { showEditor(EditorDestination::Solver); });
-    validationOverviewTabIndex_ = validationWorkspace_->addTab(
-        validationOverview, tr("Static Check"));
-    averageGainResultsView_ = new AverageGainResultsView(validationWorkspace_);
+    averageGainResultsView_ = new AverageGainResultsView;
     averageGainResultsView_->setRunAction(averageGainAction_);
-    averageGainValidationTabIndex_ = validationWorkspace_->addTab(
-        averageGainResultsView_, tr("Average Gain Test"));
-    convergenceWorkspace_ = new ConvergenceWorkspace(validationWorkspace_);
-    convergenceValidationTabIndex_ = validationWorkspace_->addTab(
-        convergenceWorkspace_, tr("Segmentation Convergence"));
-    validationPanel_->setContent(validationWorkspace_);
+    averageGainView_ = new CenterView(
+        QStringLiteral("averageGainView"), averageGainResultsView_, windowHost_);
+    averageGainView_->header()->setTitle(tr("Average Gain Test"));
+    convergenceWorkspace_ = new ConvergenceWorkspace;
+    convergenceView_ = new CenterView(
+        QStringLiteral("convergenceView"), convergenceWorkspace_, windowHost_);
+    convergenceView_->header()->setTitle(tr("Segmentation Convergence"));
     convergenceWorkspace_->setRunsChangedCallback([this] {
         bottomPanel_->runs()->reload();
         refreshLatestRun();
     });
     convergenceWorkspace_->setRunningChangedCallback([this] { synchronizeRunnerState(); });
     convergenceWorkspace_->setSummaryChangedCallback([this](const QString& summary) {
-        validationPanel_->setStatusText(summary);
+        convergenceView_->header()->setTitle(tr("Segmentation Convergence · %1").arg(summary));
         modelColumn_->tree()->setStudyStatus(ModelTree::Study::Convergence,
             ModelTree::StudyState::Complete, summary);
     });
@@ -1371,12 +1325,10 @@ void MainWindow::createMenusAndToolbar()
     validateMenu->addAction(averageGainAction_);
     validateMenu->addAction(convergenceAction_);
     validateMenu->addSeparator();
-    auto* openValidationAction = validateMenu->addAction(tr("Open Validation Results"));
-    openValidationAction->setObjectName(QStringLiteral("openValidationResultsAction"));
-    connect(openValidationAction, &QAction::triggered, this, [this] {
-        validationWorkspace_->setCurrentIndex(validationOverviewTabIndex_);
-        validationPanel_->showWindow();
-    });
+    auto* averageGainResultAction = validateMenu->addAction(tr("Average Gain &Result"));
+    averageGainResultAction->setObjectName(QStringLiteral("showAverageGainResultAction"));
+    connect(averageGainResultAction, &QAction::triggered,
+        this, [this] { workbenchLayout_->showView(averageGainView_); });
 
     auto* runMenu = menuBar()->addMenu(tr("&Run"));
     runMenu->setObjectName(QStringLiteral("runMenu"));
@@ -1854,10 +1806,10 @@ void MainWindow::checkModel(bool presentReport)
                     .arg(static_cast<qulonglong>(result.informationCount()));
     }
     bottomPanel_->problems()->setFindings(result.diagnostics, currentModel_, summary);
-    validationOverviewSummary_->setText(summary);
-    validationOverviewScope_->setText(tr(
-        "Validation target: %1. See Problems for individual findings; use the other tabs "
-        "for solver-backed Average Gain Test and convergence studies.").arg(compatibilityName));
+    bottomPanel_->problems()->setScope(tr("Checked against %1: NEC syntax, solver "
+        "compatibility, references, geometry and model adequacy. The Average Gain Test and "
+        "convergence are solver-backed studies under Validation in the model tree.")
+            .arg(compatibilityName));
 
     editor_->setDiagnostics(result.diagnostics);
     updateDeckUnitControls(deckUnitInfo);
@@ -2024,8 +1976,11 @@ void MainWindow::createModelColumn()
 {
     modelColumn_ = new ModelColumn(this);
     auto* tree = modelColumn_->tree();
-    tree->setStudyAction(ModelTree::Study::AverageGain, averageGainAction_);
-    tree->setStudyAction(ModelTree::Study::Convergence, convergenceAction_);
+    // Run from the tree reports in the row and leaves the center as it is.
+    tree->setStudyAction(ModelTree::Study::AverageGain, averageGainAction_,
+        [this] { startAverageGainTest(false); });
+    tree->setStudyAction(ModelTree::Study::Convergence, convergenceAction_,
+        [this] { if (!convergenceWorkspace_->start()) showConvergenceStudy(); });
     tree->setSelectionChangingCallback(
         [this](const ModelSelection&) { return modelColumn_->pane()->commitPendingEdits(); });
     tree->setSelectionChangedCallback(
@@ -2033,15 +1988,9 @@ void MainWindow::createModelColumn()
     tree->setActivatedCallback([this](const ModelSelection& selection) {
         switch (selection.node) {
         case ModelNode::Deck: showEditor(EditorDestination::RawSource); break;
-        case ModelNode::Validation:
-        case ModelNode::AverageGainTest:
-        case ModelNode::Convergence:
-            validationWorkspace_->setCurrentIndex(selection.node == ModelNode::Validation
-                ? validationOverviewTabIndex_
-                : selection.node == ModelNode::AverageGainTest ? averageGainValidationTabIndex_
-                                                               : convergenceValidationTabIndex_);
-            validationPanel_->showWindow();
-            break;
+        case ModelNode::Validation: problemsAction_->trigger(); break;
+        case ModelNode::AverageGainTest: workbenchLayout_->showView(averageGainView_); break;
+        case ModelNode::Convergence: showConvergenceStudy(); break;
         // A row already selected, say from its table, still opens its page.
         default:
             if (modelColumn_->pane()->currentPage() != paneContent(selection.node).first)
@@ -2874,8 +2823,7 @@ void MainWindow::synchronizeRunnerState()
 
 void MainWindow::showConvergenceStudy()
 {
-    validationWorkspace_->setCurrentIndex(convergenceValidationTabIndex_);
-    validationPanel_->showWindow();
+    workbenchLayout_->showView(convergenceView_);
 }
 
 void MainWindow::startAnalysis()
@@ -3033,7 +2981,7 @@ void MainWindow::startAnalysisRun(const std::string& authoredSource,
     startSolverProcess(command, activity);
 }
 
-void MainWindow::startAverageGainTest()
+void MainWindow::startAverageGainTest(bool showView)
 {
     if (solverRunner_->isRunning() || !averageGainAction_->isEnabled()) return;
     checkModel();
@@ -3135,6 +3083,7 @@ void MainWindow::startAverageGainTest()
         return;
     }
     startSolverProcess(command, tr("Average Gain Test"));
+    if (showView) workbenchLayout_->showView(averageGainView_);
 }
 
 void MainWindow::startSolverProcess(const analysis::SolverCommand& command, const QString& activity)
@@ -3177,15 +3126,12 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
     }
     solverActivityTimer_->start();
     runAction_->setEnabled(false);
-    if (currentRunPurpose_ == SolverRunPurpose::Analysis)
     if (currentRunPurpose_ == SolverRunPurpose::AverageGainTest) {
         averageGainResultsView_->setRunning(currentAverageGainFrequencyMHz_,
             currentAverageGainEnvironment_, runContext(*currentRunRecord_));
         modelColumn_->tree()->setStudyStatus(ModelTree::Study::AverageGain,
             ModelTree::StudyState::Running,
             tr("running @ %1 MHz").arg(formatDecimal(currentAverageGainFrequencyMHz_)));
-        validationWorkspace_->setCurrentIndex(averageGainValidationTabIndex_);
-        validationPanel_->showWindow();
     }
     statusBar()->showMessage(tr("Running %1…").arg(activity));
     solverRunner_->start(command, currentRunDirectory_, solverTimeoutSeconds_);
@@ -3297,9 +3243,7 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
                 writeAverageGainMetadata(currentRunDirectory_, currentAverageGainFrequencyMHz_,
                     currentAverageGainEnvironment_, assessment, result.averagingSolidAnglePi);
                 displayedRunDirectory_ = currentRunDirectory_;
-                validationPanel_->setStatusText(tr("Average Gain Test — %1").arg(context));
-                validationWorkspace_->setCurrentIndex(averageGainValidationTabIndex_);
-                validationPanel_->showWindow();
+                averageGainView_->header()->setTitle(tr("Average Gain Test · %1").arg(context));
                 const auto expectedSolidAngle = currentAverageGainEnvironment_
                         == analysis::AverageGainEnvironment::PerfectGround
                     ? 2.0 : 4.0;

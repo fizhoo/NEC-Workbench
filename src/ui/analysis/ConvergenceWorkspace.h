@@ -34,10 +34,17 @@ public:
     [[nodiscard]] auto isRunning() const noexcept -> bool;
     auto loadSession(const QString& sessionId) -> bool;
     void leaveHistoricalSession();
+    // Starts a study with the settings shown, once they have been seen or used for this
+    // model; otherwise returns false so the view can be shown to set them.
+    auto start() -> bool;
     void cancel();
     void cancelAndWait();
+    // Also forgets that the settings were seen, as for a newly opened model.
     void clearResults();
     void markStale();
+
+protected:
+    void showEvent(QShowEvent* event) override;
 
 private:
     struct Step {
@@ -97,6 +104,7 @@ private:
     bool externalRunActive_{};
     bool cancelRequested_{};
     bool hasResults_{};
+    bool settingsSeen_{};
     bool trackGain_{};
     bool modelChangedDuringRun_{};
     bool historicalSession_{};

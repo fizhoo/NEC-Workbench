@@ -267,13 +267,6 @@ auto main(int argc, char* argv[]) -> int
             return NECWB_SMOKE_FAILURE("historical overlay visibility persistence");
     }
     QSettings{}.remove(QStringLiteral("smoke/overlayVisible"));
-    const auto tabNames = [](const QTabWidget* tabs) {
-        QStringList names;
-        if (tabs == nullptr) return names;
-        for (auto index = 0; index < tabs->count(); ++index)
-            names.push_back(tabs->tabText(index));
-        return names;
-    };
     auto consolidatedSetupNavigation = false;
     auto linkedParameterDeleted = false;
     auto resultsColumnNavigation = false;
@@ -304,15 +297,12 @@ auto main(int argc, char* argv[]) -> int
         auto* runMenu = mainWindow.findChild<QMenu*>(QStringLiteral("runMenu"));
         auto* recentModelsMenu = mainWindow.findChild<QMenu*>(
             QStringLiteral("recentModelsMenu"));
-        auto* validationWorkspace = mainWindow.findChild<QTabWidget*>(
-            QStringLiteral("validationWorkspace"));
         auto* resultsWorkspace = mainWindow.findChild<QTabWidget*>(
             QStringLiteral("resultsWorkspace"));
         auto* bottomPanel = mainWindow.findChild<QWidget*>(QStringLiteral("bottomPanel"));
         auto* toggleBottomPanel = mainWindow.findChild<QAction*>(
             QStringLiteral("toggleBottomPanelAction"));
-        auto* validationSummary = mainWindow.findChild<QLabel*>(
-            QStringLiteral("validationOverviewSummary"));
+        auto* problemsScope = mainWindow.findChild<QLabel*>(QStringLiteral("problemsScope"));
         // One toolbar row and the model tree; the Project Tree dock and its toggle are gone.
         auto* toolBar = mainWindow.findChild<QToolBar*>(QStringLiteral("workbenchToolBar"));
         const auto compactPrimaryNavigation = mainWindow.findChild<QWidget*>(
@@ -322,7 +312,7 @@ auto main(int argc, char* argv[]) -> int
             && toolBar != nullptr && !toolBar->isMovable()
             && toolBar->findChild<QComboBox*>(QStringLiteral("toolBarBackend")) != nullptr;
         auto* openValidation = mainWindow.findChild<QAction*>(
-            QStringLiteral("openValidationResultsAction"));
+            QStringLiteral("showAverageGainResultAction"));
         auto* openConvergence = mainWindow.findChild<QAction*>(
             QStringLiteral("segmentationConvergenceAction"));
         auto* reviewRuns = mainWindow.findChild<QAction*>(
@@ -342,12 +332,13 @@ auto main(int argc, char* argv[]) -> int
             // The deck is raw source only; its cards are tables in the properties pane.
             && mainWindow.findChild<QTabWidget*>(QStringLiteral("necDeckWorkspace")) == nullptr
             && mainWindow.findChild<QWidget*>(QStringLiteral("cardsPanel")) == nullptr
-            && tabNames(validationWorkspace) == QStringList{QStringLiteral("Static Check"),
-                QStringLiteral("Average Gain Test"), QStringLiteral("Segmentation Convergence")}
+            // Validation has no window or Overview of its own: the scope note heads Problems.
+            && mainWindow.findChild<QTabWidget*>(QStringLiteral("validationWorkspace")) == nullptr
+            && mainWindow.findChild<QWidget*>(QStringLiteral("validationOverview")) == nullptr
+            && bottomPanel != nullptr && bottomPanel->isAncestorOf(problemsScope)
             && compactPrimaryNavigation
             && validateMenu != nullptr && runMenu != nullptr
             && recentModelsMenu != nullptr && !recentModelsMenu->actions().isEmpty()
-            && validationSummary != nullptr
             && openValidation != nullptr && validateMenu->actions().contains(openValidation)
             && reviewRuns != nullptr && runMenu->actions().contains(reviewRuns)
             && runMenu->actions().contains(mainWindow.findChild<QAction*>(
@@ -358,23 +349,36 @@ auto main(int argc, char* argv[]) -> int
             && mainWindow.maximumSize() == QSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX)
             && !mainWindow.statusBar()->isSizeGripEnabled()
             && mainWindow.findChild<QWidget*>(QStringLiteral("solverActivityWidget")) == nullptr;
-        if (openValidation != nullptr) {
+        // Average Gain and Convergence open in the center under ← Geometry; Esc goes back.
+        if (openValidation != nullptr && openConvergence != nullptr) {
+            mainWindow.show();
+            auto* split = mainWindow.findChild<QSplitter*>(QStringLiteral("workbenchSplit"));
+            auto* geometry = mainWindow.findChild<QWidget*>(QStringLiteral("geometryWorkspace"));
+            auto* averageGain = mainWindow.findChild<QWidget*>(QStringLiteral("averageGainView"));
+            auto* convergence = mainWindow.findChild<QWidget*>(QStringLiteral("convergenceView"));
+            const auto shownInCenter = [&](QWidget* view) {
+                return view != nullptr && split != nullptr && split->isAncestorOf(view)
+                    && view->isVisible() && geometry != nullptr && !geometry->isVisible();
+            };
             openValidation->trigger();
             application.processEvents();
-            const auto* validationWindow = topLevelDialog(QStringLiteral("validationWindow"));
-            validationWindowNavigation = validationWindow != nullptr
-                && validationWindow->isVisible()
-                && validationWorkspace != nullptr
-                && validationWorkspace->window() == validationWindow;
-        }
-        if (openConvergence != nullptr && validationWorkspace != nullptr) {
+            const auto averageGainShown = shownInCenter(averageGain);
+            if (auto* back = mainWindow.findChild<QToolButton*>(QStringLiteral("averageGainViewBack")))
+                back->click();
+            application.processEvents();
+            const auto averageGainBack = geometry->isVisible() && !averageGain->isVisible();
             openConvergence->setEnabled(true);
             openConvergence->trigger();
             application.processEvents();
-            validationWindowNavigation = validationWindowNavigation
-                && validationWorkspace->currentIndex() == 2
-                && validationWorkspace->window()->objectName()
-                    == QStringLiteral("validationWindow");
+            const auto convergenceShown = shownInCenter(convergence);
+            QTest::keyClick(convergence, Qt::Key_Escape);
+            application.processEvents();
+            validationWindowNavigation = averageGainShown && averageGainBack && convergenceShown
+                && geometry->isVisible() && !convergence->isVisible()
+                && topLevelDialog(QStringLiteral("validationWindow")) == nullptr;
+            if (!validationWindowNavigation)
+                qWarning() << "validation in center" << averageGainShown << averageGainBack
+                           << convergenceShown;
         }
         // The NEC Deck opens in the center in place of the geometry; ← Geometry returns.
         auto* deckWorkspace = mainWindow.findChild<QWidget*>(QStringLiteral("necSourceEditor"));
@@ -408,13 +412,6 @@ auto main(int argc, char* argv[]) -> int
                     && geometryWorkspace->isVisibleTo(&mainWindow)
                     && topLevelDialog(QStringLiteral("geometryEditorWindow")) == nullptr;
             }
-        }
-        // Windows that still float follow the workspace density.
-        if (const auto* validationWindow = topLevelDialog(QStringLiteral("validationWindow"))) {
-            dialogDensityIsIncremental =
-                !validationWindow->property("workspaceDensityId").toString().isEmpty()
-                && mainWindow.property("workspaceDensityId").toString()
-                    == QStringLiteral("density-smoke-sentinel");
         }
         // The Frequency row shows its page in the pane, inside the main window.
         if (auto* tree = mainWindow.findChild<QTreeWidget*>(QStringLiteral("modelTree"))) {
@@ -483,7 +480,10 @@ auto main(int argc, char* argv[]) -> int
                 && topLevelDialog(QStringLiteral("optimizationWindow")) == nullptr
                 && (candidateWindow == nullptr || !candidateWindow->isVisible());
             if (method != nullptr) method->setCurrentIndex(2);
-            QTest::keyClick(optimizationWorkspace, Qt::Key_Escape);
+            auto* focused = optimizationWorkspace->findChild<QTableWidget*>(
+                QStringLiteral("optimizationVariablesTable"));
+            focused->setFocus();
+            QTest::keyClick(focused, Qt::Key_Escape);
             application.processEvents();
             const auto escapeBack = geometry->isVisible() && !optimizationWorkspace->isVisible();
             optimizeModuleAction->trigger();
@@ -498,6 +498,15 @@ auto main(int argc, char* argv[]) -> int
             if (!optimizationWindowNavigation)
                 qWarning() << "optimize in center" << inCenter << fits << center
                            << optimizationWorkspace->minimumSizeHint() << escapeBack << keptState;
+        }
+        // Dialogs follow the workspace density when they are shown.
+        {
+            QDialog probe(&mainWindow);
+            probe.show();
+            application.processEvents();
+            dialogDensityIsIncremental = !probe.property("workspaceDensityId").toString().isEmpty()
+                && mainWindow.property("workspaceDensityId").toString()
+                    == QStringLiteral("density-smoke-sentinel");
         }
         // Results live in the main window's right column: no result windows, no Result
         // Windows menu, one overlay control, and View › Results Column collapses the column.
@@ -5146,11 +5155,14 @@ auto main(int argc, char* argv[]) -> int
     modelTree->setAddCallback([&](ModelNode node) { addedTo.push_back(node); });
     QAction averageGainAction(QStringLiteral("Run Average Gain Test…"), &modelColumn),
         convergenceAction(QStringLiteral("Segmentation Convergence…"), &modelColumn);
-    modelTree->setStudyAction(Study::AverageGain, &averageGainAction);
-    modelTree->setStudyAction(Study::Convergence, &convergenceAction);
-    auto treeAverageGainTriggered = false, treeConvergenceTriggered = false;
-    QObject::connect(&averageGainAction, &QAction::triggered, [&] { treeAverageGainTriggered = true; });
-    QObject::connect(&convergenceAction, &QAction::triggered, [&] { treeConvergenceTriggered = true; });
+    // Run calls the tree's own callback, not the menu command that also opens the view.
+    auto treeAverageGainTriggered = false, treeConvergenceTriggered = false, menuTriggered = false;
+    modelTree->setStudyAction(Study::AverageGain, &averageGainAction,
+        [&] { treeAverageGainTriggered = true; });
+    modelTree->setStudyAction(Study::Convergence, &convergenceAction,
+        [&] { treeConvergenceTriggered = true; });
+    for (auto* action : {&averageGainAction, &convergenceAction})
+        QObject::connect(action, &QAction::triggered, [&] { menuTriggered = true; });
     std::vector<ModelSelection> reportedSelections;
     std::optional<ModelSelection> activatedSelection;
     auto allowSelectionChange = true;
@@ -5247,7 +5259,18 @@ auto main(int argc, char* argv[]) -> int
     for (const auto* name : {"modelTreeAverageGainRun", "modelTreeConvergenceRun"}) {
         if (auto* run = modelTree->findChild<QToolButton*>(QString::fromLatin1(name))) run->click();
     }
-    const auto studyRunButtons = treeAverageGainTriggered && treeConvergenceTriggered;
+    // Clicking a study's result line opens it, like clicking its name.
+    activatedSelection.reset();
+    modelTree->scrollToItem(group(QStringLiteral("Validation"))->child(1));
+    application.processEvents();
+    QTest::mouseClick(const_cast<QLabel*>(convergenceState), Qt::LeftButton);
+    application.processEvents();
+    const auto studyRunButtons = treeAverageGainTriggered && treeConvergenceTriggered
+        && !menuTriggered && activatedSelection
+        && activatedSelection->node == ModelNode::Convergence;
+    if (!studyRunButtons)
+        qWarning() << "tree studies" << treeAverageGainTriggered << treeConvergenceTriggered
+                   << menuTriggered << activatedSelection.has_value();
     // A row picked by the user is reported; one picked by the window is not.
     const auto fittedHeight = modelTree->height();
     group(QStringLiteral("Wires"))->setExpanded(true);

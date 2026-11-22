@@ -343,12 +343,12 @@ void ModelTree::setModel(const model::AntennaModel& model, const model::ModelSet
     selecting_ = false;
 }
 
-void ModelTree::setStudyAction(Study study, QAction* action)
+void ModelTree::setStudyAction(Study study, QAction* action, std::function<void()> run)
 {
     auto* button = studyButtons_[static_cast<std::size_t>(study)];
     button->setToolTip(action->toolTip());
     button->setEnabled(action->isEnabled());
-    connect(button, &QToolButton::clicked, action, &QAction::trigger);
+    connect(button, &QToolButton::clicked, this, std::move(run));
     connect(action, &QAction::changed, button, [button, action] {
         button->setEnabled(action->isEnabled());
     });
