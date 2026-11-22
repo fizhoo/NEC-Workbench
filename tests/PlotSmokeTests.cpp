@@ -4268,6 +4268,97 @@ auto main(int argc, char* argv[]) -> int
         }
         if (!antennaValid) return NECWB_SMOKE_FAILURE("currents antenna view");
     }
+    // The 3D pattern is centred on the antenna and sized by it: a three-element beam moved
+    // up and sideways draws exactly as it does at the origin, in free space and over ground
+    // and in both scales, and the antenna shows in it.
+    {
+        const auto beam = [](necwb::model::Point3D offset) {
+            necwb::model::AntennaModel model;
+            const std::array<std::pair<double, double>, 3> elements{{{-1.5, 5.4}, {0.0, 5.1}, {1.2, 4.8}}};
+            for (auto index = 0; index < 3; ++index) {
+                const auto [x, half] = elements[static_cast<std::size_t>(index)];
+                model.addWire({index + 1, {x + offset.x, -half + offset.y, offset.z},
+                    {x + offset.x, half + offset.y, offset.z}, 11, 0.001, static_cast<std::size_t>(index + 1)});
+            }
+            return model;
+        };
+        const necwb::model::Point3D shift{3.0, -2.0, 10.0};
+        const auto atOrigin = beam({});
+        const auto moved = beam(shift);
+        const auto placed = necwb::ui::patternPlacement(atOrigin);
+        const auto placedMoved = necwb::ui::patternPlacement(moved);
+        const auto close = [](const necwb::model::Point3D& a, const necwb::model::Point3D& b) {
+            return std::abs(a.x - b.x) < 1e-9 && std::abs(a.y - b.y) < 1e-9 && std::abs(a.z - b.z) < 1e-9;
+        };
+        // Centred on the bounding box, the same size wherever it is, and only shifted and
+        // uniformly scaled; with no antenna, at the origin.
+        const auto placementFollows = close(placed.centre, {-0.15, 0.0, 0.0})
+            && std::abs(placed.halfSize - 5.4) < 1e-9
+            && close(placedMoved.centre, {-0.15 + shift.x, shift.y, shift.z})
+            && std::abs(placedMoved.halfSize - placed.halfSize) < 1e-9
+            && close(placedMoved.toDisplay({1.2 + shift.x, 4.8 + shift.y, shift.z}, 0.32),
+                placed.toDisplay({1.2, 4.8, 0.0}, 0.32))
+            && close(placed.toDisplay({-0.15, 5.4, 0.0}, 0.32), {0.0, 0.32, 0.0})
+            && close(placedMoved.toDisplay({-0.15 + shift.x, shift.y, 0.0}, 0.32),
+                {0.0, 0.0, -shift.z * 0.32 / 5.4});
+        const auto empty = necwb::ui::patternPlacement(necwb::model::AntennaModel{});
+        const auto patternOnly = close(empty.centre, {}) && empty.halfSize == 1.0;
+
+        // A forward lobe, over the whole sphere or only above the horizon.
+        const auto pattern = [](bool overGround) {
+            necwb::analysis::AnalysisResult result;
+            for (auto theta = 0; theta <= (overGround ? 90 : 180); theta += 10)
+                for (auto phi = 0; phi < 360; phi += 10) {
+                    const auto t = theta * std::numbers::pi / 180.0, f = phi * std::numbers::pi / 180.0;
+                    const auto gain = 7.0 + 10.0 * std::log10(std::max(1e-3,
+                        (1.0 + std::sin(t) * std::cos(f)) / 2.0 * (overGround ? std::sin(2.0 * t) + 0.05 : 1.0)));
+                    result.radiation.push_back({14.2, double(theta), double(phi), gain - 3.0, gain - 3.0, gain});
+                }
+            return necwb::ui::ResultData::make(result);
+        };
+        const auto render = [&](const necwb::model::AntennaModel& model, bool overGround,
+                                necwb::analysis::RadiationScale scale) {
+            necwb::ui::Radiation3DView view;
+            view.resize(800, 600);
+            view.setModel(model);
+            view.setResults(pattern(overGround), QStringLiteral("beam"));
+            view.setDisplaySettings({.frequencyMHz = 14.2, .scale = scale});
+            view.show();
+            application.processEvents();
+            auto* surface = view.findChild<QWidget*>(QStringLiteral("radiation3DSurface"));
+            return surface != nullptr ? surface->grab().toImage() : QImage{};
+        };
+        // Pixels that differ by more than a rounding step.
+        const auto differing = [](const QImage& a, const QImage& b) {
+            if (a.size() != b.size() || a.isNull()) return std::numeric_limits<int>::max();
+            auto count = 0;
+            for (auto y = 0; y < a.height(); ++y)
+                for (auto x = 0; x < a.width(); ++x) {
+                    const auto p = a.pixelColor(x, y), q = b.pixelColor(x, y);
+                    if (std::abs(p.red() - q.red()) + std::abs(p.green() - q.green())
+                            + std::abs(p.blue() - q.blue()) > 24) ++count;
+                }
+            return count;
+        };
+        QStringList seen;
+        auto followsAntenna = true;
+        for (const auto overGround : {false, true})
+            for (const auto scale : {necwb::analysis::RadiationScale::Normalized,
+                     necwb::analysis::RadiationScale::Absolute}) {
+                const auto here = render(atOrigin, overGround, scale);
+                const auto there = render(moved, overGround, scale);
+                const auto bare = render({}, overGround, scale);
+                const auto same = differing(here, there);
+                const auto antennaShows = differing(here, bare);
+                seen << QStringLiteral("%1/%2: moved %3 px, antenna %4 px").arg(overGround ? "ground" : "free")
+                            .arg(static_cast<int>(scale)).arg(same).arg(antennaShows);
+                followsAntenna = followsAntenna && same <= 20 && antennaShows > 200;
+            }
+        if (!placementFollows || !patternOnly || !followsAntenna) {
+            qWarning() << "pattern on antenna" << placementFollows << patternOnly << seen;
+            return NECWB_SMOKE_FAILURE("3D pattern centred on and sized by the antenna");
+        }
+    }
     necwb::ui::CurrentDistributionView currents;
     necwb::ui::RadiationPatternView radiation2D;
     necwb::ui::Radiation3DView radiation3D;

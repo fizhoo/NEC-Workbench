@@ -29,6 +29,17 @@ class RadiationSurfaceWidget;
 class DirectionalMetricsView;
 
 [[nodiscard]] auto resultModelExtentFromOrigin(const model::AntennaModel& model) -> double;
+// Where the 3D pattern view puts the antenna: the pattern is centred on the middle of the
+// antenna's bounding box and sized by its largest half-dimension, so moving the antenna moves
+// the pattern with it at the same size. The antenna is only shifted and uniformly scaled, so
+// its shape and its height over Z = 0 are kept; with no antenna, the pattern is at the origin.
+struct PatternPlacement {
+    model::Point3D centre;
+    double halfSize{1.0};
+    // A model point in pattern units, the antenna's half-size drawn `size` units long.
+    [[nodiscard]] auto toDisplay(const model::Point3D& point, double size) const -> model::Point3D;
+};
+[[nodiscard]] auto patternPlacement(const model::AntennaModel& model) -> PatternPlacement;
 [[nodiscard]] auto radiationAnglesCoverCircle(const std::vector<QPointF>& samples) -> bool;
 using CurrentPlotPath = std::vector<analysis::SegmentCurrentResult>;
 [[nodiscard]] auto connectedCurrentPaths(

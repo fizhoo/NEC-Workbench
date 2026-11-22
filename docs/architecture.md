@@ -110,7 +110,10 @@ the others catch up when they are shown. The 3D pattern's surface is drawn by
 `RadiationSurfaceMesh` with `QPainter`, not OpenGL: one flat-lit patch per θ×φ grid cell in
 Turbo colours, sorted far to near with the axis, wire and current lines cut into short
 pieces among them, coarser while dragging a dense pattern;
-`fitSurfaceView` fits the view to the pattern's projected bounds. `FlowLayout` wraps a
+`fitSurfaceView` fits the view to the pattern's projected bounds. `patternPlacement` centres
+the pattern on the middle of the antenna's bounding box and sizes it by the antenna's largest
+half-dimension, so an antenna raised or moved sideways keeps the same picture, and the fit
+covers the pattern and antenna, not the origin. `FlowLayout` wraps a
 row of controls that would otherwise widen a narrow view. The remaining workspaces are separate
 top-level windows:
 
