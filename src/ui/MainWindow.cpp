@@ -58,6 +58,7 @@
 #include "ui/geometry/GeometryView.h"
 #include "ui/geometry/GeometrySettingsDialog.h"
 #include "ui/optimization/OptimizationWorkspace.h"
+#include "ui/optimization/OptimizerWindow.h"
 #include "ui/model/ParameterEditor.h"
 #include "ui/results/ResultFullView.h"
 #include "ui/start/RecentModels.h"
@@ -360,6 +361,7 @@ auto MainWindow::eventFilter(QObject* watched, QEvent* event) -> bool
 MainWindow::~MainWindow()
 {
     delete runReviewWindow_;
+    delete optimizerWindow_;
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
@@ -382,6 +384,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
         return;
     }
     saveWorkspaceLayout();
+    optimizerWindow_->close();
     event->accept();
 }
 
@@ -837,14 +840,14 @@ void MainWindow::createWorkspace()
     createResultsColumn();
     workbenchLayout_ = new WorkbenchLayout({.start = startPanel_, .leftColumn = modelColumn_,
         .geometry = geometryWorkspace_, .views = {resultsController_->fullView(), deckView_,
-            optimizationView_, averageGainView_, convergenceView_},
+            averageGainView_, convergenceView_},
         .rightColumn = resultsController_->column(),
         .bottomPanel = bottomPanel_}, this);
     setCentralWidget(workbenchLayout_);
     const auto backToGeometry = [this] {
         showEditor(EditorDestination::Geometry, geometryWorkspace_->page());
     };
-    for (auto* view : {deckView_, optimizationView_, averageGainView_, convergenceView_})
+    for (auto* view : {deckView_, averageGainView_, convergenceView_})
         view->header()->setBackCallback(backToGeometry);
     preserveControlHeights(this);
 }
@@ -900,8 +903,8 @@ void MainWindow::createOptimizationWorkspace()
 {
     optimizationWorkspace_ = new OptimizationWorkspace;
     optimizationWorkspace_->setObjectName(QStringLiteral("optimizationWorkspace"));
-    optimizationView_ = new CenterView(
-        QStringLiteral("optimizationView"), optimizationWorkspace_, windowHost_);
+    optimizerWindow_ = new OptimizerWindow(optimizationWorkspace_, this);
+    preserveControlHeights(optimizerWindow_);
     optimizationWorkspace_->setRunsChangedCallback([this] {
         bottomPanel_->runs()->reload();
         refreshLatestRun();
@@ -911,6 +914,8 @@ void MainWindow::createOptimizationWorkspace()
         updateOptimizationStatus();
     });
     optimizationWorkspace_->setParameterizationHelpCallback([this] {
+        raise();
+        activateWindow();
         selectInModel({ModelNode::Wires});
         cardTables_->focusParameterizableField(CardTables::Table::Wires);
         statusBar()->showMessage(tr(
@@ -968,9 +973,9 @@ void MainWindow::updateOptimizationStatus()
     const auto running = optimizationWorkspace_->isRunning();
     const auto modelName = currentFile_.isEmpty()
         ? tr("Untitled model.nec") : QFileInfo(currentFile_).fileName();
-    optimizationView_->header()->setTitle(
+    optimizerWindow_->setWindowTitle(
         tr("Optimize · %1 · %2").arg(modelName, running ? tr("Running") : tr("Ready")));
-    // The toolbar shows a running search from any view, and keeps the way back to it open.
+    // The toolbar shows a running search while the window is closed, and reopens it.
     optimizeModuleAction_->setIconText(running ? tr("Optimizing…") : tr("Optimize"));
     optimizeModuleAction_->setToolTip(running
         ? tr("An optimization is running: show its progress") : tr("Optimize the model's variables"));
@@ -979,7 +984,7 @@ void MainWindow::updateOptimizationStatus()
 void MainWindow::showEditor(EditorDestination destination, int geometryTab)
 {
     if (destination == EditorDestination::Optimize) {
-        workbenchLayout_->showView(optimizationView_);
+        optimizerWindow_->present();
     } else if (destination == EditorDestination::RawSource) {
         workbenchLayout_->showView(deckView_);
         editor_->setFocus();
@@ -1273,6 +1278,8 @@ void MainWindow::createMenusAndToolbar()
     editMenu->setObjectName(QStringLiteral("editMenu"));
     editMenu->addAction(history_->undoAction());
     editMenu->addAction(history_->redoAction());
+    // Save, Undo and Redo also work while the optimizer window is in front.
+    optimizerWindow_->addActions({saveAction_, history_->undoAction(), history_->redoAction()});
     editMenu->addSeparator();
     editMenu->addAction(cutAction_);
     editMenu->addAction(copyAction_);
@@ -4234,7 +4241,7 @@ void MainWindow::setCurrentFile(QString path)
     const auto modelName = currentFile_.isEmpty() ? tr("Untitled model.nec") : name;
     statusBar_->setFileStatus(tr("Model: %1").arg(modelName),
         currentFile_.isEmpty() ? tr("This model has not been saved yet.") : currentFile_);
-    if (optimizationView_ != nullptr) updateOptimizationStatus();
+    if (optimizerWindow_ != nullptr) updateOptimizationStatus();
 }
 
 void MainWindow::restoreWorkspaceLayout()

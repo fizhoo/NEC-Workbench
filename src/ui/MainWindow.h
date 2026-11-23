@@ -48,6 +48,7 @@ class GeometryWorkspace;
 class GeometryView;
 class GeometryInteractionView;
 class RunReviewWindow;
+class OptimizerWindow;
 class AverageGainResultsView;
 class ConvergenceWorkspace;
 class SetupEditor;
@@ -305,7 +306,6 @@ private:
     QWidget* windowHost_{};
     WorkbenchLayout* workbenchLayout_{};
     CenterView* deckView_{};
-    CenterView* optimizationView_{};
     CenterView* averageGainView_{};
     CenterView* convergenceView_{};
     ModelColumn* modelColumn_{};
@@ -322,6 +322,7 @@ private:
     AnalysisSetupEditor* analysisSetupEditor_{};
     AnalysisRequestEditor* analysisRequestEditor_{};
     RunReviewWindow* runReviewWindow_{};
+    OptimizerWindow* optimizerWindow_{};
     AverageGainResultsView* averageGainResultsView_{};
     ConvergenceWorkspace* convergenceWorkspace_{};
     OptimizationWorkspace* optimizationWorkspace_{};

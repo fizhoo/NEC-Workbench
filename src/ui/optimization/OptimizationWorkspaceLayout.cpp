@@ -452,18 +452,18 @@ auto OptimizationWorkspace::buildSearchSection(QWidget* parent) -> QGroupBox*
     parameterizationLayout->setContentsMargins(0, 0, 0, 0);
     parameterizationLayout->setSpacing(4);
     auto* parameterizationHint = new QLabel(tr(
-        "Need another variable? Parameterize a numeric NEC field in a card table."),
+        "Need another variable? Right-click a card table cell → Make Variable…"),
         parameterizationBar);
     parameterizationHint->setWordWrap(true);
-    auto* chooseParameterFields = new QPushButton(
-        tr("Choose Parameter Fields…"), parameterizationBar);
-    chooseParameterFields->setObjectName(
-        QStringLiteral("optimizationChooseParameterFields"));
-    chooseParameterFields->setToolTip(tr(
-        "Open the wire table. Right-click a numeric field to create "
-        "or link an SY parameter, then return here to optimize it."));
+    auto* makeVariableButton = new QPushButton(
+        tr("Make Variable…"), parameterizationBar);
+    makeVariableButton->setObjectName(
+        QStringLiteral("optimizationMakeVariable"));
+    makeVariableButton->setToolTip(tr(
+        "Open the wire table in the main window. Right-click a numeric cell, "
+        "choose Make Variable…, then come back here to optimize it."));
     parameterizationLayout->addWidget(parameterizationHint);
-    parameterizationLayout->addWidget(chooseParameterFields, 0, Qt::AlignRight);
+    parameterizationLayout->addWidget(makeVariableButton, 0, Qt::AlignRight);
     variableSectionLayout->addWidget(parameterizationBar);
 
     connect(resetSearchDefaultsButton, &QPushButton::clicked, this, [this] {
@@ -481,7 +481,7 @@ auto OptimizationWorkspace::buildSearchSection(QWidget* parent) -> QGroupBox*
             pointsControl_->setValue(7);
         }
     });
-    connect(chooseParameterFields, &QPushButton::clicked, this, [this] {
+    connect(makeVariableButton, &QPushButton::clicked, this, [this] {
         if (parameterizationHelpCallback_) parameterizationHelpCallback_();
     });
     return variableSection;
@@ -593,7 +593,7 @@ auto OptimizationWorkspace::buildFrequencySection(QWidget* parent) -> QGroupBox*
     frequencySummaryLabel_ = new QLabel(frequencySection);
     frequencySummaryLabel_->setObjectName(
         QStringLiteral("optimizationFrequencySummary"));
-    frequencySummaryLabel_->setWordWrap(true);
+    // Its two lines are broken by hand; wrapping them again cut them off in a narrow column.
     editFrequencyButton_ = new QPushButton(tr("Edit…"), frequencySection);
     editFrequencyButton_->setObjectName(
         QStringLiteral("optimizationEditFrequencies"));

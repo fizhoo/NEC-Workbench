@@ -15,7 +15,7 @@ class BottomPanel;
 
 // The main window's content: one splitter holds the model tree on the left, the start panel
 // (with no model), the geometry editor or one of the other center views (a full result view,
-// the NEC Deck, Optimize, a validation study) in the center, and the results column on the
+// the NEC Deck, a validation study) in the center, and the results column on the
 // right. The bottom panel spans the full width underneath.
 class WorkbenchLayout final : public QWidget {
 public:

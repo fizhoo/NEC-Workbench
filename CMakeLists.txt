@@ -247,6 +247,8 @@ if(NECWB_BUILD_GUI)
         src/ui/optimization/OptimizationWorkspaceSupport.h
         src/ui/optimization/OptimizationComparePanel.cpp
         src/ui/optimization/OptimizationComparePanel.h
+        src/ui/optimization/OptimizerWindow.cpp
+        src/ui/optimization/OptimizerWindow.h
         src/ui/optimization/CandidateEvaluator.cpp
         src/ui/optimization/CandidateEvaluator.h
         src/ui/optimization/DirectionStrategyDialog.cpp

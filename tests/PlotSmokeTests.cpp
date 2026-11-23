@@ -128,6 +128,17 @@ auto topLevelDialog(const QString& objectName) -> QDialog*
     return nullptr;
 }
 
+// The optimizer lives in its own top-level window, outside the main window's children.
+template <typename T>
+auto optimizerChild(const QString& objectName) -> T*
+{
+    for (auto* widget : QApplication::topLevelWidgets()) {
+        if (widget->objectName() == QStringLiteral("optimizerWindow"))
+            return widget->findChild<T*>(objectName);
+    }
+    return nullptr;
+}
+
 }
 
 #define NECWB_SMOKE_FAILURE(checkpoint) smokeFailure(checkpoint, __LINE__)
@@ -323,7 +334,7 @@ auto main(int argc, char* argv[]) -> int
         auto* necDeckAction = mainWindow.findChild<QAction*>(QStringLiteral("necDeckAction"));
         auto* optimizeModuleAction = mainWindow.findChild<QAction*>(
             QStringLiteral("optimizeModuleAction"));
-        auto* optimizationWorkspace = mainWindow.findChild<QWidget*>(
+        auto* optimizationWorkspace = optimizerChild<QWidget>(
             QStringLiteral("optimizationWorkspace"));
         auto* validateMenu = mainWindow.findChild<QMenu*>(QStringLiteral("validateMenu"));
         auto* runMenu = mainWindow.findChild<QMenu*>(QStringLiteral("runMenu"));
@@ -480,56 +491,62 @@ auto main(int argc, char* argv[]) -> int
                 && frequencyPage->isVisible() && functionKeysReachWindow
                 && topLevelDialog(QStringLiteral("analysisSetupWindow")) == nullptr;
         }
-        // Optimize opens in the center under ← Geometry, beside the model tree and the results
-        // column, and fits a 1400×900 window without scrolling sideways; Esc and ← Geometry
-        // go back, and opening it again finds it as it was.
+        // Optimize opens its own top-level window beside the main window, setup and results
+        // side by side; a second Optimize raises the same window, closing it keeps the study,
+        // its place is remembered, and closing the main window closes it.
         if (optimizationWorkspace != nullptr && optimizeModuleAction != nullptr) {
+            QSettings{}.remove(QStringLiteral("optimizerWindow"));
             mainWindow.resize(1400, 900);
             mainWindow.show();
             optimizeModuleAction->setEnabled(true);
             optimizeModuleAction->trigger();
             application.processEvents();
-            auto* split = mainWindow.findChild<QSplitter*>(QStringLiteral("workbenchSplit"));
+            auto* window = optimizationWorkspace->window();
             auto* geometry = mainWindow.findChild<QWidget*>(QStringLiteral("geometryWorkspace"));
             auto* method = optimizationWorkspace->findChild<QComboBox*>(
                 QStringLiteral("optimizationSearchMethod"));
-            const auto* candidateWindow = topLevelDialog(
-                QStringLiteral("optimizationCandidateDetailsWindow"));
-            // Stacked in the narrow center: nothing is wider than the scroll area's viewport.
-            auto* scroll = optimizationWorkspace->findChild<QScrollArea*>(
-                QStringLiteral("optimizationScrollArea"));
             auto* stack = optimizationWorkspace->findChild<QSplitter*>(
                 QStringLiteral("optimizationWorkspaceSplitter"));
-            const auto center = split == nullptr ? 0 : split->sizes().value(1);
-            const auto fits = scroll != nullptr && stack != nullptr
-                && stack->orientation() == Qt::Vertical
-                && scroll->widget()->minimumSizeHint().width() <= scroll->viewport()->width()
-                && scroll->horizontalScrollBarPolicy() == Qt::ScrollBarAlwaysOff;
-            const auto inCenter = split != nullptr && split->isAncestorOf(optimizationWorkspace)
-                && optimizationWorkspace->isVisible() && geometry != nullptr
-                && !geometry->isVisible() && split->sizes().value(0) > 0
-                && split->sizes().value(2) > 0
-                && topLevelDialog(QStringLiteral("optimizationWindow")) == nullptr
-                && (candidateWindow == nullptr || !candidateWindow->isVisible());
-            if (method != nullptr) method->setCurrentIndex(2);
-            auto* focused = optimizationWorkspace->findChild<QTableWidget*>(
-                QStringLiteral("optimizationVariablesTable"));
-            focused->setFocus();
-            QTest::keyClick(focused, Qt::Key_Escape);
+            const auto windows = std::ranges::count_if(QApplication::topLevelWidgets(),
+                [](const QWidget* widget) { return widget->objectName() == QStringLiteral("optimizerWindow"); });
+            const auto ownWindow = window != &mainWindow && window->parentWidget() == nullptr
+                && window->objectName() == QStringLiteral("optimizerWindow") && window->isVisible()
+                && windows == 1 && geometry != nullptr && geometry->isVisible()
+                && window->windowTitle().startsWith(QStringLiteral("Optimize · "))
+                && mainWindow.findChild<QWidget*>(QStringLiteral("optimizationView")) == nullptr;
+            window->resize(1120, 720);
             application.processEvents();
-            const auto escapeBack = geometry->isVisible() && !optimizationWorkspace->isVisible();
+            const auto sideBySide = stack != nullptr && stack->orientation() == Qt::Horizontal;
+            window->resize(520, 720);
+            application.processEvents();
+            const auto stacksNarrow = stack != nullptr && stack->orientation() == Qt::Vertical;
+            // The offscreen screen is small; a size and place inside it come back as left.
+            window->resize(640, 480);
+            if (method != nullptr) method->setCurrentIndex(2);
+            window->move(40, 30);
+            application.processEvents();
+            const auto placed = window->pos();
+            window->close();
+            application.processEvents();
+            const auto closedHidden = !window->isVisible() && !QSettings{}.value(
+                QStringLiteral("optimizerWindow/geometry")).toByteArray().isEmpty();
+            optimizeModuleAction->trigger();
             optimizeModuleAction->trigger();
             application.processEvents();
-            const auto keptState = optimizationWorkspace->isVisible() && method != nullptr
-                && method->currentIndex() == 2;
-            if (auto* back = mainWindow.findChild<QToolButton*>(QStringLiteral("optimizationViewBack")))
-                back->click();
+            const auto keptState = window->isVisible() && optimizationWorkspace->window() == window
+                && method != nullptr && method->currentIndex() == 2 && window->pos() == placed
+                && window->size() == QSize(640, 480);
+            mainWindow.close();
             application.processEvents();
-            optimizationWindowNavigation = inCenter && fits && escapeBack && keptState
-                && geometry->isVisible();
+            const auto closesWithMain = !window->isVisible();
+            mainWindow.show();
+            application.processEvents();
+            optimizationWindowNavigation = ownWindow && sideBySide && stacksNarrow && closedHidden
+                && keptState && closesWithMain;
             if (!optimizationWindowNavigation)
-                qWarning() << "optimize in center" << inCenter << fits << center
-                           << optimizationWorkspace->minimumSizeHint() << escapeBack << keptState;
+                qWarning() << "optimizer window" << ownWindow << windows << sideBySide << stacksNarrow
+                           << closedHidden << keptState << placed << window->pos() << window->size()
+                           << closesWithMain;
         }
         // Dialogs follow the workspace density when they are shown.
         {
@@ -1717,10 +1734,10 @@ auto main(int argc, char* argv[]) -> int
             const auto fixed = waitFor([&] { return text().contains(QStringLiteral("EX 0 1 4 0 1 0\nFR")); })
                 && !text().contains(QStringLiteral("necwb"));
             // The optimizer leaves segments unchecked and sweeps it only in whole steps.
-            auto* variables = mainWindow.findChild<QTableWidget*>(QStringLiteral("optimizationVariablesTable"));
-            auto* method = mainWindow.findChild<QComboBox*>(QStringLiteral("optimizationSearchMethod"));
-            auto* points = mainWindow.findChild<QSpinBox*>(QStringLiteral("optimizationCandidateCount"));
-            auto* run = mainWindow.findChild<QPushButton*>(QStringLiteral("optimizationRun"));
+            auto* variables = optimizerChild<QTableWidget>(QStringLiteral("optimizationVariablesTable"));
+            auto* method = optimizerChild<QComboBox>(QStringLiteral("optimizationSearchMethod"));
+            auto* points = optimizerChild<QSpinBox>(QStringLiteral("optimizationCandidateCount"));
+            auto* run = optimizerChild<QPushButton>(QStringLiteral("optimizationRun"));
             auto optimizerGuarded = false;
             if (variables != nullptr && method != nullptr && points != nullptr && run != nullptr
                 && variables->rowCount() == 2) {
@@ -2961,8 +2978,14 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationVariablesTable"));
     auto* optimizationParameterSettings = optimization.findChild<QWidget*>(
         QStringLiteral("optimizationParameterSettings"));
-    auto* optimizationChooseParameterFields = optimization.findChild<QPushButton*>(
-        QStringLiteral("optimizationChooseParameterFields"));
+    // The frequency summary keeps its own line breaks and shows each line whole.
+    const auto summaryFitsText = [](const QLabel* label) {
+        return label != nullptr && !label->wordWrap() && label->text().contains(QLatin1Char('\n'))
+            && label->width() >= label->sizeHint().width()
+            && label->height() >= label->sizeHint().height();
+    };
+    auto* optimizationMakeVariable = optimization.findChild<QPushButton*>(
+        QStringLiteral("optimizationMakeVariable"));
     auto* optimizationObjectiveSettings = optimization.findChild<QWidget*>(
         QStringLiteral("optimizationObjectiveSettings"));
     auto* optimizationObjectivePreset = optimization.findChild<QComboBox*>(
@@ -3086,8 +3109,8 @@ auto main(int argc, char* argv[]) -> int
     auto parameterizationHelpInvoked = false;
     optimization.setParameterizationHelpCallback(
         [&parameterizationHelpInvoked] { parameterizationHelpInvoked = true; });
-    if (optimizationChooseParameterFields != nullptr)
-        optimizationChooseParameterFields->click();
+    if (optimizationMakeVariable != nullptr)
+        optimizationMakeVariable->click();
     const auto optimizerResultsPreserved = optimizationResultsTable != nullptr
         && optimizationResultsTable->rowCount() == 1;
     if (optimizationResultsTable != nullptr) optimizationResultsTable->setRowCount(0);
@@ -4359,10 +4382,13 @@ auto main(int argc, char* argv[]) -> int
             != QStringLiteral("Band Evaluation")
         || optimizationResultsTable->columnCount() != 11
         || optimizationVariables->columnCount() != 6
-        || optimizationChooseParameterFields == nullptr
+        || optimizationMakeVariable == nullptr
+        || !summaryFitsText(optimization.findChild<QLabel*>(
+            QStringLiteral("optimizationFrequencySummary")))
         || !parameterizationHelpInvoked
-        || !optimizationChooseParameterFields->toolTip().contains(
-            QStringLiteral("Right-click a numeric field"))
+        || optimizationMakeVariable->text() != QStringLiteral("Make Variable…")
+        || !optimizationMakeVariable->toolTip().contains(
+            QStringLiteral("choose Make Variable…"))
         || optimizationVariables->rowCount() != 3
         || optimizationVariables->item(0, 0)->checkState() != Qt::Checked
         || optimizationVariables->item(1, 0)->checkState() != Qt::Checked
