@@ -88,9 +88,12 @@ line holds the Top, Front, Side, 3D, Fit and Currents buttons, which the View me
 and which bring the geometry forward from the Deck or a result view, keeping its 2D or 3D
 page; Units builds its control per place, so a narrow toolbar's ›› menu gets a working copy;
 and each view's counts, grid and cursor go in a thin info line under it, never over the
-drawing), or one full result view, or the NEC
-Deck (`DeckView`: raw source), each non-geometry view under the same
-`CenterViewHeader`; the collapsible results column is on the right. The results (`ui/results`) are:
+drawing; the wire, source and load labels go through `LabelPlacer`, which keeps each inside the
+view and nudges it clear of the labels placed before it). In its place the center shows one
+of the other views, each a `CenterView` under the same `CenterViewHeader` (← Geometry, Esc):
+a full result view, the NEC Deck (raw source), Optimize, the Average Gain Test, or
+Segmentation Convergence. `WorkbenchLayout` keeps them all in one stack, so each keeps its
+state while another is shown. The collapsible results column is on the right. The results (`ui/results`) are:
 
 - `ResultsController`, which owns the displayed run, the overlay, the stale flag, and
   the one selected frequency (`ResultState`), and brings everything else up to date.
@@ -114,24 +117,17 @@ pieces among them, coarser while dragging a dense pattern;
 the pattern on the middle of the antenna's bounding box and sizes it by the antenna's largest
 half-dimension, so an antenna raised or moved sideways keeps the same picture, and the fit
 covers the pattern and antenna, not the origin. `FlowLayout` wraps a
-row of controls that would otherwise widen a narrow view. The remaining workspaces are separate
-top-level windows:
+row of controls that would otherwise widen a narrow view. The **bottom panel** (`BottomPanel`)
+along the bottom of the main window holds Problems, the Run log, Runs, and Raw output;
+`WorkbenchStatusBar` shows backend, the selected and loaded result frequencies, run state,
+and check counts. Menus expose the complete command set.
 
-- **Validation** shows the static check, Average Gain Test, and convergence studies.
-- The **bottom panel** (`BottomPanel`) along the bottom of the main window holds Problems, the Run log, Runs,
-  and Raw output; `WorkbenchStatusBar` shows backend, the selected and loaded result
-  frequencies, run state, and check counts.
-- **Optimize** owns parameter studies and candidate review.
+Only dialogs open windows of their own, among them the optimizer's candidate review and
+historical Run Review, which is read-only so opening archived output cannot silently
+replace the active editor. `retireOldSettings` removes, once per settings store and gated
+by `ui/layoutVersion`, what the earlier separate windows and main window state saved.
 
-The separate windows are `DetachablePanel`s, parented to a hidden host in the main
-window. Each window persists its own geometry, so resizing one never resizes another,
-and opening a window again raises the existing instance. They cannot be attached back
-into the main window; each moves in during its own step of the layout rework.
-Menus expose the complete command set.
-
-A detached view is the same live content, not a copied result model. Historical Run
-Review is separate and read-only so opening archived output cannot silently replace
-the active editor. The historical-overlay controller selects at most one archived run
+The historical-overlay controller selects at most one archived run
 and never changes the active result; the results column's one overlay control decides
 whether to display it.
 
@@ -143,8 +139,10 @@ optimization. Adequacy findings are warnings because their importance depends on
 the model and engineering purpose.
 
 Validation commands are grouped in the **Validate** menu. Static findings are listed
-in the bottom panel's Problems tab, while the focused **Validation** window owns the
-compact overview, Average Gain Test result, and segmentation-convergence workspace.
+in the bottom panel's Problems tab under a note on the check's scope and target solver.
+The Average Gain Test result and the segmentation-convergence workspace are center
+views opened from their model-tree rows or the menu; the tree's Run starts a study
+without changing the center.
 The Run log remains execution UI rather than a validation result; durable runs are
 reviewed through the Runs tab and the read-only Run Review window.
 
@@ -304,8 +302,8 @@ overlays and directional objective reductions on the same sampled cut.
 The optimization session stores the baseline run ID; historical session review loads
 that archived result without replacing the active model's live-result state.
 
-Candidate comparison is owned by a focused panel inside the reusable detached
-candidate-preview window, leaving the main evaluation table and search-progress plot
+Candidate comparison is owned by a focused panel inside the reusable candidate-review
+window, leaving the main evaluation table and search-progress plot
 uncompressed. It reuses the normal SWR/impedance and 2D-pattern views, placing the
 compatible baseline behind the selected candidate as a labeled dashed series. The
 core fingerprint and coverage evaluator is Qt-free; widgets only present its status
@@ -316,6 +314,13 @@ The optimization workspace resolves and fingerprints the active deck once per mo
 change, and keeps the latest pattern's peak and tracked-cut metrics until a new
 pattern arrives, so frequent readiness refreshes and objective-preset changes do not
 re-parse source or rescan large patterns.
+
+The optimizer is a center view: in a narrow center its setup stacks above its results in
+a vertical scroll area. A study evaluates the source captured when it started; edits of
+the same model keep its candidates, and a new or opened model clears them. Applying a
+candidate to a model that changed since the study started first asks, listing the
+differences from `nec::describeSourceChanges` (variables, and card fields paired by an
+alignment of the card sequence), which ignores the optimized variables' values.
 
 Applying a candidate is an explicit source edit to active `SY` definitions. It is
 undoable and does not mutate archived candidate artifacts. Applying and running
