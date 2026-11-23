@@ -2035,16 +2035,17 @@ auto main(int argc, char* argv[]) -> int
             "EX 0 1 6 0 1 0\nFR 0 1 0 0 146 0\nEN\n");
         modelFile.close();
         settings.setValue(QStringLiteral("files/recentModels"), QStringList{modelPath});
+        const auto savedReopen = necwb::ui::recentModels::reopenAtStartup();
+        necwb::ui::recentModels::setReopenAtStartup(true);
+        // Reopened at launch in a small window with nothing selected, then made larger.
         necwb::ui::MainWindow mainWindow;
-        mainWindow.resize(1400, 900);
+        mainWindow.resize(1000, 560);
         mainWindow.show();
         application.processEvents();
-        // Opening rebuilds the menu, so stop at the action triggered.
-        for (auto* action : mainWindow.findChild<QMenu*>(QStringLiteral("recentModelsMenu"))->actions()) {
-            if (action->data().toString() != modelPath) continue;
-            action->trigger();
-            break;
-        }
+        mainWindow.reopenLastModel(false);
+        application.processEvents();
+        necwb::ui::recentModels::setReopenAtStartup(savedReopen);
+        mainWindow.resize(1500, 1050);
         application.processEvents();
         auto* section = dynamic_cast<necwb::ui::VariablesSection*>(
             mainWindow.findChild<QWidget*>(QStringLiteral("variablesSection")));
@@ -2058,7 +2059,8 @@ auto main(int argc, char* argv[]) -> int
                        << (section ? section->unfoldedHeight() : -1)
                        << (section ? section->maximumHeight() : -1)
                        << (pane ? pane->isHidden() : false)
-                       << (scroll ? scroll->verticalScrollBar()->maximum() : -1);
+                       << (scroll ? scroll->verticalScrollBar()->maximum() : -1)
+                       << (section ? section->sizeHint() : QSize());
         if (auto* deck = mainWindow.findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor")))
             deck->document()->setModified(false);
         mainWindow.close();
@@ -6634,37 +6636,48 @@ auto main(int argc, char* argv[]) -> int
     applySegmentation->click();
     application.processEvents();
     const auto segmentationApplyAccepted = segmentationDialog.result() == QDialog::Accepted;
-    // In a small side view of a yagi, the source's EX and the wire labels stay inside the view
-    // and clear of each other, though the elements end on end draw their labels at one height.
+    // In small side views of a yagi, the wire and EX labels are drawn whole inside the view,
+    // clear of the EX marker and of each other, though the elements end on end draw them at
+    // one point; a label at a wire end by the edge goes on the inner side.
     {
         necwb::model::AntennaModel yagi;
         yagi.addWire({1, {-0.5, -0.52, 0.0}, {-0.5, 0.52, 0.0}, 11, 0.003, 1});
         yagi.addWire({2, {0.0, -0.5, 0.0}, {0.0, 0.5, 0.0}, 11, 0.003, 2});
         yagi.addWire({3, {0.55, -0.46, 0.0}, {0.55, 0.46, 0.0}, 11, 0.003, 3});
-        necwb::ui::GeometryView side(necwb::geometry::ProjectionPlane::XZ);
-        side.resize(side.minimumSizeHint().width(), 140);
-        side.setModel(yagi);
-        side.setExcitations({{0, 2, 6, 1.0, 0.0, 5}});
-        side.fitToView();
-        // Zoomed in about the middle, the last element's label would run past the right edge.
-        QWheelEvent zoomIn(QPointF(side.width() / 2.0, side.height() / 2.0),
-            side.mapToGlobal(QPointF(side.width() / 2.0, side.height() / 2.0)), {}, {0, 300},
-            Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
-        QApplication::sendEvent(&side, &zoomIn);
-        QImage sideImage(side.size(), QImage::Format_ARGB32_Premultiplied);
-        side.render(&sideImage);
-        const auto& boxes = side.labelBoxes();
-        const auto unclamped = side.screenPoint({0.55, 0.0, 0.0}).x() + 8.0
-            + (boxes.empty() ? 0.0 : boxes.front().width());
-        auto labelsClear = boxes.size() == 4 && unclamped > side.width();
-        for (auto first = std::size_t{}; first < boxes.size(); ++first) {
-            labelsClear = labelsClear && QRectF(side.rect()).contains(boxes[first]);
-            for (auto second = first + 1; second < boxes.size(); ++second)
-                labelsClear = labelsClear && !boxes[first].intersects(boxes[second]);
-        }
-        if (!labelsClear) {
-            qWarning() << "side view labels" << side.rect() << unclamped << boxes;
-            return NECWB_SMOKE_FAILURE("small view labels inside and apart");
+        for (const auto plane : {necwb::geometry::ProjectionPlane::XZ, necwb::geometry::ProjectionPlane::YZ}) {
+            necwb::ui::GeometryView side(plane);
+            side.resize(side.minimumSizeHint().width(), 140);
+            side.setModel(yagi);
+            side.setExcitations({{0, 2, 6, 1.0, 0.0, 5}});
+            side.fitToView();
+            // Zoomed in about the middle, the outer wire ends sit by the edges.
+            QWheelEvent zoomIn(QPointF(side.width() / 2.0, side.height() / 2.0),
+                side.mapToGlobal(QPointF(side.width() / 2.0, side.height() / 2.0)), {}, {0, 300},
+                Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+            QApplication::sendEvent(&side, &zoomIn);
+            QImage sideImage(side.size(), QImage::Format_ARGB32_Premultiplied);
+            side.render(&sideImage);
+            const auto& boxes = side.labelBoxes();
+            // The EX diamond with its outline, and every wire end's dot.
+            const auto source = side.screenPoint({0.0, 0.0, 0.0});
+            std::vector<QRectF> marks{QRectF(source - QPointF(9.0, 9.0), QSizeF(18.0, 18.0))};
+            for (const auto& wire : yagi.wires())
+                for (const auto& end : {wire.start, wire.end})
+                    marks.emplace_back(side.screenPoint(end) - QPointF(3.5, 3.5), QSizeF(7.0, 7.0));
+            const auto edge = plane == necwb::geometry::ProjectionPlane::XZ
+                ? side.screenPoint({0.55, 0.0, 0.0}) : side.screenPoint({0.0, 0.52, 0.0});
+            auto labelsClear = boxes.size() == 4 && edge.x() + 40.0 > side.width();
+            for (auto first = std::size_t{}; first < boxes.size(); ++first) {
+                labelsClear = labelsClear && QRectF(side.rect()).contains(boxes[first])
+                    && std::ranges::none_of(marks, [&](const QRectF& mark) { return mark.intersects(boxes[first]); });
+                for (auto second = first + 1; second < boxes.size(); ++second)
+                    labelsClear = labelsClear && !boxes[first].intersects(boxes[second]);
+            }
+            if (!labelsClear) {
+                qWarning() << "side view labels" << static_cast<int>(plane) << side.rect() << edge
+                           << marks << boxes;
+                return NECWB_SMOKE_FAILURE("small view labels inside and apart");
+            }
         }
     }
     necwb::model::ModelSetup attachmentSetup;

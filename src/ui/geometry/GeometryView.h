@@ -82,6 +82,7 @@ private:
     void drawAttachments(QPainter& painter) const;
     // A source's or load's tag beside its marker, placed clear of the other labels.
     void drawMarkerLabel(QPainter& painter, const QPointF& marker, const QString& text) const;
+    static auto labelSize(const QPainter& painter, const QString& text) -> QSizeF;
     void drawEmptyMessage(QPainter& painter) const;
     // Repaints and tells the info line, whose grid and cursor may have changed.
     void changed();

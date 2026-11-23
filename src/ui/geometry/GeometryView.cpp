@@ -353,11 +353,12 @@ void GeometryView::paintEvent(QPaintEvent*)
     painter.fillRect(rect(), palette().base());
     drawGrid(painter);
     drawSurfacePatches(painter);
-    // Labels stay inside the view, the later ones moving clear of the earlier.
+    // Labels go on last, inside the view and clear of the markers and of each other.
     labels_.reset(QRectF(rect()).adjusted(2.0, 2.0, -2.0, -2.0));
     drawWires(painter);
     drawAttachments(painter);
     drawExcitations(painter);
+    labels_.placeAll();
     drawEmptyMessage(painter);
 }
 
@@ -560,23 +561,26 @@ void GeometryView::drawWires(QPainter& painter) const
             model::wirePathPoint(wire, pointCount - 1), plane_));
         painter.setPen(QPen(color, 1.0));
         painter.setBrush(color);
-        painter.drawEllipse(start, selected ? 4.5 : 3.5, selected ? 4.5 : 3.5);
-        painter.drawEllipse(end, selected ? 4.5 : 3.5, selected ? 4.5 : 3.5);
+        const auto radius = selected ? 4.5 : 3.5;
+        painter.drawEllipse(start, radius, radius);
+        painter.drawEllipse(end, radius, radius);
+        for (const auto& point : {start, end})
+            labels_.block(QRectF(point - QPointF(radius, radius), QSizeF(radius, radius) * 2.0));
 
-        const auto middlePoint = model::wirePathPoint(wire, pointCount / 2);
-        const auto midpoint = mapToScreen(geometry::project(middlePoint, plane_)) + QPointF{8.0, -8.0};
+        const auto midpoint = mapToScreen(geometry::project(
+            model::wirePathPoint(wire, pointCount / 2), plane_));
         const auto label = wireLabel(wire);
-        auto labelRectangle = QRectF(painter.fontMetrics().boundingRect(label).adjusted(-3, -2, 3, 2));
-        labelRectangle.moveTopLeft(midpoint);
-        labelRectangle = labels_.place(labelRectangle);
-        painter.fillRect(labelRectangle, palette().base().color());
-        if (selected && currents) {
-            painter.setPen(selectionHaloPen(1.5));
-            painter.setBrush(Qt::NoBrush);
-            painter.drawRect(labelRectangle);
-        }
-        painter.setPen(color);
-        painter.drawText(labelRectangle, Qt::AlignCenter, label);
+        labels_.add(midpoint, labelSize(painter, label),
+            [this, &painter, label, color, halo = selected && currents](const QRectF& box) {
+                painter.fillRect(box, palette().base().color());
+                if (halo) {
+                    painter.setPen(selectionHaloPen(1.5));
+                    painter.setBrush(Qt::NoBrush);
+                    painter.drawRect(box);
+                }
+                painter.setPen(color);
+                painter.drawText(box, Qt::AlignCenter, label);
+            });
     }
 }
 
@@ -606,8 +610,19 @@ void GeometryView::drawExcitations(QPainter& painter) const
 
 void GeometryView::drawMarkerLabel(QPainter& painter, const QPointF& marker, const QString& text) const
 {
-    const auto wanted = QRectF(painter.fontMetrics().boundingRect(text)).translated(marker + QPointF{9.0, -7.0});
-    painter.drawText(labels_.place(wanted), Qt::AlignCenter, text);
+    constexpr auto Radius = 9.0;
+    labels_.block(QRectF(marker - QPointF(Radius, Radius), QSizeF(Radius, Radius) * 2.0));
+    labels_.add(marker, labelSize(painter, text), [&painter, text, color = painter.pen().color()](const QRectF& box) {
+        painter.setPen(color);
+        painter.drawText(box, Qt::AlignCenter, text);
+    });
+}
+
+auto GeometryView::labelSize(const QPainter& painter, const QString& text) -> QSizeF
+{
+    // The advance, not the ink, so the whole text fits the box it is drawn in.
+    const auto metrics = painter.fontMetrics();
+    return {metrics.horizontalAdvance(text) + 6.0, metrics.height() + 2.0};
 }
 
 void GeometryView::drawAttachments(QPainter& painter) const
