@@ -9,9 +9,9 @@ Workbench remains solver-independent and does not bundle external NEC engines.
 
 - One source-backed document shared by Raw Source, the card tables, geometry,
   model setup, parameter editing, validation, and Undo/Redo
-- One main window: the geometry editor, NEC Deck, full result views, Optimize, and the
-  validation studies take turns in the center, with a slider for each `SY` variable
-  under the model tree
+- One main window: the geometry editor, NEC Deck, full result views and the validation
+  studies take turns in the center, with a slider for each `SY` variable under the model
+  tree; the optimizer has a window of its own
 - The card tables show long numbers at 6 significant figures while the
   deck keeps full precision
 - Editable straight-wire geometry plus read-only display of supported generated
@@ -67,10 +67,10 @@ the currents-on-antenna view, and a faster optimizer.
 
 The work since Alpha 2 replaces its Home control panel and separate work and result
 windows with one main window: the model tree, variables and properties pane on the
-left; the geometry, NEC Deck, full result views, Optimize and the validation studies in
-the center; the results column on the right; and the bottom panel for Problems, the Run
-log, Runs and Raw output. Candidate review and historical Run Review remain separate
-windows. Alongside it:
+left; the geometry, NEC Deck, full result views and the validation studies in the
+center; the results column on the right; and the bottom panel for Problems, the Run
+log, Runs and Raw output. The optimizer, its candidate review and historical Run Review
+are separate windows. Alongside it:
 
 - Exercise representative real decks across supported solver backends and platforms.
 - Field-test the single-window workflow, Run History, historical overlays, and the

@@ -3,8 +3,8 @@
 NEC Workbench runs in one resizable main window. A toolbar runs across the top. With a
 model open, the **model tree**, the **variables** with their sliders, and the
 **properties pane** for what is selected form the left column; the **geometry editor**
-fills the center (or, in its place, the **NEC Deck**, a full result view, **Optimize**,
-or a validation study); and the
+fills the center (or, in its place, the **NEC Deck**, a full result view, or a
+validation study); and the
 **results column** on the right shows the key numbers and live result thumbnails. A
 bottom panel underneath holds Problems, the Run log, Runs, and Raw output. Controls
 provide tooltips; this guide
@@ -69,8 +69,8 @@ from anywhere in the main window, including the model tree and the properties pa
 
 Every view shown in the center in place of the geometry has a **← Geometry** bar across
 its top; it and `Esc` go back. Each view keeps its state while another is shown, so
-opening it again finds it as you left it. Historical Run Review and the optimizer's
-candidate review remain separate windows.
+opening it again finds it as you left it. The optimizer, its candidate review and
+Historical Run Review are separate windows.
 
 ### Bottom Panel and Status Bar
 
@@ -809,21 +809,28 @@ open model.
 
 ## Optimize
 
-**Optimize** on the toolbar or in the Run menu opens the optimizer in the center, with
-the model tree and the results column beside it. In a narrow center the setup stacks
-above the results and the view scrolls vertically. A running optimization continues
-while you go back to the geometry, and the toolbar button reads **Optimizing…** until it
-finishes. The optimizer keeps its variables, objective, method, candidates and progress
-while you work elsewhere; editing the model keeps the candidates too, and opening or
-starting another model clears them.
+**Optimize** on the toolbar or in the Run menu opens the optimizer in a window of its
+own, or brings it to the front. The first time it opens at about 80% of the main window's
+size, on another monitor if there is one, else beside the main window or over its
+right-hand side, so the geometry stays in view where the screen allows; after that it
+reopens where you left it. Either window comes to the front when clicked, and closing the
+main window closes the optimizer. The setup and the results sit side by side; in a narrow
+window the setup stacks above the results and the window scrolls vertically. Save, Undo
+and Redo work from it too.
+
+Closing the optimizer only hides it: it keeps its variables, objective, method,
+candidates and progress, and a running optimization continues, with the toolbar button
+reading **Optimizing…** until it finishes. Editing the model keeps the candidates too;
+opening or starting another model stops a running optimization and clears them.
 
 A study runs on the model as it was when it started. Applying a candidate after the
 model changed asks first, listing the variables and card fields that differ; the
 optimized variables' own values do not count as a change.
 
 Optimization consumes existing parameters. It does not decide which NEC fields a
-parameter controls. Use **Choose Parameter Fields…** to jump to the wire table when
-another field needs a variable.
+parameter controls. When another field needs one, **Make Variable…** brings the main
+window forward with the wire table open: right-click a cell and choose **Make
+Variable…**.
 
 ### Search Methods
 
@@ -1002,8 +1009,8 @@ Candidate measurements remain optimization data until explicitly promoted:
 - **Apply This Candidate to Model** applies a manually selected candidate.
 - **Apply This Candidate and Run** applies it and starts a normal analysis.
 
-Apply is one undoable source edit and leaves the optimizer in the center; Undo returns
-to it. It does not alter archived candidate artifacts.
+Apply is one undoable source edit and leaves the optimizer in front; Undo brings it
+back. It does not alter archived candidate artifacts.
 
 ### Choosing a Method
 

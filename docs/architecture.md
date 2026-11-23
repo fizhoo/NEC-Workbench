@@ -88,10 +88,11 @@ line holds the Top, Front, Side, 3D, Fit and Currents buttons, which the View me
 and which bring the geometry forward from the Deck or a result view, keeping its 2D or 3D
 page; Units builds its control per place, so a narrow toolbar's ›› menu gets a working copy;
 and each view's counts, grid and cursor go in a thin info line under it, never over the
-drawing; the wire, source and load labels go through `LabelPlacer`, which keeps each inside the
-view and nudges it clear of the labels placed before it). In its place the center shows one
+drawing; the wire, source and load labels go through `LabelPlacer`, which places them after
+everything else is drawn, beside their anchor on the side facing the middle of the view,
+whole inside it and clear of the markers, the wire-end dots and the labels placed before). In its place the center shows one
 of the other views, each a `CenterView` under the same `CenterViewHeader` (← Geometry, Esc):
-a full result view, the NEC Deck (raw source), Optimize, the Average Gain Test, or
+a full result view, the NEC Deck (raw source), the Average Gain Test, or
 Segmentation Convergence. `WorkbenchLayout` keeps them all in one stack, so each keeps its
 state while another is shown. The collapsible results column is on the right. The results (`ui/results`) are:
 
@@ -122,8 +123,8 @@ along the bottom of the main window holds Problems, the Run log, Runs, and Raw o
 `WorkbenchStatusBar` shows backend, the selected and loaded result frequencies, run state,
 and check counts. Menus expose the complete command set.
 
-Only dialogs open windows of their own, among them the optimizer's candidate review and
-historical Run Review, which is read-only so opening archived output cannot silently
+Besides dialogs, the only windows of their own are the optimizer, its candidate review,
+and historical Run Review, which is read-only so opening archived output cannot silently
 replace the active editor. `retireOldSettings` removes, once per settings store and gated
 by `ui/layoutVersion`, what the earlier separate windows and main window state saved.
 
@@ -315,8 +316,14 @@ change, and keeps the latest pattern's peak and tracked-cut metrics until a new
 pattern arrives, so frequent readiness refreshes and objective-preset changes do not
 re-parse source or rescan large patterns.
 
-The optimizer is a center view: in a narrow center its setup stacks above its results in
-a vertical scroll area. A study evaluates the source captured when it started; edits of
+The optimizer lives in `OptimizerWindow`, a top-level window with no parent, so it and
+the main window come to the front independently; MainWindow owns it, closes it when it
+closes, and shares Save, Undo and Redo with it. Closing it only hides it, keeping the
+`OptimizationWorkspace` and any running study. It saves its geometry under
+`optimizerWindow/geometry`; with none saved, or none on a connected screen, it opens at
+about 80% of the main window on another screen, else beside the main window, else over
+its right-hand side. In a narrow window its setup stacks above its results in a vertical
+scroll area. A study evaluates the source captured when it started; edits of
 the same model keep its candidates, and a new or opened model clears them. Applying a
 candidate to a model that changed since the study started first asks, listing the
 differences from `nec::describeSourceChanges` (variables, and card fields paired by an
