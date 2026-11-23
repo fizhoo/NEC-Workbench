@@ -2003,6 +2003,51 @@ auto main(int argc, char* argv[]) -> int
     }
     if (!variablesLive)
         return NECWB_SMOKE_FAILURE("variables live, undo, reset and revert");
+    // A model opened with nothing selected leaves the pane empty: the variables take the
+    // free height, all rows shown without a scroll bar of their own.
+    {
+        QSettings settings;
+        const auto savedRecent = settings.value(QStringLiteral("files/recentModels"));
+        settings.remove(QStringLiteral("variables/folded"));
+        QTemporaryDir directory;
+        const auto modelPath = directory.filePath(QStringLiteral("variables.nec"));
+        QFile modelFile(modelPath);
+        if (!directory.isValid() || !modelFile.open(QIODevice::WriteOnly | QIODevice::Text))
+            return NECWB_SMOKE_FAILURE("variables model file");
+        modelFile.write("SY a=1, b=2, c=3, d=4, e=5, f=6\nGW 1 11 0 -a 0 0 a 0 0.001\nGE 0\n"
+            "EX 0 1 6 0 1 0\nFR 0 1 0 0 146 0\nEN\n");
+        modelFile.close();
+        settings.setValue(QStringLiteral("files/recentModels"), QStringList{modelPath});
+        necwb::ui::MainWindow mainWindow;
+        mainWindow.resize(1400, 900);
+        mainWindow.show();
+        application.processEvents();
+        // Opening rebuilds the menu, so stop at the action triggered.
+        for (auto* action : mainWindow.findChild<QMenu*>(QStringLiteral("recentModelsMenu"))->actions()) {
+            if (action->data().toString() != modelPath) continue;
+            action->trigger();
+            break;
+        }
+        application.processEvents();
+        auto* section = dynamic_cast<necwb::ui::VariablesSection*>(
+            mainWindow.findChild<QWidget*>(QStringLiteral("variablesSection")));
+        const auto* pane = mainWindow.findChild<QWidget*>(QStringLiteral("propertiesPane"));
+        const auto* scroll = section == nullptr ? nullptr : section->findChild<QScrollArea*>();
+        const auto variablesFill = section != nullptr && pane != nullptr && pane->isHidden()
+            && scroll != nullptr && scroll->verticalScrollBar()->maximum() == 0
+            && section->findChildren<QSlider*>().size() == 6;
+        if (!variablesFill)
+            qWarning() << "variables fill" << (section ? section->height() : -1)
+                       << (section ? section->unfoldedHeight() : -1)
+                       << (section ? section->maximumHeight() : -1)
+                       << (pane ? pane->isHidden() : false)
+                       << (scroll ? scroll->verticalScrollBar()->maximum() : -1);
+        if (auto* deck = mainWindow.findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor")))
+            deck->document()->setModified(false);
+        mainWindow.close();
+        settings.setValue(QStringLiteral("files/recentModels"), savedRecent);
+        if (!variablesFill) return NECWB_SMOKE_FAILURE("variables take the free height");
+    }
     // Card tables in the properties pane, the only editors of their items: a group shows its
     // table and folds the variables; ⇔ widens the column to the whole table, at most 65% of the
     // window, and anything else narrows it again; a row's click selects its item, a tree item
@@ -5392,6 +5437,31 @@ auto main(int argc, char* argv[]) -> int
     modelColumn.showPage(nullptr, {});
     application.processEvents();
     const auto paneHides = propertiesPane->isHidden() && propertiesPane->currentPage() == nullptr;
+    // With the pane empty the variables take the free height: every row, no scroll bar.
+    std::vector<necwb::nec::SymbolDefinition> manyVariables;
+    for (auto index = 1; index <= 8; ++index)
+        manyVariables.push_back({"v" + std::to_string(index), "1", 1.0, static_cast<std::size_t>(index)});
+    auto* columnVariables = modelColumn.variables();
+    columnVariables->setVariables(manyVariables);
+    application.processEvents();
+    const auto* variablesScroll = columnVariables->findChild<QScrollArea*>();
+    const auto allRowsShown = [&] {
+        return variablesScroll != nullptr && variablesScroll->verticalScrollBar()->maximum() == 0
+            && columnVariables->height() >= columnVariables->unfoldedHeight();
+    };
+    const auto rowsWithPaneEmpty = allRowsShown();
+    // So they do beside a short page, which needs only its own height.
+    modelColumn.showPage(editPage, QStringLiteral("Page"));
+    application.processEvents();
+    const auto variablesTakeFreeHeight = rowsWithPaneEmpty && allRowsShown()
+        && !propertiesPane->isHidden();
+    modelColumn.showPage(nullptr, {});
+    if (!variablesTakeFreeHeight)
+        qWarning() << "variables with the pane empty" << rowsWithPaneEmpty << columnVariables->height()
+                   << columnVariables->unfoldedHeight() << columnVariables->sizeHint()
+                   << columnVariables->maximumHeight() << modelColumn.height()
+                   << modelTree->height();
+    columnVariables->setVariables({});
     // A cell edit changes only its own field: the others keep their exact values, even in a
     // deck unit that does not round-trip, such as inches.
     necwb::model::AntennaModel preciseModel;
@@ -5542,6 +5612,7 @@ auto main(int argc, char* argv[]) -> int
         std::pair{"invalid edit discarded", invalidEditDiscarded},
         std::pair{"enter applies", enterApplies}, std::pair{"escape reverts", escapeReverts},
         std::pair{"pane hides", paneHides}, std::pair{"variables shown", variablesShown},
+        std::pair{"variables take the free height", variablesTakeFreeHeight},
         std::pair{"no change during drag", noChangeDuringDrag},
         std::pair{"drag is one change", dragIsOneChange},
         std::pair{"typed value changes", typedValueChanges}, std::pair{"steps wait", stepsWait},
@@ -6537,6 +6608,39 @@ auto main(int argc, char* argv[]) -> int
     applySegmentation->click();
     application.processEvents();
     const auto segmentationApplyAccepted = segmentationDialog.result() == QDialog::Accepted;
+    // In a small side view of a yagi, the source's EX and the wire labels stay inside the view
+    // and clear of each other, though the elements end on end draw their labels at one height.
+    {
+        necwb::model::AntennaModel yagi;
+        yagi.addWire({1, {-0.5, -0.52, 0.0}, {-0.5, 0.52, 0.0}, 11, 0.003, 1});
+        yagi.addWire({2, {0.0, -0.5, 0.0}, {0.0, 0.5, 0.0}, 11, 0.003, 2});
+        yagi.addWire({3, {0.55, -0.46, 0.0}, {0.55, 0.46, 0.0}, 11, 0.003, 3});
+        necwb::ui::GeometryView side(necwb::geometry::ProjectionPlane::XZ);
+        side.resize(side.minimumSizeHint().width(), 140);
+        side.setModel(yagi);
+        side.setExcitations({{0, 2, 6, 1.0, 0.0, 5}});
+        side.fitToView();
+        // Zoomed in about the middle, the last element's label would run past the right edge.
+        QWheelEvent zoomIn(QPointF(side.width() / 2.0, side.height() / 2.0),
+            side.mapToGlobal(QPointF(side.width() / 2.0, side.height() / 2.0)), {}, {0, 300},
+            Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(&side, &zoomIn);
+        QImage sideImage(side.size(), QImage::Format_ARGB32_Premultiplied);
+        side.render(&sideImage);
+        const auto& boxes = side.labelBoxes();
+        const auto unclamped = side.screenPoint({0.55, 0.0, 0.0}).x() + 8.0
+            + (boxes.empty() ? 0.0 : boxes.front().width());
+        auto labelsClear = boxes.size() == 4 && unclamped > side.width();
+        for (auto first = std::size_t{}; first < boxes.size(); ++first) {
+            labelsClear = labelsClear && QRectF(side.rect()).contains(boxes[first]);
+            for (auto second = first + 1; second < boxes.size(); ++second)
+                labelsClear = labelsClear && !boxes[first].intersects(boxes[second]);
+        }
+        if (!labelsClear) {
+            qWarning() << "side view labels" << side.rect() << unclamped << boxes;
+            return NECWB_SMOKE_FAILURE("small view labels inside and apart");
+        }
+    }
     necwb::model::ModelSetup attachmentSetup;
     attachmentSetup.loads.push_back({4, 1, 6, 6, 50.0, 0.0, 0.0, 7});
     attachmentSetup.transmissionLines.push_back({1, 3, 2, 9, 50.0, 3.048,

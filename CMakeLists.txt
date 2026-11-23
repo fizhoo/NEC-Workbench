@@ -216,6 +216,7 @@ if(NECWB_BUILD_GUI)
         src/ui/editor/SourceHistory.h
         src/ui/geometry/GeometryView.cpp
         src/ui/geometry/GeometryView.h
+        src/ui/geometry/LabelPlacer.h
         src/ui/geometry/GeometryInteractionView.cpp
         src/ui/geometry/GeometryInteractionView.h
         src/ui/ColorScale.cpp

@@ -353,6 +353,8 @@ void GeometryView::paintEvent(QPaintEvent*)
     painter.fillRect(rect(), palette().base());
     drawGrid(painter);
     drawSurfacePatches(painter);
+    // Labels stay inside the view, the later ones moving clear of the earlier.
+    labels_.reset(QRectF(rect()).adjusted(2.0, 2.0, -2.0, -2.0));
     drawWires(painter);
     drawAttachments(painter);
     drawExcitations(painter);
@@ -549,7 +551,6 @@ void GeometryView::drawWires(QPainter& painter) const
                 mapToScreen(geometry::project(segment.end, plane_)));
         }
     }
-    auto index = 0;
     for (const auto& wire : model_.wires()) {
         const bool selected = selectedWireTag_ == wire.tag;
         const auto color = currents && selected ? palette().color(QPalette::Text) : colorOf(selected);
@@ -563,12 +564,11 @@ void GeometryView::drawWires(QPainter& painter) const
         painter.drawEllipse(end, selected ? 4.5 : 3.5, selected ? 4.5 : 3.5);
 
         const auto middlePoint = model::wirePathPoint(wire, pointCount / 2);
-        const auto midpoint = mapToScreen(geometry::project(middlePoint, plane_))
-            + QPointF{8.0, -8.0 - (index % 3) * 14.0};
+        const auto midpoint = mapToScreen(geometry::project(middlePoint, plane_)) + QPointF{8.0, -8.0};
         const auto label = wireLabel(wire);
-        const auto labelBounds = painter.fontMetrics().boundingRect(label).adjusted(-3, -2, 3, 2);
-        auto labelRectangle = QRectF(labelBounds);
+        auto labelRectangle = QRectF(painter.fontMetrics().boundingRect(label).adjusted(-3, -2, 3, 2));
         labelRectangle.moveTopLeft(midpoint);
+        labelRectangle = labels_.place(labelRectangle);
         painter.fillRect(labelRectangle, palette().base().color());
         if (selected && currents) {
             painter.setPen(selectionHaloPen(1.5));
@@ -577,7 +577,6 @@ void GeometryView::drawWires(QPainter& painter) const
         }
         painter.setPen(color);
         painter.drawText(labelRectangle, Qt::AlignCenter, label);
-        ++index;
     }
 }
 
@@ -601,8 +600,14 @@ void GeometryView::drawExcitations(QPainter& painter) const
         painter.setBrush(QColor(255, 235, 120));
         painter.drawPolygon(diamond);
         painter.setPen(QColor(150, 30, 40));
-        painter.drawText(screen + QPointF{9.0, -7.0}, tr("EX"));
+        drawMarkerLabel(painter, screen, tr("EX"));
     }
+}
+
+void GeometryView::drawMarkerLabel(QPainter& painter, const QPointF& marker, const QString& text) const
+{
+    const auto wanted = QRectF(painter.fontMetrics().boundingRect(text)).translated(marker + QPointF{9.0, -7.0});
+    painter.drawText(labels_.place(wanted), Qt::AlignCenter, text);
 }
 
 void GeometryView::drawAttachments(QPainter& painter) const
@@ -628,7 +633,7 @@ void GeometryView::drawAttachments(QPainter& painter) const
         painter.setBrush(QColor(205, 245, 225));
         painter.drawRect(marker);
         painter.setPen(QColor(25, 105, 80));
-        painter.drawText(screen + QPointF{9.0, -7.0}, tr("LD"));
+        drawMarkerLabel(painter, screen, tr("LD"));
     }
 }
 

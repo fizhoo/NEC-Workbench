@@ -73,9 +73,15 @@ void ModelColumn::limitHeights()
     const auto rowHeight = std::max(1, tree_->heightForRows(1) - frame);
     const auto shareRows = static_cast<int>((height() * TreeShare - frame) / rowHeight);
     tree_->setFixedHeight(tree_->heightForRows(std::min(treeRows_, std::max(4, shareRows))));
-    // The variables take their rows, up to a share with the pane open, and scroll beyond that.
+    // The variables take their rows. With the pane open they keep at least a share of the
+    // column and otherwise the height its page does not need, scrolling beyond that.
     const auto paneOpen = !pane_->isHidden();
-    const auto variablesHeight = std::max(rowHeight * 3, static_cast<int>(height() * VariablesShare));
+    const auto* page = pane_->currentPage();
+    // The pane scrolls its page, so ask the page how tall it is; the title adds a line.
+    const auto needed = page == nullptr ? 0 : page->sizeHint().height() + PaneTitleHeight;
+    const auto free = height() - tree_->maximumHeight() - needed;
+    const auto variablesHeight = std::max({rowHeight * 3,
+        static_cast<int>(height() * VariablesShare), free});
     variables_->setMaximumHeight(paneOpen ? variablesHeight : QWIDGETSIZE_MAX);
     // The pane takes the spare height; with it empty, the space under the variables does.
     auto* column = static_cast<QVBoxLayout*>(layout());
@@ -83,9 +89,6 @@ void ModelColumn::limitHeights()
     // A page that would not fit below the tree and the variables folds the variables away.
     const auto room = height() - tree_->maximumHeight()
         - std::min(variables_->unfoldedHeight(), variablesHeight);
-    // The pane scrolls its page, so ask the page how tall it is; the title adds a line.
-    const auto* page = pane_->currentPage();
-    const auto needed = page == nullptr ? 0 : page->sizeHint().height() + PaneTitleHeight;
     variables_->setAutoFolded(paneOpen && (table_ || (height() > 0 && room < needed)));
 }
 

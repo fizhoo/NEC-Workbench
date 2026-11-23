@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ui/geometry/LabelPlacer.h"
 #include "geometry/OrthographicProjection.h"
 #include "model/AntennaModel.h"
 #include "model/LengthUnit.h"
@@ -42,6 +43,8 @@ public:
     [[nodiscard]] auto tickLabels(Qt::Orientation orientation) const -> QStringList;
     // Where a model point is drawn in this view.
     [[nodiscard]] auto screenPoint(const model::Point3D& point) const -> QPointF;
+    // The wire, source and load label boxes the last paint placed.
+    [[nodiscard]] auto labelBoxes() const -> const std::vector<QRectF>& { return labels_.placed(); }
 
 signals:
     void endpointPreviewed(int tag, model::WireEndpoint endpoint, model::Point3D position);
@@ -77,6 +80,8 @@ private:
     void drawWires(QPainter& painter) const;
     void drawExcitations(QPainter& painter) const;
     void drawAttachments(QPainter& painter) const;
+    // A source's or load's tag beside its marker, placed clear of the other labels.
+    void drawMarkerLabel(QPainter& painter, const QPointF& marker, const QString& text) const;
     void drawEmptyMessage(QPainter& painter) const;
     // Repaints and tells the info line, whose grid and cursor may have changed.
     void changed();
@@ -121,6 +126,7 @@ private:
     int draggedWireTag_{};
     bool panning_{false};
     bool draggingWire_{false};
+    mutable LabelPlacer labels_;
 };
 
 }
