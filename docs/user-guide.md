@@ -23,9 +23,26 @@ focuses on workflow and behavior that is not obvious from an individual control.
    open that view in the center. Use the **Runs** tab and Run Review for archived
    input and historical raw output.
 
-NEC Workbench does not include an NEC solver. Configure a separately installed
-`nec2c`, OpenNEC, or 4nec2 NEC2dXS executable with **Configure…** in the engine list
-beside Run; hover the list to see the executable in use.
+NEC Workbench comes with **nec2c**, so it runs out of the box: there is nothing else to
+install or configure. nec2c is a separate program beside Workbench (`nec2c`, or
+`nec2c.exe` on Windows), run once per analysis, so a solver crash or error never takes
+Workbench down and **Stop** always ends a run. The engine list beside Run then shows
+**nec2c (bundled)**; hover it to see the version and the executable in use.
+
+To use another engine, choose **Configure…** in the engine list and pick **OpenNEC**,
+**4nec2 NEC2dXS**, or your own `nec2c`, then type or browse to its executable. Workbench
+looks for each engine's executable in this order: the path you chose, the copy that
+came with Workbench (beside it or in a `solvers` folder beside it), then the system
+PATH. Only a path you type or browse to is saved; a found one is looked up again at
+each start, since a Linux AppImage mounts at a new place each time and a Windows folder
+can move. Clear the path to go back to the bundled nec2c. If a path you chose no longer
+exists, Workbench says so in the status bar and under **Problems** rather than switching
+to another engine. The **Run log** starts with the engine, its version and its path,
+and each run records the engine version it was made with. **Help → About** lists the
+bundled nec2c's version.
+
+NEC-4 and NEC-5 are licensed programs that Workbench does not ship; support for running
+a copy you supply is planned.
 
 The selected backend also controls compatibility validation. **NEC-2 / nec2c**
 uses strict original NEC-2 card rules, while **OpenNEC** accepts the verified
@@ -507,9 +524,11 @@ rewriting the authored `FR` card.
 
 ### Solver
 
-Select the backend protocol and executable. Each backend remembers its own path.
-The backend selection controls command-line or standard-input behavior; Workbench
-does not infer protocol from the executable filename.
+Select the engine and, if you want one other than the one found, its executable. Each
+engine remembers the path you chose; leave it empty to use the bundled nec2c or the
+engine found on the PATH, shown greyed in the field. The engine selection controls
+command-line or standard-input behavior; Workbench does not infer protocol from the
+executable filename.
 
 The **Run** menu opens the Run log and the Runs tab. **Run → Open Run Folder** opens
 the folder of the run started in this session, or the newest stored run, in the system

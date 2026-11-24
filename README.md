@@ -1,9 +1,9 @@
 # NEC Workbench
 
 NEC Workbench is a cross-platform Qt 6 desktop application for building,
-checking, running, and optimizing NEC antenna models. Solver executables remain
-external; Workbench currently supports `nec2c`, OpenNEC, and 4nec2 NEC2dXS
-process protocols.
+checking, running, and optimizing NEC antenna models. It comes with the `nec2c`
+solver, run as a separate program, and can use your own OpenNEC, 4nec2 NEC2dXS, or
+`nec2c` instead.
 
 ## Highlights
 
@@ -93,8 +93,12 @@ and manual dispatch. Download artifacts from a successful run on the repository'
 - `NEC-Workbench-Linux-x86_64`
 - `NEC-Workbench-Windows-x64`
 
-Artifacts include the required Qt runtime files but not an NEC solver. Configure
-a separately installed solver with **Configure…** in the engine list beside Run.
+Download, unpack (Windows ZIP) or make executable (Linux AppImage), and run: there is
+nothing else to install. Each package contains the Qt runtime and `nec2c` 1.3.3,
+built from the pinned commit in `packaging/nec2c`, beside the Workbench executable,
+with its license notices in `THIRD_PARTY_LICENSES.txt`. Each release also carries the
+corresponding nec2c source. To use another engine, choose **Configure…** in the engine
+list beside Run.
 
 ## Design Boundary
 
