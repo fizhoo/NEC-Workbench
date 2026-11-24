@@ -86,6 +86,7 @@ add_library(necwb_core
     src/nec/NecSymbolEditor.cpp
     src/nec/NecSymbolResolver.cpp
     src/nec/SegmentationEdit.cpp
+    src/nec/SourceChanges.cpp
     src/nec/SourcePositions.cpp
     src/nec/NecWriter.cpp
 )
@@ -110,8 +111,8 @@ if(NECWB_BUILD_GUI)
         src/ui/BottomPanel.h
         src/ui/CenterViewHeader.cpp
         src/ui/CenterViewHeader.h
-        src/ui/DetachablePanel.cpp
-        src/ui/DetachablePanel.h
+        src/ui/SettingsCleanup.cpp
+        src/ui/SettingsCleanup.h
         src/ui/WorkbenchLayout.cpp
         src/ui/WorkbenchLayout.h
         src/ui/WorkbenchStatusBar.cpp
@@ -207,8 +208,6 @@ if(NECWB_BUILD_GUI)
         src/ui/cards/RowHeightCap.h
         src/ui/cards/SymbolPrompt.cpp
         src/ui/cards/SymbolPrompt.h
-        src/ui/editor/DeckView.cpp
-        src/ui/editor/DeckView.h
         src/ui/editor/NecEditor.cpp
         src/ui/editor/NecEditor.h
         src/ui/editor/NecHighlighter.cpp
@@ -217,6 +216,7 @@ if(NECWB_BUILD_GUI)
         src/ui/editor/SourceHistory.h
         src/ui/geometry/GeometryView.cpp
         src/ui/geometry/GeometryView.h
+        src/ui/geometry/LabelPlacer.h
         src/ui/geometry/GeometryInteractionView.cpp
         src/ui/geometry/GeometryInteractionView.h
         src/ui/ColorScale.cpp
@@ -247,6 +247,8 @@ if(NECWB_BUILD_GUI)
         src/ui/optimization/OptimizationWorkspaceSupport.h
         src/ui/optimization/OptimizationComparePanel.cpp
         src/ui/optimization/OptimizationComparePanel.h
+        src/ui/optimization/OptimizerWindow.cpp
+        src/ui/optimization/OptimizerWindow.h
         src/ui/optimization/CandidateEvaluator.cpp
         src/ui/optimization/CandidateEvaluator.h
         src/ui/optimization/DirectionStrategyDialog.cpp
@@ -269,7 +271,6 @@ if(NECWB_BUILD_GUI)
             resources/icons/check.svg
             resources/icons/currents.svg
             resources/icons/delete.svg
-            resources/icons/detach.svg
             resources/icons/edit.svg
             resources/icons/environment.svg
             resources/icons/export.svg

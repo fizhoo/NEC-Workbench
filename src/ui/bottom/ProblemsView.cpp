@@ -34,6 +34,13 @@ ProblemsView::ProblemsView(QWidget* parent)
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
+    scope_ = new QLabel(tr("Checks NEC syntax, solver compatibility, references, geometry and "
+        "model adequacy. The Average Gain Test and convergence are solver-backed studies under "
+        "Validation in the model tree."), this);
+    scope_->setObjectName(QStringLiteral("problemsScope"));
+    scope_->setWordWrap(true);
+    scope_->setContentsMargins(4, 2, 4, 0);
+    scope_->setForegroundRole(QPalette::PlaceholderText);
     auto* header = new QHBoxLayout;
     header->setContentsMargins(4, 0, 0, 0);
     header->setSpacing(0);
@@ -66,6 +73,7 @@ ProblemsView::ProblemsView(QWidget* parent)
     findings_->setColumnWidth(0, findings_->iconSize().isValid()
         ? findings_->iconSize().width() + 8 : 24);
     findings_->setToolTip(tr("Double-click a finding to select its wire or card"));
+    layout->addWidget(scope_);
     layout->addLayout(header);
     layout->addWidget(findings_, 1);
 
@@ -105,6 +113,11 @@ void ProblemsView::setFindings(std::span<const nec::ModelDiagnostic> diagnostics
         item->setToolTip(0, detail);
         item->setToolTip(2, tr("%1\n%2").arg(message, detail));
     }
+}
+
+void ProblemsView::setScope(const QString& scope)
+{
+    scope_->setText(scope);
 }
 
 void ProblemsView::clearFindings(const QString& summary)

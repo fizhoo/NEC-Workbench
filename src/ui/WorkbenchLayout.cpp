@@ -27,8 +27,6 @@ WorkbenchLayout::WorkbenchLayout(Panes panes, QWidget* parent)
     : QWidget(parent)
     , start_(panes.start)
     , geometry_(panes.geometry)
-    , fullView_(panes.fullView)
-    , deck_(panes.deck)
     , bottomPanel_(panes.bottomPanel)
 {
     setObjectName(QStringLiteral("workbenchLayout"));
@@ -39,8 +37,7 @@ WorkbenchLayout::WorkbenchLayout(Panes panes, QWidget* parent)
     center_->setObjectName(QStringLiteral("workbenchCenter"));
     center_->addWidget(start_);
     center_->addWidget(geometry_);
-    center_->addWidget(fullView_);
-    center_->addWidget(deck_);
+    for (auto* view : panes.views) center_->addWidget(view);
 
     split_ = new QSplitter(Qt::Horizontal, this);
     split_->setObjectName(QStringLiteral("workbenchSplit"));
@@ -79,19 +76,14 @@ void WorkbenchLayout::showGeometry()
     center_->setCurrentWidget(geometry_);
 }
 
-void WorkbenchLayout::showFullView()
+void WorkbenchLayout::showView(QWidget* view)
 {
-    center_->setCurrentWidget(fullView_);
+    center_->setCurrentWidget(view);
 }
 
-void WorkbenchLayout::showDeck()
+auto WorkbenchLayout::isShown(const QWidget* view) const -> bool
 {
-    center_->setCurrentWidget(deck_);
-}
-
-auto WorkbenchLayout::fullViewShown() const -> bool
-{
-    return center_->currentWidget() == fullView_;
+    return center_->currentWidget() == view;
 }
 
 void WorkbenchLayout::resetLayout()

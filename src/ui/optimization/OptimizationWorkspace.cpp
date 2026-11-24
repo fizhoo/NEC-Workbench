@@ -125,6 +125,7 @@ auto optimizationPresetSummary(analysis::OptimizationPresetId id,
 void OptimizationWorkspace::setContext(QString source, QString sourceFile, QString backend,
     QString executable, int timeoutSeconds, bool modelValid)
 {
+    latestSource_ = source;
     if (isRunning() || historicalSession_) return;
     const auto preserveStudy = std::exchange(preserveStudyOnNextContextUpdate_, false);
     const auto sourceUnchanged = source_ == source && sourceFile_ == sourceFile;
@@ -182,19 +183,28 @@ void OptimizationWorkspace::setContext(QString source, QString sourceFile, QStri
         frequencyTable_->clear();
     }
     if (frequencySelection) restoreFrequencySelection(*frequencySelection);
-    if (!preserveStudy) {
-        candidates_.clear();
-        candidateIndex_ = 0;
-        bestScore_ = std::numeric_limits<double>::infinity();
-        bestRow_ = -1;
-        resultsTable_->setRowCount(0);
-        candidatePlots_->clear();
-        comparePanel_->clearCandidate();
-        bestLabel_->setText(tr("No optimization results yet."));
-        resetCandidateDetails();
-    }
+    // Edits keep the candidates, which ask before applying to a changed model; another
+    // model's file starts over.
+    if (!preserveStudy && !preserveFrequencySelection) clearStudy();
     updateBaselineState();
     updateWorkload();
+    updateReadiness();
+}
+
+void OptimizationWorkspace::clearStudy()
+{
+    // A study of the model being closed has nothing left to apply to.
+    if (isRunning()) cancelAndWait();
+    candidates_.clear();
+    candidateIndex_ = 0;
+    bestScore_ = std::numeric_limits<double>::infinity();
+    bestRow_ = -1;
+    studySource_.clear();
+    resultsTable_->setRowCount(0);
+    candidatePlots_->clear();
+    comparePanel_->clearCandidate();
+    bestLabel_->setText(tr("No optimization results yet."));
+    resetCandidateDetails();
     updateReadiness();
 }
 
@@ -971,6 +981,7 @@ void OptimizationWorkspace::startSweep()
         return;
     }
     const auto setup = currentStudySetup();
+    studySource_ = source_;
     activeVariables_ = setup.variables;
     QStringList activeNames;
     for (const auto& variable : activeVariables_) activeNames.append(variable.name);

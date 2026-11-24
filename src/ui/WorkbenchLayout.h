@@ -3,6 +3,7 @@
 #include <QWidget>
 
 #include <optional>
+#include <vector>
 
 class QAction;
 class QSplitter;
@@ -13,16 +14,17 @@ namespace necwb::ui {
 class BottomPanel;
 
 // The main window's content: one splitter holds the model tree on the left, the start panel
-// (with no model), the geometry editor, a full result view or the NEC Deck in the center, and
-// the results column on the right. The bottom panel spans the full width underneath.
+// (with no model), the geometry editor or one of the other center views (a full result view,
+// the NEC Deck, a validation study) in the center, and the results column on the
+// right. The bottom panel spans the full width underneath.
 class WorkbenchLayout final : public QWidget {
 public:
     struct Panes {
         QWidget* start{};
         QWidget* leftColumn{};
         QWidget* geometry{};
-        QWidget* fullView{};
-        QWidget* deck{};
+        // Shown in place of the geometry, one at a time.
+        std::vector<QWidget*> views;
         QWidget* rightColumn{};
         BottomPanel* bottomPanel{};
     };
@@ -31,9 +33,9 @@ public:
 
     void showStart();
     void showGeometry();
-    void showFullView();
-    void showDeck();
-    [[nodiscard]] auto fullViewShown() const -> bool;
+    // One of the views; each keeps its state while another is shown.
+    void showView(QWidget* view);
+    [[nodiscard]] auto isShown(const QWidget* view) const -> bool;
     // View › Results Column: shows or collapses the right column.
     [[nodiscard]] auto rightColumnAction() const -> QAction* { return rightColumnAction_; }
     void resetLayout();
@@ -56,8 +58,6 @@ private:
     QStackedWidget* center_{};
     QWidget* start_{};
     QWidget* geometry_{};
-    QWidget* fullView_{};
-    QWidget* deck_{};
     BottomPanel* bottomPanel_{};
     QAction* rightColumnAction_{};
     // The column widths, and the left one's maximum, before it was widened for a table.

@@ -9,8 +9,9 @@ Workbench remains solver-independent and does not bundle external NEC engines.
 
 - One source-backed document shared by Raw Source, the card tables, geometry,
   model setup, parameter editing, validation, and Undo/Redo
-- Geometry editor and NEC Deck in the center of the main window, with a slider for
-  each `SY` variable under the model tree
+- One main window: the geometry editor, NEC Deck, full result views and the validation
+  studies take turns in the center, with a slider for each `SY` variable under the model
+  tree; the optimizer has a window of its own
 - The card tables show long numbers at 6 significant figures while the
   deck keeps full precision
 - Editable straight-wire geometry plus read-only display of supported generated
@@ -28,11 +29,12 @@ Workbench remains solver-independent and does not bundle external NEC engines.
 - `nec2c`, OpenNEC, and 4nec2 NEC2dXS process adapters with independent saved paths
 - Normal runs and temporary quick sweeps without rewriting the authored model
 - Durable run history with authored source, generated solver deck, output, logs,
-  metadata, editable run notes, detached historical review, and Open Run Folder
+  metadata, editable run notes, read-only historical Run Review, and Open Run Folder
 - Impedance/SWR and 2D/3D radiation inspection
 - Currents on a 2D view of the antenna as magnitude, feed-relative phase, or an
   animated RF cycle, with a common straight-wire direction, along-wire plots, and a
-  segment table
+  segment table; the 2D and 3D geometry views and the 3D pattern colour the wires by
+  current
 - One labeled historical overlay selected from Run History and shown independently
   in compatible impedance/SWR and radiation views
 - Static adequacy checks, Average Gain Test, and segmentation convergence
@@ -45,7 +47,7 @@ Workbench remains solver-independent and does not bundle external NEC engines.
 - Shared frequency plans and weighted SWR, resistance, reactance, gain, F/B, and F/R objectives
 - Per-criterion goal and band reduction, retained candidate details, and explicit
   undoable application of a selected result
-- Automatic compatible baseline runs with detached candidate comparison for
+- Automatic compatible baseline runs with a candidate review window comparing
   impedance, SWR, and available 2D radiation patterns
 - Unified search setup that states why a run cannot start, and cached pattern
   results so switching objective presets is immediate
@@ -60,19 +62,21 @@ Workbench remains solver-independent and does not bundle external NEC engines.
 ## Current Milestone
 
 `v0.1.0-alpha.1` established the first public Linux AppImage and Windows ZIP baseline.
-`v0.1.0-alpha.2` delivers the compact Home control panel, separate work and result
-windows, run references and notes, the currents-on-antenna view, and a faster
-optimizer. The Linux and Windows packages, including direct 4nec2 NEC2dXS execution,
-have been smoke-tested on their platforms; the release is merged to `main`, tagged
-`v0.1.0-alpha.2`, and published with release notes.
+`v0.1.0-alpha.2`, tagged and published from `main`, delivered run references and notes,
+the currents-on-antenna view, and a faster optimizer.
 
-After Alpha 2, stabilization continues rather than broad feature expansion:
+The work since Alpha 2 replaces its Home control panel and separate work and result
+windows with one main window: the model tree, variables and properties pane on the
+left; the geometry, NEC Deck, full result views and the validation studies in the
+center; the results column on the right; and the bottom panel for Problems, the Run
+log, Runs and Raw output. The optimizer, its candidate review and historical Run Review
+are separate windows. Alongside it:
 
 - Exercise representative real decks across supported solver backends and platforms.
-- Field-test the Home workflow, reusable windows, Run History, historical overlays,
-  and the currents view.
+- Field-test the single-window workflow, Run History, historical overlays, and the
+  currents views.
 - Strengthen regression coverage around source edits, run generation, output parsing,
-  window restoration, and optimization session restoration.
+  layout restoration, and optimization session restoration.
 - Keep card-support claims synchronized with validation, structured editing, and rendering.
 
 The first imported-deck validation audit is complete and documented in the
@@ -109,8 +113,9 @@ over the existing reproducible methods.
   a separate multi-run comparison workflow
 - Convergence plots for impedance, gain, and pattern changes
 - Input-power normalization for current and field amplitudes
-- Currents follow-ups: a 3D antenna view, phase along each wire in Along Wire, and a
-  selectable phase reference for multi-source arrays
+- Smith chart of the feedpoint impedance across the sweep
+- Currents follow-ups: phase along each wire in Along Wire, and a selectable phase
+  reference for multi-source arrays
 - Near-field parsing and visualization
 
 ### Modeling
@@ -122,7 +127,7 @@ over the existing reproducible methods.
 
 ## Longer Term
 
-- Smith chart and transmission-line, stub, matching, and phasing calculators
+- Transmission-line, stub, matching, and phasing calculators
 - Additional polarization views
 - Signed installers and broader platform packaging
 - Accessibility and theme refinement

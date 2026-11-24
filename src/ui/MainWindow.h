@@ -33,9 +33,7 @@ class QCloseEvent;
 class QComboBox;
 class QDoubleSpinBox;
 class QEvent;
-class QLabel;
 class QMenu;
-class QTabWidget;
 class QTimer;
 class QVBoxLayout;
 class QWidget;
@@ -50,6 +48,7 @@ class GeometryWorkspace;
 class GeometryView;
 class GeometryInteractionView;
 class RunReviewWindow;
+class OptimizerWindow;
 class AverageGainResultsView;
 class ConvergenceWorkspace;
 class SetupEditor;
@@ -57,12 +56,11 @@ class WireCardEditor;
 class StartPanel;
 class SourceHistory;
 class GeometryPreview;
-class DeckView;
+class CenterView;
 class ModelColumn;
 class WorkbenchToolBar;
 class OptimizationWorkspace;
 class ParameterEditor;
-class DetachablePanel;
 class ResultsController;
 class WorkbenchStatusBar;
 class BottomPanel;
@@ -104,15 +102,18 @@ private:
         Environment,
         Requests,
         Solver,
-        ReferenceImpedance
+        ReferenceImpedance,
+        Optimize
     };
 
     void createActions();
     void createModelColumn();
     void createWorkspace();
     void createResultsColumn();
-    void createValidationWindow();
+    void createValidationViews();
     void createOptimizationWorkspace();
+    // The optimizer's title and the toolbar's Optimize button follow its running state.
+    void updateOptimizationStatus();
     void createMenusAndToolbar();
     void resetWorkspaceLayout();
     void setWorkspaceDensity(WorkspaceDensity density);
@@ -218,7 +219,8 @@ private:
         const QString& runType, const QString& summary, const QString& activity,
         SolverRunPurpose purpose = SolverRunPurpose::Analysis);
     [[nodiscard]] auto startOptimizationPeakSearch(double frequencyMHz) -> bool;
-    void startAverageGainTest();
+    // From the Validate menu the test's view comes forward; from the tree's Run it does not.
+    void startAverageGainTest(bool showView);
     void showConvergenceStudy();
     void synchronizeRunnerState();
     void startSolverProcess(const analysis::SolverCommand& command, const QString& activity);
@@ -303,9 +305,9 @@ private:
     QMenu* recentModelsMenu_{};
     QWidget* windowHost_{};
     WorkbenchLayout* workbenchLayout_{};
-    DetachablePanel* validationPanel_{};
-    DeckView* deckView_{};
-    DetachablePanel* optimizationPanel_{};
+    CenterView* deckView_{};
+    CenterView* averageGainView_{};
+    CenterView* convergenceView_{};
     ModelColumn* modelColumn_{};
     WorkbenchToolBar* toolBar_{};
     StartPanel* startPanel_{};
@@ -320,13 +322,11 @@ private:
     AnalysisSetupEditor* analysisSetupEditor_{};
     AnalysisRequestEditor* analysisRequestEditor_{};
     RunReviewWindow* runReviewWindow_{};
+    OptimizerWindow* optimizerWindow_{};
     AverageGainResultsView* averageGainResultsView_{};
     ConvergenceWorkspace* convergenceWorkspace_{};
     OptimizationWorkspace* optimizationWorkspace_{};
     ParameterEditor* parameterEditor_{};
-    QTabWidget* validationWorkspace_{};
-    QLabel* validationOverviewSummary_{};
-    QLabel* validationOverviewScope_{};
     WorkbenchStatusBar* statusBar_{};
     BottomPanel* bottomPanel_{};
     mutable nec::NecSourceCache activeSourceCache_;
@@ -367,9 +367,6 @@ private:
     double currentPeakSearchFrequencyMHz_{};
     // SWR reference requested by the optimization study whose baseline is running.
     double currentBaselineReferenceImpedanceOhms_{50.0};
-    int validationOverviewTabIndex_{};
-    int averageGainValidationTabIndex_{};
-    int convergenceValidationTabIndex_{};
     std::size_t modelErrorCount_{};
     bool modelChecked_{};
     bool hasNecModel_{};

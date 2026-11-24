@@ -3,11 +3,11 @@
 NEC Workbench runs in one resizable main window. A toolbar runs across the top. With a
 model open, the **model tree**, the **variables** with their sliders, and the
 **properties pane** for what is selected form the left column; the **geometry editor**
-fills the center (or the **NEC Deck** or a full result view, in
-their place); and the
+fills the center (or, in its place, the **NEC Deck**, a full result view, or a
+validation study); and the
 **results column** on the right shows the key numbers and live result thumbnails. A
-bottom panel underneath holds Problems, the Run log, Runs, and Raw output. Optimize and
-Validation still open in their own windows. Controls provide tooltips; this guide
+bottom panel underneath holds Problems, the Run log, Runs, and Raw output. Controls
+provide tooltips; this guide
 focuses on workflow and behavior that is not obvious from an individual control.
 
 ## Getting Started
@@ -67,9 +67,10 @@ engine, **Run** (`F5`), **Stop**, **Sweep**, **Check** (`F7`), and **Optimize**.
 **Configure…** in the engine list to set the engine's executable. `F5` and `F7` work
 from anywhere in the main window, including the model tree and the properties pane.
 
-Optimize and Validation still open in their own windows. Each remembers its own size and
-position, and opening one again raises the existing window rather than creating a
-duplicate. Historical Run Review remains a separate read-only window.
+Every view shown in the center in place of the geometry has a **← Geometry** bar across
+its top; it and `Esc` go back. Each view keeps its state while another is shown, so
+opening it again finds it as you left it. The optimizer, its candidate review and
+Historical Run Review are separate windows.
 
 ### Bottom Panel and Status Bar
 
@@ -95,8 +96,8 @@ The menu bar holds the complete command set. Important actions include:
 - **View → Workspace Density** and **Reset Layout**
 - **Model → Geometry Editor**, **NEC Deck**, and **Automatic Segmentation**
 - **Validate → Check Model**, **Average Gain Test**, **Segmentation Convergence**,
-  and **Open Validation Results**
-- **Run → Run Analysis**, **Quick Frequency Sweep**, and **Stop**
+  and **Average Gain Result**
+- **Run → Run Analysis**, **Quick Frequency Sweep**, **Stop**, and **Optimize**
 - **Run → Review Run History** (the Runs tab), **Run Log**, and **Open Run Folder**
 
 Workspace Density offers Compact, Standard, and Spacious spacing without changing
@@ -121,10 +122,10 @@ geometry selects the item and moves the keyboard into its table.
 The properties pane holds one page at a time: a group's card table, a setup page, or the
 Parameters table for **Variables**. The tree is as tall as its groups and the two
 Validation studies, in whole rows, up to about 40% of the column. It keeps that height
-while you expand groups or select items, so the pane below never moves; the variables
-take up to about 25%. Each scrolls beyond that, and the pane takes the rest. With nothing
-in the pane, the Variables bar sits right under the tree and the space below stays
-empty. New and Open start with nothing selected and the pane empty; Revert to Saved keeps
+while you expand groups or select items, so the pane below never moves. The variables
+show all their rows when the pane's page leaves room for them, and otherwise keep at
+least about 25% and scroll; the pane takes the rest. With nothing in the pane, the
+variables sit right under the tree and the space below them stays empty. New and Open start with nothing selected and the pane empty; Revert to Saved keeps
 the selection when its item is still there.
 
 Selecting the **Wires**, **Sources**, **Loads**, **Trans. lines**, **Networks**, or
@@ -189,9 +190,12 @@ applies them and `Esc` reverts them. Selecting something else applies valid pend
 edits as one undoable step; only edits that cannot be applied ask whether to discard
 them. Undo returns to the page an edit was made on.
 
-**Deck** opens the NEC Deck in the center. **Validation** shows the Average Gain Test and
-segmentation convergence, each with its result and a **Run** button; double-click a row
-to open the Validation window.
+**Deck** opens the NEC Deck in the center. **Validation** opens Problems in the bottom
+panel; under it, the Average Gain Test and segmentation convergence each show their
+result and a **Run** button. Click a study's row or its result to open it in the center.
+**Run** starts the study without leaving the view you are in, and the row shows the
+result when it finishes; convergence opens its view instead the first time for a model,
+so its settings can be checked.
 
 ## Model
 
@@ -354,9 +358,9 @@ reports errors and warnings. Errors block analysis and optimization. Warnings
 identify conditions requiring engineering judgment.
 
 The **Validate** menu groups the static Model Check, Average Gain Test, and
-segmentation convergence commands. **Validate → Open Validation Results** opens a
-reusable focused window with the compact status overview and both solver-backed
-studies. The static findings are listed in the bottom panel's **Problems** tab, one
+segmentation convergence commands; running either study from the menu opens it in the
+center. The static findings are listed in the bottom panel's **Problems** tab under a
+note on what the check covers and the solver it checks against, one
 row per finding with its severity, location (`L12` is deck line 12, `W3 · L12` also
 names wire 3), and message; hover a message for its category. Double-click a finding
 on a wire, source, load, transmission line, or network to select it, keeping the
@@ -404,9 +408,9 @@ mark. Its segment field never causes a skip, since the mark decides where it goe
 ### Average Gain Test
 
 Average Gain Test creates a temporary one-frequency, lossless deck in free space
-or over perfect ground. It does not modify the authored model. Current AGT and
-convergence results share the reusable **Validation** window; completed studies are
-also archived in the Runs tab.
+or over perfect ground. It does not modify the authored model. Its result opens in the
+center from its row in the model tree or **Validate → Average Gain Result**, and like
+convergence studies, completed tests are also archived in the Runs tab.
 
 ### Segmentation Convergence
 
@@ -486,9 +490,9 @@ When one segment carries more than one source, load, transmission-line end, or n
 port, Workbench explains how NEC connects them. NEC-2 puts `EX` sources, `TL` ends, and
 `NT` ports across the segment's gap, in parallel with one another, but an `LD` load sits
 in series inside the segment. A load on a line end therefore acts in series with the
-line, which is rarely what is meant; on a short stub wire it has almost no effect. In
-the pane form of an affected source, load, line, or network, the explanation shows below
-its fields. Hovering
+line, which is rarely what is meant; on a short stub wire it has almost no effect. When
+the selected row of the Sources, Loads, Trans. lines or Networks table is affected, the
+explanation shows in the line under the table. Hovering
 the segment in a Geometry view shows the same text. Model Check warns about loads on a
 line end or network port, and suggests the `TL` shunt admittance, an `NT` network, or a
 short parallel wire to put the load across the port instead.
@@ -805,9 +809,28 @@ open model.
 
 ## Optimize
 
+**Optimize** on the toolbar or in the Run menu opens the optimizer in a window of its
+own, or brings it to the front. The first time it opens at about 80% of the main window's
+size, on another monitor if there is one, else beside the main window or over its
+right-hand side, so the geometry stays in view where the screen allows; after that it
+reopens where you left it. Either window comes to the front when clicked, and closing the
+main window closes the optimizer. The setup and the results sit side by side; in a narrow
+window the setup stacks above the results and the window scrolls vertically. Save, Undo
+and Redo work from it too.
+
+Closing the optimizer only hides it: it keeps its variables, objective, method,
+candidates and progress, and a running optimization continues, with the toolbar button
+reading **Optimizing…** until it finishes. Editing the model keeps the candidates too;
+opening or starting another model stops a running optimization and clears them.
+
+A study runs on the model as it was when it started. Applying a candidate after the
+model changed asks first, listing the variables and card fields that differ; the
+optimized variables' own values do not count as a change.
+
 Optimization consumes existing parameters. It does not decide which NEC fields a
-parameter controls. Use **Choose Parameter Fields…** to jump to the wire table when
-another field needs a variable.
+parameter controls. When another field needs one, **Make Variable…** brings the main
+window forward with the wire table open: right-click a cell and choose **Make
+Variable…**.
 
 ### Search Methods
 
@@ -986,7 +1009,8 @@ Candidate measurements remain optimization data until explicitly promoted:
 - **Apply This Candidate to Model** applies a manually selected candidate.
 - **Apply This Candidate and Run** applies it and starts a normal analysis.
 
-Apply is one undoable source edit. It does not alter archived candidate artifacts.
+Apply is one undoable source edit and leaves the optimizer in front; Undo brings it
+back. It does not alter archived candidate artifacts.
 
 ### Choosing a Method
 

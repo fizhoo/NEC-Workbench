@@ -67,7 +67,8 @@ public:
 
     void setModel(const model::AntennaModel& model, const model::ModelSetup& setup,
         const nec::NecDocument& document);
-    void setStudyAction(Study study, QAction* action);
+    // The study's Run button follows action's enabled state and tooltip and calls run.
+    void setStudyAction(Study study, QAction* action, std::function<void()> run);
     void setStudyStatus(Study study, StudyState state, const QString& text = {},
         const QString& toolTip = {});
     void clearStudy(Study study);

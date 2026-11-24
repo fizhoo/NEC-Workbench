@@ -5,6 +5,7 @@
 #include <QHBoxLayout>
 #include <QShortcut>
 #include <QToolButton>
+#include <QVBoxLayout>
 
 namespace necwb::ui {
 
@@ -46,6 +47,18 @@ void CenterViewHeader::addTrailingWidget(QWidget* widget)
 void CenterViewHeader::setBackCallback(std::function<void()> callback)
 {
     back_ = std::move(callback);
+}
+
+CenterView::CenterView(const QString& objectName, QWidget* content, QWidget* parent)
+    : QWidget(parent)
+{
+    setObjectName(objectName);
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    header_ = new CenterViewHeader(objectName, this);
+    layout->addWidget(header_);
+    layout->addWidget(content, 1);
 }
 
 }

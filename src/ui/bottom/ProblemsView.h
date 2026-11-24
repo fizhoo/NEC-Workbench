@@ -22,6 +22,8 @@ public:
     void setFindings(std::span<const nec::ModelDiagnostic> diagnostics,
         const model::AntennaModel& model, const QString& summary);
     void clearFindings(const QString& summary);
+    // The note above the findings on what the check covers.
+    void setScope(const QString& scope);
 
 signals:
     void findingActivated(std::size_t sourceLine);
@@ -30,6 +32,7 @@ signals:
     void changeSolverRequested();
 
 private:
+    QLabel* scope_{};
     QLabel* summary_{};
     QTreeWidget* findings_{};
 };

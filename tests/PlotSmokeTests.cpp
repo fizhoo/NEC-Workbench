@@ -1,7 +1,6 @@
 #include "analysis/AnalysisResult.h"
 #include "analysis/FrequencyComparison.h"
 #include "ui/DisplayFormat.h"
-#include "ui/DetachablePanel.h"
 #include "ui/MainWindow.h"
 #include "ui/analysis/SweepPlotsView.h"
 #include "ui/WorkbenchLayout.h"
@@ -43,6 +42,7 @@
 #include "ui/setup/SetupEditor.h"
 #include "ui/start/RecentModels.h"
 #include "ui/start/StartPanel.h"
+#include "ui/SettingsCleanup.h"
 #include "nec/NecParser.h"
 #include "model/WireGauge.h"
 
@@ -124,6 +124,17 @@ auto topLevelDialog(const QString& objectName) -> QDialog*
 {
     for (auto* widget : QApplication::topLevelWidgets()) {
         if (widget->objectName() == objectName) return qobject_cast<QDialog*>(widget);
+    }
+    return nullptr;
+}
+
+// The optimizer lives in its own top-level window, outside the main window's children.
+template <typename T>
+auto optimizerChild(const QString& objectName) -> T*
+{
+    for (auto* widget : QApplication::topLevelWidgets()) {
+        if (widget->objectName() == QStringLiteral("optimizerWindow"))
+            return widget->findChild<T*>(objectName);
     }
     return nullptr;
 }
@@ -267,13 +278,40 @@ auto main(int argc, char* argv[]) -> int
             return NECWB_SMOKE_FAILURE("historical overlay visibility persistence");
     }
     QSettings{}.remove(QStringLiteral("smoke/overlayVisible"));
-    const auto tabNames = [](const QTabWidget* tabs) {
-        QStringList names;
-        if (tabs == nullptr) return names;
-        for (auto index = 0; index < tabs->count(); ++index)
-            names.push_back(tabs->tabText(index));
-        return names;
-    };
+    // Settings that earlier layouts saved go once, gated by ui/layoutVersion; the single solver
+    // path of early versions moves to the selected backend first.
+    {
+        QSettings settings;
+        const auto savedBackend = settings.value(QStringLiteral("analysis/backendId"));
+        const auto savedPath = settings.value(QStringLiteral("analysis/executables/opennec"));
+        settings.remove(QStringLiteral("ui/layoutVersion"));
+        settings.remove(QStringLiteral("analysis/executables/opennec"));
+        settings.setValue(QStringLiteral("analysis/backendId"), QStringLiteral("opennec"));
+        settings.setValue(QStringLiteral("analysis/executablePath"), QStringLiteral("/opt/onec"));
+        const QStringList retired{QStringLiteral("workspaceWindows/optimization/geometry"),
+            QStringLiteral("resultWindows/impedance/visible"), QStringLiteral("mainWindow/geometry"),
+            QStringLiteral("mainWindow/normalGeometry"), QStringLiteral("mainWindow/state"),
+            QStringLiteral("modelCheckWindow/geometry"), QStringLiteral("runMonitorWindow/geometry")};
+        for (const auto& key : retired) settings.setValue(key, 1);
+        settings.setValue(QStringLiteral("mainWindow/v2/leftColumnWidth"), 420);
+        necwb::ui::retireOldSettings();
+        const auto retiredGone = std::ranges::none_of(retired,
+            [&settings](const QString& key) { return settings.contains(key); });
+        const auto cleaned = retiredGone && !settings.contains(QStringLiteral("analysis/executablePath"))
+            && settings.value(QStringLiteral("analysis/executables/opennec")).toString()
+                == QStringLiteral("/opt/onec")
+            && settings.value(QStringLiteral("mainWindow/v2/leftColumnWidth")).toInt() == 420
+            && settings.value(QStringLiteral("ui/layoutVersion")).toInt() == 1;
+        settings.setValue(QStringLiteral("mainWindow/state"), 1);
+        necwb::ui::retireOldSettings();
+        const auto ranOnce = settings.contains(QStringLiteral("mainWindow/state"));
+        settings.remove(QStringLiteral("mainWindow"));
+        settings.setValue(QStringLiteral("analysis/backendId"), savedBackend);
+        if (savedBackend.isNull()) settings.remove(QStringLiteral("analysis/backendId"));
+        settings.setValue(QStringLiteral("analysis/executables/opennec"), savedPath);
+        if (savedPath.isNull()) settings.remove(QStringLiteral("analysis/executables/opennec"));
+        if (!cleaned || !ranOnce) return NECWB_SMOKE_FAILURE("retired settings removed once");
+    }
     auto consolidatedSetupNavigation = false;
     auto linkedParameterDeleted = false;
     auto resultsColumnNavigation = false;
@@ -288,8 +326,6 @@ auto main(int argc, char* argv[]) -> int
     QSettings resultWindowSettings;
     resultWindowSettings.remove(QStringLiteral("resultsColumn"));
     resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
-    resultWindowSettings.remove(QStringLiteral("workspaceWindows/validation"));
-    resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
     resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
     resultWindowSettings.sync();
     {
@@ -298,21 +334,18 @@ auto main(int argc, char* argv[]) -> int
         auto* necDeckAction = mainWindow.findChild<QAction*>(QStringLiteral("necDeckAction"));
         auto* optimizeModuleAction = mainWindow.findChild<QAction*>(
             QStringLiteral("optimizeModuleAction"));
-        auto* optimizationWorkspace = mainWindow.findChild<QWidget*>(
+        auto* optimizationWorkspace = optimizerChild<QWidget>(
             QStringLiteral("optimizationWorkspace"));
         auto* validateMenu = mainWindow.findChild<QMenu*>(QStringLiteral("validateMenu"));
         auto* runMenu = mainWindow.findChild<QMenu*>(QStringLiteral("runMenu"));
         auto* recentModelsMenu = mainWindow.findChild<QMenu*>(
             QStringLiteral("recentModelsMenu"));
-        auto* validationWorkspace = mainWindow.findChild<QTabWidget*>(
-            QStringLiteral("validationWorkspace"));
         auto* resultsWorkspace = mainWindow.findChild<QTabWidget*>(
             QStringLiteral("resultsWorkspace"));
         auto* bottomPanel = mainWindow.findChild<QWidget*>(QStringLiteral("bottomPanel"));
         auto* toggleBottomPanel = mainWindow.findChild<QAction*>(
             QStringLiteral("toggleBottomPanelAction"));
-        auto* validationSummary = mainWindow.findChild<QLabel*>(
-            QStringLiteral("validationOverviewSummary"));
+        auto* problemsScope = mainWindow.findChild<QLabel*>(QStringLiteral("problemsScope"));
         // One toolbar row and the model tree; the Project Tree dock and its toggle are gone.
         auto* toolBar = mainWindow.findChild<QToolBar*>(QStringLiteral("workbenchToolBar"));
         const auto compactPrimaryNavigation = mainWindow.findChild<QWidget*>(
@@ -322,7 +355,7 @@ auto main(int argc, char* argv[]) -> int
             && toolBar != nullptr && !toolBar->isMovable()
             && toolBar->findChild<QComboBox*>(QStringLiteral("toolBarBackend")) != nullptr;
         auto* openValidation = mainWindow.findChild<QAction*>(
-            QStringLiteral("openValidationResultsAction"));
+            QStringLiteral("showAverageGainResultAction"));
         auto* openConvergence = mainWindow.findChild<QAction*>(
             QStringLiteral("segmentationConvergenceAction"));
         auto* reviewRuns = mainWindow.findChild<QAction*>(
@@ -342,12 +375,13 @@ auto main(int argc, char* argv[]) -> int
             // The deck is raw source only; its cards are tables in the properties pane.
             && mainWindow.findChild<QTabWidget*>(QStringLiteral("necDeckWorkspace")) == nullptr
             && mainWindow.findChild<QWidget*>(QStringLiteral("cardsPanel")) == nullptr
-            && tabNames(validationWorkspace) == QStringList{QStringLiteral("Static Check"),
-                QStringLiteral("Average Gain Test"), QStringLiteral("Segmentation Convergence")}
+            // Validation has no window or Overview of its own: the scope note heads Problems.
+            && mainWindow.findChild<QTabWidget*>(QStringLiteral("validationWorkspace")) == nullptr
+            && mainWindow.findChild<QWidget*>(QStringLiteral("validationOverview")) == nullptr
+            && bottomPanel != nullptr && bottomPanel->isAncestorOf(problemsScope)
             && compactPrimaryNavigation
             && validateMenu != nullptr && runMenu != nullptr
             && recentModelsMenu != nullptr && !recentModelsMenu->actions().isEmpty()
-            && validationSummary != nullptr
             && openValidation != nullptr && validateMenu->actions().contains(openValidation)
             && reviewRuns != nullptr && runMenu->actions().contains(reviewRuns)
             && runMenu->actions().contains(mainWindow.findChild<QAction*>(
@@ -358,23 +392,36 @@ auto main(int argc, char* argv[]) -> int
             && mainWindow.maximumSize() == QSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX)
             && !mainWindow.statusBar()->isSizeGripEnabled()
             && mainWindow.findChild<QWidget*>(QStringLiteral("solverActivityWidget")) == nullptr;
-        if (openValidation != nullptr) {
+        // Average Gain and Convergence open in the center under ← Geometry; Esc goes back.
+        if (openValidation != nullptr && openConvergence != nullptr) {
+            mainWindow.show();
+            auto* split = mainWindow.findChild<QSplitter*>(QStringLiteral("workbenchSplit"));
+            auto* geometry = mainWindow.findChild<QWidget*>(QStringLiteral("geometryWorkspace"));
+            auto* averageGain = mainWindow.findChild<QWidget*>(QStringLiteral("averageGainView"));
+            auto* convergence = mainWindow.findChild<QWidget*>(QStringLiteral("convergenceView"));
+            const auto shownInCenter = [&](QWidget* view) {
+                return view != nullptr && split != nullptr && split->isAncestorOf(view)
+                    && view->isVisible() && geometry != nullptr && !geometry->isVisible();
+            };
             openValidation->trigger();
             application.processEvents();
-            const auto* validationWindow = topLevelDialog(QStringLiteral("validationWindow"));
-            validationWindowNavigation = validationWindow != nullptr
-                && validationWindow->isVisible()
-                && validationWorkspace != nullptr
-                && validationWorkspace->window() == validationWindow;
-        }
-        if (openConvergence != nullptr && validationWorkspace != nullptr) {
+            const auto averageGainShown = shownInCenter(averageGain);
+            if (auto* back = mainWindow.findChild<QToolButton*>(QStringLiteral("averageGainViewBack")))
+                back->click();
+            application.processEvents();
+            const auto averageGainBack = geometry->isVisible() && !averageGain->isVisible();
             openConvergence->setEnabled(true);
             openConvergence->trigger();
             application.processEvents();
-            validationWindowNavigation = validationWindowNavigation
-                && validationWorkspace->currentIndex() == 2
-                && validationWorkspace->window()->objectName()
-                    == QStringLiteral("validationWindow");
+            const auto convergenceShown = shownInCenter(convergence);
+            QTest::keyClick(convergence, Qt::Key_Escape);
+            application.processEvents();
+            validationWindowNavigation = averageGainShown && averageGainBack && convergenceShown
+                && geometry->isVisible() && !convergence->isVisible()
+                && topLevelDialog(QStringLiteral("validationWindow")) == nullptr;
+            if (!validationWindowNavigation)
+                qWarning() << "validation in center" << averageGainShown << averageGainBack
+                           << convergenceShown;
         }
         // The NEC Deck opens in the center in place of the geometry; ← Geometry returns.
         auto* deckWorkspace = mainWindow.findChild<QWidget*>(QStringLiteral("necSourceEditor"));
@@ -408,13 +455,6 @@ auto main(int argc, char* argv[]) -> int
                     && geometryWorkspace->isVisibleTo(&mainWindow)
                     && topLevelDialog(QStringLiteral("geometryEditorWindow")) == nullptr;
             }
-        }
-        // Windows that still float follow the workspace density.
-        if (const auto* validationWindow = topLevelDialog(QStringLiteral("validationWindow"))) {
-            dialogDensityIsIncremental =
-                !validationWindow->property("workspaceDensityId").toString().isEmpty()
-                && mainWindow.property("workspaceDensityId").toString()
-                    == QStringLiteral("density-smoke-sentinel");
         }
         // The Frequency row shows its page in the pane, inside the main window.
         if (auto* tree = mainWindow.findChild<QTreeWidget*>(QStringLiteral("modelTree"))) {
@@ -451,26 +491,71 @@ auto main(int argc, char* argv[]) -> int
                 && frequencyPage->isVisible() && functionKeysReachWindow
                 && topLevelDialog(QStringLiteral("analysisSetupWindow")) == nullptr;
         }
+        // Optimize opens its own top-level window beside the main window, setup and results
+        // side by side; a second Optimize raises the same window, closing it keeps the study,
+        // its place is remembered, and closing the main window closes it.
         if (optimizationWorkspace != nullptr && optimizeModuleAction != nullptr) {
+            QSettings{}.remove(QStringLiteral("optimizerWindow"));
+            mainWindow.resize(1400, 900);
+            mainWindow.show();
             optimizeModuleAction->setEnabled(true);
             optimizeModuleAction->trigger();
             application.processEvents();
-            const auto* optimizationWindow = topLevelDialog(
-                QStringLiteral("optimizationWindow"));
-            const auto* unexpectedRadiationWindow = topLevelDialog(
-                QStringLiteral("radiationResultWindow"));
-            const auto* unexpectedCandidateWindow = topLevelDialog(
-                QStringLiteral("optimizationCandidateDetailsWindow"));
-            resultWindowSettings.sync();
-            optimizationWindowNavigation = optimizationWindow != nullptr
-                && optimizationWindow->isVisible()
-                && optimizationWorkspace->window() == optimizationWindow
-                && (unexpectedRadiationWindow == nullptr
-                    || !unexpectedRadiationWindow->isVisible())
-                && (unexpectedCandidateWindow == nullptr
-                    || !unexpectedCandidateWindow->isVisible())
-                && resultWindowSettings.value(
-                    QStringLiteral("workspaceWindows/optimization/detached"), false).toBool();
+            auto* window = optimizationWorkspace->window();
+            auto* geometry = mainWindow.findChild<QWidget*>(QStringLiteral("geometryWorkspace"));
+            auto* method = optimizationWorkspace->findChild<QComboBox*>(
+                QStringLiteral("optimizationSearchMethod"));
+            auto* stack = optimizationWorkspace->findChild<QSplitter*>(
+                QStringLiteral("optimizationWorkspaceSplitter"));
+            const auto windows = std::ranges::count_if(QApplication::topLevelWidgets(),
+                [](const QWidget* widget) { return widget->objectName() == QStringLiteral("optimizerWindow"); });
+            const auto ownWindow = window != &mainWindow && window->parentWidget() == nullptr
+                && window->objectName() == QStringLiteral("optimizerWindow") && window->isVisible()
+                && windows == 1 && geometry != nullptr && geometry->isVisible()
+                && window->windowTitle().startsWith(QStringLiteral("Optimize · "))
+                && mainWindow.findChild<QWidget*>(QStringLiteral("optimizationView")) == nullptr;
+            window->resize(1120, 720);
+            application.processEvents();
+            const auto sideBySide = stack != nullptr && stack->orientation() == Qt::Horizontal;
+            window->resize(520, 720);
+            application.processEvents();
+            const auto stacksNarrow = stack != nullptr && stack->orientation() == Qt::Vertical;
+            // The offscreen screen is small; a size and place inside it come back as left.
+            window->resize(640, 480);
+            if (method != nullptr) method->setCurrentIndex(2);
+            window->move(40, 30);
+            application.processEvents();
+            const auto placed = window->pos();
+            window->close();
+            application.processEvents();
+            const auto closedHidden = !window->isVisible() && !QSettings{}.value(
+                QStringLiteral("optimizerWindow/geometry")).toByteArray().isEmpty();
+            optimizeModuleAction->trigger();
+            optimizeModuleAction->trigger();
+            application.processEvents();
+            const auto keptState = window->isVisible() && optimizationWorkspace->window() == window
+                && method != nullptr && method->currentIndex() == 2 && window->pos() == placed
+                && window->size() == QSize(640, 480);
+            mainWindow.close();
+            application.processEvents();
+            const auto closesWithMain = !window->isVisible();
+            mainWindow.show();
+            application.processEvents();
+            optimizationWindowNavigation = ownWindow && sideBySide && stacksNarrow && closedHidden
+                && keptState && closesWithMain;
+            if (!optimizationWindowNavigation)
+                qWarning() << "optimizer window" << ownWindow << windows << sideBySide << stacksNarrow
+                           << closedHidden << keptState << placed << window->pos() << window->size()
+                           << closesWithMain;
+        }
+        // Dialogs follow the workspace density when they are shown.
+        {
+            QDialog probe(&mainWindow);
+            probe.show();
+            application.processEvents();
+            dialogDensityIsIncremental = !probe.property("workspaceDensityId").toString().isEmpty()
+                && mainWindow.property("workspaceDensityId").toString()
+                    == QStringLiteral("density-smoke-sentinel");
         }
         // Results live in the main window's right column: no result windows, no Result
         // Windows menu, one overlay control, and View › Results Column collapses the column.
@@ -599,8 +684,6 @@ auto main(int argc, char* argv[]) -> int
         }
     }
     resultWindowSettings.remove(QStringLiteral("resultsColumn"));
-    resultWindowSettings.remove(QStringLiteral("workspaceWindows/validation"));
-    resultWindowSettings.remove(QStringLiteral("workspaceWindows/optimization"));
     resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
     resultWindowSettings.sync();
     // Launch: with no model the workspace shows the start panel in its center; reopening the
@@ -919,13 +1002,14 @@ auto main(int argc, char* argv[]) -> int
         trigger("necDeckAction");
         trigger("geometryFit");
         const auto fitFromDeckKeeps3D = shows(Page::ThreeD);
-        layout->showFullView();
+        auto* fullView = window.findChild<QWidget*>(QStringLiteral("resultFullView"));
+        layout->showView(fullView);
         application.processEvents();
-        const auto fullShown = layout->fullViewShown() && !workspace->isVisible();
+        const auto fullShown = layout->isShown(fullView) && !workspace->isVisible();
         trigger("geometryFrontView");
         const auto frontFromFull = fullShown && shows(Page::Planes)
             && planes->mainPlane() == Plane::XZ;
-        layout->showFullView();
+        layout->showView(fullView);
         application.processEvents();
         trigger("geometryFit");
         const auto fitFromFullKeepsPlanes = shows(Page::Planes) && planes->mainPlane() == Plane::XZ;
@@ -1650,10 +1734,10 @@ auto main(int argc, char* argv[]) -> int
             const auto fixed = waitFor([&] { return text().contains(QStringLiteral("EX 0 1 4 0 1 0\nFR")); })
                 && !text().contains(QStringLiteral("necwb"));
             // The optimizer leaves segments unchecked and sweeps it only in whole steps.
-            auto* variables = mainWindow.findChild<QTableWidget*>(QStringLiteral("optimizationVariablesTable"));
-            auto* method = mainWindow.findChild<QComboBox*>(QStringLiteral("optimizationSearchMethod"));
-            auto* points = mainWindow.findChild<QSpinBox*>(QStringLiteral("optimizationCandidateCount"));
-            auto* run = mainWindow.findChild<QPushButton*>(QStringLiteral("optimizationRun"));
+            auto* variables = optimizerChild<QTableWidget>(QStringLiteral("optimizationVariablesTable"));
+            auto* method = optimizerChild<QComboBox>(QStringLiteral("optimizationSearchMethod"));
+            auto* points = optimizerChild<QSpinBox>(QStringLiteral("optimizationCandidateCount"));
+            auto* run = optimizerChild<QPushButton>(QStringLiteral("optimizationRun"));
             auto optimizerGuarded = false;
             if (variables != nullptr && method != nullptr && points != nullptr && run != nullptr
                 && variables->rowCount() == 2) {
@@ -1936,6 +2020,53 @@ auto main(int argc, char* argv[]) -> int
     }
     if (!variablesLive)
         return NECWB_SMOKE_FAILURE("variables live, undo, reset and revert");
+    // A model opened with nothing selected leaves the pane empty: the variables take the
+    // free height, all rows shown without a scroll bar of their own.
+    {
+        QSettings settings;
+        const auto savedRecent = settings.value(QStringLiteral("files/recentModels"));
+        settings.remove(QStringLiteral("variables/folded"));
+        QTemporaryDir directory;
+        const auto modelPath = directory.filePath(QStringLiteral("variables.nec"));
+        QFile modelFile(modelPath);
+        if (!directory.isValid() || !modelFile.open(QIODevice::WriteOnly | QIODevice::Text))
+            return NECWB_SMOKE_FAILURE("variables model file");
+        modelFile.write("SY a=1, b=2, c=3, d=4, e=5, f=6\nGW 1 11 0 -a 0 0 a 0 0.001\nGE 0\n"
+            "EX 0 1 6 0 1 0\nFR 0 1 0 0 146 0\nEN\n");
+        modelFile.close();
+        settings.setValue(QStringLiteral("files/recentModels"), QStringList{modelPath});
+        const auto savedReopen = necwb::ui::recentModels::reopenAtStartup();
+        necwb::ui::recentModels::setReopenAtStartup(true);
+        // Reopened at launch in a small window with nothing selected, then made larger.
+        necwb::ui::MainWindow mainWindow;
+        mainWindow.resize(1000, 560);
+        mainWindow.show();
+        application.processEvents();
+        mainWindow.reopenLastModel(false);
+        application.processEvents();
+        necwb::ui::recentModels::setReopenAtStartup(savedReopen);
+        mainWindow.resize(1500, 1050);
+        application.processEvents();
+        auto* section = dynamic_cast<necwb::ui::VariablesSection*>(
+            mainWindow.findChild<QWidget*>(QStringLiteral("variablesSection")));
+        const auto* pane = mainWindow.findChild<QWidget*>(QStringLiteral("propertiesPane"));
+        const auto* scroll = section == nullptr ? nullptr : section->findChild<QScrollArea*>();
+        const auto variablesFill = section != nullptr && pane != nullptr && pane->isHidden()
+            && scroll != nullptr && scroll->verticalScrollBar()->maximum() == 0
+            && section->findChildren<QSlider*>().size() == 6;
+        if (!variablesFill)
+            qWarning() << "variables fill" << (section ? section->height() : -1)
+                       << (section ? section->unfoldedHeight() : -1)
+                       << (section ? section->maximumHeight() : -1)
+                       << (pane ? pane->isHidden() : false)
+                       << (scroll ? scroll->verticalScrollBar()->maximum() : -1)
+                       << (section ? section->sizeHint() : QSize());
+        if (auto* deck = mainWindow.findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor")))
+            deck->document()->setModified(false);
+        mainWindow.close();
+        settings.setValue(QStringLiteral("files/recentModels"), savedRecent);
+        if (!variablesFill) return NECWB_SMOKE_FAILURE("variables take the free height");
+    }
     // Card tables in the properties pane, the only editors of their items: a group shows its
     // table and folds the variables; ⇔ widens the column to the whole table, at most 65% of the
     // window, and anything else narrows it again; a row's click selects its item, a tree item
@@ -2849,8 +2980,14 @@ auto main(int argc, char* argv[]) -> int
         QStringLiteral("optimizationVariablesTable"));
     auto* optimizationParameterSettings = optimization.findChild<QWidget*>(
         QStringLiteral("optimizationParameterSettings"));
-    auto* optimizationChooseParameterFields = optimization.findChild<QPushButton*>(
-        QStringLiteral("optimizationChooseParameterFields"));
+    // The frequency summary keeps its own line breaks and shows each line whole.
+    const auto summaryFitsText = [](const QLabel* label) {
+        return label != nullptr && !label->wordWrap() && label->text().contains(QLatin1Char('\n'))
+            && label->width() >= label->sizeHint().width()
+            && label->height() >= label->sizeHint().height();
+    };
+    auto* optimizationMakeVariable = optimization.findChild<QPushButton*>(
+        QStringLiteral("optimizationMakeVariable"));
     auto* optimizationObjectiveSettings = optimization.findChild<QWidget*>(
         QStringLiteral("optimizationObjectiveSettings"));
     auto* optimizationObjectivePreset = optimization.findChild<QComboBox*>(
@@ -2974,8 +3111,8 @@ auto main(int argc, char* argv[]) -> int
     auto parameterizationHelpInvoked = false;
     optimization.setParameterizationHelpCallback(
         [&parameterizationHelpInvoked] { parameterizationHelpInvoked = true; });
-    if (optimizationChooseParameterFields != nullptr)
-        optimizationChooseParameterFields->click();
+    if (optimizationMakeVariable != nullptr)
+        optimizationMakeVariable->click();
     const auto optimizerResultsPreserved = optimizationResultsTable != nullptr
         && optimizationResultsTable->rowCount() == 1;
     if (optimizationResultsTable != nullptr) optimizationResultsTable->setRowCount(0);
@@ -3901,6 +4038,68 @@ auto main(int argc, char* argv[]) -> int
             qWarning() << "optimization tolerance" << session << candidate;
             return NECWB_SMOKE_FAILURE("optimization metadata tolerance");
         }
+        // A study runs on the model as it was when it started; applying a candidate after the
+        // model changed asks first, listing what differs, while the applied values themselves
+        // are not a change.
+        necwb::ui::OptimizationWorkspace changedWorkspace;
+        changedWorkspace.setContext(optimizationSource, QStringLiteral("changed.nec"),
+            QStringLiteral("nec2"), nec2c, 60, true);
+        changedWorkspace.setOptimizationBaseline(toleranceRecord, toleranceBaseline);
+        auto applied = 0;
+        changedWorkspace.setApplyParameterCallback(
+            [&applied](const std::vector<std::pair<QString, double>>&) { return ++applied, true; });
+        auto* points = changedWorkspace.findChild<QSpinBox*>(
+            QStringLiteral("optimizationCandidateCount"));
+        auto* changedRun = changedWorkspace.findChild<QPushButton*>(QStringLiteral("optimizationRun"));
+        auto* applyBest = changedWorkspace.findChild<QPushButton*>(
+            QStringLiteral("optimizationApplyBest"));
+        if (points == nullptr || changedRun == nullptr || applyBest == nullptr)
+            return NECWB_SMOKE_FAILURE("optimization apply-after-change controls");
+        points->setValue(points->minimum());
+        changedRun->click();
+        const auto runningAtEdit = changedWorkspace.isRunning();
+        auto edited = optimizationSource;
+        edited.replace(QStringLiteral("0.001"), QStringLiteral("0.002"));
+        changedWorkspace.setContext(edited, QStringLiteral("changed.nec"),
+            QStringLiteral("nec2"), nec2c, 60, true);
+        QElapsedTimer changedWait;
+        changedWait.start();
+        while (changedWorkspace.isRunning() && changedWait.elapsed() < 30000)
+            application.processEvents(QEventLoop::AllEvents, 50);
+        QString promptText;
+        const auto answer = [&promptText](QMessageBox::StandardButton button) {
+            QTimer::singleShot(0, [&promptText, button] {
+                if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                    promptText = box->text() + QLatin1Char('\n') + box->informativeText();
+                    box->button(button)->click();
+                }
+            });
+        };
+        answer(QMessageBox::No);
+        applyBest->click();
+        const auto declined = applied == 0
+            && promptText.startsWith(QStringLiteral("The model changed since this optimization started"))
+            && promptText.contains(QStringLiteral("GW (line 4), field 9: 0.001 → 0.002"));
+        answer(QMessageBox::Yes);
+        applyBest->click();
+        const auto appliedAnyway = applied == 1;
+        // Back to the model the study ran on, with a different optimized value: no question.
+        promptText.clear();
+        auto revalued = optimizationSource;
+        revalued.replace(QStringLiteral("LONG_FT=95"), QStringLiteral("LONG_FT=97"));
+        changedWorkspace.setContext(revalued, QStringLiteral("changed.nec"),
+            QStringLiteral("nec2"), nec2c, 60, true);
+        applyBest->click();
+        application.processEvents();
+        const auto unchangedApplies = applied == 2 && promptText.isEmpty();
+        for (const auto& record : toleranceStore.load())
+            if (record.sourceFile == QStringLiteral("changed.nec") && record.parentId.isEmpty())
+                toleranceStore.removeGroup(record.id, record.directory);
+        if (!runningAtEdit || !declined || !appliedAnyway || !unchangedApplies) {
+            qWarning() << "apply after change" << runningAtEdit << declined << appliedAnyway
+                       << unchangedApplies << applied << promptText;
+            return NECWB_SMOKE_FAILURE("optimization asks before applying to a changed model");
+        }
     }
     necwb::ui::OptimizationWorkspace directionalBaselineWorkspace;
     directionalBaselineWorkspace.setContext(optimizationSource,
@@ -4185,10 +4384,13 @@ auto main(int argc, char* argv[]) -> int
             != QStringLiteral("Band Evaluation")
         || optimizationResultsTable->columnCount() != 11
         || optimizationVariables->columnCount() != 6
-        || optimizationChooseParameterFields == nullptr
+        || optimizationMakeVariable == nullptr
+        || !summaryFitsText(optimization.findChild<QLabel*>(
+            QStringLiteral("optimizationFrequencySummary")))
         || !parameterizationHelpInvoked
-        || !optimizationChooseParameterFields->toolTip().contains(
-            QStringLiteral("Right-click a numeric field"))
+        || optimizationMakeVariable->text() != QStringLiteral("Make Variable…")
+        || !optimizationMakeVariable->toolTip().contains(
+            QStringLiteral("choose Make Variable…"))
         || optimizationVariables->rowCount() != 3
         || optimizationVariables->item(0, 0)->checkState() != Qt::Checked
         || optimizationVariables->item(1, 0)->checkState() != Qt::Checked
@@ -5056,11 +5258,14 @@ auto main(int argc, char* argv[]) -> int
     modelTree->setAddCallback([&](ModelNode node) { addedTo.push_back(node); });
     QAction averageGainAction(QStringLiteral("Run Average Gain Test…"), &modelColumn),
         convergenceAction(QStringLiteral("Segmentation Convergence…"), &modelColumn);
-    modelTree->setStudyAction(Study::AverageGain, &averageGainAction);
-    modelTree->setStudyAction(Study::Convergence, &convergenceAction);
-    auto treeAverageGainTriggered = false, treeConvergenceTriggered = false;
-    QObject::connect(&averageGainAction, &QAction::triggered, [&] { treeAverageGainTriggered = true; });
-    QObject::connect(&convergenceAction, &QAction::triggered, [&] { treeConvergenceTriggered = true; });
+    // Run calls the tree's own callback, not the menu command that also opens the view.
+    auto treeAverageGainTriggered = false, treeConvergenceTriggered = false, menuTriggered = false;
+    modelTree->setStudyAction(Study::AverageGain, &averageGainAction,
+        [&] { treeAverageGainTriggered = true; });
+    modelTree->setStudyAction(Study::Convergence, &convergenceAction,
+        [&] { treeConvergenceTriggered = true; });
+    for (auto* action : {&averageGainAction, &convergenceAction})
+        QObject::connect(action, &QAction::triggered, [&] { menuTriggered = true; });
     std::vector<ModelSelection> reportedSelections;
     std::optional<ModelSelection> activatedSelection;
     auto allowSelectionChange = true;
@@ -5157,7 +5362,18 @@ auto main(int argc, char* argv[]) -> int
     for (const auto* name : {"modelTreeAverageGainRun", "modelTreeConvergenceRun"}) {
         if (auto* run = modelTree->findChild<QToolButton*>(QString::fromLatin1(name))) run->click();
     }
-    const auto studyRunButtons = treeAverageGainTriggered && treeConvergenceTriggered;
+    // Clicking a study's result line opens it, like clicking its name.
+    activatedSelection.reset();
+    modelTree->scrollToItem(group(QStringLiteral("Validation"))->child(1));
+    application.processEvents();
+    QTest::mouseClick(const_cast<QLabel*>(convergenceState), Qt::LeftButton);
+    application.processEvents();
+    const auto studyRunButtons = treeAverageGainTriggered && treeConvergenceTriggered
+        && !menuTriggered && activatedSelection
+        && activatedSelection->node == ModelNode::Convergence;
+    if (!studyRunButtons)
+        qWarning() << "tree studies" << treeAverageGainTriggered << treeConvergenceTriggered
+                   << menuTriggered << activatedSelection.has_value();
     // A row picked by the user is reported; one picked by the window is not.
     const auto fittedHeight = modelTree->height();
     group(QStringLiteral("Wires"))->setExpanded(true);
@@ -5249,6 +5465,31 @@ auto main(int argc, char* argv[]) -> int
     modelColumn.showPage(nullptr, {});
     application.processEvents();
     const auto paneHides = propertiesPane->isHidden() && propertiesPane->currentPage() == nullptr;
+    // With the pane empty the variables take the free height: every row, no scroll bar.
+    std::vector<necwb::nec::SymbolDefinition> manyVariables;
+    for (auto index = 1; index <= 8; ++index)
+        manyVariables.push_back({"v" + std::to_string(index), "1", 1.0, static_cast<std::size_t>(index)});
+    auto* columnVariables = modelColumn.variables();
+    columnVariables->setVariables(manyVariables);
+    application.processEvents();
+    const auto* variablesScroll = columnVariables->findChild<QScrollArea*>();
+    const auto allRowsShown = [&] {
+        return variablesScroll != nullptr && variablesScroll->verticalScrollBar()->maximum() == 0
+            && columnVariables->height() >= columnVariables->unfoldedHeight();
+    };
+    const auto rowsWithPaneEmpty = allRowsShown();
+    // So they do beside a short page, which needs only its own height.
+    modelColumn.showPage(editPage, QStringLiteral("Page"));
+    application.processEvents();
+    const auto variablesTakeFreeHeight = rowsWithPaneEmpty && allRowsShown()
+        && !propertiesPane->isHidden();
+    modelColumn.showPage(nullptr, {});
+    if (!variablesTakeFreeHeight)
+        qWarning() << "variables with the pane empty" << rowsWithPaneEmpty << columnVariables->height()
+                   << columnVariables->unfoldedHeight() << columnVariables->sizeHint()
+                   << columnVariables->maximumHeight() << modelColumn.height()
+                   << modelTree->height();
+    columnVariables->setVariables({});
     // A cell edit changes only its own field: the others keep their exact values, even in a
     // deck unit that does not round-trip, such as inches.
     necwb::model::AntennaModel preciseModel;
@@ -5399,6 +5640,7 @@ auto main(int argc, char* argv[]) -> int
         std::pair{"invalid edit discarded", invalidEditDiscarded},
         std::pair{"enter applies", enterApplies}, std::pair{"escape reverts", escapeReverts},
         std::pair{"pane hides", paneHides}, std::pair{"variables shown", variablesShown},
+        std::pair{"variables take the free height", variablesTakeFreeHeight},
         std::pair{"no change during drag", noChangeDuringDrag},
         std::pair{"drag is one change", dragIsOneChange},
         std::pair{"typed value changes", typedValueChanges}, std::pair{"steps wait", stepsWait},
@@ -5577,148 +5819,6 @@ auto main(int argc, char* argv[]) -> int
         }
         QSettings{}.remove(QStringLiteral("resultsColumn"));
     }
-    QSettings detachableSettings;
-    detachableSettings.remove(QStringLiteral("workspaceWindows/smoke-test"));
-    detachableSettings.sync();
-    auto resultPanelDetached = false;
-    auto resultPanelHiddenButLive = false;
-    auto resultPanelRaisedWithUpdate = false;
-    {
-        necwb::ui::DetachablePanel detachablePanel(
-            QStringLiteral("smoke-test"), QStringLiteral("Smoke Results"), nullptr,
-            {QStringLiteral("workspaceWindows")});
-        auto* detachableContent = new QLabel(QStringLiteral("Live result content"));
-        detachablePanel.setContent(detachableContent);
-        detachablePanel.show();
-        application.processEvents();
-        // Floating windows cannot be attached back: there is no Pop Out/Attach toggle.
-        for (auto* button : detachablePanel.findChildren<QPushButton*>())
-            if (button->text().contains(QStringLiteral("Attach"))
-                || button->text() == QStringLiteral("Pop Out"))
-                return NECWB_SMOKE_FAILURE("detachable panel offers attach");
-        detachablePanel.showWindow();
-        application.processEvents();
-        auto* resultWindow = topLevelDialog(QStringLiteral("smoke-testResultWindow"));
-        resultPanelDetached = detachablePanel.isDetached()
-            && detachablePanel.isWindowVisible()
-            && resultWindow != nullptr && resultWindow->isVisible()
-            && resultWindow->parentWidget() == nullptr
-            && !resultWindow->testAttribute(Qt::WA_QuitOnClose)
-            && detachableContent->window() == resultWindow;
-        resultWindow->close();
-        application.processEvents();
-        detachableContent->setText(QStringLiteral("Updated while hidden"));
-        detachablePanel.setStatusText(QStringLiteral("Stale — model changed"));
-        detachableSettings.sync();
-        resultPanelHiddenButLive = detachablePanel.isDetached()
-            && !detachablePanel.isWindowVisible()
-            && detachableContent->window() == resultWindow
-            && !detachableSettings.value(
-                QStringLiteral("workspaceWindows/smoke-test/visible"), true).toBool();
-        detachablePanel.showWindow();
-        application.processEvents();
-        auto* windowStatus = resultWindow->findChild<QLabel*>(
-            QStringLiteral("smoke-testWindowStatusLabel"));
-        resultPanelRaisedWithUpdate = detachablePanel.isWindowVisible()
-            && detachableContent->text() == QStringLiteral("Updated while hidden")
-            && windowStatus != nullptr
-            && windowStatus->text() == QStringLiteral("Stale — model changed");
-        resultWindow->close();
-        application.processEvents();
-    }
-    auto resultPanelRestoredHidden = false;
-    auto resultPanelOpenStateSaved = false;
-    {
-        necwb::ui::DetachablePanel restoredPanel(
-            QStringLiteral("smoke-test"), QStringLiteral("Smoke Results"), nullptr,
-            {QStringLiteral("workspaceWindows")});
-        auto* restoredContent = new QLabel(QStringLiteral("Restored content"));
-        restoredPanel.setContent(restoredContent);
-        restoredPanel.show();
-        application.processEvents();
-        resultPanelRestoredHidden = restoredPanel.isDetached()
-            && !restoredPanel.isWindowVisible()
-            && restoredContent->window() != &restoredPanel;
-        restoredPanel.showWindow();
-        application.processEvents();
-        resultPanelOpenStateSaved = restoredPanel.isWindowVisible();
-    }
-    auto resultPanelRestoredVisible = false;
-    {
-        necwb::ui::DetachablePanel restoredPanel(
-            QStringLiteral("smoke-test"), QStringLiteral("Smoke Results"), nullptr,
-            {QStringLiteral("workspaceWindows")});
-        restoredPanel.setContent(new QLabel(QStringLiteral("Visible restored content")));
-        restoredPanel.show();
-        application.processEvents();
-        resultPanelRestoredVisible = restoredPanel.isDetached()
-            && restoredPanel.isWindowVisible();
-    }
-    detachableSettings.remove(QStringLiteral("workspaceWindows/offscreen"));
-    QDialog offscreenGeometry;
-    offscreenGeometry.resize(420, 300);
-    offscreenGeometry.move(50000, 50000);
-    detachableSettings.setValue(
-        QStringLiteral("workspaceWindows/offscreen/geometry"), offscreenGeometry.saveGeometry());
-    detachableSettings.setValue(QStringLiteral("workspaceWindows/offscreen/detached"), true);
-    detachableSettings.setValue(QStringLiteral("workspaceWindows/offscreen/visible"), true);
-    detachableSettings.sync();
-    auto offscreenWindowRecovered = false;
-    {
-        necwb::ui::DetachablePanel restoredPanel(
-            QStringLiteral("offscreen"), QStringLiteral("Off-screen Results"), nullptr,
-            {QStringLiteral("workspaceWindows")});
-        restoredPanel.setContent(new QLabel(QStringLiteral("Recovered content")));
-        restoredPanel.show();
-        application.processEvents();
-        const auto* restoredWindow = topLevelDialog(QStringLiteral("offscreenResultWindow"));
-        if (restoredWindow != nullptr) {
-            offscreenWindowRecovered = std::ranges::any_of(
-                QGuiApplication::screens(), [restoredWindow](const QScreen* screen) {
-                    const auto intersection = restoredWindow->frameGeometry().intersected(
-                        screen->availableGeometry());
-                    return intersection.width() >= 100 && intersection.height() >= 60;
-                });
-        }
-    }
-    detachableSettings.remove(QStringLiteral("workspaceWindows/oversized"));
-    QDialog oversizedGeometry;
-    oversizedGeometry.resize(50000, 50000);
-    oversizedGeometry.move(0, 0);
-    detachableSettings.setValue(
-        QStringLiteral("workspaceWindows/oversized/geometry"), oversizedGeometry.saveGeometry());
-    detachableSettings.setValue(QStringLiteral("workspaceWindows/oversized/detached"), true);
-    detachableSettings.setValue(QStringLiteral("workspaceWindows/oversized/visible"), true);
-    detachableSettings.sync();
-    auto oversizedWindowClamped = false;
-    {
-        necwb::ui::DetachablePanel restoredPanel(
-            QStringLiteral("oversized"), QStringLiteral("Oversized Results"), nullptr,
-            {QStringLiteral("workspaceWindows")});
-        restoredPanel.setContent(new QLabel(QStringLiteral("Recovered content")));
-        restoredPanel.show();
-        application.processEvents();
-        const auto* restoredWindow = topLevelDialog(QStringLiteral("oversizedResultWindow"));
-        if (restoredWindow != nullptr) {
-            oversizedWindowClamped = std::ranges::any_of(
-                QGuiApplication::screens(), [restoredWindow](const QScreen* screen) {
-                    const auto available = screen->availableGeometry();
-                    const auto frame = restoredWindow->frameGeometry();
-                    const auto intersection = available.intersected(frame);
-                    return restoredWindow->width() <= available.width()
-                        && restoredWindow->height() <= available.height()
-                        && intersection.width() >= 100 && intersection.height() >= 60;
-                });
-        }
-    }
-    detachableSettings.remove(QStringLiteral("workspaceWindows/offscreen"));
-    detachableSettings.remove(QStringLiteral("workspaceWindows/oversized"));
-    detachableSettings.remove(QStringLiteral("workspaceWindows/smoke-test"));
-    detachableSettings.sync();
-    if (!offscreenWindowRecovered)
-        return NECWB_SMOKE_FAILURE("off-screen window recovery");
-    if (!oversizedWindowClamped)
-        return NECWB_SMOKE_FAILURE("oversized result window clamping");
     // The start panel: its buttons trigger New, Open and Open Example, its recent list shows
     // file, folder and when each was opened, opens a row when activated, and is no taller
     // than its rows.
@@ -6536,6 +6636,50 @@ auto main(int argc, char* argv[]) -> int
     applySegmentation->click();
     application.processEvents();
     const auto segmentationApplyAccepted = segmentationDialog.result() == QDialog::Accepted;
+    // In small side views of a yagi, the wire and EX labels are drawn whole inside the view,
+    // clear of the EX marker and of each other, though the elements end on end draw them at
+    // one point; a label at a wire end by the edge goes on the inner side.
+    {
+        necwb::model::AntennaModel yagi;
+        yagi.addWire({1, {-0.5, -0.52, 0.0}, {-0.5, 0.52, 0.0}, 11, 0.003, 1});
+        yagi.addWire({2, {0.0, -0.5, 0.0}, {0.0, 0.5, 0.0}, 11, 0.003, 2});
+        yagi.addWire({3, {0.55, -0.46, 0.0}, {0.55, 0.46, 0.0}, 11, 0.003, 3});
+        for (const auto plane : {necwb::geometry::ProjectionPlane::XZ, necwb::geometry::ProjectionPlane::YZ}) {
+            necwb::ui::GeometryView side(plane);
+            side.resize(side.minimumSizeHint().width(), 140);
+            side.setModel(yagi);
+            side.setExcitations({{0, 2, 6, 1.0, 0.0, 5}});
+            side.fitToView();
+            // Zoomed in about the middle, the outer wire ends sit by the edges.
+            QWheelEvent zoomIn(QPointF(side.width() / 2.0, side.height() / 2.0),
+                side.mapToGlobal(QPointF(side.width() / 2.0, side.height() / 2.0)), {}, {0, 300},
+                Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+            QApplication::sendEvent(&side, &zoomIn);
+            QImage sideImage(side.size(), QImage::Format_ARGB32_Premultiplied);
+            side.render(&sideImage);
+            const auto& boxes = side.labelBoxes();
+            // The EX diamond with its outline, and every wire end's dot.
+            const auto source = side.screenPoint({0.0, 0.0, 0.0});
+            std::vector<QRectF> marks{QRectF(source - QPointF(9.0, 9.0), QSizeF(18.0, 18.0))};
+            for (const auto& wire : yagi.wires())
+                for (const auto& end : {wire.start, wire.end})
+                    marks.emplace_back(side.screenPoint(end) - QPointF(3.5, 3.5), QSizeF(7.0, 7.0));
+            const auto edge = plane == necwb::geometry::ProjectionPlane::XZ
+                ? side.screenPoint({0.55, 0.0, 0.0}) : side.screenPoint({0.0, 0.52, 0.0});
+            auto labelsClear = boxes.size() == 4 && edge.x() + 40.0 > side.width();
+            for (auto first = std::size_t{}; first < boxes.size(); ++first) {
+                labelsClear = labelsClear && QRectF(side.rect()).contains(boxes[first])
+                    && std::ranges::none_of(marks, [&](const QRectF& mark) { return mark.intersects(boxes[first]); });
+                for (auto second = first + 1; second < boxes.size(); ++second)
+                    labelsClear = labelsClear && !boxes[first].intersects(boxes[second]);
+            }
+            if (!labelsClear) {
+                qWarning() << "side view labels" << static_cast<int>(plane) << side.rect() << edge
+                           << marks << boxes;
+                return NECWB_SMOKE_FAILURE("small view labels inside and apart");
+            }
+        }
+    }
     necwb::model::ModelSetup attachmentSetup;
     attachmentSetup.loads.push_back({4, 1, 6, 6, 50.0, 0.0, 0.0, 7});
     attachmentSetup.transmissionLines.push_back({1, 3, 2, 9, 50.0, 3.048,
@@ -6765,9 +6909,6 @@ auto main(int argc, char* argv[]) -> int
         && !summaryImage.isNull()
         && !fieldImage.isNull() && !currentImage.isNull()
         && !modelTreeImage.isNull() && modelTreeStateVisible
-        && resultPanelDetached && resultPanelHiddenButLive
-        && resultPanelRaisedWithUpdate && resultPanelRestoredHidden
-        && resultPanelOpenStateSaved && resultPanelRestoredVisible
         && startPanelValid && storeValid
         && runReviewValid
         && runReviewSwitchesCleanly

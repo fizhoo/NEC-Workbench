@@ -141,6 +141,9 @@ VariablesSection::VariablesSection(QWidget* parent) : QWidget(parent)
     rowsLayout_ = new QVBoxLayout(rowsWidget_);
     rowsLayout_->setContentsMargins(4, 2, 4, 2);
     rowsLayout_->setSpacing(1);
+    // The scroll area keeps the rows' layout changes to itself; pass them on so the column
+    // gives the rows their new height.
+    rowsWidget_->installEventFilter(this);
     auto* scroll = new QScrollArea(this);
     scroll_ = scroll;
     scroll->setFrameShape(QFrame::NoFrame);
@@ -303,6 +306,7 @@ void VariablesSection::setAutoFolded(bool folded)
 
 auto VariablesSection::eventFilter(QObject* watched, QEvent* event) -> bool
 {
+    if (watched == rowsWidget_ && event->type() == QEvent::LayoutRequest) updateGeometry();
     if (watched == header_ && event->type() == QEvent::MouseButtonRelease) {
         if (isFolded()) {
             userFolded_ = false;
