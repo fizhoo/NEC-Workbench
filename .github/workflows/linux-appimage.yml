@@ -90,7 +90,7 @@ jobs:
             curl -sSfL -o icu-LICENSE "https://raw.githubusercontent.com/unicode-org/icu/release-$major-1/icu4c/LICENSE"
             icu=(--icu-license icu-LICENSE)
           fi
-          packaging/nec2c/ci-step.sh "Linux license notices" python3 -I packaging/qt-notices.py \
+          CI_STEP_NOTICE=1 packaging/nec2c/ci-step.sh "Linux license notices" python3 -I packaging/qt-notices.py \
             --platform linux --deployed AppDir/usr --qt-version "$QT_VERSION" \
             --qt-source "qt-src/qtbase-everywhere-src-$QT_VERSION.tar.xz" \
             --qt-source "qt-src/qtsvg-everywhere-src-$QT_VERSION.tar.xz" \

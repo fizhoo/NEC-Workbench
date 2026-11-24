@@ -266,8 +266,12 @@ Qt libraries in this package (Qt source modules: {', '.join(sorted(modules_neede
         return
     with open(args.append, "a", encoding="utf-8", newline="\n") as notices:
         notices.write(text)
-    print(f"Qt {version}: {len(libraries)} libraries, {len(plugins)} plugins, {len(translations)} "
-          f"translations, {len(others)} other libraries, {len(texts)} license texts -> {args.append}")
+    print(f"Qt {version} -> {args.append}")
+    print(f"Qt libraries: {', '.join('Qt6' + name for name in libraries)}")
+    print(f"Qt plugins: {', '.join(plugins)}")
+    print(f"Qt translations: {len(translations)}")
+    print(f"Other libraries: {', '.join(others) or 'none'}")
+    print(f"License texts: {', '.join(sorted(texts))}")
 
 
 if __name__ == "__main__":

@@ -100,12 +100,17 @@ jobs:
           Copy-Item nec2c-bin/nec2c.exe, nec2c-bin/nec2c-build.txt package/solvers/
           Copy-Item stage/share/nec-workbench/examples/*.nec package/examples/
           windeployqt --release --compiler-runtime --no-opengl-sw --no-system-d3d-compiler package/nec-workbench.exe
-          python -I packaging/qt-notices.py --platform windows --deployed package `
+          $notices = python -I packaging/qt-notices.py --platform windows --deployed package `
             --qt-version $env:QT_VERSION `
             --qt-source "qt-src/qtbase-everywhere-src-$env:QT_VERSION.tar.xz" `
             --qt-source "qt-src/qtsvg-everywhere-src-$env:QT_VERSION.tar.xz" `
-            --append package/THIRD_PARTY_LICENSES.txt
-          if ($LASTEXITCODE -ne 0) { throw "license notices failed" }
+            --append package/THIRD_PARTY_LICENSES.txt 2>&1
+          $notices
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output ("::error title=Windows license notices::" + ($notices -join "%0A"))
+            throw "license notices failed"
+          }
+          Write-Output ("::notice title=Windows license notices::" + ($notices -join "%0A"))
           Compress-Archive -Path package/* -DestinationPath $env:PACKAGE
 
       # The ZIP as a user gets it: unpacked into a fresh folder whose path has a space, fresh
