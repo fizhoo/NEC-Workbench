@@ -115,6 +115,8 @@ if(NECWB_BUILD_GUI)
         src/ui/PackageCheck.h
         src/ui/SettingsCleanup.cpp
         src/ui/SettingsCleanup.h
+        src/ui/ExampleLocator.cpp
+        src/ui/ExampleLocator.h
         src/ui/SolverLocator.cpp
         src/ui/SolverLocator.h
         src/ui/SolverSettings.cpp
@@ -330,6 +332,22 @@ if(NECWB_BUILD_GUI)
     )
     install(FILES LICENSE
         DESTINATION share/licenses/nec-workbench
+    )
+    # The examples in the repository, named so that a local file in examples/ never ships.
+    install(FILES
+        "examples/20m_dipole.nec"
+        "examples/2m-3-element-yagi.nec"
+        "examples/40m-phased-vertical-array.nec"
+        "examples/40m-symbolic-dipole.nec"
+        "examples/40m-vertical-elevated-radials.nec"
+        "examples/80-6 ocfd.nec"
+        "examples/dipole.nec"
+        "examples/folded_dipole.nec"
+        "examples/folded_dipole_with_TL.nec"
+        "examples/geometry-gm-array.nec"
+        "examples/geometry-gr-array.nec"
+        "examples/geometry-gx-symmetry.nec"
+        DESTINATION share/nec-workbench/examples
     )
 
     if(UNIX AND NOT APPLE)

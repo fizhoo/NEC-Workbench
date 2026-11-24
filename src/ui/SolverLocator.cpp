@@ -104,7 +104,7 @@ auto locateSolver(const QString& backendId, const QHash<QString, QString>& chose
 auto bundledSolver(const QString& backendId, const QString& applicationDirectory) -> QString
 {
     const QDir folder(applicationFolder(applicationDirectory));
-    return find(backendId, {folder.path(), folder.filePath(QStringLiteral("solvers"))});
+    return find(backendId, {folder.filePath(QStringLiteral("solvers")), folder.path()});
 }
 
 auto isInsideApplication(const QString& path, const QString& applicationDirectory) -> bool
@@ -146,7 +146,7 @@ auto bundledSolverSummary() -> QString
     const auto path = bundledSolver(QStringLiteral("nec2"));
     const auto version = path.isEmpty() ? QString{} : builtVersion(path);
     return version.isEmpty()
-        ? QCoreApplication::translate("SolverLocator", "No bundled nec2c beside this build.")
+        ? QCoreApplication::translate("SolverLocator", "No bundled nec2c with this build.")
         : QCoreApplication::translate("SolverLocator",
               "Bundled engine: %1, a separate program under its own license "
               "(see THIRD_PARTY_LICENSES.txt).").arg(version);

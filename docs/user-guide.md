@@ -24,16 +24,16 @@ focuses on workflow and behavior that is not obvious from an individual control.
    input and historical raw output.
 
 NEC Workbench comes with **nec2c**, so it runs out of the box: there is nothing else to
-install or configure. nec2c is a separate program beside Workbench (`nec2c`, or
-`nec2c.exe` on Windows), run once per analysis, so a solver crash or error never takes
+install or configure. nec2c is a separate program shipped with Workbench (on Windows
+`nec2c.exe` in the `solvers` folder beside `nec-workbench.exe`), run once per analysis, so a solver crash or error never takes
 Workbench down and **Stop** always ends a run. The engine list beside Run then shows
 **nec2c (bundled)**; hover it to see the version and the executable in use.
 
 To use another engine, choose **Configure…** in the engine list and pick **OpenNEC**,
 **4nec2 NEC2dXS**, or your own `nec2c`, then type or browse to its executable. Workbench
 looks for each engine's executable in this order: the path you chose, the copy that
-came with Workbench (beside it or in a `solvers` folder beside it), then the system
-PATH. Only a path you type or browse to is saved; a found one is looked up again at
+came with Workbench (in the `solvers` folder beside it, then beside it), then the
+system PATH. Only a path you type or browse to is saved; a found one is looked up again at
 each start, since a Linux AppImage mounts at a new place each time and a Windows folder
 can move. Clear the path to go back to the bundled nec2c. If a path you chose no longer
 exists, Workbench says so in the status bar and under **Problems** rather than switching
@@ -68,7 +68,8 @@ The model tree and properties pane are the left column, the geometry editor or a
 result view fills the center, and the results column is on the right. With no model open,
 the center shows the start panel at its top: **New**, **Open…**, **Open Example…**, and the
 recent models with their folder and when each was last opened (double-click one to open
-it).
+it). **Open Example…** starts in the examples that come with Workbench (the `examples`
+folder beside `nec-workbench.exe` on Windows).
 
 At launch Workbench reopens the last model you had open. Turn this off with **File →
 Reopen Last Model at Startup**, or hold `Shift` while it starts to skip it once. If that

@@ -208,15 +208,19 @@ The packages bundle nec2c (packaging/nec2c: the pinned commit and version, `buil
 the MinGW-w64 compat headers, the reference build, the decks and skip list for the result
 checks). `build.sh` writes `nec2c-build.txt` beside the executable with the version,
 commit, compiler and flags. `ui/SolverLocator` finds each engine's executable afresh at
-every start: the path the user chose, else a copy beside the executable or in
-`solvers/`, else the PATH. It reads the bundled version from the metadata and asks other
+every start: the path the user chose, else a copy in `solvers/` beside the executable
+(the home of bundled engines; the Windows ZIP's nec2c), else beside it (the AppImage's
+`usr/bin`), else the PATH. It reads the bundled version from the metadata and asks other
 nec2c builds with `-v` in the background, cached by path, size and modification time.
 `ui/SolverSettings` is the only writer of the engine settings: it saves the chosen engine
 and only paths the user typed or browsed to, never one inside the application folder or a
 mounted AppImage. A chosen path that has gone is reported, never replaced. Run records
 keep the engine version and path. CI runs the hidden `nec-workbench --package-check`
 (throwaway settings, no window) on each unpacked package: it finds the bundled nec2c,
-reads its version, solves, and stops long runs with Stop and with a timeout. It also
+reads its version, solves, finds the shipped examples where `ui/ExampleLocator` (Open
+Example…) looks for them (`examples/` beside the executable, else
+`../share/nec-workbench/examples`, else `./examples` in a source tree), solves
+`2m-3-element-yagi.nec` from there, and stops long runs with Stop and with a timeout. It also
 compares the packaged nec2c's output with a reference build's, as text, and the Windows
 build's parsed results with Linux's (`necwb_nec2c_check`).
 

@@ -76,7 +76,8 @@ jobs:
 
       # The package as a user gets it: a fresh folder whose path has a space, fresh settings,
       # no nec2c on the PATH. The AppImage must start Workbench, which must find the bundled
-      # nec2c, read its version, solve, and stop a run with Stop and with a timeout.
+      # nec2c, read its version, solve, find the examples (exactly the repository's) and
+      # solve one, and stop a run with Stop and with a timeout.
       - name: Check package
         env:
           APPIMAGE_EXTRACT_AND_RUN: '1'
@@ -90,6 +91,8 @@ jobs:
           test -x squashfs-root/usr/bin/nec2c
           test -f squashfs-root/usr/bin/nec2c-build.txt
           grep -q '^Exec=nec-workbench' squashfs-root/*.desktop
+          diff <(git -C "$GITHUB_WORKSPACE" -c core.quotePath=off ls-files 'examples/*.nec' | sed 's|^examples/||' | sort) \
+            <(ls squashfs-root/usr/share/nec-workbench/examples | sort)
           HOME="$check/home" XDG_CONFIG_HOME="$check/home/.config" CI_STEP_NOTICE=1 "$GITHUB_WORKSPACE/packaging/nec2c/ci-step.sh" \
             "Linux package check" ./NEC-Workbench-Linux-x86_64.AppImage --package-check
           test ! -e "$check/home/.config/NEC Workbench"
