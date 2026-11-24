@@ -105,4 +105,4 @@ jobs:
         run: |
           build/necwb_nec2c_check compare --strict linux/decks linux/out-linux windows > text.txt || true
           cat text.txt
-          echo "::notice title=Windows vs Linux, text::$(grep -E '^(same|DIFFERENT) |decks match' text.txt | sed -e ':a;N;$!ba;s/\n/%0A/g')"
+          echo "::notice title=Windows vs Linux (text)::$(grep -E '^(same|DIFFERENT) |decks match' text.txt | sed -e ':a;N;$!ba;s/\n/%0A/g')"
