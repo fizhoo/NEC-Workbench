@@ -222,7 +222,14 @@ prefix) where `ui/ExampleLocator` (Open Example…) looks for them (`examples/` 
 executable, else `../share/nec-workbench/examples`, else `./examples` in a source tree),
 solves `2m-3-element-yagi.nec` from there, and stops long runs with Stop and with a timeout. It also
 compares the packaged nec2c's output with a reference build's, as text, and the Windows
-build's parsed results with Linux's (`necwb_nec2c_check`).
+build's parsed results with Linux's (`necwb_nec2c_check`). CMake is the one source of the version:
+it writes `necwb-version.txt` into the build tree, from which the packaging workflows
+name the packages (`NEC-Workbench-<version>-x86_64.AppImage`,
+`NEC-Workbench-<version>-windows-x64.zip`), and the Windows executable's version
+resource (`packaging/nec-workbench.rc.in`). A pushed `v<version>` tag runs `release.yml`,
+which calls both packaging workflows and publishes the release with their packages, the
+nec2c source archive and `docs/release-notes/<tag>.md` only when every build and package
+check has passed; a `-dryrun` tag or a manual run lists the files instead.
 
 Solver execution is asynchronous and supports live output, cancellation, and a
 timeout. Every run receives a unique durable directory containing source,

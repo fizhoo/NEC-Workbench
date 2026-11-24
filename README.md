@@ -88,14 +88,17 @@ contains the Qt runtime, `nec2c` 1.3.3 built from the pinned commit in
 `packaging/nec2c` with its license notices in `THIRD_PARTY_LICENSES.txt`, and the
 examples. Each release also carries the corresponding nec2c source.
 
-- **Windows:** extract `NEC-Workbench-Windows-x64.zip` and run `nec-workbench.exe`. Keep
+Package names carry the version, such as `NEC-Workbench-0.1.0-alpha.3-windows-x64.zip`
+and `NEC-Workbench-0.1.0-alpha.3-x86_64.AppImage`.
+
+- **Windows:** extract `NEC-Workbench-<version>-windows-x64.zip` and run `nec-workbench.exe`. Keep
   the extracted files together: the DLLs and folders beside the executable are needed,
   nec2c is in `solvers/`, and the examples are in `examples/`.
-- **Linux:** make `NEC-Workbench-Linux-x86_64.AppImage` executable and run it:
+- **Linux:** make `NEC-Workbench-<version>-x86_64.AppImage` executable and run it:
 
   ```sh
-  chmod +x NEC-Workbench-Linux-x86_64.AppImage
-  ./NEC-Workbench-Linux-x86_64.AppImage
+  chmod +x NEC-Workbench-0.1.0-alpha.3-x86_64.AppImage
+  ./NEC-Workbench-0.1.0-alpha.3-x86_64.AppImage
   ```
 
   Without FUSE, run it with `--appimage-extract-and-run`.
@@ -108,6 +111,11 @@ Packaging workflows run for `main`, `release/**` and other selected branches, pu
 requests, and manual dispatch. Download artifacts from a successful run on the
 repository's **Actions** page: `NEC-Workbench-Linux-x86_64` and
 `NEC-Workbench-Windows-x64`, each with the package and the nec2c source archive.
+
+Pushing a `v<version>` tag that matches the CMake version builds both packages from the
+tag, runs their package checks, and publishes the GitHub release with both packages and
+the nec2c source archive, using `docs/release-notes/<tag>.md` as its notes. Nothing is
+published if a build or check fails.
 
 ## Design Boundary
 

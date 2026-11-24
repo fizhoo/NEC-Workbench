@@ -5,6 +5,8 @@ on:
     branches: [main, 'release/**', feature/baseline-reference, feature/compact-workspace, feature/compact-control-panel]
   pull_request:
   workflow_dispatch:
+  # The release workflow builds and checks the package from its tag.
+  workflow_call:
 
 permissions:
   contents: read
@@ -41,6 +43,7 @@ jobs:
           -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DNECWB_BUILD_TESTS=ON
+          && echo "PACKAGE=NEC-Workbench-$(cat build/necwb-version.txt)-x86_64.AppImage" >> "$GITHUB_ENV"
 
       - name: Build
         run: cmake --build build --parallel
@@ -72,7 +75,7 @@ jobs:
             --output appimage
           appimage=$(find . -maxdepth 1 -name '*.AppImage' ! -name 'linuxdeploy*.AppImage' -print -quit)
           test -n "$appimage"
-          mv "$appimage" NEC-Workbench-Linux-x86_64.AppImage
+          mv "$appimage" "$PACKAGE"
 
       # The package as a user gets it: a fresh folder whose path has a space, fresh settings,
       # no nec2c on the PATH. The AppImage must start Workbench, which must find the bundled
@@ -85,16 +88,16 @@ jobs:
           if command -v nec2c; then echo "nec2c is on the PATH; the check needs a clean runner"; exit 1; fi
           check="$RUNNER_TEMP/package check"
           mkdir -p "$check/home"
-          cp NEC-Workbench-Linux-x86_64.AppImage "$check/"
+          cp "$PACKAGE" "$check/"
           cd "$check"
-          ./NEC-Workbench-Linux-x86_64.AppImage --appimage-extract > /dev/null
+          "./$PACKAGE" --appimage-extract > /dev/null
           test -x squashfs-root/usr/bin/nec2c
           test -f squashfs-root/usr/bin/nec2c-build.txt
           grep -q '^Exec=nec-workbench' squashfs-root/*.desktop
           diff <(git -C "$GITHUB_WORKSPACE" -c core.quotePath=off ls-files 'examples/*.nec' | sed 's|^examples/||' | sort) \
             <(ls squashfs-root/usr/share/nec-workbench/examples | sort)
           HOME="$check/home" XDG_CONFIG_HOME="$check/home/.config" CI_STEP_NOTICE=1 "$GITHUB_WORKSPACE/packaging/nec2c/ci-step.sh" \
-            "Linux package check" ./NEC-Workbench-Linux-x86_64.AppImage --package-check
+            "Linux package check" "./$PACKAGE" --package-check
           test ! -e "$check/home/.config/NEC Workbench"
 
       # The packaged nec2c against a second build of the same commit with upstream's own
@@ -115,7 +118,7 @@ jobs:
         with:
           name: NEC-Workbench-Linux-x86_64
           path: |
-            NEC-Workbench-Linux-x86_64.AppImage
+            ${{ env.PACKAGE }}
             dist/nec2c-*-source.tar.gz
           if-no-files-found: error
           retention-days: 14

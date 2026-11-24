@@ -9,6 +9,9 @@ if(NECWB_VERSION_LABEL)
 else()
     set(NECWB_DISPLAY_VERSION "${PROJECT_VERSION}")
 endif()
+set(NECWB_COPYRIGHT "Copyright © 2026 Adam Young. GPL-3.0-or-later.")
+# For the packaging workflows: the package names and the release tag come from here.
+file(CONFIGURE OUTPUT "${CMAKE_BINARY_DIR}/necwb-version.txt" CONTENT "${NECWB_DISPLAY_VERSION}\n")
 
 # Single-configuration builds without a type compile unoptimized, which makes the GUI
 # noticeably slower; default to an optimized build that keeps debug symbols.
@@ -324,6 +327,14 @@ if(NECWB_BUILD_GUI)
     target_link_libraries(nec-workbench PRIVATE necwb_ui)
     if(WIN32)
         set_target_properties(nec-workbench PROPERTIES WIN32_EXECUTABLE TRUE)
+        # Product name, version, description and copyright in the executable's properties.
+        if(NECWB_VERSION_LABEL)
+            set(NECWB_RC_FILEFLAGS "VS_FF_PRERELEASE")
+        else()
+            set(NECWB_RC_FILEFLAGS "0")
+        endif()
+        configure_file(packaging/nec-workbench.rc.in nec-workbench.rc @ONLY)
+        target_sources(nec-workbench PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/nec-workbench.rc")
     endif()
 
     install(TARGETS nec-workbench

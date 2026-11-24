@@ -5,6 +5,8 @@ on:
     branches: [main, 'release/**', feature/baseline-reference, feature/compact-workspace, feature/compact-control-panel]
   pull_request:
   workflow_dispatch:
+  # The release workflow builds and checks the package from its tag.
+  workflow_call:
 
 permissions:
   contents: read
@@ -52,6 +54,7 @@ jobs:
           -A x64
           -T v143
           -DNECWB_BUILD_TESTS=ON
+          && echo "PACKAGE=NEC-Workbench-$(Get-Content build/necwb-version.txt)-windows-x64.zip" >> $env:GITHUB_ENV
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -82,7 +85,7 @@ jobs:
           Copy-Item nec2c-bin/nec2c.exe, nec2c-bin/nec2c-build.txt package/solvers/
           Copy-Item stage/share/nec-workbench/examples/*.nec package/examples/
           windeployqt --release --compiler-runtime package/nec-workbench.exe
-          Compress-Archive -Path package/* -DestinationPath NEC-Workbench-Windows-x64.zip
+          Compress-Archive -Path package/* -DestinationPath $env:PACKAGE
 
       # The ZIP as a user gets it: unpacked into a fresh folder whose path has a space, fresh
       # settings, no nec2c on the PATH. Workbench must find nec2c.exe in solvers/, read its
@@ -93,7 +96,7 @@ jobs:
         run: |
           if (Get-Command nec2c -ErrorAction SilentlyContinue) { throw "nec2c is on the PATH" }
           $check = Join-Path $env:RUNNER_TEMP "package check"
-          Expand-Archive NEC-Workbench-Windows-x64.zip -DestinationPath $check
+          Expand-Archive $env:PACKAGE -DestinationPath $check
           if (Test-Path (Join-Path $check "nec2c.exe")) { throw "nec2c.exe is at the top level, not in solvers/" }
           foreach ($file in "solvers/nec2c.exe", "solvers/nec2c-build.txt", "README.md", "LICENSE.txt", "THIRD_PARTY_LICENSES.txt") {
             if (-not (Test-Path (Join-Path $check $file))) { throw "$file is missing" }
@@ -101,7 +104,15 @@ jobs:
           $tracked = (git -c core.quotePath=off ls-files "examples/*.nec" | ForEach-Object { Split-Path -Leaf $_ } | Sort-Object) -join "|"
           $shipped = (Get-ChildItem (Join-Path $check "examples") -File | ForEach-Object Name | Sort-Object) -join "|"
           if ($tracked -ne $shipped) { throw "examples/ holds $shipped, not $tracked" }
+          # The executable's version resource, from the CMake version.
+          $info = (Get-Item (Join-Path $check "nec-workbench.exe")).VersionInfo
+          $version = (Get-Content build/necwb-version.txt).Trim()
+          if ($info.ProductVersion -ne $version -or $info.FileVersion -ne $version -or $info.ProductName -ne "NEC Workbench" -or -not $info.LegalCopyright -or -not $info.FileDescription) {
+            throw "nec-workbench.exe version resource: $($info | Format-List | Out-String)"
+          }
           $listing = @(
+            "$env:PACKAGE"
+            "nec-workbench.exe: $($info.ProductName) $($info.ProductVersion) ($($info.FileMajorPart).$($info.FileMinorPart).$($info.FileBuildPart).$($info.FilePrivatePart)) · $($info.FileDescription) · $($info.LegalCopyright)"
             "top level: " + ((Get-ChildItem $check | ForEach-Object { $_.Name + $(if ($_.PSIsContainer) { "/" } else { "" }) }) -join ", ")
             "solvers/: " + ((Get-ChildItem (Join-Path $check "solvers") | ForEach-Object Name) -join ", ")
             "examples/: " + ((Get-ChildItem (Join-Path $check "examples") | ForEach-Object Name) -join ", ")
@@ -124,7 +135,7 @@ jobs:
         with:
           name: NEC-Workbench-Windows-x64
           path: |
-            NEC-Workbench-Windows-x64.zip
+            ${{ env.PACKAGE }}
             dist/nec2c-*-source.tar.gz
           if-no-files-found: error
           retention-days: 14
