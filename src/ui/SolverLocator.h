@@ -31,6 +31,8 @@ struct LocatedSolver {
     -> bool;
 
 // "nec2c (bundled)" when the bundled copy is the one in use, else the engine's name.
+// The name users see for an engine id; ids stay internal.
+[[nodiscard]] auto solverName(const QString& backendId) -> QString;
 [[nodiscard]] auto solverLabel(const QString& backendId, const LocatedSolver& located) -> QString;
 // "nec2c 1.3.3 (55be1e0) · bundled · /path", for the engine list's tooltip and the Run log.
 [[nodiscard]] auto solverDescription(const QString& backendId, const LocatedSolver& located) -> QString;

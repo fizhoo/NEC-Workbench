@@ -70,13 +70,14 @@ auto versionArguments(const QString& backendId) -> QStringList
     return backendId == QStringLiteral("nec2") ? QStringList{QStringLiteral("-v")} : QStringList{};
 }
 
-auto engineName(const QString& backendId) -> QString
-{
-    if (backendId == QStringLiteral("opennec")) return QStringLiteral("OpenNEC");
-    if (backendId == QStringLiteral("nec2dxs")) return QStringLiteral("4nec2 NEC2dXS");
-    return QStringLiteral("nec2c");
 }
 
+auto solverName(const QString& backendId) -> QString
+{
+    if (backendId == QStringLiteral("nec2")) return QStringLiteral("nec2c");
+    if (backendId == QStringLiteral("opennec")) return QStringLiteral("OpenNEC");
+    if (backendId == QStringLiteral("nec2dxs")) return QStringLiteral("4nec2 NEC2dXS");
+    return backendId;
 }
 
 auto LocatedSolver::missing() const -> bool
@@ -119,20 +120,20 @@ auto isInsideApplication(const QString& path, const QString& applicationDirector
 auto solverLabel(const QString& backendId, const LocatedSolver& located) -> QString
 {
     if (located.origin == LocatedSolver::Origin::Bundled)
-        return QCoreApplication::translate("SolverLocator", "%1 (bundled)").arg(engineName(backendId));
+        return QCoreApplication::translate("SolverLocator", "%1 (bundled)").arg(solverName(backendId));
     if (backendId == QStringLiteral("nec2")) return QStringLiteral("NEC-2 / nec2c");
-    return engineName(backendId);
+    return solverName(backendId);
 }
 
 auto solverDescription(const QString& backendId, const LocatedSolver& located) -> QString
 {
     const auto tr = [](const char* text) { return QCoreApplication::translate("SolverLocator", text); };
     if (located.origin == LocatedSolver::Origin::NotFound)
-        return tr("%1 · not found").arg(engineName(backendId));
+        return tr("%1 · not found").arg(solverName(backendId));
     if (located.missing())
         return tr("%1: the chosen executable %2 no longer exists. Choose Configure… to pick it "
                   "again, or clear the path to use the one found automatically.")
-            .arg(engineName(backendId), QDir::toNativeSeparators(located.path));
+            .arg(solverName(backendId), QDir::toNativeSeparators(located.path));
     auto version = SolverVersions::instance().version(backendId, located.path);
     if (version.isEmpty()) version = tr("checking version");
     const auto origin = located.origin == LocatedSolver::Origin::Bundled ? tr("bundled")

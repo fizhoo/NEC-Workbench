@@ -789,7 +789,7 @@ void MainWindow::createWorkspace()
             solverBackendId_ = std::move(backendId);
             solverExecutablePath_ = locateSolver(solverBackendId_, executablePath).path;
             solverTimeoutSeconds_ = timeoutSeconds;
-            statusBar_->setBackend(solverBackendId_);
+            statusBar_->setBackend(solverName(solverBackendId_));
             optimizationWorkspace_->setContext(editor_->toPlainText(), currentFile_,
                 solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_,
                 modelChecked_ && modelErrorCount_ == 0);
@@ -4298,7 +4298,7 @@ void MainWindow::restoreWorkspaceLayout()
         QStringLiteral("geometry/endpointTolerancePixels"), 12.0).toDouble();
     applyGeometrySettings(geometrySettings);
     solverBackendId_ = solverSettings::chosenEngine();
-    statusBar_->setBackend(solverBackendId_);
+    statusBar_->setBackend(solverName(solverBackendId_));
     solverExecutablePaths_ = solverSettings::chosenPaths();
     solverTimeoutSeconds_ = settings.value(QStringLiteral("analysis/timeoutSeconds"), 120).toInt();
     const auto located = locateSolver(solverBackendId_, solverExecutablePaths_);

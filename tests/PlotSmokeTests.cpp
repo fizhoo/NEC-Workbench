@@ -12,6 +12,7 @@
 #include "ui/analysis/AnalysisRunStore.h"
 #include "ui/analysis/ResultsSummaryView.h"
 #include "ui/analysis/RunReviewWindow.h"
+#include "ui/bottom/RunHistoryView.h"
 #include "ui/analysis/AverageGainResultsView.h"
 #include "ui/analysis/AnalysisRequestEditor.h"
 #include "ui/analysis/ConvergenceWorkspace.h"
@@ -290,7 +291,9 @@ auto main(int argc, char* argv[]) -> int
         const auto chosenFirst = chosen.origin == LocatedSolver::Origin::Chosen && !chosen.missing()
             && necwb::ui::solverLabel(QStringLiteral("nec2"), chosen) == QStringLiteral("NEC-2 / nec2c")
             && gone.origin == LocatedSolver::Origin::Chosen && gone.missing()
-            && necwb::ui::solverDescription(QStringLiteral("nec2"), gone).contains(QStringLiteral("no longer exists"));
+            && necwb::ui::solverDescription(QStringLiteral("nec2"), gone).contains(QStringLiteral("no longer exists"))
+            && necwb::ui::solverName(QStringLiteral("nec2")) == QStringLiteral("nec2c")
+            && necwb::ui::solverName(QStringLiteral("opennec")) == QStringLiteral("OpenNEC");
         // A user's nec2c is asked its version in the background; another program never is.
         // (On Windows the stand-in is not an executable, so it is never started and its version
         // is unknown.)
@@ -329,7 +332,9 @@ auto main(int argc, char* argv[]) -> int
         const auto reloaded = store.load();
         const auto runRecordsEngine = record.engineVersion == QStringLiteral("nec2c 1.3.3 (55be1e0)")
             && reloaded.size() == 1 && reloaded.front().engineVersion == record.engineVersion
-            && reloaded.front().enginePath == bundled.path;
+            && reloaded.front().enginePath == bundled.path
+            && reloaded.front().backend == QStringLiteral("nec2")
+            && necwb::ui::runContext(record).endsWith(QStringLiteral("Backend: nec2c · nec2c 1.3.3 (55be1e0)"));
         qputenv("PATH", savedPath);
         if (!nothing || !onPath || !inSolvers || !besideFirst || !chosenFirst || !probed || !notAsked
             || !refusesOwnFolder || !refusesAppImage || !savesChosen || !runRecordsEngine) {
