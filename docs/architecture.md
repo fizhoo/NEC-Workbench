@@ -217,10 +217,10 @@ and only paths the user typed or browsed to, never one inside the application fo
 mounted AppImage. A chosen path that has gone is reported, never replaced. Run records
 keep the engine version and path. CI runs the hidden `nec-workbench --package-check`
 (throwaway settings, no window) on each unpacked package: it finds the bundled nec2c,
-reads its version, solves, finds the shipped examples where `ui/ExampleLocator` (Open
-Example…) looks for them (`examples/` beside the executable, else
-`../share/nec-workbench/examples`, else `./examples` in a source tree), solves
-`2m-3-element-yagi.nec` from there, and stops long runs with Stop and with a timeout. It also
+reads its version, solves, finds the shipped examples (inside the package or install
+prefix) where `ui/ExampleLocator` (Open Example…) looks for them (`examples/` beside the
+executable, else `../share/nec-workbench/examples`, else `./examples` in a source tree),
+solves `2m-3-element-yagi.nec` from there, and stops long runs with Stop and with a timeout. It also
 compares the packaged nec2c's output with a reference build's, as text, and the Windows
 build's parsed results with Linux's (`necwb_nec2c_check`).
 

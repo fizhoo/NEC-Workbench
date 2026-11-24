@@ -147,11 +147,11 @@ auto runPackageCheck() -> int
               .arg(result.radiation.size())
         : quick.result.detail);
 
-    // The shipped examples, where Open Example… looks, inside the package rather than a
-    // source tree's ./examples.
+    // The shipped examples, where Open Example… looks, inside the package or install prefix
+    // rather than a source tree's ./examples.
     const auto examples = exampleFolder();
     const auto exampleFiles = QDir(examples).entryList({QStringLiteral("*.nec")}, QDir::Files);
-    const auto examplesShipped = !examples.isEmpty() && isInsideApplication(examples)
+    const auto examplesShipped = !examples.isEmpty() && isInsideInstallation(examples)
         && !exampleFiles.isEmpty();
     report(examplesShipped, QStringLiteral("examples found"), examples.isEmpty()
         ? QStringLiteral("no examples folder")

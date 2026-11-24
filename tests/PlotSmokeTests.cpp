@@ -301,6 +301,13 @@ auto main(int argc, char* argv[]) -> int
         QDir().mkpath(app + QStringLiteral("/share/nec-workbench/examples"));
         const auto sharedExamples = necwb::ui::exampleFolder(bin)
             == QDir::cleanPath(app + QStringLiteral("/share/nec-workbench/examples"));
+        // A plain prefix install (bin/ and share/) counts as shipped; a folder beside the
+        // prefix, and the prefix of an executable not in bin/, do not.
+        const auto prefixInstall = necwb::ui::isInsideInstallation(necwb::ui::exampleFolder(bin), bin)
+            && !necwb::ui::isInsideApplication(necwb::ui::exampleFolder(bin), bin)
+            && !necwb::ui::isInsideInstallation(app + QStringLiteral("-other/examples"), bin)
+            && !necwb::ui::isInsideInstallation(app + QStringLiteral("/share/nec-workbench/examples"),
+                app + QStringLiteral("/lib"));
         QDir().mkpath(bin + QStringLiteral("/examples"));
         const auto examplesBeside = necwb::ui::exampleFolder(bin) == QDir::cleanPath(bin + QStringLiteral("/examples"));
         // A user's nec2c is asked its version in the background; another program never is.
@@ -347,10 +354,10 @@ auto main(int argc, char* argv[]) -> int
         qputenv("PATH", savedPath);
         if (!nothing || !onPath || !beside || !solversFirst || !chosenFirst || !probed || !notAsked
             || !refusesOwnFolder || !refusesAppImage || !savesChosen || !runRecordsEngine
-            || !sharedExamples || !examplesBeside) {
+            || !sharedExamples || !prefixInstall || !examplesBeside) {
             qWarning() << "solver lookup" << nothing << onPath << beside << solversFirst << chosenFirst
                        << probed << notAsked << refusesOwnFolder << refusesAppImage << savesChosen
-                       << runRecordsEngine << sharedExamples << examplesBeside << versions.version(QStringLiteral("nec2"), userNec2c);
+                       << runRecordsEngine << sharedExamples << prefixInstall << examplesBeside << versions.version(QStringLiteral("nec2"), userNec2c);
             return NECWB_SMOKE_FAILURE("solver lookup and saved paths");
         }
     }

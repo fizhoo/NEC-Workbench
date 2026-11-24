@@ -1,7 +1,10 @@
 #include "ui/ExampleLocator.h"
 
+#include "ui/SolverLocator.h"
+
 #include <QCoreApplication>
 #include <QDir>
+#include <QFileInfo>
 
 namespace necwb::ui {
 
@@ -15,6 +18,15 @@ auto exampleFolder(const QString& applicationDirectory) -> QString
         if (QDir(candidate).exists()) return QDir::cleanPath(QDir(candidate).absolutePath());
     }
     return {};
+}
+
+auto isInsideInstallation(const QString& path, const QString& applicationDirectory) -> bool
+{
+    if (isInsideApplication(path, applicationDirectory)) return true;
+    QDir prefix(applicationDirectory.isEmpty() ? QCoreApplication::applicationDirPath() : applicationDirectory);
+    if (prefix.dirName() != QStringLiteral("bin") || !prefix.cdUp()) return false;
+    return QFileInfo(path).absoluteFilePath().startsWith(prefix.absolutePath() + QLatin1Char('/'),
+        Qt::CaseInsensitive);
 }
 
 }
