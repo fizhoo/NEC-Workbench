@@ -2,7 +2,7 @@ name: Windows Build
 
 on:
   push:
-    branches: [main, feature/baseline-reference, feature/compact-workspace, feature/compact-control-panel]
+    branches: [main, 'release/**', feature/baseline-reference, feature/compact-workspace, feature/compact-control-panel]
   pull_request:
   workflow_dispatch:
 
@@ -13,11 +13,36 @@ jobs:
   build-windows:
     name: Windows x64
     runs-on: windows-2025-vs2026
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - name: Check out source
         uses: actions/checkout@v5
+
+      - name: Install MinGW-w64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: git mingw-w64-x86_64-gcc mingw-w64-x86_64-binutils
+
+      # The MINGW64 gcc (x86_64-w64-mingw32), linked statically; build.sh refuses MSYS gcc.
+      - name: Build bundled nec2c
+        shell: msys2 {0}
+        run: |
+          packaging/nec2c/build.sh nec2c-bin nec2c-src
+          packaging/nec2c/check-imports.sh nec2c-bin/nec2c.exe
+          packaging/nec2c/source-archive.sh dist nec2c-src
+          # The runtime pieces linked into nec2c.exe bring their own notices.
+          cp THIRD_PARTY_LICENSES.txt nec2c-bin/THIRD_PARTY_LICENSES.txt
+          notices=$(find /mingw64/share/licenses/crt /mingw64/share/licenses/gcc-libs \
+            /mingw64/share/licenses/winpthreads -type f 2> /dev/null | sort)
+          test -n "$notices"
+          for notice in $notices; do
+            printf '\n\n%s\n%s\n\n' "MinGW-w64 runtime notice: ${notice#/mingw64/share/licenses/}" \
+              "----------------------------------------------------------------" >> nec2c-bin/THIRD_PARTY_LICENSES.txt
+            cat "$notice" >> nec2c-bin/THIRD_PARTY_LICENSES.txt
+          done
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -40,19 +65,41 @@ jobs:
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
 
+      # Assembled by hand: Workbench, its Qt runtime, and nec2c.exe beside it.
       - name: Package application
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force package | Out-Null
           Copy-Item build/Release/nec-workbench.exe package/
           Copy-Item LICENSE package/LICENSE.txt
+          Copy-Item nec2c-bin/nec2c.exe package/
+          Copy-Item nec2c-bin/nec2c-build.txt package/
+          Copy-Item nec2c-bin/THIRD_PARTY_LICENSES.txt package/
           windeployqt --release --compiler-runtime package/nec-workbench.exe
           Compress-Archive -Path package/* -DestinationPath NEC-Workbench-Windows-x64.zip
+
+      # The ZIP as a user gets it: unpacked into a fresh folder whose path has a space, fresh
+      # settings, no nec2c on the PATH. Workbench must find the bundled nec2c.exe, read its
+      # version, solve, and stop a run with Stop and with a timeout.
+      - name: Check package
+        shell: pwsh
+        run: |
+          if (Get-Command nec2c -ErrorAction SilentlyContinue) { throw "nec2c is on the PATH" }
+          $check = Join-Path $env:RUNNER_TEMP "package check"
+          Expand-Archive NEC-Workbench-Windows-x64.zip -DestinationPath $check
+          $report = Join-Path $env:RUNNER_TEMP "package-check.txt"
+          $run = Start-Process -FilePath (Join-Path $check "nec-workbench.exe") `
+            -ArgumentList "--package-check" -WorkingDirectory $check -Wait -PassThru `
+            -NoNewWindow -RedirectStandardOutput $report
+          Get-Content $report
+          if ($run.ExitCode -ne 0) { throw "package check failed ($($run.ExitCode))" }
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v6
         with:
           name: NEC-Workbench-Windows-x64
-          path: NEC-Workbench-Windows-x64.zip
+          path: |
+            NEC-Workbench-Windows-x64.zip
+            dist/nec2c-*-source.tar.gz
           if-no-files-found: error
           retention-days: 14

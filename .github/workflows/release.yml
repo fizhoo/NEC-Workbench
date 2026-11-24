@@ -1,0 +1,27 @@
+name: Release Sources
+
+# Each release carries the corresponding source of the nec2c it bundles: the pinned commit
+# with the build scripts, Windows compat headers and settings in packaging/nec2c.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  nec2c-source:
+    name: Attach nec2c source
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - name: Pack and attach
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          packaging/nec2c/build.sh nec2c-bin nec2c-src
+          archive=$(packaging/nec2c/source-archive.sh dist nec2c-src)
+          gh release upload "${{ github.event.release.tag_name }}" "$archive" --clobber

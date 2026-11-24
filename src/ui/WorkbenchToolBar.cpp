@@ -59,7 +59,8 @@ WorkbenchToolBar::WorkbenchToolBar(const Actions& actions, QWidget* parent)
         const auto id = backend_->itemData(index).toString();
         if (id.isEmpty()) {
             // "Configure…" is a command, not an engine: show the engine in use again.
-            setBackend(backendId_, executable_);
+            const QSignalBlocker blocker(backend_);
+            backend_->setCurrentIndex(backend_->findData(backendId_));
             if (configure_) configure_();
             return;
         }
@@ -68,16 +69,17 @@ WorkbenchToolBar::WorkbenchToolBar(const Actions& actions, QWidget* parent)
     });
 }
 
-void WorkbenchToolBar::setBackend(const QString& backendId, const QString& executable)
+void WorkbenchToolBar::setBackend(const QString& backendId, const QString& label,
+    const QString& description)
 {
     backendId_ = backendId;
-    executable_ = executable;
     const QSignalBlocker blocker(backend_);
+    // Only the engine in use is named for where it was found, as in "nec2c (bundled)".
+    for (const auto& [name, id] : AnalysisSetupEditor::backends())
+        backend_->setItemText(backend_->findData(id), id == backendId ? label : name);
     const auto index = backend_->findData(backendId);
     if (index >= 0) backend_->setCurrentIndex(index);
-    backend_->setToolTip(executable.isEmpty()
-            ? tr("Calculation engine: no executable. Choose Configure… to select one.")
-            : tr("Calculation engine: %1").arg(executable));
+    backend_->setToolTip(tr("Calculation engine: %1").arg(description));
 }
 
 void WorkbenchToolBar::setBackendSelectedCallback(std::function<void(const QString&)> callback)

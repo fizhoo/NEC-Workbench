@@ -1,0 +1,97 @@
+name: nec2c Results
+
+# The bundled nec2c must compute the same on Windows as on Linux: the MinGW-w64 build and
+# its compat headers must not change results. Both are built with packaging/nec2c/build.sh,
+# as the packages are, run on the same decks, and their parsed results compared.
+
+on:
+  push:
+    branches: [main, 'release/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux decks and results
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install --yes ninja-build
+      - name: Build nec2c and the check tool
+        run: |
+          packaging/nec2c/build.sh nec2c-bin nec2c-src
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNECWB_BUILD_GUI=OFF -DNECWB_BUILD_TESTS=ON
+          cmake --build build --target necwb_nec2c_check
+      - name: Write decks and run them
+        run: |
+          build/necwb_nec2c_check decks packaging/nec2c/skip-list.txt decks examples packaging/nec2c/decks
+          packaging/nec2c/run-decks.sh nec2c-bin/nec2c decks out-linux
+      - uses: actions/upload-artifact@v6
+        with:
+          name: nec2c-linux
+          path: |
+            decks
+            out-linux
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Windows results
+    needs: linux
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: git mingw-w64-x86_64-gcc mingw-w64-x86_64-binutils
+      - uses: actions/download-artifact@v6
+        with:
+          name: nec2c-linux
+          path: linux
+      - name: Build nec2c.exe and run the decks
+        shell: msys2 {0}
+        run: |
+          packaging/nec2c/build.sh nec2c-bin nec2c-src
+          packaging/nec2c/check-imports.sh nec2c-bin/nec2c.exe
+          packaging/nec2c/run-decks.sh nec2c-bin/nec2c.exe linux/decks out-windows
+      - uses: actions/upload-artifact@v6
+        with:
+          name: nec2c-windows
+          path: out-windows
+          if-no-files-found: error
+          retention-days: 7
+
+  compare:
+    name: Compare Windows with Linux
+    needs: [linux, windows]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build the check tool
+        run: |
+          sudo apt-get update && sudo apt-get install --yes ninja-build
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNECWB_BUILD_GUI=OFF -DNECWB_BUILD_TESTS=ON
+          cmake --build build --target necwb_nec2c_check
+      - uses: actions/download-artifact@v6
+        with:
+          name: nec2c-linux
+          path: linux
+      - uses: actions/download-artifact@v6
+        with:
+          name: nec2c-windows
+          path: windows
+      # Same counts of frequencies, segments and pattern points; impedances and currents
+      # within 1e-4 relative (with floors near zero), gains within 0.02 dB, phases mod 360°.
+      - name: Compare parsed results
+        run: build/necwb_nec2c_check compare --tolerance linux/decks linux/out-linux windows
+      - name: Compare text, for the record
+        run: build/necwb_nec2c_check compare --strict linux/decks linux/out-linux windows || true

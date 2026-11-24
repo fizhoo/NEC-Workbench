@@ -43,6 +43,8 @@
 #include "ui/start/RecentModels.h"
 #include "ui/start/StartPanel.h"
 #include "ui/SettingsCleanup.h"
+#include "ui/SolverLocator.h"
+#include "ui/SolverSettings.h"
 #include "nec/NecParser.h"
 #include "model/WireGauge.h"
 
@@ -212,9 +214,109 @@ auto main(int argc, char* argv[]) -> int
     if (solverBackend != nullptr) solverBackend->setCurrentIndex(0);
     const auto backendReturnRestoresExecutable = solverExecutable != nullptr
         && solverExecutable->text() == QCoreApplication::applicationFilePath();
+    // Switching engines reports no path: only one typed or browsed to is the user's to save.
+    QStringList pathsChosen;
+    QObject::connect(&solverSetup, &necwb::ui::AnalysisSetupEditor::executablePathChanged,
+        [&pathsChosen](const QString& backend, const QString& path) { pathsChosen << backend + QLatin1Char('=') + path; });
+    solverSetup.selectBackend(QStringLiteral("opennec"));
+    solverSetup.selectBackend(QStringLiteral("nec2"));
+    const auto switchingSavesNothing = pathsChosen.isEmpty();
+    if (solverExecutable != nullptr) {
+        solverExecutable->setText(QStringLiteral("/opt/my/nec2c"));
+        emit solverExecutable->editingFinished();
+    }
+    const auto typedPathChosen = pathsChosen == QStringList{QStringLiteral("nec2=/opt/my/nec2c")};
     if (!backendChoicesValid || !backendChangeRestoresExecutable
-        || !backendReturnRestoresExecutable)
+        || !backendReturnRestoresExecutable || !switchingSavesNothing || !typedPathChosen)
         return NECWB_SMOKE_FAILURE("solver backend selection");
+    // Finding an engine: the path the user chose, even one that has gone; else the copy
+    // beside Workbench or in solvers/; else the PATH. Only a chosen path outside Workbench's
+    // folder is saved, and a bundled build's version comes from its metadata.
+    {
+        using necwb::ui::LocatedSolver;
+        QTemporaryDir application, elsewhere;
+        const auto makeExecutable = [](const QString& path, const QByteArray& script) {
+            QDir().mkpath(QFileInfo(path).path());
+            QFile file(path);
+            file.open(QIODevice::WriteOnly);
+            file.write(script);
+            file.close();
+            file.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        };
+        const auto savedPath = qgetenv("PATH");
+        qputenv("PATH", QFile::encodeName(elsewhere.path()));
+        const auto app = application.path();
+        const auto located = [&app](const QString& chosen) {
+            return necwb::ui::locateSolver(QStringLiteral("nec2"), chosen, app);
+        };
+        const auto nothing = located({}).origin == LocatedSolver::Origin::NotFound;
+        makeExecutable(elsewhere.filePath(QStringLiteral("nec2c")),
+            "#!/bin/sh\n[ \"$1\" = -v ] && echo 'nec2c 9.9 (on path)'\n");
+        const auto onPath = located({}).origin == LocatedSolver::Origin::Path;
+        makeExecutable(app + QStringLiteral("/solvers/nec2c"), "#!/bin/sh\n");
+        const auto inSolvers = located({}).origin == LocatedSolver::Origin::Bundled
+            && located({}).path.endsWith(QStringLiteral("solvers/nec2c"));
+        makeExecutable(app + QStringLiteral("/nec2c"), "#!/bin/sh\n");
+        QFile metadata(app + QStringLiteral("/nec2c-build.txt"));
+        metadata.open(QIODevice::WriteOnly);
+        metadata.write("name=nec2c\nversion=1.3.3\ncommit=55be1e0e3fe5ee9dad4ce6050711450d19c562fd\n");
+        metadata.close();
+        const auto bundled = located({});
+        const auto besideFirst = bundled.origin == LocatedSolver::Origin::Bundled
+            && bundled.path == QDir::toNativeSeparators(app + QStringLiteral("/nec2c"))
+            && necwb::ui::solverLabel(QStringLiteral("nec2"), bundled) == QStringLiteral("nec2c (bundled)")
+            && necwb::ui::solverDescription(QStringLiteral("nec2"), bundled)
+                .startsWith(QStringLiteral("nec2c 1.3.3 (55be1e0) · bundled · "));
+        const auto chosen = located(elsewhere.filePath(QStringLiteral("nec2c")));
+        const auto gone = located(QStringLiteral("/gone/nec2c"));
+        const auto chosenFirst = chosen.origin == LocatedSolver::Origin::Chosen && !chosen.missing()
+            && necwb::ui::solverLabel(QStringLiteral("nec2"), chosen) == QStringLiteral("NEC-2 / nec2c")
+            && gone.origin == LocatedSolver::Origin::Chosen && gone.missing()
+            && necwb::ui::solverDescription(QStringLiteral("nec2"), gone).contains(QStringLiteral("no longer exists"));
+        // A user's nec2c is asked its version in the background; another program never is.
+        auto& versions = necwb::ui::SolverVersions::instance();
+        const auto userNec2c = elsewhere.filePath(QStringLiteral("nec2c"));
+        const auto asking = versions.version(QStringLiteral("nec2"), userNec2c).isEmpty();
+        QElapsedTimer probing;
+        probing.start();
+        while (versions.version(QStringLiteral("nec2"), userNec2c).isEmpty() && probing.elapsed() < 3000)
+            QTest::qWait(20);
+        const auto probed = asking && versions.version(QStringLiteral("nec2"), userNec2c)
+            == QStringLiteral("nec2c 9.9 (on path)");
+        makeExecutable(elsewhere.filePath(QStringLiteral("other")), "#!/bin/sh\nexit 1\n");
+        const auto notAsked = versions.version(QStringLiteral("nec2"), elsewhere.filePath(QStringLiteral("other")))
+            == QStringLiteral("version unknown");
+        // Saving: a path inside Workbench's own folder or the mounted AppImage is refused.
+        QSettings settings;
+        const auto savedChoice = settings.value(QStringLiteral("analysis/executables/nec2"));
+        const auto refusesOwnFolder = !necwb::ui::solverSettings::choosePath(QStringLiteral("nec2"),
+            QCoreApplication::applicationDirPath() + QStringLiteral("/nec2c"));
+        qputenv("APPDIR", QFile::encodeName(app));
+        const auto refusesAppImage = !necwb::ui::solverSettings::choosePath(QStringLiteral("nec2"),
+            app + QStringLiteral("/usr/bin/nec2c"));
+        qunsetenv("APPDIR");
+        const auto savesChosen = necwb::ui::solverSettings::choosePath(QStringLiteral("nec2"), userNec2c)
+            && necwb::ui::solverSettings::chosenPaths().value(QStringLiteral("nec2")) == userNec2c
+            && necwb::ui::solverSettings::choosePath(QStringLiteral("nec2"), {})
+            && !settings.contains(QStringLiteral("analysis/executables/nec2"));
+        if (savedChoice.isValid()) settings.setValue(QStringLiteral("analysis/executables/nec2"), savedChoice);
+        // A run records the engine build that made it.
+        QTemporaryDir runs;
+        necwb::ui::AnalysisRunStore store(runs.path());
+        const auto record = store.create(QStringLiteral("nec2"), {}, QStringLiteral("analysis"), {}, bundled.path);
+        const auto reloaded = store.load();
+        const auto runRecordsEngine = record.engineVersion == QStringLiteral("nec2c 1.3.3 (55be1e0)")
+            && reloaded.size() == 1 && reloaded.front().engineVersion == record.engineVersion
+            && reloaded.front().enginePath == bundled.path;
+        qputenv("PATH", savedPath);
+        if (!nothing || !onPath || !inSolvers || !besideFirst || !chosenFirst || !probed || !notAsked
+            || !refusesOwnFolder || !refusesAppImage || !savesChosen || !runRecordsEngine) {
+            qWarning() << "solver lookup" << nothing << onPath << inSolvers << besideFirst << chosenFirst
+                       << probed << notAsked << refusesOwnFolder << refusesAppImage << savesChosen
+                       << runRecordsEngine << versions.version(QStringLiteral("nec2"), userNec2c);
+            return NECWB_SMOKE_FAILURE("solver lookup and saved paths");
+        }
+    }
     necwb::ui::NecEditor historyEditor;
     const auto originalSource = QStringLiteral("CM original\nCE\nGE 0\nEN");
     const auto typedSource = QStringLiteral("CM typed\nCM original\nCE\nGE 0\nEN");
@@ -301,7 +403,7 @@ auto main(int argc, char* argv[]) -> int
             && settings.value(QStringLiteral("analysis/executables/opennec")).toString()
                 == QStringLiteral("/opt/onec")
             && settings.value(QStringLiteral("mainWindow/v2/leftColumnWidth")).toInt() == 420
-            && settings.value(QStringLiteral("ui/layoutVersion")).toInt() == 1;
+            && settings.value(QStringLiteral("ui/layoutVersion")).toInt() == 2;
         settings.setValue(QStringLiteral("mainWindow/state"), 1);
         necwb::ui::retireOldSettings();
         const auto ranOnce = settings.contains(QStringLiteral("mainWindow/state"));
@@ -311,6 +413,56 @@ auto main(int argc, char* argv[]) -> int
         settings.setValue(QStringLiteral("analysis/executables/opennec"), savedPath);
         if (savedPath.isNull()) settings.remove(QStringLiteral("analysis/executables/opennec"));
         if (!cleaned || !ranOnce) return NECWB_SMOKE_FAILURE("retired settings removed once");
+    }
+    // Version 2 drops a solver path saved only because the PATH had it, so the bundled nec2c
+    // is found first, and keeps the engine, every other path and a path that has gone.
+    {
+        QSettings settings;
+        const QStringList keys{QStringLiteral("analysis/backendId"),
+            QStringLiteral("analysis/executables/nec2"), QStringLiteral("analysis/executables/opennec"),
+            QStringLiteral("analysis/executables/nec2dxs")};
+        std::vector<QVariant> saved;
+        for (const auto& key : keys) saved.push_back(settings.value(key));
+        const auto savedPath = qgetenv("PATH");
+        QTemporaryDir bin;
+        QFile fake(bin.filePath(QStringLiteral("nec2c")));
+        fake.open(QIODevice::WriteOnly);
+        fake.write("#!/bin/sh\n");
+        fake.close();
+        fake.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        qputenv("PATH", QFile::encodeName(bin.path()));
+        const auto migrate = [&settings](const QString& nec2) {
+            settings.setValue(QStringLiteral("ui/layoutVersion"), 1);
+            settings.setValue(QStringLiteral("analysis/executables/nec2"), nec2);
+            necwb::ui::retireOldSettings();
+        };
+        settings.setValue(QStringLiteral("analysis/backendId"), QStringLiteral("nec2"));
+        settings.setValue(QStringLiteral("analysis/executables/opennec"), QStringLiteral("/opt/onec"));
+        settings.setValue(QStringLiteral("analysis/executables/nec2dxs"), QStringLiteral("C:/4nec2/Nec2dXS1k5.exe"));
+        // The same file by another spelling counts as the one on the PATH.
+        migrate(bin.path() + QStringLiteral("/./nec2c"));
+        const auto foundDropped = !settings.contains(QStringLiteral("analysis/executables/nec2"))
+            && settings.value(QStringLiteral("analysis/executables/opennec")).toString() == QStringLiteral("/opt/onec")
+            && settings.value(QStringLiteral("analysis/executables/nec2dxs")).toString()
+                == QStringLiteral("C:/4nec2/Nec2dXS1k5.exe")
+            && settings.value(QStringLiteral("analysis/backendId")).toString() == QStringLiteral("nec2")
+            && settings.value(QStringLiteral("ui/layoutVersion")).toInt() == 2;
+        // Startup again leaves a path saved since; a path that has gone stays chosen.
+        settings.setValue(QStringLiteral("analysis/executables/nec2"), fake.fileName());
+        necwb::ui::retireOldSettings();
+        const auto ranOnce = settings.value(QStringLiteral("analysis/executables/nec2")).toString() == fake.fileName();
+        migrate(QStringLiteral("/gone/nec2c"));
+        const auto missingKept = settings.value(QStringLiteral("analysis/executables/nec2")).toString()
+            == QStringLiteral("/gone/nec2c");
+        qputenv("PATH", savedPath);
+        for (std::size_t index = 0; index < keys.size(); ++index) {
+            if (saved[index].isValid()) settings.setValue(keys[index], saved[index]);
+            else settings.remove(keys[index]);
+        }
+        if (!foundDropped || !ranOnce || !missingKept) {
+            qWarning() << "solver path migration" << foundDropped << ranOnce << missingKept;
+            return NECWB_SMOKE_FAILURE("found solver paths retired once");
+        }
     }
     auto consolidatedSetupNavigation = false;
     auto linkedParameterDeleted = false;
@@ -5611,12 +5763,19 @@ auto main(int argc, char* argv[]) -> int
     auto configureRequested = false;
     toolBar.setBackendSelectedCallback([&](const QString& id) { selectedBackend = id; });
     toolBar.setConfigureCallback([&] { configureRequested = true; });
-    toolBar.setBackend(QStringLiteral("opennec"), {});
+    // Only the engine in use is named for where it was found.
+    toolBar.setBackend(QStringLiteral("nec2"), QStringLiteral("nec2c (bundled)"),
+        QStringLiteral("nec2c 1.3.3 (55be1e0) · bundled · /opt/nec2c"));
     auto* backend = toolBar.findChild<QComboBox*>(QStringLiteral("toolBarBackend"));
+    const auto bundledNamed = backend != nullptr
+        && backend->itemText(backend->findData(QStringLiteral("nec2"))) == QStringLiteral("nec2c (bundled)")
+        && backend->toolTip().contains(QStringLiteral("1.3.3 (55be1e0) · bundled"));
+    toolBar.setBackend(QStringLiteral("opennec"), QStringLiteral("OpenNEC"), QStringLiteral("OpenNEC · not found"));
     auto* toolOpenButton = toolBar.findChild<QToolButton*>(QStringLiteral("toolBarOpen"));
-    const auto backendShownQuietly = backend != nullptr
+    const auto backendShownQuietly = bundledNamed
         && backend->currentData().toString() == QStringLiteral("opennec") && selectedBackend.isEmpty()
-        && backend->toolTip().contains(QStringLiteral("no executable"));
+        && backend->itemText(backend->findData(QStringLiteral("nec2"))) == QStringLiteral("NEC-2 / nec2c")
+        && backend->toolTip().contains(QStringLiteral("not found"));
     if (backend != nullptr) {
         emit backend->activated(backend->findData(QStringLiteral("nec2dxs")));
         emit backend->activated(backend->count() - 1);

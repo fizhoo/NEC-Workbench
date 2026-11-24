@@ -2,7 +2,7 @@ name: Linux AppImage
 
 on:
   push:
-    branches: [main, feature/baseline-reference, feature/compact-workspace, feature/compact-control-panel]
+    branches: [main, 'release/**', feature/baseline-reference, feature/compact-workspace, feature/compact-control-panel]
   pull_request:
   workflow_dispatch:
 
@@ -13,7 +13,7 @@ jobs:
   build-linux:
     name: Linux x86_64
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - name: Check out source
@@ -22,13 +22,18 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes ninja-build libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0
+          sudo apt-get install --yes ninja-build libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 autoconf automake
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.*'
           cache: true
+
+      - name: Build bundled nec2c
+        run: |
+          packaging/nec2c/build.sh nec2c-bin nec2c-src
+          packaging/nec2c/reference-build.sh nec2c-reference nec2c-src
 
       - name: Configure
         run: >-
@@ -44,7 +49,11 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
       - name: Stage application
-        run: cmake --install build --prefix AppDir/usr
+        run: |
+          cmake --install build --prefix AppDir/usr
+          install -m 755 nec2c-bin/nec2c AppDir/usr/bin/nec2c
+          install -m 644 nec2c-bin/nec2c-build.txt AppDir/usr/bin/nec2c-build.txt
+          install -m 644 THIRD_PARTY_LICENSES.txt AppDir/usr/share/licenses/nec-workbench/THIRD_PARTY_LICENSES.txt
 
       - name: Package AppImage
         env:
@@ -56,6 +65,7 @@ jobs:
           chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
           ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
+            --executable AppDir/usr/bin/nec2c \
             --desktop-file packaging/nec-workbench.desktop \
             --icon-file packaging/nec-workbench.svg \
             --plugin qt \
@@ -64,10 +74,43 @@ jobs:
           test -n "$appimage"
           mv "$appimage" NEC-Workbench-Linux-x86_64.AppImage
 
+      # The package as a user gets it: a fresh folder whose path has a space, fresh settings,
+      # no nec2c on the PATH. The AppImage must start Workbench, which must find the bundled
+      # nec2c, read its version, solve, and stop a run with Stop and with a timeout.
+      - name: Check package
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          if command -v nec2c; then echo "nec2c is on the PATH; the check needs a clean runner"; exit 1; fi
+          check="$RUNNER_TEMP/package check"
+          mkdir -p "$check/home"
+          cp NEC-Workbench-Linux-x86_64.AppImage "$check/"
+          cd "$check"
+          ./NEC-Workbench-Linux-x86_64.AppImage --appimage-extract > /dev/null
+          test -x squashfs-root/usr/bin/nec2c
+          test -f squashfs-root/usr/bin/nec2c-build.txt
+          grep -q '^Exec=nec-workbench' squashfs-root/*.desktop
+          HOME="$check/home" XDG_CONFIG_HOME="$check/home/.config" ./NEC-Workbench-Linux-x86_64.AppImage --package-check
+          test ! -e "$check/home/.config/NEC Workbench"
+
+      # The packaged nec2c against a second build of the same commit with upstream's own
+      # build system and the same flags: the text must match, run times aside.
+      - name: Compare packaged nec2c with a reference build
+        run: |
+          build/necwb_nec2c_check decks packaging/nec2c/skip-list.txt decks examples packaging/nec2c/decks
+          packaging/nec2c/run-decks.sh "$RUNNER_TEMP/package check/squashfs-root/usr/bin/nec2c" decks out-packaged
+          packaging/nec2c/run-decks.sh nec2c-reference/nec2c decks out-reference
+          build/necwb_nec2c_check compare --strict decks out-packaged out-reference
+
+      - name: Pack nec2c source
+        run: packaging/nec2c/source-archive.sh dist nec2c-src
+
       - name: Upload Linux package
         uses: actions/upload-artifact@v6
         with:
           name: NEC-Workbench-Linux-x86_64
-          path: NEC-Workbench-Linux-x86_64.AppImage
+          path: |
+            NEC-Workbench-Linux-x86_64.AppImage
+            dist/nec2c-*-source.tar.gz
           if-no-files-found: error
           retention-days: 14

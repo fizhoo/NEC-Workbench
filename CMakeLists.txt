@@ -111,8 +111,14 @@ if(NECWB_BUILD_GUI)
         src/ui/BottomPanel.h
         src/ui/CenterViewHeader.cpp
         src/ui/CenterViewHeader.h
+        src/ui/PackageCheck.cpp
+        src/ui/PackageCheck.h
         src/ui/SettingsCleanup.cpp
         src/ui/SettingsCleanup.h
+        src/ui/SolverLocator.cpp
+        src/ui/SolverLocator.h
+        src/ui/SolverSettings.cpp
+        src/ui/SolverSettings.h
         src/ui/WorkbenchLayout.cpp
         src/ui/WorkbenchLayout.h
         src/ui/WorkbenchStatusBar.cpp
@@ -345,6 +351,10 @@ if(NECWB_BUILD_TESTS)
     add_executable(necwb_model_lint_tests tests/ModelLintTests.cpp)
     target_link_libraries(necwb_model_lint_tests PRIVATE necwb_core)
     add_test(NAME necwb_model_lint_tests COMMAND necwb_model_lint_tests)
+
+    # Compares the bundled nec2c's results with a reference build's (packaging/nec2c).
+    add_executable(necwb_nec2c_check tests/Nec2cCheck.cpp)
+    target_link_libraries(necwb_nec2c_check PRIVATE necwb_core)
 
     if(NECWB_BUILD_GUI)
         find_package(Qt6 6.4 REQUIRED COMPONENTS Test)
