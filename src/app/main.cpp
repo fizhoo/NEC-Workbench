@@ -1,8 +1,12 @@
 #include "ui/MainWindow.h"
+#include "ui/PackageCheck.h"
 
 #include <QApplication>
+#include <QCoreApplication>
 #include <QTimer>
 #include <QSettings>
+
+#include <string_view>
 
 namespace {
 
@@ -19,6 +23,11 @@ auto workspaceDensityFontSize() -> int
 
 auto main(int argc, char* argv[]) -> int
 {
+    // Checks a built package (docs/architecture.md, Solver Integration); never opens a window.
+    if (argc == 2 && std::string_view(argv[1]) == "--package-check") {
+        QCoreApplication application(argc, argv);
+        return necwb::ui::runPackageCheck();
+    }
     QApplication application(argc, argv);
     QApplication::setApplicationName("NEC Workbench");
     QApplication::setOrganizationName("NEC Workbench");

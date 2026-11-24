@@ -996,7 +996,7 @@ void OptimizationWorkspace::startSweep()
     resultsTable_->horizontalHeaderItem(ScoreColumn)->setText(tr("Objective Score"));
     sessionRecord_ = runStore_.create(backend_, sourceFile_.isEmpty()
         ? QStringLiteral("Untitled model.nec") : sourceFile_,
-        QStringLiteral("optimization-session"));
+        QStringLiteral("optimization-session"), {}, executable_);
     sessionRecord_->status = QStringLiteral("Running");
     const auto candidateLimit = setup.candidateLimit;
     sessionRecord_->candidateCount = candidateLimit;
@@ -1307,7 +1307,8 @@ void OptimizationWorkspace::startNextCandidate()
     }
     candidate.record = runStore_.create(backend_, sourceFile_.isEmpty()
         ? QStringLiteral("Untitled model.nec") : sourceFile_,
-        QStringLiteral("optimization-candidate"), sessionRecord_ ? sessionRecord_->id : QString{});
+        QStringLiteral("optimization-candidate"), sessionRecord_ ? sessionRecord_->id : QString{},
+        executable_);
     if (!writeCandidateMetadata(candidate)) {
         candidate.record.status = QStringLiteral("Failed");
         runStore_.save(candidate.record);

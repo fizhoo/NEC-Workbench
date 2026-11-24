@@ -1,5 +1,7 @@
 #include "ui/analysis/AnalysisRunStore.h"
 
+#include "ui/SolverLocator.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -73,7 +75,8 @@ AnalysisRunStore::AnalysisRunStore(QString rootDirectory)
 }
 
 auto AnalysisRunStore::create(const QString& backend, const QString& sourceFile,
-    const QString& runType, const QString& parentId) const -> AnalysisRunRecord
+    const QString& runType, const QString& parentId, const QString& executable) const
+    -> AnalysisRunRecord
 {
     const auto started = QDateTime::currentDateTime();
     const auto id = QStringLiteral("%1-%2")
@@ -85,6 +88,11 @@ auto AnalysisRunStore::create(const QString& backend, const QString& sourceFile,
     record.started = started;
     record.sourceFile = sourceFile;
     record.backend = backend;
+    if (!executable.isEmpty()) {
+        record.engineVersion = SolverVersions::instance().version(backend, executable);
+        if (record.engineVersion.isEmpty()) record.engineVersion = QObject::tr("version unknown");
+        record.enginePath = executable;
+    }
     record.status = QStringLiteral("Starting");
     record.runType = runType;
     record.parentId = parentId;
@@ -151,6 +159,8 @@ auto AnalysisRunStore::save(const AnalysisRunRecord& record) const -> bool
         {QStringLiteral("started"), record.started.toString(Qt::ISODateWithMs)},
         {QStringLiteral("sourceFile"), record.sourceFile},
         {QStringLiteral("backend"), record.backend},
+        {QStringLiteral("engineVersion"), record.engineVersion},
+        {QStringLiteral("enginePath"), record.enginePath},
         {QStringLiteral("status"), record.status},
         {QStringLiteral("runType"), record.runType},
         {QStringLiteral("parentId"), record.parentId},
@@ -211,6 +221,8 @@ auto AnalysisRunStore::readRecord(const QString& directory) const -> AnalysisRun
         object.value(QStringLiteral("started")).toString(), Qt::ISODateWithMs);
     record.sourceFile = object.value(QStringLiteral("sourceFile")).toString();
     record.backend = object.value(QStringLiteral("backend")).toString();
+    record.engineVersion = object.value(QStringLiteral("engineVersion")).toString();
+    record.enginePath = object.value(QStringLiteral("enginePath")).toString();
     record.status = object.value(QStringLiteral("status")).toString();
     record.runType = object.value(QStringLiteral("runType")).toString();
     if (record.runType.isEmpty()) {

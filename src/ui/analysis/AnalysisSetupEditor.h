@@ -21,16 +21,20 @@ public:
 
     // Display name and id of each engine Workbench can run.
     [[nodiscard]] static auto backends() -> std::vector<std::pair<QString, QString>>;
+    // The paths are the ones the user chose; an engine without one uses the one found.
     void setSettings(const QString& backendId,
         const QHash<QString, QString>& executablePaths, int timeoutSeconds);
     // Switches engine as if chosen here, reporting the change.
     void selectBackend(const QString& backendId);
 
 signals:
+    // The executable path is the one the user chose, empty when none.
     void settingsChanged(QString backendId, QString executablePath, int timeoutSeconds);
+    // Only when the user types or browses to a path, never on switching engines.
     void executablePathChanged(QString backendId, QString executablePath);
 
 private:
+    void choosePath(const QString& path);
     void updateDescription();
     void emitSettings();
 

@@ -1,8 +1,10 @@
 #include "ui/analysis/AnalysisSetupEditor.h"
 
 #include "analysis/SolverCommand.h"
+#include "ui/SolverLocator.h"
 
 #include <QComboBox>
+#include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -32,8 +34,8 @@ AnalysisSetupEditor::AnalysisSetupEditor(QWidget* parent)
     executableLayout->setContentsMargins(0, 0, 0, 0);
     executableControl_ = new QLineEdit(executableRow);
     executableControl_->setObjectName(QStringLiteral("analysisExecutableControl"));
-    executableControl_->setPlaceholderText(tr("Solver executable"));
-    executableControl_->setToolTip(tr("The executable stays external; Workbench never bundles a solver"));
+    executableControl_->setToolTip(tr("A path you choose is saved. Leave it empty to use the "
+        "nec2c that comes with Workbench, or the engine found on the PATH."));
     auto* browseButton = new QPushButton(tr("Browse…"), executableRow);
     executableLayout->addWidget(executableControl_, 1);
     executableLayout->addWidget(browseButton);
@@ -50,11 +52,8 @@ AnalysisSetupEditor::AnalysisSetupEditor(QWidget* parent)
     layout->addRow(tr("Status"), status_);
 
     connect(backendControl_, &QComboBox::currentIndexChanged, this, [this] {
+        // Switching engines saves nothing: only a path typed or browsed to is the user's.
         if (!updating_) {
-            if (!selectedBackendId_.isEmpty()) {
-                executablePaths_.insert(selectedBackendId_, executableControl_->text());
-                emit executablePathChanged(selectedBackendId_, executableControl_->text());
-            }
             selectedBackendId_ = backendControl_->currentData().toString();
             executableControl_->setText(executablePaths_.value(selectedBackendId_));
         }
@@ -62,21 +61,18 @@ AnalysisSetupEditor::AnalysisSetupEditor(QWidget* parent)
         emitSettings();
     });
     connect(executableControl_, &QLineEdit::editingFinished, this, [this] {
-        executablePaths_.insert(selectedBackendId_, executableControl_->text());
-        emit executablePathChanged(selectedBackendId_, executableControl_->text());
-        updateDescription();
-        emitSettings();
+        if (executableControl_->text() == executablePaths_.value(selectedBackendId_)) return;
+        choosePath(executableControl_->text());
     });
     connect(timeoutControl_, &QSpinBox::valueChanged, this, [this] { emitSettings(); });
+    connect(&SolverVersions::instance(), &SolverVersions::versionFound,
+        this, &AnalysisSetupEditor::updateDescription);
     connect(browseButton, &QPushButton::clicked, this, [this] {
         const auto path = QFileDialog::getOpenFileName(this, tr("Select NEC Solver Executable"),
             executableControl_->text());
         if (!path.isEmpty()) {
-            executableControl_->setText(path);
-            executablePaths_.insert(selectedBackendId_, path);
-            emit executablePathChanged(selectedBackendId_, path);
-            updateDescription();
-            emitSettings();
+            executableControl_->setText(QDir::toNativeSeparators(path));
+            choosePath(executableControl_->text());
         }
     });
     updateDescription();
@@ -122,20 +118,34 @@ void AnalysisSetupEditor::updateDescription()
         backendControl_->setToolTip(tr(
             "nec2c receives working-directory-relative input and output paths through -i and -o arguments."));
     }
-    const QFileInfo executable(executableControl_->text());
-    if (executableControl_->text().isEmpty()) {
-        status_->setText(tr("No executable selected."));
-    } else if (!executable.exists() || !executable.isFile()) {
-        status_->setText(tr("Executable path does not exist."));
+    // An empty field uses what is found: the bundled copy, else the PATH's.
+    const auto located = locateSolver(backend, executableControl_->text());
+    const auto found = locateSolver(backend, QString{});
+    executableControl_->setPlaceholderText(found.origin == LocatedSolver::Origin::NotFound
+        ? tr("Solver executable") : QDir::toNativeSeparators(found.path));
+    const QFileInfo executable(located.path);
+    if (located.origin == LocatedSolver::Origin::NotFound) {
+        status_->setText(tr("No executable found. Browse to the engine."));
+    } else if (located.missing()) {
+        status_->setText(tr("The chosen path no longer exists. Browse to it again, or clear it "
+                            "to use the engine found automatically."));
     } else if (!executable.isExecutable()) {
         status_->setText(tr("The selected file is not executable."));
     } else {
-        status_->setText(tr("Executable found. This backend is ready to run."));
+        status_->setText(tr("Ready: %1").arg(solverDescription(backend, located)));
         if (const auto capacity = analysis::solverSegmentCapacity(
                 backend.toStdString(), executable.absoluteFilePath().toStdString())) {
-            status_->setText(tr("Executable found · maximum %1 segments.").arg(*capacity));
+            status_->setText(tr("Ready · maximum %1 segments.").arg(*capacity));
         }
     }
+}
+
+void AnalysisSetupEditor::choosePath(const QString& path)
+{
+    executablePaths_.insert(selectedBackendId_, path);
+    emit executablePathChanged(selectedBackendId_, path);
+    updateDescription();
+    emitSettings();
 }
 
 void AnalysisSetupEditor::emitSettings()

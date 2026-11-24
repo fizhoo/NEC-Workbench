@@ -31,7 +31,8 @@ public:
     explicit WorkbenchToolBar(const Actions& actions, QWidget* parent = nullptr);
 
     // Shows the engine without reporting a change, with its executable in the tooltip.
-    void setBackend(const QString& backendId, const QString& executable);
+    // The engine in use, its name in the list and the tooltip saying which executable it is.
+    void setBackend(const QString& backendId, const QString& label, const QString& description);
     void setBackendSelectedCallback(std::function<void(const QString&)> callback);
     // Called for "Configure…" in the engine list.
     void setConfigureCallback(std::function<void()> callback);
@@ -39,7 +40,6 @@ public:
 private:
     QComboBox* backend_{};
     QString backendId_;
-    QString executable_;
     std::function<void(const QString&)> backendSelected_;
     std::function<void()> configure_;
 };

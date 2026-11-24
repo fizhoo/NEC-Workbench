@@ -1,0 +1,14 @@
+CM Coverage: a two-port network and a shunt-loaded transmission line between two
+CM dipoles over real ground (reflection coefficient), several frequencies and a pattern.
+CE
+GW 1 21 -5 0 10 5 0 10 0.001
+GW 2 21 -5 4 10 5 4 10 0.001
+GW 3 1 0 8 10 0 8.2 10 0.001
+GE 0
+GN 0 0 0 0 13 0.005
+EX 0 3 1 0 1 0
+NT 1 11 2 11 0.002 -0.01 0 0 0.002 0.01
+TL 3 1 1 11 300 4 0 0 0.0001 0
+FR 0 4 0 0 14 0.1
+RP 0 10 6 1000 0 0 10 60
+EN

@@ -4,6 +4,8 @@
 #include "ui/BottomPanel.h"
 #include "ui/CenterViewHeader.h"
 #include "ui/SettingsCleanup.h"
+#include "ui/SolverLocator.h"
+#include "ui/SolverSettings.h"
 #include "ui/WorkbenchLayout.h"
 #include "ui/WorkbenchStatusBar.h"
 #include "ui/bottom/ProblemsView.h"
@@ -112,7 +114,6 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QStyle>
-#include <QStandardPaths>
 #include <QTableView>
 #include <QTextCursor>
 #include <QTextDocument>
@@ -780,14 +781,15 @@ void MainWindow::createWorkspace()
     deckView_->header()->setTitle(tr("NEC Deck"));
 
     analysisSetupEditor_ = new AnalysisSetupEditor(windowHost_);
+    connect(&SolverVersions::instance(), &SolverVersions::versionFound, this, [this] { refreshEngine(); });
     connect(analysisSetupEditor_, &AnalysisSetupEditor::settingsChanged, this,
         [this](QString backendId, QString executablePath, int timeoutSeconds) {
             const auto backendChanged = solverBackendId_ != backendId;
+            if (backendChanged) solverSettings::chooseEngine(backendId);
             solverBackendId_ = std::move(backendId);
-            solverExecutablePath_ = std::move(executablePath);
-            solverExecutablePaths_.insert(solverBackendId_, solverExecutablePath_);
+            solverExecutablePath_ = locateSolver(solverBackendId_, executablePath).path;
             solverTimeoutSeconds_ = timeoutSeconds;
-            statusBar_->setBackend(solverBackendId_);
+            statusBar_->setBackend(solverName(solverBackendId_));
             optimizationWorkspace_->setContext(editor_->toPlainText(), currentFile_,
                 solverBackendId_, solverExecutablePath_, solverTimeoutSeconds_,
                 modelChecked_ && modelErrorCount_ == 0);
@@ -803,10 +805,12 @@ void MainWindow::createWorkspace()
         });
     connect(analysisSetupEditor_, &AnalysisSetupEditor::executablePathChanged, this,
         [this](const QString& backendId, const QString& executablePath) {
-            if (backendId.isEmpty()) return;
-            solverExecutablePaths_.insert(backendId, executablePath);
-            QSettings{}.setValue(
-                QStringLiteral("analysis/executables/%1").arg(backendId), executablePath);
+            if (solverSettings::choosePath(backendId, executablePath)) {
+                solverExecutablePaths_.insert(backendId, executablePath);
+                return;
+            }
+            statusBar()->showMessage(tr("Not saved: %1 is in Workbench's own folder").arg(executablePath), 8000);
+            analysisSetupEditor_->setSettings(solverBackendId_, solverExecutablePaths_, solverTimeoutSeconds_);
         });
     analysisRequestEditor_ = new AnalysisRequestEditor(windowHost_);
     connect(analysisRequestEditor_, &AnalysisRequestEditor::executionChanged, this,
@@ -1538,8 +1542,8 @@ void MainWindow::showAboutDialog()
         tr("NEC Workbench %1\n\n"
            "A cross-platform desktop workbench for creating, checking, analyzing, "
            "visualizing, and optimizing NEC antenna models.\n\n"
-           "Licensed under the GNU General Public License version 3 or later.")
-            .arg(QStringLiteral(NECWB_DISPLAY_VERSION)));
+           "Licensed under the GNU General Public License version 3 or later.\n\n%2")
+            .arg(QStringLiteral(NECWB_DISPLAY_VERSION), bundledSolverSummary()));
 }
 
 void MainWindow::newModel()
@@ -1810,6 +1814,10 @@ void MainWindow::checkModel(bool presentReport)
                     .arg(compatibilityName)
                     .arg(static_cast<qulonglong>(result.informationCount()));
     }
+    // A chosen engine that has gone is reported, not swapped for another.
+    if (const auto engine = locateSolver(solverBackendId_, solverExecutablePaths_); engine.missing())
+        result.diagnostics.push_back({nec::DiagnosticSeverity::Warning, 0,
+            solverDescription(solverBackendId_, engine).toStdString(), "Engine"});
     bottomPanel_->problems()->setFindings(result.diagnostics, currentModel_, summary);
     bottomPanel_->problems()->setScope(tr("Checked against %1: NEC syntax, solver "
         "compatibility, references, geometry and model adequacy. The Average Gain Test and "
@@ -2940,7 +2948,7 @@ void MainWindow::startAnalysisRun(const std::string& authoredSource,
     pendingRunDeck_ = resolution.ok()
         ? analysis::solverDeckIdentity(resolution.generatedDeck) : std::string{};
     currentRunRecord_ = runStore_.create(solverBackendId_, currentFile_.isEmpty()
-        ? QStringLiteral("Untitled model.nec") : currentFile_, runType);
+        ? QStringLiteral("Untitled model.nec") : currentFile_, runType, {}, solverExecutablePath_);
     currentRunRecord_->summary = summary;
     currentRunRecord_->modelFingerprint = QString::fromStdString(
         analysis::optimizationModelFingerprint(solverInput));
@@ -3035,7 +3043,8 @@ void MainWindow::startAverageGainTest(bool showView)
     currentAverageGainEnvironment_ = static_cast<analysis::AverageGainEnvironment>(
         environment->currentData().toInt());
     currentRunRecord_ = runStore_.create(solverBackendId_, currentFile_.isEmpty()
-        ? QStringLiteral("Untitled model.nec") : currentFile_, QStringLiteral("average-gain-test"));
+        ? QStringLiteral("Untitled model.nec") : currentFile_, QStringLiteral("average-gain-test"),
+        {}, solverExecutablePath_);
     currentRunDirectory_ = currentRunRecord_->directory;
     if (!QFileInfo::exists(currentRunDirectory_)) {
         QMessageBox::critical(this, tr("AGT Failed"), tr("Could not create the solver run folder."));
@@ -3115,8 +3124,9 @@ void MainWindow::startSolverProcess(const analysis::SolverCommand& command, cons
     bottomPanel_->runLog()->beginRun(runContext(*currentRunRecord_), currentSolverCommand_,
         currentRunDirectory_);
     bottomPanel_->openForRun();
-    appendSolverOutput(tr("%1\nRun folder: %2\nCommand: %3 %4\n\n")
-        .arg(runContext(*currentRunRecord_), currentRunDirectory_, program,
+    appendSolverOutput(tr("Engine: %1\n%2\nRun folder: %3\nCommand: %4 %5\n\n")
+        .arg(solverDescription(solverBackendId_, locateSolver(solverBackendId_, solverExecutablePaths_)),
+            runContext(*currentRunRecord_), currentRunDirectory_, program,
             arguments.join(QLatin1Char(' '))) + standardInputDescription + QStringLiteral("\n"));
 
     solverActivityName_ = activity;
@@ -4287,21 +4297,13 @@ void MainWindow::restoreWorkspaceLayout()
     geometrySettings.endpointTolerancePixels = settings.value(
         QStringLiteral("geometry/endpointTolerancePixels"), 12.0).toDouble();
     applyGeometrySettings(geometrySettings);
-    solverBackendId_ = settings.value(QStringLiteral("analysis/backendId"), QStringLiteral("nec2")).toString();
-    statusBar_->setBackend(solverBackendId_);
-    for (const auto& backendId : {QStringLiteral("nec2"), QStringLiteral("opennec"),
-             QStringLiteral("nec2dxs")}) {
-        solverExecutablePaths_.insert(backendId, settings.value(
-            QStringLiteral("analysis/executables/%1").arg(backendId)).toString());
-    }
+    solverBackendId_ = solverSettings::chosenEngine();
+    statusBar_->setBackend(solverName(solverBackendId_));
+    solverExecutablePaths_ = solverSettings::chosenPaths();
     solverTimeoutSeconds_ = settings.value(QStringLiteral("analysis/timeoutSeconds"), 120).toInt();
-    if (solverExecutablePaths_.value(QStringLiteral("nec2")).isEmpty())
-        solverExecutablePaths_.insert(QStringLiteral("nec2"),
-            QStandardPaths::findExecutable(QStringLiteral("nec2c")));
-    if (solverExecutablePaths_.value(QStringLiteral("opennec")).isEmpty())
-        solverExecutablePaths_.insert(QStringLiteral("opennec"),
-            QStandardPaths::findExecutable(QStringLiteral("onec")));
-    solverExecutablePath_ = solverExecutablePaths_.value(solverBackendId_);
+    const auto located = locateSolver(solverBackendId_, solverExecutablePaths_);
+    solverExecutablePath_ = located.path;
+    if (located.missing()) statusBar()->showMessage(solverDescription(solverBackendId_, located));
     analysisSetupEditor_->setSettings(
         solverBackendId_, solverExecutablePaths_, solverTimeoutSeconds_);
     refreshEngine();
@@ -4312,7 +4314,9 @@ void MainWindow::refreshEngine()
 {
     // Settings load before the toolbar exists.
     if (toolBar_ == nullptr) return;
-    toolBar_->setBackend(solverBackendId_, solverExecutablePath_);
+    const auto located = locateSolver(solverBackendId_, solverExecutablePaths_);
+    toolBar_->setBackend(solverBackendId_, solverLabel(solverBackendId_, located),
+        solverDescription(solverBackendId_, located));
 }
 
 void MainWindow::saveWorkspaceLayout()
@@ -4332,12 +4336,6 @@ void MainWindow::saveWorkspaceLayout()
     settings.setValue(QStringLiteral("geometry/snapUnitBehavior"), static_cast<int>(geometrySettings_.snapUnitBehavior));
     settings.setValue(QStringLiteral("geometry/endpointSnapping"), geometrySettings_.endpointSnapping);
     settings.setValue(QStringLiteral("geometry/endpointTolerancePixels"), geometrySettings_.endpointTolerancePixels);
-    settings.setValue(QStringLiteral("analysis/backendId"), solverBackendId_);
-    for (auto iterator = solverExecutablePaths_.cbegin();
-         iterator != solverExecutablePaths_.cend(); ++iterator) {
-        settings.setValue(QStringLiteral("analysis/executables/%1").arg(iterator.key()),
-            iterator.value());
-    }
     settings.setValue(QStringLiteral("analysis/timeoutSeconds"), solverTimeoutSeconds_);
 }
 

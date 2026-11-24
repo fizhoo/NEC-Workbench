@@ -12,6 +12,7 @@
 #include "ui/analysis/AnalysisRunStore.h"
 #include "ui/analysis/ResultsSummaryView.h"
 #include "ui/analysis/RunReviewWindow.h"
+#include "ui/bottom/RunHistoryView.h"
 #include "ui/analysis/AverageGainResultsView.h"
 #include "ui/analysis/AnalysisRequestEditor.h"
 #include "ui/analysis/ConvergenceWorkspace.h"
@@ -43,6 +44,8 @@
 #include "ui/start/RecentModels.h"
 #include "ui/start/StartPanel.h"
 #include "ui/SettingsCleanup.h"
+#include "ui/SolverLocator.h"
+#include "ui/SolverSettings.h"
 #include "nec/NecParser.h"
 #include "model/WireGauge.h"
 
@@ -120,6 +123,13 @@ auto smokeFailure(const char* checkpoint, int line) -> int
     return EXIT_FAILURE;
 }
 
+// An executable's file name as the PATH and the bundled lookup find it.
+#ifdef Q_OS_WIN
+const auto ExecutableSuffix = QStringLiteral(".exe");
+#else
+const auto ExecutableSuffix = QString{};
+#endif
+
 auto topLevelDialog(const QString& objectName) -> QDialog*
 {
     for (auto* widget : QApplication::topLevelWidgets()) {
@@ -142,6 +152,16 @@ auto optimizerChild(const QString& objectName) -> T*
 }
 
 #define NECWB_SMOKE_FAILURE(checkpoint) smokeFailure(checkpoint, __LINE__)
+
+// With NECWB_SMOKE_TRACE set, each top-level block says when it starts, so a run that hangs
+// shows where.
+#define NECWB_SMOKE_STEP() \
+    do { \
+        if (qEnvironmentVariableIsSet("NECWB_SMOKE_TRACE")) { \
+            std::fprintf(stderr, "step at line %d\n", __LINE__); \
+            std::fflush(stderr); \
+        } \
+    } while (false)
 
 auto main(int argc, char* argv[]) -> int
 {
@@ -212,9 +232,118 @@ auto main(int argc, char* argv[]) -> int
     if (solverBackend != nullptr) solverBackend->setCurrentIndex(0);
     const auto backendReturnRestoresExecutable = solverExecutable != nullptr
         && solverExecutable->text() == QCoreApplication::applicationFilePath();
+    // Switching engines reports no path: only one typed or browsed to is the user's to save.
+    QStringList pathsChosen;
+    QObject::connect(&solverSetup, &necwb::ui::AnalysisSetupEditor::executablePathChanged,
+        [&pathsChosen](const QString& backend, const QString& path) { pathsChosen << backend + QLatin1Char('=') + path; });
+    solverSetup.selectBackend(QStringLiteral("opennec"));
+    solverSetup.selectBackend(QStringLiteral("nec2"));
+    const auto switchingSavesNothing = pathsChosen.isEmpty();
+    if (solverExecutable != nullptr) {
+        solverExecutable->setText(QStringLiteral("/opt/my/nec2c"));
+        emit solverExecutable->editingFinished();
+    }
+    const auto typedPathChosen = pathsChosen == QStringList{QStringLiteral("nec2=/opt/my/nec2c")};
     if (!backendChoicesValid || !backendChangeRestoresExecutable
-        || !backendReturnRestoresExecutable)
+        || !backendReturnRestoresExecutable || !switchingSavesNothing || !typedPathChosen)
         return NECWB_SMOKE_FAILURE("solver backend selection");
+    // Finding an engine: the path the user chose, even one that has gone; else the copy
+    // beside Workbench or in solvers/; else the PATH. Only a chosen path outside Workbench's
+    // folder is saved, and a bundled build's version comes from its metadata.
+    NECWB_SMOKE_STEP();
+    {
+        using necwb::ui::LocatedSolver;
+        QTemporaryDir application, elsewhere;
+        const auto makeExecutable = [](const QString& path, const QByteArray& script) {
+            QDir().mkpath(QFileInfo(path).path());
+            QFile file(path);
+            file.open(QIODevice::WriteOnly);
+            file.write(script);
+            file.close();
+            file.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        };
+        const auto savedPath = qgetenv("PATH");
+        qputenv("PATH", QFile::encodeName(elsewhere.path()));
+        const auto app = application.path();
+        const auto located = [&app](const QString& chosen) {
+            return necwb::ui::locateSolver(QStringLiteral("nec2"), chosen, app);
+        };
+        const auto nothing = located({}).origin == LocatedSolver::Origin::NotFound;
+        makeExecutable(elsewhere.filePath(QStringLiteral("nec2c") + ExecutableSuffix),
+            "#!/bin/sh\n[ \"$1\" = -v ] && echo 'nec2c 9.9 (on path)'\n");
+        const auto onPath = located({}).origin == LocatedSolver::Origin::Path;
+        makeExecutable(app + QStringLiteral("/solvers/nec2c") + ExecutableSuffix, "#!/bin/sh\n");
+        const auto inSolvers = located({}).origin == LocatedSolver::Origin::Bundled
+            && QDir::fromNativeSeparators(located({}).path).endsWith(QStringLiteral("solvers/nec2c") + ExecutableSuffix);
+        makeExecutable(app + QStringLiteral("/nec2c") + ExecutableSuffix, "#!/bin/sh\n");
+        QFile metadata(app + QStringLiteral("/nec2c-build.txt"));
+        metadata.open(QIODevice::WriteOnly);
+        metadata.write("name=nec2c\nversion=1.3.3\ncommit=55be1e0e3fe5ee9dad4ce6050711450d19c562fd\n");
+        metadata.close();
+        const auto bundled = located({});
+        const auto besideFirst = bundled.origin == LocatedSolver::Origin::Bundled
+            && bundled.path == QDir::toNativeSeparators(app + QStringLiteral("/nec2c") + ExecutableSuffix)
+            && necwb::ui::solverLabel(QStringLiteral("nec2"), bundled) == QStringLiteral("nec2c (bundled)")
+            && necwb::ui::solverDescription(QStringLiteral("nec2"), bundled)
+                .startsWith(QStringLiteral("nec2c 1.3.3 (55be1e0) · bundled · "));
+        const auto chosen = located(elsewhere.filePath(QStringLiteral("nec2c") + ExecutableSuffix));
+        const auto gone = located(QStringLiteral("/gone/nec2c"));
+        const auto chosenFirst = chosen.origin == LocatedSolver::Origin::Chosen && !chosen.missing()
+            && necwb::ui::solverLabel(QStringLiteral("nec2"), chosen) == QStringLiteral("NEC-2 / nec2c")
+            && gone.origin == LocatedSolver::Origin::Chosen && gone.missing()
+            && necwb::ui::solverDescription(QStringLiteral("nec2"), gone).contains(QStringLiteral("no longer exists"))
+            && necwb::ui::solverName(QStringLiteral("nec2")) == QStringLiteral("nec2c")
+            && necwb::ui::solverName(QStringLiteral("opennec")) == QStringLiteral("OpenNEC");
+        // A user's nec2c is asked its version in the background; another program never is.
+        // (On Windows the stand-in is not an executable, so it is never started and its version
+        // is unknown.)
+        auto& versions = necwb::ui::SolverVersions::instance();
+        const auto userNec2c = elsewhere.filePath(QStringLiteral("nec2c") + ExecutableSuffix);
+        const auto asking = versions.version(QStringLiteral("nec2"), userNec2c).isEmpty();
+        QElapsedTimer probing;
+        probing.start();
+        while (versions.version(QStringLiteral("nec2"), userNec2c).isEmpty() && probing.elapsed() < 3000)
+            QTest::qWait(20);
+        const auto probed = ExecutableSuffix.isEmpty()
+            ? asking && versions.version(QStringLiteral("nec2"), userNec2c) == QStringLiteral("nec2c 9.9 (on path)")
+            : versions.version(QStringLiteral("nec2"), userNec2c) == QStringLiteral("version unknown");
+        makeExecutable(elsewhere.filePath(QStringLiteral("other") + ExecutableSuffix), "#!/bin/sh\nexit 1\n");
+        const auto notAsked = versions.version(QStringLiteral("nec2"),
+            elsewhere.filePath(QStringLiteral("other") + ExecutableSuffix))
+            == QStringLiteral("version unknown");
+        // Saving: a path inside Workbench's own folder or the mounted AppImage is refused.
+        QSettings settings;
+        const auto savedChoice = settings.value(QStringLiteral("analysis/executables/nec2"));
+        const auto refusesOwnFolder = !necwb::ui::solverSettings::choosePath(QStringLiteral("nec2"),
+            QCoreApplication::applicationDirPath() + QStringLiteral("/nec2c"));
+        qputenv("APPDIR", QFile::encodeName(app));
+        const auto refusesAppImage = !necwb::ui::solverSettings::choosePath(QStringLiteral("nec2"),
+            app + QStringLiteral("/usr/bin/nec2c"));
+        qunsetenv("APPDIR");
+        const auto savesChosen = necwb::ui::solverSettings::choosePath(QStringLiteral("nec2"), userNec2c)
+            && necwb::ui::solverSettings::chosenPaths().value(QStringLiteral("nec2")) == userNec2c
+            && necwb::ui::solverSettings::choosePath(QStringLiteral("nec2"), {})
+            && !settings.contains(QStringLiteral("analysis/executables/nec2"));
+        if (savedChoice.isValid()) settings.setValue(QStringLiteral("analysis/executables/nec2"), savedChoice);
+        // A run records the engine build that made it.
+        QTemporaryDir runs;
+        necwb::ui::AnalysisRunStore store(runs.path());
+        const auto record = store.create(QStringLiteral("nec2"), {}, QStringLiteral("analysis"), {}, bundled.path);
+        const auto reloaded = store.load();
+        const auto runRecordsEngine = record.engineVersion == QStringLiteral("nec2c 1.3.3 (55be1e0)")
+            && reloaded.size() == 1 && reloaded.front().engineVersion == record.engineVersion
+            && reloaded.front().enginePath == bundled.path
+            && reloaded.front().backend == QStringLiteral("nec2")
+            && necwb::ui::runContext(record).endsWith(QStringLiteral("Backend: nec2c · nec2c 1.3.3 (55be1e0)"));
+        qputenv("PATH", savedPath);
+        if (!nothing || !onPath || !inSolvers || !besideFirst || !chosenFirst || !probed || !notAsked
+            || !refusesOwnFolder || !refusesAppImage || !savesChosen || !runRecordsEngine) {
+            qWarning() << "solver lookup" << nothing << onPath << inSolvers << besideFirst << chosenFirst
+                       << probed << notAsked << refusesOwnFolder << refusesAppImage << savesChosen
+                       << runRecordsEngine << versions.version(QStringLiteral("nec2"), userNec2c);
+            return NECWB_SMOKE_FAILURE("solver lookup and saved paths");
+        }
+    }
     necwb::ui::NecEditor historyEditor;
     const auto originalSource = QStringLiteral("CM original\nCE\nGE 0\nEN");
     const auto typedSource = QStringLiteral("CM typed\nCM original\nCE\nGE 0\nEN");
@@ -248,6 +377,7 @@ auto main(int argc, char* argv[]) -> int
     QSettings{}.remove(QStringLiteral("smoke/overlayVisible"));
     auto overlayVisibilityChanged = false;
     auto overlayChooseRequested = false;
+    NECWB_SMOKE_STEP();
     {
         necwb::ui::HistoricalOverlayControl overlay(QStringLiteral("smoke/overlayVisible"));
         overlay.setVisibilityChangedCallback([&overlayVisibilityChanged](bool visible) {
@@ -272,6 +402,7 @@ auto main(int argc, char* argv[]) -> int
             return NECWB_SMOKE_FAILURE("historical overlay controls");
         }
     }
+    NECWB_SMOKE_STEP();
     {
         necwb::ui::HistoricalOverlayControl overlay(QStringLiteral("smoke/overlayVisible"));
         if (!overlay.isChecked())
@@ -280,6 +411,7 @@ auto main(int argc, char* argv[]) -> int
     QSettings{}.remove(QStringLiteral("smoke/overlayVisible"));
     // Settings that earlier layouts saved go once, gated by ui/layoutVersion; the single solver
     // path of early versions moves to the selected backend first.
+    NECWB_SMOKE_STEP();
     {
         QSettings settings;
         const auto savedBackend = settings.value(QStringLiteral("analysis/backendId"));
@@ -301,7 +433,7 @@ auto main(int argc, char* argv[]) -> int
             && settings.value(QStringLiteral("analysis/executables/opennec")).toString()
                 == QStringLiteral("/opt/onec")
             && settings.value(QStringLiteral("mainWindow/v2/leftColumnWidth")).toInt() == 420
-            && settings.value(QStringLiteral("ui/layoutVersion")).toInt() == 1;
+            && settings.value(QStringLiteral("ui/layoutVersion")).toInt() == 2;
         settings.setValue(QStringLiteral("mainWindow/state"), 1);
         necwb::ui::retireOldSettings();
         const auto ranOnce = settings.contains(QStringLiteral("mainWindow/state"));
@@ -311,6 +443,57 @@ auto main(int argc, char* argv[]) -> int
         settings.setValue(QStringLiteral("analysis/executables/opennec"), savedPath);
         if (savedPath.isNull()) settings.remove(QStringLiteral("analysis/executables/opennec"));
         if (!cleaned || !ranOnce) return NECWB_SMOKE_FAILURE("retired settings removed once");
+    }
+    // Version 2 drops a solver path saved only because the PATH had it, so the bundled nec2c
+    // is found first, and keeps the engine, every other path and a path that has gone.
+    NECWB_SMOKE_STEP();
+    {
+        QSettings settings;
+        const QStringList keys{QStringLiteral("analysis/backendId"),
+            QStringLiteral("analysis/executables/nec2"), QStringLiteral("analysis/executables/opennec"),
+            QStringLiteral("analysis/executables/nec2dxs")};
+        std::vector<QVariant> saved;
+        for (const auto& key : keys) saved.push_back(settings.value(key));
+        const auto savedPath = qgetenv("PATH");
+        QTemporaryDir bin;
+        QFile fake(bin.filePath(QStringLiteral("nec2c") + ExecutableSuffix));
+        fake.open(QIODevice::WriteOnly);
+        fake.write("#!/bin/sh\n");
+        fake.close();
+        fake.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        qputenv("PATH", QFile::encodeName(bin.path()));
+        const auto migrate = [&settings](const QString& nec2) {
+            settings.setValue(QStringLiteral("ui/layoutVersion"), 1);
+            settings.setValue(QStringLiteral("analysis/executables/nec2"), nec2);
+            necwb::ui::retireOldSettings();
+        };
+        settings.setValue(QStringLiteral("analysis/backendId"), QStringLiteral("nec2"));
+        settings.setValue(QStringLiteral("analysis/executables/opennec"), QStringLiteral("/opt/onec"));
+        settings.setValue(QStringLiteral("analysis/executables/nec2dxs"), QStringLiteral("C:/4nec2/Nec2dXS1k5.exe"));
+        // The same file by another spelling counts as the one on the PATH.
+        migrate(bin.path() + QStringLiteral("/./nec2c") + ExecutableSuffix);
+        const auto foundDropped = !settings.contains(QStringLiteral("analysis/executables/nec2"))
+            && settings.value(QStringLiteral("analysis/executables/opennec")).toString() == QStringLiteral("/opt/onec")
+            && settings.value(QStringLiteral("analysis/executables/nec2dxs")).toString()
+                == QStringLiteral("C:/4nec2/Nec2dXS1k5.exe")
+            && settings.value(QStringLiteral("analysis/backendId")).toString() == QStringLiteral("nec2")
+            && settings.value(QStringLiteral("ui/layoutVersion")).toInt() == 2;
+        // Startup again leaves a path saved since; a path that has gone stays chosen.
+        settings.setValue(QStringLiteral("analysis/executables/nec2"), fake.fileName());
+        necwb::ui::retireOldSettings();
+        const auto ranOnce = settings.value(QStringLiteral("analysis/executables/nec2")).toString() == fake.fileName();
+        migrate(QStringLiteral("/gone/nec2c"));
+        const auto missingKept = settings.value(QStringLiteral("analysis/executables/nec2")).toString()
+            == QStringLiteral("/gone/nec2c");
+        qputenv("PATH", savedPath);
+        for (std::size_t index = 0; index < keys.size(); ++index) {
+            if (saved[index].isValid()) settings.setValue(keys[index], saved[index]);
+            else settings.remove(keys[index]);
+        }
+        if (!foundDropped || !ranOnce || !missingKept) {
+            qWarning() << "solver path migration" << foundDropped << ranOnce << missingKept;
+            return NECWB_SMOKE_FAILURE("found solver paths retired once");
+        }
     }
     auto consolidatedSetupNavigation = false;
     auto linkedParameterDeleted = false;
@@ -328,6 +511,7 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
     resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
     resultWindowSettings.sync();
+    NECWB_SMOKE_STEP();
     {
         necwb::ui::MainWindow mainWindow;
         mainWindow.setProperty("workspaceDensityId", QStringLiteral("density-smoke-sentinel"));
@@ -688,6 +872,7 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.sync();
     // Launch: with no model the workspace shows the start panel in its center; reopening the
     // last model obeys the setting, Shift, a missing file and an attempt that never finished.
+    NECWB_SMOKE_STEP();
     {
         QSettings launchSettings;
         const QStringList launchKeys{QStringLiteral("files/recentModels"),
@@ -778,6 +963,7 @@ auto main(int argc, char* argv[]) -> int
     // The delta loop lies in XZ, so XZ opens in the big view; double-clicking XY's title swaps
     // it in, fitted, and edits keep it there until a model is opened again. The wire form
     // shows deck units (meters) with Geometry in feet, and Make Variable names W1_X1.
+    NECWB_SMOKE_STEP();
     {
         QSettings planeSettings;
         const QStringList planeKeys{QStringLiteral("files/recentModels"),
@@ -1038,6 +1224,7 @@ auto main(int argc, char* argv[]) -> int
     }
     // The geometry views: nothing drawn over a plane but the model, distinct axis labels on a
     // plane that sees the model end-on, and wires coloured by the Currents view's values.
+    NECWB_SMOKE_STEP();
     {
         QSettings{}.setValue(QStringLiteral("geometry/showCurrents"), true);
         necwb::model::AntennaModel pair;
@@ -1253,6 +1440,7 @@ auto main(int argc, char* argv[]) -> int
     }
     // The line under a card table sits under its last row, or at the bottom, visible, when
     // the table is taller than the pane.
+    NECWB_SMOKE_STEP();
     {
         necwb::ui::WireCardEditor wires;
         wires.resize(600, 420);
@@ -1290,6 +1478,7 @@ auto main(int argc, char* argv[]) -> int
     auto openModelKeepsDeckClosed = false;
     auto leftColumnCappedAtContent = false;
     auto bottomPanelOpensAtMinimumSize = false;
+    NECWB_SMOKE_STEP();
     {
         const auto savedRecentModels = resultWindowSettings.value(
             QStringLiteral("files/recentModels"));
@@ -1361,6 +1550,7 @@ auto main(int argc, char* argv[]) -> int
     // Editing a cell rewrites only its own field: SY symbols and exact numbers in the other
     // fields stay in the deck as written, in the Wires table and the card tables alike.
     auto wirePaneKeepsSymbols = false;
+    NECWB_SMOKE_STEP();
     {
         const auto savedRecentModels = resultWindowSettings.value(
             QStringLiteral("files/recentModels"));
@@ -1440,6 +1630,7 @@ auto main(int argc, char* argv[]) -> int
     }
     // A wire GX made is read-only: no ƒx from the GX card's fields, and its tooltip names GX,
     // not a GC taper. Wire 1's own expression still shows.
+    NECWB_SMOKE_STEP();
     {
         const auto savedRecentModels = resultWindowSettings.value(
             QStringLiteral("files/recentModels"));
@@ -1538,6 +1729,7 @@ auto main(int argc, char* argv[]) -> int
     // Dragging a variable's slider rewrites its SY card once, on release, as one undo entry;
     // selecting Variables shows the Parameters table in the properties pane.
     auto variableSliderEdits = false;
+    NECWB_SMOKE_STEP();
     {
         const auto savedRecentModels = resultWindowSettings.value(
             QStringLiteral("files/recentModels"));
@@ -1614,6 +1806,7 @@ auto main(int argc, char* argv[]) -> int
     // 4nec2 comment, moved by a segment-count variable, undone and redone, saved and reopened,
     // and put back on an exact segment; the optimizer will only sweep the count in whole steps.
     auto sourcePlacement = false;
+    NECWB_SMOKE_STEP();
     {
         QSettings settings;
         const auto savedRecent = settings.value(QStringLiteral("files/recentModels"));
@@ -1785,6 +1978,7 @@ auto main(int argc, char* argv[]) -> int
     // a 25% source goes to the segment its mark gives, Apply writes the deck the preview showed,
     // and one Undo restores the deck.
     auto segmentationPreviewApplied = false;
+    NECWB_SMOKE_STEP();
     {
         QSettings settings;
         const auto savedRecent = settings.value(QStringLiteral("files/recentModels"));
@@ -1869,6 +2063,7 @@ auto main(int argc, char* argv[]) -> int
     // step, Ctrl+Z works from a value box and the tree, Reset and Revert are one step each,
     // and a live solve uses a one-frequency copy of the deck without adding to Runs history.
     auto variablesLive = false;
+    NECWB_SMOKE_STEP();
     {
         QSettings settings;
         const auto saved = std::array{std::pair{QStringLiteral("files/recentModels"),
@@ -2022,6 +2217,7 @@ auto main(int argc, char* argv[]) -> int
         return NECWB_SMOKE_FAILURE("variables live, undo, reset and revert");
     // A model opened with nothing selected leaves the pane empty: the variables take the
     // free height, all rows shown without a scroll bar of their own.
+    NECWB_SMOKE_STEP();
     {
         QSettings settings;
         const auto savedRecent = settings.value(QStringLiteral("files/recentModels"));
@@ -2074,6 +2270,7 @@ auto main(int argc, char* argv[]) -> int
     // symbols; new cards land before FR and RP; a right-clicked load and a TL picked by two
     // ends show as rows; New empties the pane; the Variables header folds them.
     auto cardTables = false;
+    NECWB_SMOKE_STEP();
     {
         QSettings settings;
         const auto savedRecent = settings.value(QStringLiteral("files/recentModels"));
@@ -3461,6 +3658,7 @@ auto main(int argc, char* argv[]) -> int
     optimizationCandidateDetailsWindow->hide();
     QSettings{}.remove(QStringLiteral("optimization/candidateReviewSizeV1"));
     QSettings{}.remove(QStringLiteral("optimization/candidateReviewGeometryV1"));
+    NECWB_SMOKE_STEP();
     {
         necwb::ui::OptimizationWorkspace persistenceWorkspace;
     }
@@ -4402,6 +4600,7 @@ auto main(int argc, char* argv[]) -> int
         || optimizationVariables->item(2, 1)->text() != QStringLiteral("HALF")) {
         return NECWB_SMOKE_FAILURE("optimization workspace");
     }
+    NECWB_SMOKE_STEP();
     {
         // Two parallel elements entered in opposite directions with the same physical current:
         // the Antenna tab and the relative-phase column must show them in phase.
@@ -4480,6 +4679,7 @@ auto main(int argc, char* argv[]) -> int
     // The 3D pattern is centred on the antenna and sized by it: a three-element beam moved
     // up and sideways draws exactly as it does at the origin, in free space and over ground
     // and in both scales, and the antenna shows in it.
+    NECWB_SMOKE_STEP();
     {
         const auto beam = [](necwb::model::Point3D offset) {
             necwb::model::AntennaModel model;
@@ -4916,6 +5116,7 @@ auto main(int argc, char* argv[]) -> int
             && radiation3DSurface->property("seeThrough").toBool();
     }
     // A θ×φ grid fills with patches; a single cut has nothing to fill.
+    NECWB_SMOKE_STEP();
     {
         std::vector<necwb::ui::SurfaceSample> grid, cut;
         for (auto theta = 0; theta <= 180; theta += 45)
@@ -4958,6 +5159,7 @@ auto main(int argc, char* argv[]) -> int
     }
     // Fitting: a lobe off to one side is centred and fills the area; the view fits until
     // a zoom, and Reset View fits again. The controls wrap to a narrow centre.
+    NECWB_SMOKE_STEP();
     {
         const std::vector<necwb::model::Point3D> lobe{{0, 0, 0}, {1.0, 0.2, 0.1}, {0.6, -0.2, -0.1}};
         const QRectF area(20, 100, 400, 300);
@@ -5611,12 +5813,19 @@ auto main(int argc, char* argv[]) -> int
     auto configureRequested = false;
     toolBar.setBackendSelectedCallback([&](const QString& id) { selectedBackend = id; });
     toolBar.setConfigureCallback([&] { configureRequested = true; });
-    toolBar.setBackend(QStringLiteral("opennec"), {});
+    // Only the engine in use is named for where it was found.
+    toolBar.setBackend(QStringLiteral("nec2"), QStringLiteral("nec2c (bundled)"),
+        QStringLiteral("nec2c 1.3.3 (55be1e0) · bundled · /opt/nec2c"));
     auto* backend = toolBar.findChild<QComboBox*>(QStringLiteral("toolBarBackend"));
+    const auto bundledNamed = backend != nullptr
+        && backend->itemText(backend->findData(QStringLiteral("nec2"))) == QStringLiteral("nec2c (bundled)")
+        && backend->toolTip().contains(QStringLiteral("1.3.3 (55be1e0) · bundled"));
+    toolBar.setBackend(QStringLiteral("opennec"), QStringLiteral("OpenNEC"), QStringLiteral("OpenNEC · not found"));
     auto* toolOpenButton = toolBar.findChild<QToolButton*>(QStringLiteral("toolBarOpen"));
-    const auto backendShownQuietly = backend != nullptr
+    const auto backendShownQuietly = bundledNamed
         && backend->currentData().toString() == QStringLiteral("opennec") && selectedBackend.isEmpty()
-        && backend->toolTip().contains(QStringLiteral("no executable"));
+        && backend->itemText(backend->findData(QStringLiteral("nec2"))) == QStringLiteral("NEC-2 / nec2c")
+        && backend->toolTip().contains(QStringLiteral("not found"));
     if (backend != nullptr) {
         emit backend->activated(backend->findData(QStringLiteral("nec2dxs")));
         emit backend->activated(backend->count() - 1);
@@ -5659,6 +5868,7 @@ auto main(int argc, char* argv[]) -> int
     }
     // The results column: one selected frequency drives the key numbers, the thumbnails
     // and the full view, and survives a new run that has it.
+    NECWB_SMOKE_STEP();
     {
         QSettings{}.remove(QStringLiteral("resultsColumn"));
         QWidget host;
@@ -5823,6 +6033,7 @@ auto main(int argc, char* argv[]) -> int
     // file, folder and when each was opened, opens a row when activated, and is no taller
     // than its rows.
     auto startPanelValid = false;
+    NECWB_SMOKE_STEP();
     {
         QTemporaryDir recentDirectory;
         const auto firstPath = recentDirectory.filePath(QStringLiteral("first.nec"));
@@ -6033,6 +6244,7 @@ auto main(int argc, char* argv[]) -> int
     selectStructuredFamily(generatedGeometryFamilies, QStringLiteral("Other NEC-2 Geometry"));
     application.processEvents();
     const auto generatedCardsExcludedFromOther = generatedGeometryTable->rowCount() == 0;
+    NECWB_SMOKE_STEP();
     {
         // Long machine-written numbers display at 6 significant figures, but editing
         // still gets the exact deck text.
@@ -6257,6 +6469,7 @@ auto main(int argc, char* argv[]) -> int
         && std::abs(groundConductivity->value() - 0.005) < 1.0e-12;
     // The setup pages fit the column at its narrowest without ⇔; a wider page shows it.
     auto setupPagesFit = true;
+    NECWB_SMOKE_STEP();
     {
         necwb::ui::PropertiesPane fitPane;
         fitPane.resize(360, 600);
@@ -6639,6 +6852,7 @@ auto main(int argc, char* argv[]) -> int
     // In small side views of a yagi, the wire and EX labels are drawn whole inside the view,
     // clear of the EX marker and of each other, though the elements end on end draw them at
     // one point; a label at a wire end by the edge goes on the inner side.
+    NECWB_SMOKE_STEP();
     {
         necwb::model::AntennaModel yagi;
         yagi.addWire({1, {-0.5, -0.52, 0.0}, {-0.5, 0.52, 0.0}, 11, 0.003, 1});
@@ -6698,6 +6912,7 @@ auto main(int argc, char* argv[]) -> int
     attachmentImage.fill(Qt::transparent); QPainter attachmentPainter(&attachmentImage);
     attachment2D.render(&attachmentPainter); attachment3D.render(&attachmentPainter);
     attachmentPainter.end();
+    NECWB_SMOKE_STEP();
     {
         auto sharedSetup = attachmentSetup;
         sharedSetup.loads.push_back({4, 1, 3, 3, 300.0, 0.0, 0.0, 9});
@@ -6718,6 +6933,7 @@ auto main(int argc, char* argv[]) -> int
     // explains what shares its segment; a cell edit changes only its own field, keeping the
     // others exact and an SY symbol as written; a value that is not a number is held back.
     auto cardFormValid = false;
+    NECWB_SMOKE_STEP();
     {
         necwb::model::ModelSetup sharedSetup;
         sharedSetup.excitations.push_back({0, 1, 6, 1.0, 0.0, 3});

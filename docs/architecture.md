@@ -125,8 +125,10 @@ and check counts. Menus expose the complete command set.
 
 Besides dialogs, the only windows of their own are the optimizer, its candidate review,
 and historical Run Review, which is read-only so opening archived output cannot silently
-replace the active editor. `retireOldSettings` removes, once per settings store and gated
-by `ui/layoutVersion`, what the earlier separate windows and main window state saved.
+replace the active editor. `retireOldSettings` runs its steps once per settings store, in
+order of `ui/layoutVersion`: version 1 removes what the earlier separate windows and main
+window state saved; version 2 drops a saved nec2c or OpenNEC path that is only what the
+PATH gives, so the bundled nec2c is found first.
 
 The historical-overlay controller selects at most one archived run
 and never changes the active result; the results column's one overlay control decides
@@ -198,8 +200,25 @@ The selected backend identifies a process protocol, not merely an executable nam
   uses canonical space-delimited fields so direct execution never depends on the full
   4nec2 application's input preprocessing or on unsupported tab separators.
 
-Each backend has an independently persisted executable path. All adapters feed
-the same run store and backend-neutral result model. No solver is bundled.
+All adapters feed the same run store and backend-neutral result model. Solvers are
+always separate processes, so a crash cannot take the application down, `SolverProcessRunner`
+can always stop one (terminate, then kill), and several could run at once.
+
+The packages bundle nec2c (packaging/nec2c: the pinned commit and version, `build.sh`,
+the MinGW-w64 compat headers, the reference build, the decks and skip list for the result
+checks). `build.sh` writes `nec2c-build.txt` beside the executable with the version,
+commit, compiler and flags. `ui/SolverLocator` finds each engine's executable afresh at
+every start: the path the user chose, else a copy beside the executable or in
+`solvers/`, else the PATH. It reads the bundled version from the metadata and asks other
+nec2c builds with `-v` in the background, cached by path, size and modification time.
+`ui/SolverSettings` is the only writer of the engine settings: it saves the chosen engine
+and only paths the user typed or browsed to, never one inside the application folder or a
+mounted AppImage. A chosen path that has gone is reported, never replaced. Run records
+keep the engine version and path. CI runs the hidden `nec-workbench --package-check`
+(throwaway settings, no window) on each unpacked package: it finds the bundled nec2c,
+reads its version, solves, and stops long runs with Stop and with a timeout. It also
+compares the packaged nec2c's output with a reference build's, as text, and the Windows
+build's parsed results with Linux's (`necwb_nec2c_check`).
 
 Solver execution is asynchronous and supports live output, cancellation, and a
 timeout. Every run receives a unique durable directory containing source,
@@ -335,8 +354,8 @@ then uses the normal analysis pipeline to create an ordinary result.
 
 ## Persistence and Presentation
 
-`QSettings` stores window state, display preferences, and per-backend executable
-paths using the platform's normal user settings location. Run artifacts remain in
+`QSettings` stores window state, display preferences, the chosen engine and the
+executable paths the user picked, using the platform's normal user settings location. Run artifacts remain in
 the application's local data directory.
 
 Common numeric presentation is centralized in `ui/DisplayFormat.h`. The card tables

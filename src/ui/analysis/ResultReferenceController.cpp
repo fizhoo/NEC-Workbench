@@ -1,5 +1,7 @@
 #include "ui/analysis/ResultReferenceController.h"
 
+#include "ui/SolverLocator.h"
+
 #include "analysis/NecOutputParser.h"
 #include "analysis/ReferenceRunSelection.h"
 #include "model/ModelSetup.h"
@@ -107,7 +109,7 @@ auto ResultReferenceController::label() const -> QString
     const auto note = reference_->userNote.trimmed().isEmpty()
         ? QString{} : QStringLiteral(" — “%1”").arg(reference_->userNote.trimmed());
     return QStringLiteral("%1 — %2 — %3%4%5")
-        .arg(modelName, started, reference_->backend, note,
+        .arg(modelName, started, solverName(reference_->backend), note,
             pinned_ ? QStringLiteral(" — selected manually") : QString{});
 }
 

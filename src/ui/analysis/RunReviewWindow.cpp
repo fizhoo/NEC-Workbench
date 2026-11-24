@@ -5,6 +5,7 @@
 #include "nec/NecModelConverter.h"
 #include "nec/NecParser.h"
 #include "nec/NecSetupConverter.h"
+#include "ui/SolverLocator.h"
 #include "ui/analysis/AverageGainResultsView.h"
 #include "ui/analysis/ConvergenceWorkspace.h"
 #include "ui/analysis/FieldResultsViews.h"
@@ -53,7 +54,8 @@ auto runContext(const AnalysisRunRecord& record) -> QString
         ? QObject::tr("Archived model.nec") : QFileInfo(record.sourceFile).fileName();
     const auto started = record.started.isValid()
         ? record.started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : record.id;
-    const auto backend = record.backend.isEmpty() ? QObject::tr("Unknown backend") : record.backend;
+    auto backend = record.backend.isEmpty() ? QObject::tr("Unknown backend") : solverName(record.backend);
+    if (!record.engineVersion.isEmpty()) backend += QStringLiteral(" · ") + record.engineVersion;
     const auto purpose = record.runType == QStringLiteral("quick-sweep")
         ? record.summary.isEmpty() ? QObject::tr(" · Quick Sweep")
                                    : QObject::tr(" · Quick Sweep: %1").arg(record.summary)
@@ -203,10 +205,10 @@ auto RunReviewWindow::showRun(const AnalysisRunRecord& record,
     identityLabel_->setText(record.runType == QStringLiteral("quick-sweep")
         ? tr("Historical Quick Sweep — %1 — %2 — %3")
             .arg(modelName, started,
-                record.backend.isEmpty() ? tr("Unknown backend") : record.backend)
+                record.backend.isEmpty() ? tr("Unknown backend") : solverName(record.backend))
         : tr("Historical Run — %1 — %2 — %3")
             .arg(modelName, started,
-                record.backend.isEmpty() ? tr("Unknown backend") : record.backend));
+                record.backend.isEmpty() ? tr("Unknown backend") : solverName(record.backend)));
     activeModelLabel_->setText(tr("Active Model: %1 · This archived review does not modify it.")
         .arg(activeModelName.isEmpty() ? tr("None") : activeModelName));
     openSnapshotButton_->setEnabled(QFileInfo::exists(

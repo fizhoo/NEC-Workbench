@@ -338,7 +338,8 @@ void ConvergenceWorkspace::startStudy()
     }
 
     sessionRecord_ = runStore_.create(backend_, sourceFile_.isEmpty()
-        ? QStringLiteral("Untitled model.nec") : sourceFile_, QStringLiteral("convergence-session"));
+        ? QStringLiteral("Untitled model.nec") : sourceFile_, QStringLiteral("convergence-session"),
+        {}, executable_);
     sessionRecord_->status = QStringLiteral("Running");
     sessionRecord_->candidateCount = levels;
     sessionRecord_->summary = tr("Segmentation convergence · %1 MHz · %2 levels")
@@ -424,7 +425,7 @@ void ConvergenceWorkspace::startNextStep()
         numericSource_.toStdString(), frequencyControl_->value(), step.scale);
     step.record = runStore_.create(backend_, sourceFile_.isEmpty()
         ? QStringLiteral("Untitled model.nec") : sourceFile_, QStringLiteral("convergence-step"),
-        sessionRecord_ ? sessionRecord_->id : QString{});
+        sessionRecord_ ? sessionRecord_->id : QString{}, executable_);
     if (!prepared.ok() || !writeStepFiles(step, prepared.deck)) {
         step.record.status = QStringLiteral("Failed");
         runStore_.save(step.record);

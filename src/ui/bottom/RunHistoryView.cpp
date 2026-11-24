@@ -1,6 +1,7 @@
 #include "ui/bottom/RunHistoryView.h"
 
 #include "ui/DisplayFormat.h"
+#include "ui/SolverLocator.h"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -22,6 +23,7 @@ constexpr auto RunDirectoryRole = Qt::UserRole + 3;
 constexpr auto RunContextRole = Qt::UserRole + 4;
 constexpr auto RunTypeRole = Qt::UserRole + 6;
 constexpr auto RunIdRole = Qt::UserRole + 7;
+constexpr auto RunBackendRole = Qt::UserRole + 8;
 
 enum RunColumn {
     RunStartedColumn,
@@ -86,7 +88,8 @@ auto runContext(const AnalysisRunRecord& record) -> QString
         : QFileInfo(record.sourceFile).fileName();
     const auto started = record.started.isValid()
         ? record.started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : record.id;
-    const auto backend = record.backend.isEmpty() ? QObject::tr("Unknown backend") : record.backend;
+    auto backend = record.backend.isEmpty() ? QObject::tr("Unknown backend") : solverName(record.backend);
+    if (!record.engineVersion.isEmpty()) backend += QStringLiteral(" · ") + record.engineVersion;
     const auto purpose = record.runType == QStringLiteral("quick-sweep")
         ? record.summary.isEmpty() ? QObject::tr(" · Quick Sweep")
                                    : QObject::tr(" · Quick Sweep: %1").arg(record.summary)
@@ -238,7 +241,7 @@ auto RunHistoryView::selection() const -> std::optional<Selection>
     selected.record.runType = item->data(RunTypeRole).toString();
     selected.record.started = QDateTime::fromString(item->text(),
         QStringLiteral("yyyy-MM-dd HH:mm:ss"));
-    selected.record.backend = table_->item(row, RunBackendColumn)->text();
+    selected.record.backend = item->data(RunBackendRole).toString();
     selected.record.status = table_->item(row, RunStatusColumn)->text();
     selected.modelName = table_->item(row, RunModelColumn)->text();
     selected.record.sourceFile = selected.modelName;
@@ -264,7 +267,7 @@ void RunHistoryView::setRow(int row, const AnalysisRunRecord& record)
         type,
         runResultsText(displayRecord),
         formatByteSize(outputBytes),
-        record.backend,
+        solverName(record.backend),
         record.status,
         record.durationSeconds > 0.0
             ? tr("%1 s").arg(formatDecimal(record.durationSeconds)) : tr("—"),
@@ -276,6 +279,7 @@ void RunHistoryView::setRow(int row, const AnalysisRunRecord& record)
         item->setData(RunContextRole, runContext(record));
         item->setData(RunTypeRole, record.runType);
         item->setData(RunIdRole, record.id);
+        item->setData(RunBackendRole, record.backend);
         if (column == RunNoteColumn && !record.userNote.trimmed().isEmpty())
             item->setToolTip(record.userNote);
         table_->setItem(row, column, item);
