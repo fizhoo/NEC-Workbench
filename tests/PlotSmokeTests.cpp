@@ -292,7 +292,8 @@ auto main(int argc, char* argv[]) -> int
             && gone.origin == LocatedSolver::Origin::Chosen && gone.missing()
             && necwb::ui::solverDescription(QStringLiteral("nec2"), gone).contains(QStringLiteral("no longer exists"));
         // A user's nec2c is asked its version in the background; another program never is.
-        // (On Windows the stand-in cannot run, so its version is unknown, without waiting.)
+        // (On Windows the stand-in is not an executable, so it is never started and its version
+        // is unknown.)
         auto& versions = necwb::ui::SolverVersions::instance();
         const auto userNec2c = elsewhere.filePath(QStringLiteral("nec2c") + ExecutableSuffix);
         const auto asking = versions.version(QStringLiteral("nec2"), userNec2c).isEmpty();

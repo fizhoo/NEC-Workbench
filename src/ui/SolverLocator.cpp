@@ -52,6 +52,19 @@ auto builtVersion(const QString& path) -> QString
         values.value(QStringLiteral("version")), values.value(QStringLiteral("commit")).left(7));
 }
 
+// On Windows only a file with the executable signature, since Windows answers starting
+// anything else with a dialog that blocks until someone closes it.
+auto looksRunnable(const QString& path) -> bool
+{
+#ifdef Q_OS_WIN
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) && file.read(2) == "MZ";
+#else
+    Q_UNUSED(path);
+    return true;
+#endif
+}
+
 auto versionArguments(const QString& backendId) -> QStringList
 {
     return backendId == QStringLiteral("nec2") ? QStringList{QStringLiteral("-v")} : QStringList{};
@@ -156,7 +169,7 @@ auto SolverVersions::version(const QString& backendId, const QString& path) -> Q
     // runs it with an option it may not know.
     const auto arguments = versionArguments(backendId);
     if (arguments.isEmpty() || !file.baseName().startsWith(executableNames(backendId).value(0),
-            Qt::CaseInsensitive))
+            Qt::CaseInsensitive) || !looksRunnable(path))
         return versions_[key] = QCoreApplication::translate("SolverLocator", "version unknown");
     // Asked once in the background; an executable that does not answer in time is unknown.
     versions_.insert(key, {});
