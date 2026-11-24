@@ -85,8 +85,10 @@ ctest --test-dir build --output-on-failure
 Download the package for your system from the repository's **Releases** page. The
 current release is `0.1.0-alpha.3`. There is nothing else to install: each package
 contains the Qt runtime, `nec2c` 1.3.3 built from the pinned commit in
-`packaging/nec2c` with its license notices in `THIRD_PARTY_LICENSES.txt`, and the
-examples. Each release also carries the corresponding nec2c source.
+`packaging/nec2c`, and the examples. `THIRD_PARTY_LICENSES.txt` in each package covers
+nec2c, Qt (LGPL-3.0, with where to get its source) and every other bundled library. Each
+release also carries the corresponding nec2c source, which rebuilds offline (see
+`BUILDING.txt` in it), and `SHA256SUMS.txt`.
 
 Package names carry the version, such as `NEC-Workbench-0.1.0-alpha.3-windows-x64.zip`
 and `NEC-Workbench-0.1.0-alpha.3-x86_64.AppImage`.
@@ -113,9 +115,11 @@ repository's **Actions** page: `NEC-Workbench-Linux-x86_64` and
 `NEC-Workbench-Windows-x64`, each with the package and the nec2c source archive.
 
 Pushing a `v<version>` tag that matches the CMake version builds both packages from the
-tag, runs their package checks, and publishes the GitHub release with both packages and
-the nec2c source archive, using `docs/release-notes/<tag>.md` as its notes. Nothing is
-published if a build or check fails.
+tag, runs their startup and package checks, compares the nec2c inside the Windows package
+with the one inside the Linux package, and publishes the GitHub release with both
+packages, the nec2c source archive and `SHA256SUMS.txt`, using
+`docs/release-notes/<tag>.md` as its notes. Nothing is published if a build, check or
+comparison fails.
 
 ## Design Boundary
 
