@@ -301,8 +301,9 @@ auto main(int argc, char* argv[]) -> int
         probing.start();
         while (versions.version(QStringLiteral("nec2"), userNec2c).isEmpty() && probing.elapsed() < 3000)
             QTest::qWait(20);
-        const auto probed = asking && versions.version(QStringLiteral("nec2"), userNec2c)
-            == (ExecutableSuffix.isEmpty() ? QStringLiteral("nec2c 9.9 (on path)") : QStringLiteral("version unknown"));
+        const auto probed = ExecutableSuffix.isEmpty()
+            ? asking && versions.version(QStringLiteral("nec2"), userNec2c) == QStringLiteral("nec2c 9.9 (on path)")
+            : versions.version(QStringLiteral("nec2"), userNec2c) == QStringLiteral("version unknown");
         makeExecutable(elsewhere.filePath(QStringLiteral("other") + ExecutableSuffix), "#!/bin/sh\nexit 1\n");
         const auto notAsked = versions.version(QStringLiteral("nec2"),
             elsewhere.filePath(QStringLiteral("other") + ExecutableSuffix))
