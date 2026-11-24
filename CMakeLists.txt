@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.21)
 project(NecWorkbench VERSION 0.1.0 LANGUAGES CXX)
 
 # Pre-release label shown to users (About box); leave empty for a final release.
-set(NECWB_VERSION_LABEL "alpha.2")
+set(NECWB_VERSION_LABEL "alpha.3")
 if(NECWB_VERSION_LABEL)
     set(NECWB_DISPLAY_VERSION "${PROJECT_VERSION}-${NECWB_VERSION_LABEL}")
 else()

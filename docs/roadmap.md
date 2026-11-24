@@ -1,7 +1,8 @@
 # Development Roadmap
 
 This document records direction rather than promised release dates. NEC
-Workbench remains solver-independent and does not bundle external NEC engines.
+Workbench stays solver-independent: it ships nec2c so that it works out of the box,
+runs every engine as a separate program, and can use others the user installs.
 
 ## Current Baseline
 
@@ -26,7 +27,8 @@ Workbench remains solver-independent and does not bundle external NEC engines.
   pane that hosts the setup and wire editors
 - Results column with one selected frequency, key numbers (including F/R), live
   thumbnails, and full result views in the center of the main window
-- `nec2c`, OpenNEC, and 4nec2 NEC2dXS process adapters with independent saved paths
+- Bundled `nec2c` 1.3.3 in both packages, plus OpenNEC, 4nec2 NEC2dXS, and the user's own
+  `nec2c` with independent saved paths; the shipped examples open from Open Example…
 - Normal runs and temporary quick sweeps without rewriting the authored model
 - Durable run history with authored source, generated solver deck, output, logs,
   metadata, editable run notes, read-only historical Run Review, and Open Run Folder
@@ -62,22 +64,25 @@ Workbench remains solver-independent and does not bundle external NEC engines.
 ## Current Milestone
 
 `v0.1.0-alpha.1` established the first public Linux AppImage and Windows ZIP baseline.
-`v0.1.0-alpha.2`, tagged and published from `main`, delivered run references and notes,
-the currents-on-antenna view, and a faster optimizer.
+`v0.1.0-alpha.2` delivered run references and notes, the currents-on-antenna view, and a
+faster optimizer.
 
-The work since Alpha 2 replaces its Home control panel and separate work and result
+`v0.1.0-alpha.3` replaces Alpha 2's Home control panel and separate work and result
 windows with one main window: the model tree, variables and properties pane on the
 left; the geometry, NEC Deck, full result views and the validation studies in the
 center; the results column on the right; and the bottom panel for Problems, the Run
 log, Runs and Raw output. The optimizer, its candidate review and historical Run Review
-are separate windows. Alongside it:
+are separate windows. It also ships nec2c and the examples, so it works out of the box.
 
-- Exercise representative real decks across supported solver backends and platforms.
-- Field-test the single-window workflow, Run History, historical overlays, and the
-  currents views.
-- Strengthen regression coverage around source edits, run generation, output parsing,
-  layout restoration, and optimization session restoration.
-- Keep card-support claims synchronized with validation, structured editing, and rendering.
+Next steps:
+
+- Smith chart of the feedpoint impedance, with a measured `.s1p` file as an overlay
+- Matching: transmission-line, stub and lumped matching from the feedpoint impedance
+- An engine adapter layer, so each engine's command, input, capabilities and model
+  checks live in one place and further engines plug in without touching the rest
+- A parallel optimizer that solves several candidates at once
+- Field-test the single-window workflow across solver backends and platforms, and keep
+  regression coverage and card-support claims in step with the code
 
 The first imported-deck validation audit is complete and documented in the
 [NEC Validation Reference](nec-validation-reference.md). Follow-up work should focus
@@ -113,7 +118,6 @@ over the existing reproducible methods.
   a separate multi-run comparison workflow
 - Convergence plots for impedance, gain, and pattern changes
 - Input-power normalization for current and field amplitudes
-- Smith chart of the feedpoint impedance across the sweep
 - Currents follow-ups: phase along each wire in Along Wire, and a selectable phase
   reference for multi-source arrays
 - Near-field parsing and visualization
@@ -127,7 +131,7 @@ over the existing reproducible methods.
 
 ## Longer Term
 
-- Transmission-line, stub, matching, and phasing calculators
+- Standalone transmission-line, stub, and phasing calculators
 - Additional polarization views
 - Signed installers and broader platform packaging
 - Accessibility and theme refinement

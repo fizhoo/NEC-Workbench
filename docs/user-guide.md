@@ -666,7 +666,7 @@ impedance plots and the 2D, 3D, and performance views, and a **Choose Overlay…
 The line beneath says whether the overlay is **Compatible**, **Partial**, or has **No
 matching data** for the impedance and pattern data. Manual choices
 may come from another antenna; Workbench only draws genuinely matching frequencies,
-feedpoints, cuts, and sample grids. Use **Clear Overlay** to remove the selection.
+feedpoints, cuts, and sample grids. Use **Clear Historical Overlay** to remove the selection.
 
 ### Currents
 
