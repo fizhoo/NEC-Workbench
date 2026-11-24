@@ -58,6 +58,8 @@ jobs:
 
       - name: Test
         shell: pwsh
+        env:
+          NECWB_SMOKE_TRACE: '1'
         run: |
           $out = ctest --test-dir build -C Release --output-on-failure --timeout 300 2>&1
           $out

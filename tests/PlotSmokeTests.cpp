@@ -152,6 +152,16 @@ auto optimizerChild(const QString& objectName) -> T*
 
 #define NECWB_SMOKE_FAILURE(checkpoint) smokeFailure(checkpoint, __LINE__)
 
+// With NECWB_SMOKE_TRACE set, each top-level block says when it starts, so a run that hangs
+// shows where.
+#define NECWB_SMOKE_STEP() \
+    do { \
+        if (qEnvironmentVariableIsSet("NECWB_SMOKE_TRACE")) { \
+            std::fprintf(stderr, "step at line %d\n", __LINE__); \
+            std::fflush(stderr); \
+        } \
+    } while (false)
+
 auto main(int argc, char* argv[]) -> int
 {
     if (argc == 3 && QByteArray(argv[1]).startsWith("-i")
@@ -239,6 +249,7 @@ auto main(int argc, char* argv[]) -> int
     // Finding an engine: the path the user chose, even one that has gone; else the copy
     // beside Workbench or in solvers/; else the PATH. Only a chosen path outside Workbench's
     // folder is saved, and a bundled build's version comes from its metadata.
+    NECWB_SMOKE_STEP();
     {
         using necwb::ui::LocatedSolver;
         QTemporaryDir application, elsewhere;
@@ -359,6 +370,7 @@ auto main(int argc, char* argv[]) -> int
     QSettings{}.remove(QStringLiteral("smoke/overlayVisible"));
     auto overlayVisibilityChanged = false;
     auto overlayChooseRequested = false;
+    NECWB_SMOKE_STEP();
     {
         necwb::ui::HistoricalOverlayControl overlay(QStringLiteral("smoke/overlayVisible"));
         overlay.setVisibilityChangedCallback([&overlayVisibilityChanged](bool visible) {
@@ -383,6 +395,7 @@ auto main(int argc, char* argv[]) -> int
             return NECWB_SMOKE_FAILURE("historical overlay controls");
         }
     }
+    NECWB_SMOKE_STEP();
     {
         necwb::ui::HistoricalOverlayControl overlay(QStringLiteral("smoke/overlayVisible"));
         if (!overlay.isChecked())
@@ -391,6 +404,7 @@ auto main(int argc, char* argv[]) -> int
     QSettings{}.remove(QStringLiteral("smoke/overlayVisible"));
     // Settings that earlier layouts saved go once, gated by ui/layoutVersion; the single solver
     // path of early versions moves to the selected backend first.
+    NECWB_SMOKE_STEP();
     {
         QSettings settings;
         const auto savedBackend = settings.value(QStringLiteral("analysis/backendId"));
@@ -425,6 +439,7 @@ auto main(int argc, char* argv[]) -> int
     }
     // Version 2 drops a solver path saved only because the PATH had it, so the bundled nec2c
     // is found first, and keeps the engine, every other path and a path that has gone.
+    NECWB_SMOKE_STEP();
     {
         QSettings settings;
         const QStringList keys{QStringLiteral("analysis/backendId"),
@@ -489,6 +504,7 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.remove(QStringLiteral("mainWindow/v2"));
     resultWindowSettings.remove(QStringLiteral("ui/bottomPanel"));
     resultWindowSettings.sync();
+    NECWB_SMOKE_STEP();
     {
         necwb::ui::MainWindow mainWindow;
         mainWindow.setProperty("workspaceDensityId", QStringLiteral("density-smoke-sentinel"));
@@ -849,6 +865,7 @@ auto main(int argc, char* argv[]) -> int
     resultWindowSettings.sync();
     // Launch: with no model the workspace shows the start panel in its center; reopening the
     // last model obeys the setting, Shift, a missing file and an attempt that never finished.
+    NECWB_SMOKE_STEP();
     {
         QSettings launchSettings;
         const QStringList launchKeys{QStringLiteral("files/recentModels"),
@@ -939,6 +956,7 @@ auto main(int argc, char* argv[]) -> int
     // The delta loop lies in XZ, so XZ opens in the big view; double-clicking XY's title swaps
     // it in, fitted, and edits keep it there until a model is opened again. The wire form
     // shows deck units (meters) with Geometry in feet, and Make Variable names W1_X1.
+    NECWB_SMOKE_STEP();
     {
         QSettings planeSettings;
         const QStringList planeKeys{QStringLiteral("files/recentModels"),
@@ -1199,6 +1217,7 @@ auto main(int argc, char* argv[]) -> int
     }
     // The geometry views: nothing drawn over a plane but the model, distinct axis labels on a
     // plane that sees the model end-on, and wires coloured by the Currents view's values.
+    NECWB_SMOKE_STEP();
     {
         QSettings{}.setValue(QStringLiteral("geometry/showCurrents"), true);
         necwb::model::AntennaModel pair;
@@ -1414,6 +1433,7 @@ auto main(int argc, char* argv[]) -> int
     }
     // The line under a card table sits under its last row, or at the bottom, visible, when
     // the table is taller than the pane.
+    NECWB_SMOKE_STEP();
     {
         necwb::ui::WireCardEditor wires;
         wires.resize(600, 420);
@@ -1451,6 +1471,7 @@ auto main(int argc, char* argv[]) -> int
     auto openModelKeepsDeckClosed = false;
     auto leftColumnCappedAtContent = false;
     auto bottomPanelOpensAtMinimumSize = false;
+    NECWB_SMOKE_STEP();
     {
         const auto savedRecentModels = resultWindowSettings.value(
             QStringLiteral("files/recentModels"));
@@ -1522,6 +1543,7 @@ auto main(int argc, char* argv[]) -> int
     // Editing a cell rewrites only its own field: SY symbols and exact numbers in the other
     // fields stay in the deck as written, in the Wires table and the card tables alike.
     auto wirePaneKeepsSymbols = false;
+    NECWB_SMOKE_STEP();
     {
         const auto savedRecentModels = resultWindowSettings.value(
             QStringLiteral("files/recentModels"));
@@ -1601,6 +1623,7 @@ auto main(int argc, char* argv[]) -> int
     }
     // A wire GX made is read-only: no ƒx from the GX card's fields, and its tooltip names GX,
     // not a GC taper. Wire 1's own expression still shows.
+    NECWB_SMOKE_STEP();
     {
         const auto savedRecentModels = resultWindowSettings.value(
             QStringLiteral("files/recentModels"));
@@ -1699,6 +1722,7 @@ auto main(int argc, char* argv[]) -> int
     // Dragging a variable's slider rewrites its SY card once, on release, as one undo entry;
     // selecting Variables shows the Parameters table in the properties pane.
     auto variableSliderEdits = false;
+    NECWB_SMOKE_STEP();
     {
         const auto savedRecentModels = resultWindowSettings.value(
             QStringLiteral("files/recentModels"));
@@ -1775,6 +1799,7 @@ auto main(int argc, char* argv[]) -> int
     // 4nec2 comment, moved by a segment-count variable, undone and redone, saved and reopened,
     // and put back on an exact segment; the optimizer will only sweep the count in whole steps.
     auto sourcePlacement = false;
+    NECWB_SMOKE_STEP();
     {
         QSettings settings;
         const auto savedRecent = settings.value(QStringLiteral("files/recentModels"));
@@ -1946,6 +1971,7 @@ auto main(int argc, char* argv[]) -> int
     // a 25% source goes to the segment its mark gives, Apply writes the deck the preview showed,
     // and one Undo restores the deck.
     auto segmentationPreviewApplied = false;
+    NECWB_SMOKE_STEP();
     {
         QSettings settings;
         const auto savedRecent = settings.value(QStringLiteral("files/recentModels"));
@@ -2030,6 +2056,7 @@ auto main(int argc, char* argv[]) -> int
     // step, Ctrl+Z works from a value box and the tree, Reset and Revert are one step each,
     // and a live solve uses a one-frequency copy of the deck without adding to Runs history.
     auto variablesLive = false;
+    NECWB_SMOKE_STEP();
     {
         QSettings settings;
         const auto saved = std::array{std::pair{QStringLiteral("files/recentModels"),
@@ -2183,6 +2210,7 @@ auto main(int argc, char* argv[]) -> int
         return NECWB_SMOKE_FAILURE("variables live, undo, reset and revert");
     // A model opened with nothing selected leaves the pane empty: the variables take the
     // free height, all rows shown without a scroll bar of their own.
+    NECWB_SMOKE_STEP();
     {
         QSettings settings;
         const auto savedRecent = settings.value(QStringLiteral("files/recentModels"));
@@ -2235,6 +2263,7 @@ auto main(int argc, char* argv[]) -> int
     // symbols; new cards land before FR and RP; a right-clicked load and a TL picked by two
     // ends show as rows; New empties the pane; the Variables header folds them.
     auto cardTables = false;
+    NECWB_SMOKE_STEP();
     {
         QSettings settings;
         const auto savedRecent = settings.value(QStringLiteral("files/recentModels"));
@@ -3622,6 +3651,7 @@ auto main(int argc, char* argv[]) -> int
     optimizationCandidateDetailsWindow->hide();
     QSettings{}.remove(QStringLiteral("optimization/candidateReviewSizeV1"));
     QSettings{}.remove(QStringLiteral("optimization/candidateReviewGeometryV1"));
+    NECWB_SMOKE_STEP();
     {
         necwb::ui::OptimizationWorkspace persistenceWorkspace;
     }
@@ -4563,6 +4593,7 @@ auto main(int argc, char* argv[]) -> int
         || optimizationVariables->item(2, 1)->text() != QStringLiteral("HALF")) {
         return NECWB_SMOKE_FAILURE("optimization workspace");
     }
+    NECWB_SMOKE_STEP();
     {
         // Two parallel elements entered in opposite directions with the same physical current:
         // the Antenna tab and the relative-phase column must show them in phase.
@@ -4641,6 +4672,7 @@ auto main(int argc, char* argv[]) -> int
     // The 3D pattern is centred on the antenna and sized by it: a three-element beam moved
     // up and sideways draws exactly as it does at the origin, in free space and over ground
     // and in both scales, and the antenna shows in it.
+    NECWB_SMOKE_STEP();
     {
         const auto beam = [](necwb::model::Point3D offset) {
             necwb::model::AntennaModel model;
@@ -5077,6 +5109,7 @@ auto main(int argc, char* argv[]) -> int
             && radiation3DSurface->property("seeThrough").toBool();
     }
     // A θ×φ grid fills with patches; a single cut has nothing to fill.
+    NECWB_SMOKE_STEP();
     {
         std::vector<necwb::ui::SurfaceSample> grid, cut;
         for (auto theta = 0; theta <= 180; theta += 45)
@@ -5119,6 +5152,7 @@ auto main(int argc, char* argv[]) -> int
     }
     // Fitting: a lobe off to one side is centred and fills the area; the view fits until
     // a zoom, and Reset View fits again. The controls wrap to a narrow centre.
+    NECWB_SMOKE_STEP();
     {
         const std::vector<necwb::model::Point3D> lobe{{0, 0, 0}, {1.0, 0.2, 0.1}, {0.6, -0.2, -0.1}};
         const QRectF area(20, 100, 400, 300);
@@ -5827,6 +5861,7 @@ auto main(int argc, char* argv[]) -> int
     }
     // The results column: one selected frequency drives the key numbers, the thumbnails
     // and the full view, and survives a new run that has it.
+    NECWB_SMOKE_STEP();
     {
         QSettings{}.remove(QStringLiteral("resultsColumn"));
         QWidget host;
@@ -5991,6 +6026,7 @@ auto main(int argc, char* argv[]) -> int
     // file, folder and when each was opened, opens a row when activated, and is no taller
     // than its rows.
     auto startPanelValid = false;
+    NECWB_SMOKE_STEP();
     {
         QTemporaryDir recentDirectory;
         const auto firstPath = recentDirectory.filePath(QStringLiteral("first.nec"));
@@ -6201,6 +6237,7 @@ auto main(int argc, char* argv[]) -> int
     selectStructuredFamily(generatedGeometryFamilies, QStringLiteral("Other NEC-2 Geometry"));
     application.processEvents();
     const auto generatedCardsExcludedFromOther = generatedGeometryTable->rowCount() == 0;
+    NECWB_SMOKE_STEP();
     {
         // Long machine-written numbers display at 6 significant figures, but editing
         // still gets the exact deck text.
@@ -6425,6 +6462,7 @@ auto main(int argc, char* argv[]) -> int
         && std::abs(groundConductivity->value() - 0.005) < 1.0e-12;
     // The setup pages fit the column at its narrowest without ⇔; a wider page shows it.
     auto setupPagesFit = true;
+    NECWB_SMOKE_STEP();
     {
         necwb::ui::PropertiesPane fitPane;
         fitPane.resize(360, 600);
@@ -6807,6 +6845,7 @@ auto main(int argc, char* argv[]) -> int
     // In small side views of a yagi, the wire and EX labels are drawn whole inside the view,
     // clear of the EX marker and of each other, though the elements end on end draw them at
     // one point; a label at a wire end by the edge goes on the inner side.
+    NECWB_SMOKE_STEP();
     {
         necwb::model::AntennaModel yagi;
         yagi.addWire({1, {-0.5, -0.52, 0.0}, {-0.5, 0.52, 0.0}, 11, 0.003, 1});
@@ -6866,6 +6905,7 @@ auto main(int argc, char* argv[]) -> int
     attachmentImage.fill(Qt::transparent); QPainter attachmentPainter(&attachmentImage);
     attachment2D.render(&attachmentPainter); attachment3D.render(&attachmentPainter);
     attachmentPainter.end();
+    NECWB_SMOKE_STEP();
     {
         auto sharedSetup = attachmentSetup;
         sharedSetup.loads.push_back({4, 1, 3, 3, 300.0, 0.0, 0.0, 9});
@@ -6886,6 +6926,7 @@ auto main(int argc, char* argv[]) -> int
     // explains what shares its segment; a cell edit changes only its own field, keeping the
     // others exact and an SY symbol as written; a value that is not a number is held back.
     auto cardFormValid = false;
+    NECWB_SMOKE_STEP();
     {
         necwb::model::ModelSetup sharedSetup;
         sharedSetup.excitations.push_back({0, 1, 6, 1.0, 0.0, 3});
