@@ -94,8 +94,12 @@ jobs:
       # Same counts of frequencies, segments and pattern points; impedances and currents
       # within 1e-4 relative (with floors near zero), gains within 0.02 dB, phases mod 360°.
       - name: Compare parsed results
+        env:
+          CI_STEP_NOTICE: '1'
         run: >-
           packaging/nec2c/ci-step.sh "Windows vs Linux"
           build/necwb_nec2c_check compare --tolerance linux/decks linux/out-linux windows
       - name: Compare text, for the record
-        run: build/necwb_nec2c_check compare --strict linux/decks linux/out-linux windows || true
+        env:
+          CI_STEP_NOTICE: '1'
+        run: packaging/nec2c/ci-step.sh "Windows vs Linux, text" build/necwb_nec2c_check compare --strict linux/decks linux/out-linux windows || true

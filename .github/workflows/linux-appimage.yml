@@ -90,7 +90,7 @@ jobs:
           test -x squashfs-root/usr/bin/nec2c
           test -f squashfs-root/usr/bin/nec2c-build.txt
           grep -q '^Exec=nec-workbench' squashfs-root/*.desktop
-          HOME="$check/home" XDG_CONFIG_HOME="$check/home/.config" "$GITHUB_WORKSPACE/packaging/nec2c/ci-step.sh" \
+          HOME="$check/home" XDG_CONFIG_HOME="$check/home/.config" CI_STEP_NOTICE=1 "$GITHUB_WORKSPACE/packaging/nec2c/ci-step.sh" \
             "Linux package check" ./NEC-Workbench-Linux-x86_64.AppImage --package-check
           test ! -e "$check/home/.config/NEC Workbench"
 
@@ -102,7 +102,7 @@ jobs:
           $step "decks" build/necwb_nec2c_check decks packaging/nec2c/skip-list.txt decks examples packaging/nec2c/decks
           $step "packaged run" packaging/nec2c/run-decks.sh "$RUNNER_TEMP/package check/squashfs-root/usr/bin/nec2c" decks out-packaged
           $step "reference run" packaging/nec2c/run-decks.sh nec2c-reference/nec2c decks out-reference
-          $step "packaged vs reference" build/necwb_nec2c_check compare --strict decks out-packaged out-reference
+          CI_STEP_NOTICE=1 $step "packaged vs reference" build/necwb_nec2c_check compare --strict decks out-packaged out-reference
 
       - name: Pack nec2c source
         run: packaging/nec2c/source-archive.sh dist nec2c-src

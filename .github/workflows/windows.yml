@@ -94,6 +94,7 @@ jobs:
             -NoNewWindow -RedirectStandardOutput $report
           $text = Get-Content -Raw $report
           Write-Output $text
+          if ($run.ExitCode -eq 0) { Write-Output ("::notice title=Windows package check::" + ($text -replace "`r?`n", "%0A")) }
           if ($run.ExitCode -ne 0) {
             Write-Output ("::error title=Windows package check::" + ($text -replace "`r?`n", "%0A"))
             throw "package check failed ($($run.ExitCode))"
