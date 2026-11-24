@@ -99,7 +99,10 @@ jobs:
         run: >-
           packaging/nec2c/ci-step.sh "Windows vs Linux"
           build/necwb_nec2c_check compare --tolerance linux/decks linux/out-linux windows
+      # Printed digits can differ in the last place where the values are near zero (pattern
+      # nulls); the parsed comparison above is the check, this is a record.
       - name: Compare text, for the record
-        env:
-          CI_STEP_NOTICE: '1'
-        run: packaging/nec2c/ci-step.sh "Windows vs Linux, text" build/necwb_nec2c_check compare --strict linux/decks linux/out-linux windows || true
+        run: |
+          build/necwb_nec2c_check compare --strict linux/decks linux/out-linux windows > text.txt || true
+          cat text.txt
+          echo "::notice title=Windows vs Linux, text::$(grep -E '^(same|DIFFERENT) |decks match' text.txt | sed -e ':a;N;$!ba;s/\n/%0A/g')"
