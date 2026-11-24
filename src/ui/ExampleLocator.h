@@ -11,8 +11,7 @@ namespace necwb::ui {
 [[nodiscard]] auto exampleFolder(const QString& applicationDirectory = {}) -> QString;
 // Inside what was shipped: Workbench's folder or the mounted AppImage, or the install prefix
 // when Workbench is in its bin/ (bin/ beside share/nec-workbench/examples). Wider than
-// isInsideApplication, which keeps chosen engine paths unsaved and must not take in a /usr
-// prefix.
+// isInsideApplication, which must not take in a whole /usr prefix.
 [[nodiscard]] auto isInsideInstallation(const QString& path, const QString& applicationDirectory = {})
     -> bool;
 
