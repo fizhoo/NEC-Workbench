@@ -2,6 +2,11 @@
 
 #include "analysis/NecOutputParser.h"
 #include "analysis/SolverCommand.h"
+#include "analysis/SolverInput.h"
+#include "nec/NecModelChecker.h"
+#include "nec/NecParser.h"
+#include "nec/NecSymbolResolver.h"
+#include "ui/ExampleLocator.h"
 #include "ui/SolverLocator.h"
 #include "ui/SolverSettings.h"
 #include "ui/analysis/SolverProcessRunner.h"
@@ -17,6 +22,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <string>
 
 namespace necwb::ui {
 namespace {
@@ -29,6 +35,37 @@ constexpr auto QuickDeck = "CM package check\nCE\nGW 1 21 -5 0 9 5 0 9 0.001\nGE
 constexpr auto LongDeck = "CM package check: long run\nCE\nGW 1 1201 -20 0 9 20 0 9 0.001\nGE 0\n"
                           "GN 2 0 0 0 13 0.005\nEX 0 1 601 0 1 0\nFR 0 200 0 0 3 0.05\nXQ\nEN\n";
 
+auto describeImpedance(const analysis::FeedpointResult& feedpoint) -> QString
+{
+    const auto z = feedpoint.impedance;
+    return QStringLiteral("Z = %1 %2 j%3 Ω at %4 MHz").arg(z.real(), 0, 'f', 3)
+        .arg(z.imag() < 0 ? QLatin1Char('-') : QLatin1Char('+')).arg(std::abs(z.imag()), 0, 'f', 3)
+        .arg(feedpoint.frequencyMHz, 0, 'g', 6);
+}
+
+// The deck Workbench sends nec2c for a model file: symbols resolved, checked, normalized.
+auto solverDeck(const QString& path, QString& problem) -> QByteArray
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        problem = QStringLiteral("cannot open %1").arg(path);
+        return {};
+    }
+    const auto resolution = nec::NecSymbolResolver{}.resolve(file.readAll().toStdString());
+    if (!resolution.ok()) {
+        problem = QStringLiteral("%1 does not resolve").arg(path);
+        return {};
+    }
+    const auto check = nec::NecModelChecker{}.check(nec::NecParser{}.parse(resolution.generatedDeck),
+        {nec::compatibilityProfileForBackend("nec2")});
+    if (check.errorCount() != 0) {
+        problem = QStringLiteral("%1 has model check errors").arg(path);
+        return {};
+    }
+    return QByteArray::fromStdString(analysis::formatSolverInputForBackend(
+        analysis::normalizeSolverDeck(resolution.generatedDeck), "nec2"));
+}
+
 struct Run {
     SolverProcessResult result;
     double stoppedAfterSeconds{-1.0};
@@ -37,7 +74,7 @@ struct Run {
 
 // Runs nec2c on the deck in a folder whose path has a space, stopping it after stopAfter
 // milliseconds when that is given.
-auto solve(const QString& executable, const char* deck, int timeoutSeconds, int stopAfter = -1) -> Run
+auto solve(const QString& executable, const QByteArray& deck, int timeoutSeconds, int stopAfter = -1) -> Run
 {
     Run run;
     QTemporaryDir root;
@@ -106,12 +143,30 @@ auto runPackageCheck() -> int
     const auto solved = quick.result.status == SolverProcessStatus::Succeeded
         && !result.feedpoints.empty() && std::isfinite(result.feedpoints.front().impedance.real());
     report(solved, QStringLiteral("solve"), solved
-        ? QStringLiteral("Z = %1 %2 j%3 Ω at 14.2 MHz, %4 pattern points")
-              .arg(result.feedpoints.front().impedance.real(), 0, 'f', 3)
-              .arg(result.feedpoints.front().impedance.imag() < 0 ? QLatin1Char('-') : QLatin1Char('+'))
-              .arg(std::abs(result.feedpoints.front().impedance.imag()), 0, 'f', 3)
+        ? QStringLiteral("%1, %2 pattern points").arg(describeImpedance(result.feedpoints.front()))
               .arg(result.radiation.size())
         : quick.result.detail);
+
+    // The shipped examples, where Open Example… looks, inside the package or install prefix
+    // rather than a source tree's ./examples.
+    const auto examples = exampleFolder();
+    const auto exampleFiles = QDir(examples).entryList({QStringLiteral("*.nec")}, QDir::Files);
+    const auto examplesShipped = !examples.isEmpty() && isInsideInstallation(examples)
+        && !exampleFiles.isEmpty();
+    report(examplesShipped, QStringLiteral("examples found"), examples.isEmpty()
+        ? QStringLiteral("no examples folder")
+        : QStringLiteral("%1 examples in %2").arg(exampleFiles.size()).arg(QDir::toNativeSeparators(examples)));
+    QString problem;
+    const auto yagiDeck = examplesShipped
+        ? solverDeck(QDir(examples).filePath(QStringLiteral("2m-3-element-yagi.nec")), problem) : QByteArray{};
+    const auto yagi = yagiDeck.isEmpty() ? Run{} : solve(located.path, yagiDeck, 300);
+    const auto yagiResult = analysis::NecOutputParser{}.parse(yagi.output.toStdString());
+    const auto yagiSolved = yagi.result.status == SolverProcessStatus::Succeeded
+        && yagiResult.feedpoints.size() == 41 && std::isfinite(yagiResult.feedpoints.front().impedance.real());
+    report(yagiSolved, QStringLiteral("example 2m-3-element-yagi.nec"), yagiSolved
+        ? QStringLiteral("%1 frequencies, %2, %3 pattern points").arg(yagiResult.feedpoints.size())
+              .arg(describeImpedance(yagiResult.feedpoints.front())).arg(yagiResult.radiation.size())
+        : !problem.isEmpty() ? problem : !examplesShipped ? QStringLiteral("no examples") : yagi.result.detail);
 
     // Stop and the timeout end the process themselves: terminate, then kill.
     const auto stop = solve(located.path, LongDeck, 600, 1500);

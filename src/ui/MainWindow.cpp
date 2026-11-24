@@ -4,6 +4,7 @@
 #include "ui/BottomPanel.h"
 #include "ui/CenterViewHeader.h"
 #include "ui/SettingsCleanup.h"
+#include "ui/ExampleLocator.h"
 #include "ui/SolverLocator.h"
 #include "ui/SolverSettings.h"
 #include "ui/WorkbenchLayout.h"
@@ -1647,17 +1648,8 @@ void MainWindow::openFileAtPath(const QString& path)
 
 void MainWindow::openExample()
 {
-    QString examplesDirectory;
-    for (const auto& candidate : {
-             QDir::current().absoluteFilePath(QStringLiteral("examples")),
-             QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../share/nec-workbench/examples"))}) {
-        if (QDir(candidate).exists()) {
-            examplesDirectory = candidate;
-            break;
-        }
-    }
     const auto path = QFileDialog::getOpenFileName(this, tr("Open Example NEC Model"),
-        examplesDirectory, tr("NEC files (*.nec);;All files (*)"));
+        exampleFolder(), tr("NEC files (*.nec);;All files (*)"));
     if (!path.isEmpty()) openFileAtPath(path);
 }
 

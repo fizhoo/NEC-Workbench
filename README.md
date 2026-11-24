@@ -41,7 +41,8 @@ Most individual controls also provide tooltips in the application.
 
 ## Examples
 
-The [examples](examples) folder contains ready-to-run decks, including:
+The [examples](examples) folder contains ready-to-run decks, also shipped in both packages
+(**Open Example…** starts there), including:
 
 - `2m-3-element-yagi.nec` — free-space Yagi with a direct 50 Ω feed; directional
   results, F/B optimization, and element current phase
@@ -95,8 +96,9 @@ and manual dispatch. Download artifacts from a successful run on the repository'
 
 Download, unpack (Windows ZIP) or make executable (Linux AppImage), and run: there is
 nothing else to install. Each package contains the Qt runtime and `nec2c` 1.3.3,
-built from the pinned commit in `packaging/nec2c`, beside the Workbench executable,
-with its license notices in `THIRD_PARTY_LICENSES.txt`. Each release also carries the
+built from the pinned commit in `packaging/nec2c` (in `solvers/` beside
+`nec-workbench.exe` in the Windows ZIP), with its license notices in
+`THIRD_PARTY_LICENSES.txt`, and the examples. Each release also carries the
 corresponding nec2c source. To use another engine, choose **Configure…** in the engine
 list beside Run.
 

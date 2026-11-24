@@ -6,8 +6,9 @@
 
 namespace necwb::ui {
 
-// Where an engine's executable is: the path the user chose, else a copy shipped beside
-// Workbench (or in solvers/ beside it), else the system PATH. A chosen path that no longer
+// Where an engine's executable is: the path the user chose, else a copy shipped in solvers/
+// beside Workbench (the home of bundled engines) or beside Workbench itself (the AppImage's
+// usr/bin), else the system PATH. A chosen path that no longer
 // exists stays chosen and is reported, never swapped for another engine's.
 struct LocatedSolver {
     enum class Origin { Chosen, Bundled, Path, NotFound };
@@ -30,9 +31,9 @@ struct LocatedSolver {
 [[nodiscard]] auto isInsideApplication(const QString& path, const QString& applicationDirectory = {})
     -> bool;
 
-// "nec2c (bundled)" when the bundled copy is the one in use, else the engine's name.
 // The name users see for an engine id; ids stay internal.
 [[nodiscard]] auto solverName(const QString& backendId) -> QString;
+// "nec2c (bundled)" when the bundled copy is the one in use, else the engine's name.
 [[nodiscard]] auto solverLabel(const QString& backendId, const LocatedSolver& located) -> QString;
 // "nec2c 1.3.3 (55be1e0) · bundled · /path", for the engine list's tooltip and the Run log.
 [[nodiscard]] auto solverDescription(const QString& backendId, const LocatedSolver& located) -> QString;

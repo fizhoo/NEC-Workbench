@@ -3,6 +3,7 @@
 #include "ui/DisplayFormat.h"
 #include "ui/MainWindow.h"
 #include "ui/analysis/SweepPlotsView.h"
+#include "ui/ExampleLocator.h"
 #include "ui/WorkbenchLayout.h"
 #include "ui/WorkbenchToolBar.h"
 #include "ui/results/ResultFullView.h"
@@ -247,9 +248,9 @@ auto main(int argc, char* argv[]) -> int
     if (!backendChoicesValid || !backendChangeRestoresExecutable
         || !backendReturnRestoresExecutable || !switchingSavesNothing || !typedPathChosen)
         return NECWB_SMOKE_FAILURE("solver backend selection");
-    // Finding an engine: the path the user chose, even one that has gone; else the copy
-    // beside Workbench or in solvers/; else the PATH. Only a chosen path outside Workbench's
-    // folder is saved, and a bundled build's version comes from its metadata.
+    // Finding an engine: the path the user chose, even one that has gone; else the copy in
+    // solvers/ beside Workbench, or beside it; else the PATH. Only a chosen path outside
+    // Workbench's folder is saved, and a bundled build's version comes from its metadata.
     NECWB_SMOKE_STEP();
     {
         using necwb::ui::LocatedSolver;
@@ -272,17 +273,17 @@ auto main(int argc, char* argv[]) -> int
         makeExecutable(elsewhere.filePath(QStringLiteral("nec2c") + ExecutableSuffix),
             "#!/bin/sh\n[ \"$1\" = -v ] && echo 'nec2c 9.9 (on path)'\n");
         const auto onPath = located({}).origin == LocatedSolver::Origin::Path;
-        makeExecutable(app + QStringLiteral("/solvers/nec2c") + ExecutableSuffix, "#!/bin/sh\n");
-        const auto inSolvers = located({}).origin == LocatedSolver::Origin::Bundled
-            && QDir::fromNativeSeparators(located({}).path).endsWith(QStringLiteral("solvers/nec2c") + ExecutableSuffix);
         makeExecutable(app + QStringLiteral("/nec2c") + ExecutableSuffix, "#!/bin/sh\n");
-        QFile metadata(app + QStringLiteral("/nec2c-build.txt"));
+        const auto beside = located({}).origin == LocatedSolver::Origin::Bundled
+            && located({}).path == QDir::toNativeSeparators(app + QStringLiteral("/nec2c") + ExecutableSuffix);
+        makeExecutable(app + QStringLiteral("/solvers/nec2c") + ExecutableSuffix, "#!/bin/sh\n");
+        QFile metadata(app + QStringLiteral("/solvers/nec2c-build.txt"));
         metadata.open(QIODevice::WriteOnly);
         metadata.write("name=nec2c\nversion=1.3.3\ncommit=55be1e0e3fe5ee9dad4ce6050711450d19c562fd\n");
         metadata.close();
         const auto bundled = located({});
-        const auto besideFirst = bundled.origin == LocatedSolver::Origin::Bundled
-            && bundled.path == QDir::toNativeSeparators(app + QStringLiteral("/nec2c") + ExecutableSuffix)
+        const auto solversFirst = bundled.origin == LocatedSolver::Origin::Bundled
+            && bundled.path == QDir::toNativeSeparators(app + QStringLiteral("/solvers/nec2c") + ExecutableSuffix)
             && necwb::ui::solverLabel(QStringLiteral("nec2"), bundled) == QStringLiteral("nec2c (bundled)")
             && necwb::ui::solverDescription(QStringLiteral("nec2"), bundled)
                 .startsWith(QStringLiteral("nec2c 1.3.3 (55be1e0) · bundled · "));
@@ -294,6 +295,21 @@ auto main(int argc, char* argv[]) -> int
             && necwb::ui::solverDescription(QStringLiteral("nec2"), gone).contains(QStringLiteral("no longer exists"))
             && necwb::ui::solverName(QStringLiteral("nec2")) == QStringLiteral("nec2c")
             && necwb::ui::solverName(QStringLiteral("opennec")) == QStringLiteral("OpenNEC");
+        // Examples: examples/ beside Workbench, else ../share/nec-workbench/examples.
+        const auto bin = app + QStringLiteral("/bin");
+        QDir().mkpath(bin);
+        QDir().mkpath(app + QStringLiteral("/share/nec-workbench/examples"));
+        const auto sharedExamples = necwb::ui::exampleFolder(bin)
+            == QDir::cleanPath(app + QStringLiteral("/share/nec-workbench/examples"));
+        // A plain prefix install (bin/ and share/) counts as shipped; a folder beside the
+        // prefix, and the prefix of an executable not in bin/, do not.
+        const auto prefixInstall = necwb::ui::isInsideInstallation(necwb::ui::exampleFolder(bin), bin)
+            && !necwb::ui::isInsideApplication(necwb::ui::exampleFolder(bin), bin)
+            && !necwb::ui::isInsideInstallation(app + QStringLiteral("-other/examples"), bin)
+            && !necwb::ui::isInsideInstallation(app + QStringLiteral("/share/nec-workbench/examples"),
+                app + QStringLiteral("/lib"));
+        QDir().mkpath(bin + QStringLiteral("/examples"));
+        const auto examplesBeside = necwb::ui::exampleFolder(bin) == QDir::cleanPath(bin + QStringLiteral("/examples"));
         // A user's nec2c is asked its version in the background; another program never is.
         // (On Windows the stand-in is not an executable, so it is never started and its version
         // is unknown.)
@@ -336,11 +352,12 @@ auto main(int argc, char* argv[]) -> int
             && reloaded.front().backend == QStringLiteral("nec2")
             && necwb::ui::runContext(record).endsWith(QStringLiteral("Backend: nec2c · nec2c 1.3.3 (55be1e0)"));
         qputenv("PATH", savedPath);
-        if (!nothing || !onPath || !inSolvers || !besideFirst || !chosenFirst || !probed || !notAsked
-            || !refusesOwnFolder || !refusesAppImage || !savesChosen || !runRecordsEngine) {
-            qWarning() << "solver lookup" << nothing << onPath << inSolvers << besideFirst << chosenFirst
+        if (!nothing || !onPath || !beside || !solversFirst || !chosenFirst || !probed || !notAsked
+            || !refusesOwnFolder || !refusesAppImage || !savesChosen || !runRecordsEngine
+            || !sharedExamples || !prefixInstall || !examplesBeside) {
+            qWarning() << "solver lookup" << nothing << onPath << beside << solversFirst << chosenFirst
                        << probed << notAsked << refusesOwnFolder << refusesAppImage << savesChosen
-                       << runRecordsEngine << versions.version(QStringLiteral("nec2"), userNec2c);
+                       << runRecordsEngine << sharedExamples << prefixInstall << examplesBeside << versions.version(QStringLiteral("nec2"), userNec2c);
             return NECWB_SMOKE_FAILURE("solver lookup and saved paths");
         }
     }

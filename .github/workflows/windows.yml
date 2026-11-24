@@ -68,28 +68,45 @@ jobs:
             exit 1
           }
 
-      # Assembled by hand: Workbench, its Qt runtime, and nec2c.exe beside it.
+      # Assembled by hand: Workbench and its Qt runtime, which must stay beside it, nec2c in
+      # solvers/, and the installed examples in examples/.
       - name: Package application
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force package | Out-Null
+          cmake --install build --config Release --prefix stage
+          New-Item -ItemType Directory -Force package/solvers, package/examples | Out-Null
           Copy-Item build/Release/nec-workbench.exe package/
           Copy-Item LICENSE package/LICENSE.txt
-          Copy-Item nec2c-bin/nec2c.exe package/
-          Copy-Item nec2c-bin/nec2c-build.txt package/
+          Copy-Item README.md package/
           Copy-Item nec2c-bin/THIRD_PARTY_LICENSES.txt package/
+          Copy-Item nec2c-bin/nec2c.exe, nec2c-bin/nec2c-build.txt package/solvers/
+          Copy-Item stage/share/nec-workbench/examples/*.nec package/examples/
           windeployqt --release --compiler-runtime package/nec-workbench.exe
           Compress-Archive -Path package/* -DestinationPath NEC-Workbench-Windows-x64.zip
 
       # The ZIP as a user gets it: unpacked into a fresh folder whose path has a space, fresh
-      # settings, no nec2c on the PATH. Workbench must find the bundled nec2c.exe, read its
-      # version, solve, and stop a run with Stop and with a timeout.
+      # settings, no nec2c on the PATH. Workbench must find nec2c.exe in solvers/, read its
+      # version, solve, find the examples (exactly the repository's) and solve one, and stop
+      # a run with Stop and with a timeout.
       - name: Check package
         shell: pwsh
         run: |
           if (Get-Command nec2c -ErrorAction SilentlyContinue) { throw "nec2c is on the PATH" }
           $check = Join-Path $env:RUNNER_TEMP "package check"
           Expand-Archive NEC-Workbench-Windows-x64.zip -DestinationPath $check
+          if (Test-Path (Join-Path $check "nec2c.exe")) { throw "nec2c.exe is at the top level, not in solvers/" }
+          foreach ($file in "solvers/nec2c.exe", "solvers/nec2c-build.txt", "README.md", "LICENSE.txt", "THIRD_PARTY_LICENSES.txt") {
+            if (-not (Test-Path (Join-Path $check $file))) { throw "$file is missing" }
+          }
+          $tracked = (git -c core.quotePath=off ls-files "examples/*.nec" | ForEach-Object { Split-Path -Leaf $_ } | Sort-Object) -join "|"
+          $shipped = (Get-ChildItem (Join-Path $check "examples") -File | ForEach-Object Name | Sort-Object) -join "|"
+          if ($tracked -ne $shipped) { throw "examples/ holds $shipped, not $tracked" }
+          $listing = @(
+            "top level: " + ((Get-ChildItem $check | ForEach-Object { $_.Name + $(if ($_.PSIsContainer) { "/" } else { "" }) }) -join ", ")
+            "solvers/: " + ((Get-ChildItem (Join-Path $check "solvers") | ForEach-Object Name) -join ", ")
+            "examples/: " + ((Get-ChildItem (Join-Path $check "examples") | ForEach-Object Name) -join ", ")
+          ) -join "%0A"
+          Write-Output ("::notice title=Windows ZIP contents::" + $listing)
           $report = Join-Path $env:RUNNER_TEMP "package-check.txt"
           $run = Start-Process -FilePath (Join-Path $check "nec-workbench.exe") `
             -ArgumentList "--package-check" -WorkingDirectory $check -Wait -PassThru `
