@@ -13,7 +13,7 @@ jobs:
   build-windows:
     name: Windows x64
     runs-on: windows-2025-vs2026
-    timeout-minutes: 40
+    timeout-minutes: 50
 
     steps:
       - name: Check out source
@@ -59,7 +59,7 @@ jobs:
       - name: Test
         shell: pwsh
         run: |
-          $out = ctest --test-dir build -C Release --output-on-failure 2>&1
+          $out = ctest --test-dir build -C Release --output-on-failure --timeout 300 2>&1
           $out
           if ($LASTEXITCODE -ne 0) {
             Write-Output ("::error title=Windows tests::" + (($out | Select-Object -Last 60) -join "%0A"))
