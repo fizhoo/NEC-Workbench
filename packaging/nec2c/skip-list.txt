@@ -1,4 +1,3 @@
 # Decks the nec2c result checks leave out, each with the reason it was reviewed and dropped.
 # One file name per line, then # and the reason. A listed deck that runs fine fails the check,
 # so this list cannot go stale.
-folded_dipole_xnec2.nec  # uses xnec2's built-in FT symbol, which no SY card defines; Workbench reports it as undefined

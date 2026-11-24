@@ -30,19 +30,13 @@ jobs:
       - name: Build bundled nec2c
         shell: msys2 {0}
         run: |
-          packaging/nec2c/build.sh nec2c-bin nec2c-src
-          packaging/nec2c/check-imports.sh nec2c-bin/nec2c.exe
-          packaging/nec2c/source-archive.sh dist nec2c-src
+          step=packaging/nec2c/ci-step.sh
+          $step "nec2c build" packaging/nec2c/build.sh nec2c-bin nec2c-src
+          $step "nec2c imports" packaging/nec2c/check-imports.sh nec2c-bin/nec2c.exe
+          $step "nec2c source" packaging/nec2c/source-archive.sh dist nec2c-src
           # The runtime pieces linked into nec2c.exe bring their own notices.
           cp THIRD_PARTY_LICENSES.txt nec2c-bin/THIRD_PARTY_LICENSES.txt
-          notices=$(find /mingw64/share/licenses/crt /mingw64/share/licenses/gcc-libs \
-            /mingw64/share/licenses/winpthreads -type f 2> /dev/null | sort)
-          test -n "$notices"
-          for notice in $notices; do
-            printf '\n\n%s\n%s\n\n' "MinGW-w64 runtime notice: ${notice#/mingw64/share/licenses/}" \
-              "----------------------------------------------------------------" >> nec2c-bin/THIRD_PARTY_LICENSES.txt
-            cat "$notice" >> nec2c-bin/THIRD_PARTY_LICENSES.txt
-          done
+          $step "runtime notices" packaging/nec2c/runtime-notices.sh nec2c-bin/THIRD_PARTY_LICENSES.txt
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -91,8 +85,12 @@ jobs:
           $run = Start-Process -FilePath (Join-Path $check "nec-workbench.exe") `
             -ArgumentList "--package-check" -WorkingDirectory $check -Wait -PassThru `
             -NoNewWindow -RedirectStandardOutput $report
-          Get-Content $report
-          if ($run.ExitCode -ne 0) { throw "package check failed ($($run.ExitCode))" }
+          $text = Get-Content -Raw $report
+          Write-Output $text
+          if ($run.ExitCode -ne 0) {
+            Write-Output ("::error title=Windows package check::" + ($text -replace "`r?`n", "%0A"))
+            throw "package check failed ($($run.ExitCode))"
+          }
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v6

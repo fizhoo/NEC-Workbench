@@ -29,8 +29,9 @@ jobs:
           cmake --build build --target necwb_nec2c_check
       - name: Write decks and run them
         run: |
-          build/necwb_nec2c_check decks packaging/nec2c/skip-list.txt decks examples packaging/nec2c/decks
-          packaging/nec2c/run-decks.sh nec2c-bin/nec2c decks out-linux
+          step=packaging/nec2c/ci-step.sh
+          $step "decks" build/necwb_nec2c_check decks packaging/nec2c/skip-list.txt decks examples packaging/nec2c/decks
+          $step "Linux run" packaging/nec2c/run-decks.sh nec2c-bin/nec2c decks out-linux
       - uses: actions/upload-artifact@v6
         with:
           name: nec2c-linux
@@ -59,9 +60,10 @@ jobs:
       - name: Build nec2c.exe and run the decks
         shell: msys2 {0}
         run: |
-          packaging/nec2c/build.sh nec2c-bin nec2c-src
-          packaging/nec2c/check-imports.sh nec2c-bin/nec2c.exe
-          packaging/nec2c/run-decks.sh nec2c-bin/nec2c.exe linux/decks out-windows
+          step=packaging/nec2c/ci-step.sh
+          $step "nec2c build" packaging/nec2c/build.sh nec2c-bin nec2c-src
+          $step "nec2c imports" packaging/nec2c/check-imports.sh nec2c-bin/nec2c.exe
+          $step "Windows run" packaging/nec2c/run-decks.sh nec2c-bin/nec2c.exe linux/decks out-windows
       - uses: actions/upload-artifact@v6
         with:
           name: nec2c-windows
@@ -92,6 +94,8 @@ jobs:
       # Same counts of frequencies, segments and pattern points; impedances and currents
       # within 1e-4 relative (with floors near zero), gains within 0.02 dB, phases mod 360°.
       - name: Compare parsed results
-        run: build/necwb_nec2c_check compare --tolerance linux/decks linux/out-linux windows
+        run: >-
+          packaging/nec2c/ci-step.sh "Windows vs Linux"
+          build/necwb_nec2c_check compare --tolerance linux/decks linux/out-linux windows
       - name: Compare text, for the record
         run: build/necwb_nec2c_check compare --strict linux/decks linux/out-linux windows || true
