@@ -122,6 +122,13 @@ auto smokeFailure(const char* checkpoint, int line) -> int
     return EXIT_FAILURE;
 }
 
+// An executable's file name as the PATH and the bundled lookup find it.
+#ifdef Q_OS_WIN
+const auto ExecutableSuffix = QStringLiteral(".exe");
+#else
+const auto ExecutableSuffix = QString{};
+#endif
+
 auto topLevelDialog(const QString& objectName) -> QDialog*
 {
     for (auto* widget : QApplication::topLevelWidgets()) {
@@ -250,41 +257,43 @@ auto main(int argc, char* argv[]) -> int
             return necwb::ui::locateSolver(QStringLiteral("nec2"), chosen, app);
         };
         const auto nothing = located({}).origin == LocatedSolver::Origin::NotFound;
-        makeExecutable(elsewhere.filePath(QStringLiteral("nec2c")),
+        makeExecutable(elsewhere.filePath(QStringLiteral("nec2c") + ExecutableSuffix),
             "#!/bin/sh\n[ \"$1\" = -v ] && echo 'nec2c 9.9 (on path)'\n");
         const auto onPath = located({}).origin == LocatedSolver::Origin::Path;
-        makeExecutable(app + QStringLiteral("/solvers/nec2c"), "#!/bin/sh\n");
+        makeExecutable(app + QStringLiteral("/solvers/nec2c") + ExecutableSuffix, "#!/bin/sh\n");
         const auto inSolvers = located({}).origin == LocatedSolver::Origin::Bundled
-            && located({}).path.endsWith(QStringLiteral("solvers/nec2c"));
-        makeExecutable(app + QStringLiteral("/nec2c"), "#!/bin/sh\n");
+            && QDir::fromNativeSeparators(located({}).path).endsWith(QStringLiteral("solvers/nec2c") + ExecutableSuffix);
+        makeExecutable(app + QStringLiteral("/nec2c") + ExecutableSuffix, "#!/bin/sh\n");
         QFile metadata(app + QStringLiteral("/nec2c-build.txt"));
         metadata.open(QIODevice::WriteOnly);
         metadata.write("name=nec2c\nversion=1.3.3\ncommit=55be1e0e3fe5ee9dad4ce6050711450d19c562fd\n");
         metadata.close();
         const auto bundled = located({});
         const auto besideFirst = bundled.origin == LocatedSolver::Origin::Bundled
-            && bundled.path == QDir::toNativeSeparators(app + QStringLiteral("/nec2c"))
+            && bundled.path == QDir::toNativeSeparators(app + QStringLiteral("/nec2c") + ExecutableSuffix)
             && necwb::ui::solverLabel(QStringLiteral("nec2"), bundled) == QStringLiteral("nec2c (bundled)")
             && necwb::ui::solverDescription(QStringLiteral("nec2"), bundled)
                 .startsWith(QStringLiteral("nec2c 1.3.3 (55be1e0) · bundled · "));
-        const auto chosen = located(elsewhere.filePath(QStringLiteral("nec2c")));
+        const auto chosen = located(elsewhere.filePath(QStringLiteral("nec2c") + ExecutableSuffix));
         const auto gone = located(QStringLiteral("/gone/nec2c"));
         const auto chosenFirst = chosen.origin == LocatedSolver::Origin::Chosen && !chosen.missing()
             && necwb::ui::solverLabel(QStringLiteral("nec2"), chosen) == QStringLiteral("NEC-2 / nec2c")
             && gone.origin == LocatedSolver::Origin::Chosen && gone.missing()
             && necwb::ui::solverDescription(QStringLiteral("nec2"), gone).contains(QStringLiteral("no longer exists"));
         // A user's nec2c is asked its version in the background; another program never is.
+        // (On Windows the stand-in cannot run, so its version is unknown, without waiting.)
         auto& versions = necwb::ui::SolverVersions::instance();
-        const auto userNec2c = elsewhere.filePath(QStringLiteral("nec2c"));
+        const auto userNec2c = elsewhere.filePath(QStringLiteral("nec2c") + ExecutableSuffix);
         const auto asking = versions.version(QStringLiteral("nec2"), userNec2c).isEmpty();
         QElapsedTimer probing;
         probing.start();
         while (versions.version(QStringLiteral("nec2"), userNec2c).isEmpty() && probing.elapsed() < 3000)
             QTest::qWait(20);
         const auto probed = asking && versions.version(QStringLiteral("nec2"), userNec2c)
-            == QStringLiteral("nec2c 9.9 (on path)");
-        makeExecutable(elsewhere.filePath(QStringLiteral("other")), "#!/bin/sh\nexit 1\n");
-        const auto notAsked = versions.version(QStringLiteral("nec2"), elsewhere.filePath(QStringLiteral("other")))
+            == (ExecutableSuffix.isEmpty() ? QStringLiteral("nec2c 9.9 (on path)") : QStringLiteral("version unknown"));
+        makeExecutable(elsewhere.filePath(QStringLiteral("other") + ExecutableSuffix), "#!/bin/sh\nexit 1\n");
+        const auto notAsked = versions.version(QStringLiteral("nec2"),
+            elsewhere.filePath(QStringLiteral("other") + ExecutableSuffix))
             == QStringLiteral("version unknown");
         // Saving: a path inside Workbench's own folder or the mounted AppImage is refused.
         QSettings settings;
@@ -425,7 +434,7 @@ auto main(int argc, char* argv[]) -> int
         for (const auto& key : keys) saved.push_back(settings.value(key));
         const auto savedPath = qgetenv("PATH");
         QTemporaryDir bin;
-        QFile fake(bin.filePath(QStringLiteral("nec2c")));
+        QFile fake(bin.filePath(QStringLiteral("nec2c") + ExecutableSuffix));
         fake.open(QIODevice::WriteOnly);
         fake.write("#!/bin/sh\n");
         fake.close();
@@ -440,7 +449,7 @@ auto main(int argc, char* argv[]) -> int
         settings.setValue(QStringLiteral("analysis/executables/opennec"), QStringLiteral("/opt/onec"));
         settings.setValue(QStringLiteral("analysis/executables/nec2dxs"), QStringLiteral("C:/4nec2/Nec2dXS1k5.exe"));
         // The same file by another spelling counts as the one on the PATH.
-        migrate(bin.path() + QStringLiteral("/./nec2c"));
+        migrate(bin.path() + QStringLiteral("/./nec2c") + ExecutableSuffix);
         const auto foundDropped = !settings.contains(QStringLiteral("analysis/executables/nec2"))
             && settings.value(QStringLiteral("analysis/executables/opennec")).toString() == QStringLiteral("/opt/onec")
             && settings.value(QStringLiteral("analysis/executables/nec2dxs")).toString()

@@ -57,7 +57,14 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Test
-        run: ctest --test-dir build -C Release --output-on-failure
+        shell: pwsh
+        run: |
+          $out = ctest --test-dir build -C Release --output-on-failure 2>&1
+          $out
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output ("::error title=Windows tests::" + (($out | Select-Object -Last 60) -join "%0A"))
+            exit 1
+          }
 
       # Assembled by hand: Workbench, its Qt runtime, and nec2c.exe beside it.
       - name: Package application
