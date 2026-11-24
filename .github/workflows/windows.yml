@@ -47,6 +47,19 @@ jobs:
           arch: win64_msvc2022_64
           cache: true
 
+      # The exact Qt source, for the attributions and license texts of the deployed Qt.
+      - name: Qt version
+        shell: pwsh
+        run: echo "QT_VERSION=$(& (Join-Path $env:QT_ROOT_DIR 'bin/qmake.exe') -query QT_VERSION)" >> $env:GITHUB_ENV
+      - name: Cache Qt source
+        uses: actions/cache@v4
+        with:
+          path: qt-src
+          key: qt-src-${{ env.QT_VERSION }}-qtbase-qtsvg
+      - name: Download Qt source
+        shell: bash
+        run: packaging/qt-sources.sh "$QT_VERSION" qt-src qtbase qtsvg
+
       - name: Configure
         run: >-
           cmake -S . -B build
@@ -72,7 +85,9 @@ jobs:
           }
 
       # Assembled by hand: Workbench and its Qt runtime, which must stay beside it, nec2c in
-      # solvers/, and the installed examples in examples/.
+      # solvers/, and the installed examples in examples/. Workbench draws with QPainter, so
+      # neither the software OpenGL (opengl32sw.dll, Mesa) nor the Direct3D shader compiler
+      # is deployed. The license notices get a Qt section generated from the deployed files.
       - name: Package application
         shell: pwsh
         run: |
@@ -84,13 +99,20 @@ jobs:
           Copy-Item nec2c-bin/THIRD_PARTY_LICENSES.txt package/
           Copy-Item nec2c-bin/nec2c.exe, nec2c-bin/nec2c-build.txt package/solvers/
           Copy-Item stage/share/nec-workbench/examples/*.nec package/examples/
-          windeployqt --release --compiler-runtime package/nec-workbench.exe
+          windeployqt --release --compiler-runtime --no-opengl-sw --no-system-d3d-compiler package/nec-workbench.exe
+          python -I packaging/qt-notices.py --platform windows --deployed package `
+            --qt-version $env:QT_VERSION `
+            --qt-source "qt-src/qtbase-everywhere-src-$env:QT_VERSION.tar.xz" `
+            --qt-source "qt-src/qtsvg-everywhere-src-$env:QT_VERSION.tar.xz" `
+            --append package/THIRD_PARTY_LICENSES.txt
+          if ($LASTEXITCODE -ne 0) { throw "license notices failed" }
           Compress-Archive -Path package/* -DestinationPath $env:PACKAGE
 
       # The ZIP as a user gets it: unpacked into a fresh folder whose path has a space, fresh
-      # settings, no nec2c on the PATH. Workbench must find nec2c.exe in solvers/, read its
-      # version, solve, find the examples (exactly the repository's) and solve one, and stop
-      # a run with Stop and with a timeout.
+      # settings, no nec2c on the PATH. Workbench must start its main window with the windows
+      # platform plugin, and its license notices must name the Qt it runs on; and it must find
+      # nec2c.exe in solvers/, read its version, solve, find the examples (exactly the
+      # repository's) and solve one, and stop a run with Stop and with a timeout.
       - name: Check package
         shell: pwsh
         run: |
@@ -118,6 +140,29 @@ jobs:
             "examples/: " + ((Get-ChildItem (Join-Path $check "examples") | ForEach-Object Name) -join ", ")
           ) -join "%0A"
           Write-Output ("::notice title=Windows ZIP contents::" + $listing)
+          # The normal start, until the main window is on screen. A missing platform plugin
+          # aborts with a dialog on Windows, so a start that does not end in time fails too.
+          $startup = Join-Path $env:RUNNER_TEMP "startup-check.txt"
+          $app = Start-Process -FilePath (Join-Path $check "nec-workbench.exe") `
+            -ArgumentList "--startup-check" -WorkingDirectory $check -PassThru `
+            -NoNewWindow -RedirectStandardOutput $startup
+          $null = $app.Handle
+          if (-not $app.WaitForExit(120000)) { $app.Kill(); throw "startup check did not end within 2 minutes" }
+          $text = Get-Content -Raw $startup
+          Write-Output $text
+          if ($app.ExitCode -ne 0 -or $text -notmatch "(?m)^PASS main window shown: platform plugin windows, Qt ([0-9.]+),") {
+            Write-Output ("::error title=Windows startup check::exit $($app.ExitCode)%0A" + ($text -replace "`r?`n", "%0A"))
+            throw "startup check failed"
+          }
+          $qt = $Matches[1]
+          $core = (Get-Item (Join-Path $check "Qt6Core.dll")).VersionInfo
+          $deployed = "$($core.FileMajorPart).$($core.FileMinorPart).$($core.FileBuildPart)"
+          if ($qt -ne $deployed) { throw "Workbench runs on Qt $qt, but the package's Qt6Core.dll is $deployed" }
+          if (-not (Select-String -Path (Join-Path $check "THIRD_PARTY_LICENSES.txt") -Pattern "^Qt $([regex]::Escape($qt))$" -CaseSensitive -Quiet)) {
+            Write-Output "::error title=Windows license notices::THIRD_PARTY_LICENSES.txt does not name Qt $qt, the Qt the package runs on"
+            throw "license notices do not name Qt $qt"
+          }
+          Write-Output ("::notice title=Windows startup check::" + ($text -replace "`r?`n", "%0A") + "THIRD_PARTY_LICENSES.txt names Qt $qt; Qt6Core.dll is $deployed")
           $report = Join-Path $env:RUNNER_TEMP "package-check.txt"
           $run = Start-Process -FilePath (Join-Path $check "nec-workbench.exe") `
             -ArgumentList "--package-check" -WorkingDirectory $check -Wait -PassThru `

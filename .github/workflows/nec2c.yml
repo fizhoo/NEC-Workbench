@@ -3,12 +3,21 @@ name: nec2c Results
 # The bundled nec2c must compute the same on Windows as on Linux: the MinGW-w64 build and
 # its compat headers must not change results. Both are built with packaging/nec2c/build.sh,
 # as the packages are, run on the same decks, and their parsed results compared.
+#
+# Called with packaged: true (by the release workflow), it takes the nec2c binaries out of
+# the AppImage and the ZIP built earlier in the same run instead of building them.
 
 on:
   push:
     branches: [main, 'release/**']
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      packaged:
+        description: Compare the nec2c in this run's packages instead of building it
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -22,11 +31,28 @@ jobs:
       - uses: actions/checkout@v5
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install --yes ninja-build
-      - name: Build nec2c and the check tool
+      - name: Build the check tool
         run: |
-          packaging/nec2c/build.sh nec2c-bin nec2c-src
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNECWB_BUILD_GUI=OFF -DNECWB_BUILD_TESTS=ON
           cmake --build build --target necwb_nec2c_check
+      - name: Build nec2c
+        if: ${{ !inputs.packaged }}
+        run: packaging/nec2c/build.sh nec2c-bin nec2c-src
+      - name: Download the Linux package
+        if: ${{ inputs.packaged }}
+        uses: actions/download-artifact@v6
+        with:
+          name: NEC-Workbench-Linux-x86_64
+          path: package
+      - name: Take nec2c out of the AppImage
+        if: ${{ inputs.packaged }}
+        run: |
+          appimage=$(ls package/NEC-Workbench-*-x86_64.AppImage)
+          chmod +x "$appimage"
+          (cd package && "../$appimage" --appimage-extract > /dev/null)
+          mkdir -p nec2c-bin
+          cp package/squashfs-root/usr/bin/nec2c nec2c-bin/nec2c
+          echo "nec2c from $appimage: $(nec2c-bin/nec2c -v)"
       - name: Write decks and run them
         run: |
           step=packaging/nec2c/ci-step.sh
@@ -48,22 +74,42 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: git mingw-w64-x86_64-gcc mingw-w64-x86_64-binutils
       - uses: actions/download-artifact@v6
         with:
           name: nec2c-linux
           path: linux
+      - uses: msys2/setup-msys2@v2
+        if: ${{ !inputs.packaged }}
+        with:
+          msystem: MINGW64
+          update: true
+          install: git mingw-w64-x86_64-gcc mingw-w64-x86_64-binutils
       - name: Build nec2c.exe and run the decks
+        if: ${{ !inputs.packaged }}
         shell: msys2 {0}
         run: |
           step=packaging/nec2c/ci-step.sh
           $step "nec2c build" packaging/nec2c/build.sh nec2c-bin nec2c-src
           $step "nec2c imports" packaging/nec2c/check-imports.sh nec2c-bin/nec2c.exe
           $step "Windows run" packaging/nec2c/run-decks.sh nec2c-bin/nec2c.exe linux/decks out-windows
+      - name: Download the Windows package
+        if: ${{ inputs.packaged }}
+        uses: actions/download-artifact@v6
+        with:
+          name: NEC-Workbench-Windows-x64
+          path: package
+      - name: Unpack the ZIP
+        if: ${{ inputs.packaged }}
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem package/NEC-Workbench-*-windows-x64.zip
+          Expand-Archive $zip.FullName -DestinationPath unpacked
+          Write-Output "nec2c.exe from $($zip.Name)"
+      - name: Run the decks with the ZIP's nec2c.exe
+        if: ${{ inputs.packaged }}
+        shell: bash
+        run: >-
+          packaging/nec2c/ci-step.sh "Windows run" packaging/nec2c/run-decks.sh unpacked/solvers/nec2c.exe linux/decks out-windows
       - uses: actions/upload-artifact@v6
         with:
           name: nec2c-windows
@@ -97,7 +143,7 @@ jobs:
         env:
           CI_STEP_NOTICE: '1'
         run: >-
-          packaging/nec2c/ci-step.sh "Windows vs Linux"
+          packaging/nec2c/ci-step.sh "Windows vs Linux${{ inputs.packaged && ' (packaged nec2c)' || '' }}"
           build/necwb_nec2c_check compare --tolerance linux/decks linux/out-linux windows
       # Printed digits can differ in the last place where the values are near zero (pattern
       # nulls); the parsed comparison above is the check, this is a record.
