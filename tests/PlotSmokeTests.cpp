@@ -340,7 +340,7 @@ auto main(int argc, char* argv[]) -> int
         const auto refusesAppImage = !necwb::ui::solverSettings::choosePath(QStringLiteral("nec2"),
                 mount.path() + QStringLiteral("/usr/bin/nec2c"), app)
             && !necwb::ui::solverSettings::choosePath(QStringLiteral("nec2"),
-                QStringLiteral("/tmp/.mount_NEC-Wo1a2b3c/usr/bin/nec2c"), app);
+                QDir::tempPath() + QStringLiteral("/.mount_NEC-Wo1a2b3c/usr/bin/nec2c"), app);
         qunsetenv("APPDIR");
         makeExecutable(app + QStringLiteral("/solvers/Nec2dXS1k5.exe"), "#!/bin/sh\n");
         const auto moved = elsewhere.filePath(QStringLiteral("moved folder"));
