@@ -94,31 +94,36 @@ jobs:
       - name: Package application
         shell: pwsh
         run: |
-          cmake --install build --config Release --prefix stage
-          New-Item -ItemType Directory -Force package/solvers, package/examples | Out-Null
-          Copy-Item build/Release/nec-workbench.exe package/
-          Copy-Item LICENSE package/LICENSE.txt
-          Copy-Item README.md package/
-          Copy-Item nec2c-bin/THIRD_PARTY_LICENSES.txt package/
-          Copy-Item nec2c-bin/nec2c.exe, nec2c-bin/nec2c-build.txt package/solvers/
-          Copy-Item stage/share/nec-workbench/examples/*.nec package/examples/
-          windeployqt --release --no-compiler-runtime --no-opengl-sw --no-system-d3d-compiler package/nec-workbench.exe
-          $compiler = (Select-String build/CMakeCache.txt -Pattern '^CMAKE_CXX_COMPILER:FILEPATH=(.*)$').Matches[0].Groups[1].Value
-          "CL_EXE=$compiler" >> $env:GITHUB_ENV
-          $runtime = & packaging/windows/bundle-msvc-runtime.ps1 -Package package -Compiler $compiler
-          Write-Output ("::notice title=Windows Visual C++ runtime::" + $runtime)
-          $notices = python -I packaging/qt-notices.py --platform windows --deployed package `
-            --qt-version $env:QT_VERSION --msvc-runtime "$runtime" `
-            --qt-source "qt-src/qtbase-everywhere-src-$env:QT_VERSION.tar.xz" `
-            --qt-source "qt-src/qtsvg-everywhere-src-$env:QT_VERSION.tar.xz" `
-            --append package/THIRD_PARTY_LICENSES.txt 2>&1
-          $notices
-          if ($LASTEXITCODE -ne 0) {
-            Write-Output ("::error title=Windows license notices::" + ($notices -join "%0A"))
-            throw "license notices failed"
+          try {
+            cmake --install build --config Release --prefix stage
+            New-Item -ItemType Directory -Force package/solvers, package/examples | Out-Null
+            Copy-Item build/Release/nec-workbench.exe package/
+            Copy-Item LICENSE package/LICENSE.txt
+            Copy-Item README.md package/
+            Copy-Item nec2c-bin/THIRD_PARTY_LICENSES.txt package/
+            Copy-Item nec2c-bin/nec2c.exe, nec2c-bin/nec2c-build.txt package/solvers/
+            Copy-Item stage/share/nec-workbench/examples/*.nec package/examples/
+            windeployqt --release --no-compiler-runtime --no-opengl-sw --no-system-d3d-compiler package/nec-workbench.exe
+            $compiler = (Select-String build/CMakeCache.txt -Pattern '^CMAKE_CXX_COMPILER:FILEPATH=(.*)$').Matches[0].Groups[1].Value
+            "CL_EXE=$compiler" >> $env:GITHUB_ENV
+            $runtime = & packaging/windows/bundle-msvc-runtime.ps1 -Package package -Compiler $compiler
+            Write-Output ("::notice title=Windows Visual C++ runtime::" + $runtime)
+            $notices = python -I packaging/qt-notices.py --platform windows --deployed package `
+              --qt-version $env:QT_VERSION --msvc-runtime "$runtime" `
+              --qt-source "qt-src/qtbase-everywhere-src-$env:QT_VERSION.tar.xz" `
+              --qt-source "qt-src/qtsvg-everywhere-src-$env:QT_VERSION.tar.xz" `
+              --append package/THIRD_PARTY_LICENSES.txt 2>&1
+            $notices
+            if ($LASTEXITCODE -ne 0) {
+              Write-Output ("::error title=Windows license notices::" + ($notices -join "%0A"))
+              throw "license notices failed"
+            }
+            Write-Output ("::notice title=Windows license notices::" + ($notices -join "%0A"))
+            Compress-Archive -Path package/* -DestinationPath $env:PACKAGE
+          } catch {
+            Write-Output ("::error title=Windows packaging::" + (($_ | Out-String) -replace "`r?`n", "%0A"))
+            throw
           }
-          Write-Output ("::notice title=Windows license notices::" + ($notices -join "%0A"))
-          Compress-Archive -Path package/* -DestinationPath $env:PACKAGE
 
       # The ZIP as a user gets it: unpacked into a fresh folder whose path has a space, fresh
       # settings, no nec2c on the PATH. Workbench must start its main window with the windows
