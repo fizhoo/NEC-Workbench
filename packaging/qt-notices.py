@@ -158,6 +158,8 @@ def main():
     parser.add_argument("--qt-source", action="append", required=True)
     parser.add_argument("--qt-lib-dir", type=Path)
     parser.add_argument("--icu-license", type=Path)
+    parser.add_argument("--msvc-runtime", help="Windows: where the bundled Visual C++ runtime came from "
+                        "(bundle-msvc-runtime.ps1's line)")
     parser.add_argument("--append", type=Path, help="append to this file (UTF-8) instead of printing")
     args = parser.parse_args()
 
@@ -221,9 +223,27 @@ Qt libraries in this package (Qt source modules: {', '.join(sorted(modules_neede
     write("\nOther libraries in this package:\n")
     other_texts = []
     if args.platform == "windows":
-        if others:
-            fail(f"bundled DLLs with no notice: {', '.join(others)}")
-        write("  None: the Windows package carries only the Qt files above beside nec-workbench.exe.\n")
+        runtime = [name for name in others if re.match(r"(vcruntime|msvcp|concrt|vccorlib)\d", name, re.IGNORECASE)]
+        unknown = [name for name in others if name not in runtime]
+        if unknown:
+            fail(f"bundled DLLs with no notice: {', '.join(unknown)}")
+        if runtime and not args.msvc_runtime:
+            fail(f"the Visual C++ runtime ({', '.join(runtime)}) is bundled; pass --msvc-runtime")
+        if runtime:
+            write(f"""  {', '.join(runtime)}:
+    The Microsoft Visual C++ runtime (Copyright (c) Microsoft Corporation), which
+    nec-workbench.exe and the Qt libraries are built against, shipped beside
+    nec-workbench.exe so that no Visual C++ redistributable needs to be installed.
+    {args.msvc_runtime}
+    These files are Distributable Code of Microsoft Visual Studio, redistributed
+    unmodified under the Visual Studio license terms (Microsoft Software License Terms,
+    "Distributable Code"); see
+    https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files and
+    https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution.
+    They are not covered by the GPL or the LGPL.
+""")
+        else:
+            write("  None: the Windows package carries only the Qt files above beside nec-workbench.exe.\n")
     else:
         for name in others:
             if name.startswith("libicu"):

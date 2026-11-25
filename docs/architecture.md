@@ -232,12 +232,21 @@ also compares the packaged nec2c's output with a reference build's, as text, and
 nec2c rebuilt offline from the release source archive (`BUILDING.txt` in it), and the
 Windows build's parsed results with Linux's (`necwb_nec2c_check`).
 
+The Windows ZIP carries the Visual C++ runtime DLLs that Workbench and Qt import,
+app-locally beside `nec-workbench.exe`, copied from the redistributable folder of the MSVC
+toolset that built it (`packaging/windows/bundle-msvc-runtime.ps1`), so it runs on a
+Windows without the Visual C++ redistributable. `packaging/windows/check-imports.ps1` reads
+every executable's and DLL's imports in the unpacked ZIP with that toolset's dumpbin and
+fails on any DLL that is neither in the ZIP nor part of Windows; the Visual C++ runtime
+never counts as part of Windows, though the CI machine has it installed.
+
 Each package's `THIRD_PARTY_LICENSES.txt` is the repository's (nec2c, GPL-3.0 text) plus,
 on Windows, the MinGW-w64 runtime notices, plus a section generated from the deployed
 files by `packaging/qt-notices.py`: the Qt version, libraries, plugins and translations,
 the third-party code in those Qt modules from the exact Qt source's `qt_attribution.json`
 files, their license texts (LGPL-3.0 first), the Qt source download, and on Linux every
-other library linuxdeploy bundled with its Ubuntu package and copyright file. It fails on
+other library linuxdeploy bundled with its Ubuntu package and copyright file, and on
+Windows the Visual C++ runtime under the Visual Studio redistribution terms. It fails on
 any file it cannot account for, and CI fails when the notices do not name the Qt version
 the startup check reports.
 

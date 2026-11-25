@@ -87,7 +87,10 @@ jobs:
       # Assembled by hand: Workbench and its Qt runtime, which must stay beside it, nec2c in
       # solvers/, and the installed examples in examples/. Workbench draws with QPainter, so
       # neither the software OpenGL (opengl32sw.dll, Mesa) nor the Direct3D shader compiler
-      # is deployed. The license notices get a Qt section generated from the deployed files.
+      # is deployed. The Visual C++ runtime DLLs that Workbench and Qt import come from the
+      # build toolset's redistributable folder, app-locally, so a Windows without the
+      # Visual C++ redistributable runs it. The license notices get a Qt and runtime
+      # section generated from the deployed files.
       - name: Package application
         shell: pwsh
         run: |
@@ -99,9 +102,13 @@ jobs:
           Copy-Item nec2c-bin/THIRD_PARTY_LICENSES.txt package/
           Copy-Item nec2c-bin/nec2c.exe, nec2c-bin/nec2c-build.txt package/solvers/
           Copy-Item stage/share/nec-workbench/examples/*.nec package/examples/
-          windeployqt --release --compiler-runtime --no-opengl-sw --no-system-d3d-compiler package/nec-workbench.exe
+          windeployqt --release --no-compiler-runtime --no-opengl-sw --no-system-d3d-compiler package/nec-workbench.exe
+          $compiler = (Select-String build/CMakeCache.txt -Pattern '^CMAKE_CXX_COMPILER:FILEPATH=(.*)$').Matches[0].Groups[1].Value
+          "CL_EXE=$compiler" >> $env:GITHUB_ENV
+          $runtime = & packaging/windows/bundle-msvc-runtime.ps1 -Package package -Compiler $compiler
+          Write-Output ("::notice title=Windows Visual C++ runtime::" + $runtime)
           $notices = python -I packaging/qt-notices.py --platform windows --deployed package `
-            --qt-version $env:QT_VERSION `
+            --qt-version $env:QT_VERSION --msvc-runtime "$runtime" `
             --qt-source "qt-src/qtbase-everywhere-src-$env:QT_VERSION.tar.xz" `
             --qt-source "qt-src/qtsvg-everywhere-src-$env:QT_VERSION.tar.xz" `
             --append package/THIRD_PARTY_LICENSES.txt 2>&1
@@ -125,6 +132,16 @@ jobs:
           $check = Join-Path $env:RUNNER_TEMP "package check"
           Expand-Archive $env:PACKAGE -DestinationPath $check
           if (Test-Path (Join-Path $check "nec2c.exe")) { throw "nec2c.exe is at the top level, not in solvers/" }
+          # Every DLL anything in the ZIP imports must be in the ZIP or part of Windows; the
+          # Visual C++ runtime never counts as part of Windows, though this machine has it.
+          $imports = & packaging/windows/check-imports.ps1 -Package $check -Compiler $env:CL_EXE
+          $code = $LASTEXITCODE
+          $imports
+          if ($code -ne 0) {
+            Write-Output ("::error title=Windows DLL imports::" + ($imports -join "%0A"))
+            throw "DLL import check failed"
+          }
+          Write-Output ("::notice title=Windows DLL imports::" + ($imports -join "%0A"))
           foreach ($file in "solvers/nec2c.exe", "solvers/nec2c-build.txt", "README.md", "LICENSE.txt", "THIRD_PARTY_LICENSES.txt") {
             if (-not (Test-Path (Join-Path $check $file))) { throw "$file is missing" }
           }

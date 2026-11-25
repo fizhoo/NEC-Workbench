@@ -93,7 +93,8 @@ release also carries the corresponding nec2c source, which rebuilds offline (see
 Package names carry the version, such as `NEC-Workbench-0.1.0-alpha.3-windows-x64.zip`
 and `NEC-Workbench-0.1.0-alpha.3-x86_64.AppImage`.
 
-- **Windows:** extract `NEC-Workbench-<version>-windows-x64.zip` and run `nec-workbench.exe`. Keep
+- **Windows:** extract `NEC-Workbench-<version>-windows-x64.zip` and run `nec-workbench.exe`;
+  the Visual C++ runtime it needs is included. Keep
   the extracted files together: the DLLs and folders beside the executable are needed,
   nec2c is in `solvers/`, and the examples are in `examples/`.
 - **Linux:** make `NEC-Workbench-<version>-x86_64.AppImage` executable and run it:
