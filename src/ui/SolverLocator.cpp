@@ -37,17 +37,30 @@ auto find(const QString& backendId, const QStringList& folders) -> QString
     return {};
 }
 
-// "nec2c 1.3.3 (55be1e0)" from the metadata build.sh writes beside the executable.
-auto builtVersion(const QString& path) -> QString
+// "nec2c 1.3.3 (55be1e0)" from the metadata build.sh writes beside the nec2c it built, read
+// only for that executable as the nec2 engine, so another program beside it is never labelled
+// with it.
+auto builtVersion(const QString& backendId, const QString& path) -> QString
 {
-    QFile file(QFileInfo(path).dir().filePath(BuildMetadata));
+#ifdef Q_OS_WIN
+    constexpr auto sensitivity = Qt::CaseInsensitive;
+#else
+    constexpr auto sensitivity = Qt::CaseSensitive;
+#endif
+    const QFileInfo executable(path);
+    const auto nec2c = QStringLiteral("nec2c");
+    const auto named = executable.fileName().compare(nec2c, sensitivity) == 0
+        || executable.fileName().compare(nec2c + QStringLiteral(".exe"), sensitivity) == 0;
+    if (backendId != QStringLiteral("nec2") || !named) return {};
+    QFile file(executable.dir().filePath(BuildMetadata));
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return {};
     QHash<QString, QString> values;
     for (const auto& line : QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'))) {
         const auto equals = line.indexOf(QLatin1Char('='));
         if (equals > 0) values.insert(line.left(equals), line.mid(equals + 1).trimmed());
     }
-    if (values.value(QStringLiteral("version")).isEmpty()) return {};
+    if (values.value(QStringLiteral("name")) != nec2c || values.value(QStringLiteral("version")).isEmpty())
+        return {};
     return QStringLiteral("%1 %2 (%3)").arg(values.value(QStringLiteral("name")),
         values.value(QStringLiteral("version")), values.value(QStringLiteral("commit")).left(7));
 }
@@ -157,7 +170,7 @@ auto solverDescription(const QString& backendId, const LocatedSolver& located) -
 auto bundledSolverSummary() -> QString
 {
     const auto path = bundledSolver(QStringLiteral("nec2"));
-    const auto version = path.isEmpty() ? QString{} : builtVersion(path);
+    const auto version = path.isEmpty() ? QString{} : builtVersion(QStringLiteral("nec2"), path);
     return version.isEmpty()
         ? QCoreApplication::translate("SolverLocator", "No bundled nec2c with this build.")
         : QCoreApplication::translate("SolverLocator",
@@ -175,10 +188,10 @@ auto SolverVersions::version(const QString& backendId, const QString& path) -> Q
 {
     const QFileInfo file(path);
     if (!file.isFile()) return {};
-    const auto key = QStringLiteral("%1|%2|%3").arg(file.absoluteFilePath()).arg(file.size())
+    const auto key = QStringLiteral("%1|%2|%3|%4").arg(backendId, file.absoluteFilePath()).arg(file.size())
         .arg(file.lastModified().toMSecsSinceEpoch());
     if (const auto known = versions_.find(key); known != versions_.end()) return *known;
-    if (const auto built = builtVersion(path); !built.isEmpty()) return versions_[key] = built;
+    if (const auto built = builtVersion(backendId, path); !built.isEmpty()) return versions_[key] = built;
     // Only an executable named as the engine is asked, so choosing some other program never
     // runs it with an option it may not know.
     const auto arguments = versionArguments(backendId);

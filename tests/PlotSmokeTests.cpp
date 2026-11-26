@@ -296,6 +296,17 @@ auto main(int argc, char* argv[]) -> int
             && necwb::ui::solverLabel(QStringLiteral("nec2"), bundled) == QStringLiteral("nec2c (bundled)")
             && necwb::ui::solverDescription(QStringLiteral("nec2"), bundled)
                 .startsWith(QStringLiteral("nec2c 1.3.3 (55be1e0) · bundled · "));
+        // The build metadata describes only the nec2c beside it, as the nec2 engine: not an
+        // onec in the same folder, and not that nec2c asked about as another engine.
+        makeExecutable(app + QStringLiteral("/solvers/onec") + ExecutableSuffix, "#!/bin/sh\n");
+        auto& sidecarVersions = necwb::ui::SolverVersions::instance();
+        const auto sidecarForNec2cOnly = sidecarVersions.version(QStringLiteral("nec2"), bundled.path)
+                == QStringLiteral("nec2c 1.3.3 (55be1e0)")
+            && sidecarVersions.version(QStringLiteral("opennec"), app + QStringLiteral("/solvers/onec") + ExecutableSuffix)
+                == QStringLiteral("version unknown")
+            && sidecarVersions.version(QStringLiteral("nec2"), app + QStringLiteral("/solvers/onec") + ExecutableSuffix)
+                == QStringLiteral("version unknown")
+            && sidecarVersions.version(QStringLiteral("opennec"), bundled.path) == QStringLiteral("version unknown");
         const auto chosen = located(elsewhere.filePath(QStringLiteral("nec2c") + ExecutableSuffix));
         const auto gone = located(QStringLiteral("/gone/nec2c"));
         const auto chosenFirst = chosen.origin == LocatedSolver::Origin::Chosen && !chosen.missing()
@@ -418,10 +429,10 @@ auto main(int argc, char* argv[]) -> int
         qputenv("PATH", savedPath);
         if (!nothing || !onPath || !beside || !solversFirst || !chosenFirst || !probed || !notAsked
             || !refusesBundled || !refusesAppImage || !savesInside || !savesChosen || !runRecordsEngine
-            || !sharedExamples || !prefixInstall || !containment || !examplesBeside) {
+            || !sharedExamples || !prefixInstall || !containment || !examplesBeside || !sidecarForNec2cOnly) {
             qWarning() << "solver lookup" << nothing << onPath << beside << solversFirst << chosenFirst
                        << probed << notAsked << refusesBundled << refusesAppImage << savesInside << savesChosen
-                       << runRecordsEngine << sharedExamples << prefixInstall << containment << examplesBeside << versions.version(QStringLiteral("nec2"), userNec2c);
+                       << runRecordsEngine << sharedExamples << prefixInstall << containment << examplesBeside << sidecarForNec2cOnly << versions.version(QStringLiteral("nec2"), userNec2c);
             return NECWB_SMOKE_FAILURE("solver lookup and saved paths");
         }
     }
