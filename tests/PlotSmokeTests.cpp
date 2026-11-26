@@ -64,6 +64,7 @@
 #include <QElapsedTimer>
 #include <QDir>
 #include <QFile>
+#include <QFileDialog>
 #include <QImage>
 #include <QFileInfo>
 #include <QJsonDocument>
@@ -114,6 +115,14 @@
 #include <memory>
 #include <numbers>
 #include <vector>
+
+#ifdef Q_OS_UNIX
+#include <unistd.h>
+#endif
+#ifdef Q_OS_LINUX
+#include <csignal>
+#include <sys/resource.h>
+#endif
 
 namespace {
 
@@ -2007,6 +2016,139 @@ auto main(int argc, char* argv[]) -> int
         else settings.remove(QStringLiteral("variables/live"));
         settings.sync();
     }
+    // A save that fails says so and changes nothing: not the file, its name, the modified flag
+    // or the status line. Save onto a read-only file, Save As into a read-only folder, and Save
+    // with a file size limit below the deck.
+    auto failedSaveKeepsState = false;
+    NECWB_SMOKE_STEP();
+#ifdef Q_OS_UNIX
+    const auto runningAsRoot = ::geteuid() == 0;
+#else
+    const auto runningAsRoot = false;
+#endif
+    if (runningAsRoot) {
+        qInfo() << "SKIP failed save: root can write read-only files";
+        failedSaveKeepsState = true;
+    } else {
+        QSettings settings;
+        const auto savedRecent = settings.value(QStringLiteral("files/recentModels"));
+        QTemporaryDir directory;
+        const auto modelPath = directory.filePath(QStringLiteral("read-only.nec"));
+        const QByteArray original = "GW 1 11 0 -5 0 0 5 0 .001\nGE 0\nEX 0 1 6 0 1 0\nFR 0 1 0 0 14 0\nEN\n";
+        QFile modelFile(modelPath);
+        if (directory.isValid() && modelFile.open(QIODevice::WriteOnly)) {
+            modelFile.write(original);
+            modelFile.close();
+        }
+        settings.setValue(QStringLiteral("files/recentModels"), QStringList{modelPath});
+        settings.sync();
+        necwb::ui::MainWindow mainWindow;
+        mainWindow.resize(1400, 900);
+        mainWindow.show();
+        application.processEvents();
+        if (auto* recent = mainWindow.findChild<QMenu*>(QStringLiteral("recentModelsMenu"))) {
+            for (auto* item : recent->actions())
+                if (item->data().toString() == modelPath) { item->trigger(); break; }
+        }
+        application.processEvents();
+        const auto action = [&mainWindow](const QString& text) -> QAction* {
+            for (auto* found : mainWindow.findChildren<QAction*>())
+                if (found->text() == text) return found;
+            return nullptr;
+        };
+        auto* deck = mainWindow.findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor"));
+        auto* save = action(QStringLiteral("&Save"));
+        auto* saveAs = action(QStringLiteral("Save &As…"));
+        if (deck != nullptr && save != nullptr && saveAs != nullptr
+            && deck->toPlainText().startsWith(QStringLiteral("GW 1 11"))) {
+            const auto readFile = [](const QString& path) {
+                QFile file(path);
+                return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray{};
+            };
+            const auto unchanged = [&](const QString& step) {
+                const auto kept = readFile(modelPath) == original && deck->document()->isModified()
+                    && mainWindow.windowTitle().startsWith(QStringLiteral("read-only.nec"))
+                    && !mainWindow.statusBar()->currentMessage().startsWith(QStringLiteral("Saved"));
+                if (!kept)
+                    qWarning() << "failed save" << step << readFile(modelPath) << deck->document()->isModified()
+                               << mainWindow.windowTitle() << mainWindow.statusBar()->currentMessage();
+                return kept;
+            };
+            // Answers the Save Failed box, and, for Save As, first the file dialog. Its timers
+            // end with this block, and it gives up after about a second without a dialog.
+            QString reported;
+            QObject answering;
+            const std::function<void(const QString&, int)> answerWithin = [&](const QString& target, int tries) {
+                QTimer::singleShot(50, &answering, [&, target, tries] {
+                    if (auto* dialog = qobject_cast<QFileDialog*>(QApplication::activeModalWidget())) {
+                        dialog->selectFile(target);
+                        static_cast<QDialog*>(dialog)->accept();
+                        answerWithin({}, 20);
+                    } else if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                        reported = box->windowTitle();
+                        box->accept();
+                    } else if (tries > 0) {
+                        answerWithin(target, tries - 1);
+                    }
+                });
+            };
+            const auto answer = [&](const QString& target) { answerWithin(target, 20); };
+            deck->appendPlainText(QStringLiteral("CM edited"));
+            application.processEvents();
+            QFile::setPermissions(modelPath, QFileDevice::ReadOwner | QFileDevice::ReadUser);
+            answer({});
+            save->trigger();
+            application.processEvents();
+            const auto readOnlyFile = reported == QStringLiteral("Save Failed") && unchanged(QStringLiteral("save"));
+            QFile::setPermissions(modelPath, QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                | QFileDevice::ReadUser | QFileDevice::WriteUser);
+            auto readOnlyFolder = true;
+#ifdef Q_OS_UNIX
+            // Windows has no read-only folders.
+            const auto lockedFolder = directory.filePath(QStringLiteral("locked"));
+            QDir().mkpath(lockedFolder);
+            QFile::setPermissions(lockedFolder, QFileDevice::ReadOwner | QFileDevice::ExeOwner);
+            reported.clear();
+            answer(QDir(lockedFolder).filePath(QStringLiteral("elsewhere.nec")));
+            saveAs->trigger();
+            application.processEvents();
+            readOnlyFolder = reported == QStringLiteral("Save Failed") && unchanged(QStringLiteral("save as"))
+                && !QFileInfo::exists(QDir(lockedFolder).filePath(QStringLiteral("elsewhere.nec")));
+            QFile::setPermissions(lockedFolder, QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                | QFileDevice::ExeOwner);
+#endif
+            // A file that opens but cannot take the whole deck (a file size limit below it): the
+            // old save called this saved and cleared the flag.
+            auto partialWrite = true;
+#ifdef Q_OS_LINUX
+            rlimit limit{};
+            if (::getrlimit(RLIMIT_FSIZE, &limit) == 0) {
+                const auto previousSignal = std::signal(SIGXFSZ, SIG_IGN);
+                auto small = limit;
+                small.rlim_cur = 16;
+                reported.clear();
+                answer({});
+                ::setrlimit(RLIMIT_FSIZE, &small);
+                save->trigger();
+                ::setrlimit(RLIMIT_FSIZE, &limit);
+                std::signal(SIGXFSZ, previousSignal);
+                application.processEvents();
+                partialWrite = reported == QStringLiteral("Save Failed") && unchanged(QStringLiteral("partial write"));
+            }
+#endif
+            // Writable again, the same Save succeeds and only then clears the flag.
+            save->trigger();
+            application.processEvents();
+            const auto savedAfter = readFile(modelPath).contains("CM edited") && !deck->document()->isModified()
+                && mainWindow.statusBar()->currentMessage() == QStringLiteral("Saved read-only.nec");
+            failedSaveKeepsState = readOnlyFile && readOnlyFolder && partialWrite && savedAfter;
+            if (!failedSaveKeepsState)
+                qWarning() << "failed save" << readOnlyFile << readOnlyFolder << partialWrite << savedAfter;
+            deck->document()->setModified(false);
+        }
+        settings.setValue(QStringLiteral("files/recentModels"), savedRecent);
+        settings.sync();
+    }
     // Automatic Segmentation in the window: a wire with a symbolic count is skipped and says so,
     // a 25% source goes to the segment its mark gives, Apply writes the deck the preview showed,
     // and one Undo restores the deck.
@@ -2081,7 +2223,9 @@ auto main(int argc, char* argv[]) -> int
             application.processEvents();
             const auto undone = deck->toPlainText().toUtf8() == original;
             segmentationPreviewApplied = previewMatchesApply && previewShown && undone;
-            if (!segmentationPreviewApplied)
+            if (!failedSaveKeepsState)
+        return NECWB_SMOKE_FAILURE("a failed save keeps the file, its name and the modified flag");
+    if (!segmentationPreviewApplied)
                 qWarning() << "automatic segmentation" << previewMatchesApply << previewShown << undone
                            << sourceRow << skippedRow << summary << applied;
         } else {

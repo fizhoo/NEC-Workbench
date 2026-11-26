@@ -5,6 +5,7 @@
 #include "ui/CenterViewHeader.h"
 #include "ui/SettingsCleanup.h"
 #include "ui/ExampleLocator.h"
+#include "ui/FileIo.h"
 #include "ui/SolverLocator.h"
 #include "ui/SolverSettings.h"
 #include "ui/WorkbenchLayout.h"
@@ -85,6 +86,7 @@
 #include <QDoubleSpinBox>
 #include <QEvent>
 #include <QFile>
+#include <QSaveFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -281,10 +283,8 @@ auto writeAverageGainMetadata(const QString& directory, double frequencyMHz,
             averageGainClassificationName(assessment->classification));
     }
     if (solidAnglePi) metadata.insert(QStringLiteral("solidAnglePi"), *solidAnglePi);
-    QFile file(QDir(directory).filePath(QStringLiteral("agt.json")));
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
-    const auto contents = QJsonDocument(metadata).toJson(QJsonDocument::Indented);
-    return file.write(contents) == contents.size();
+    return writeFile(QDir(directory).filePath(QStringLiteral("agt.json")),
+        QJsonDocument(metadata).toJson(QJsonDocument::Indented));
 }
 
 void preserveControlHeights(QWidget* root)
@@ -1721,12 +1721,15 @@ auto MainWindow::saveFileAs() -> bool
 
 auto MainWindow::writeFile(const QString& path) -> bool
 {
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+    // Written beside the file and renamed over it only when complete, so a failed save
+    // leaves the file, its name here and the modified flag as they were.
+    QSaveFile file(path);
+    const auto contents = editor_->toPlainText().toUtf8();
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text) || file.write(contents) != contents.size()
+        || !file.commit()) {
         QMessageBox::critical(this, tr("Save Failed"), file.errorString());
         return false;
     }
-    file.write(editor_->toPlainText().toUtf8());
     setCurrentFile(path);
     editor_->document()->setModified(false);
     statusBar()->showMessage(tr("Saved %1").arg(QFileInfo(path).fileName()), 3000);
@@ -2955,23 +2958,12 @@ void MainWindow::startAnalysisRun(const std::string& authoredSource,
     const auto inputPath = QDir(currentRunDirectory_).filePath(QStringLiteral("model.nec"));
     const auto sourcePath = QDir(currentRunDirectory_).filePath(QStringLiteral("model.source.nec"));
     currentRunOutputPath_ = QDir(currentRunDirectory_).filePath(QStringLiteral("model.out"));
-    QFile sourceFile(sourcePath);
-    if (!sourceFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QMessageBox::critical(this, tr("Run Failed"), sourceFile.errorString());
+    if (!ui::writeFile(sourcePath, QByteArray::fromStdString(authoredSource))
+        || !ui::writeFile(inputPath, QByteArray::fromStdString(backendSolverInput))) {
+        QMessageBox::critical(this, tr("Run Failed"), tr("Could not write the solver input."));
         currentRunRecord_.reset();
         return;
     }
-    sourceFile.write(QByteArray::fromStdString(authoredSource));
-    sourceFile.close();
-
-    QFile inputFile(inputPath);
-    if (!inputFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QMessageBox::critical(this, tr("Run Failed"), inputFile.errorString());
-        currentRunRecord_.reset();
-        return;
-    }
-    inputFile.write(QByteArray::fromStdString(backendSolverInput));
-    inputFile.close();
 
     analysis::SolverCommand command;
     try {
@@ -3056,28 +3048,17 @@ void MainWindow::startAverageGainTest(bool showView)
         currentRunRecord_.reset();
         return;
     }
-    QFile sourceFile(sourcePath);
-    if (!sourceFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QMessageBox::critical(this, tr("AGT Failed"), sourceFile.errorString());
-        currentRunRecord_.reset();
-        return;
-    }
-    sourceFile.write(QByteArray::fromStdString(source));
-    sourceFile.close();
-
-    QFile inputFile(inputPath);
-    if (!inputFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QMessageBox::critical(this, tr("AGT Failed"), inputFile.errorString());
-        currentRunRecord_.reset();
-        return;
-    }
     const auto averageGainInput = analysis::prepareAverageGainTestInput(
         resolution.generatedDeck, currentAverageGainFrequencyMHz_, currentAverageGainEnvironment_);
-    inputFile.write(QByteArray::fromStdString(analysis::formatSolverInputForBackend(
-        averageGainInput, solverBackendId_.toStdString())));
-    inputFile.close();
-    writeAverageGainMetadata(currentRunDirectory_, currentAverageGainFrequencyMHz_,
-        currentAverageGainEnvironment_);
+    if (!ui::writeFile(sourcePath, QByteArray::fromStdString(source))
+        || !ui::writeFile(inputPath, QByteArray::fromStdString(analysis::formatSolverInputForBackend(
+               averageGainInput, solverBackendId_.toStdString())))
+        || !writeAverageGainMetadata(currentRunDirectory_, currentAverageGainFrequencyMHz_,
+               currentAverageGainEnvironment_)) {
+        QMessageBox::critical(this, tr("AGT Failed"), tr("Could not write the solver input."));
+        currentRunRecord_.reset();
+        return;
+    }
 
     analysis::SolverCommand command;
     try {
@@ -3247,8 +3228,9 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
                     ModelTree::StudyState::Complete,
                     tr("%1 @ %2 MHz").arg(formatDecimal(assessment.normalizedGain),
                         formatDecimal(currentAverageGainFrequencyMHz_)));
-                writeAverageGainMetadata(currentRunDirectory_, currentAverageGainFrequencyMHz_,
-                    currentAverageGainEnvironment_, assessment, result.averagingSolidAnglePi);
+                if (!writeAverageGainMetadata(currentRunDirectory_, currentAverageGainFrequencyMHz_,
+                        currentAverageGainEnvironment_, assessment, result.averagingSolidAnglePi))
+                    appendSolverOutput(tr("\nWarning: could not write agt.json to the run folder.\n"));
                 displayedRunDirectory_ = currentRunDirectory_;
                 averageGainView_->header()->setTitle(tr("Average Gain Test · %1").arg(context));
                 const auto expectedSolidAngle = currentAverageGainEnvironment_
