@@ -107,14 +107,27 @@ auto bundledSolver(const QString& backendId, const QString& applicationDirectory
     return find(backendId, {folder.filePath(QStringLiteral("solvers")), folder.path()});
 }
 
+auto pathInsideFolder(const QString& path, const QString& folder) -> QString
+{
+    if (path.isEmpty() || folder.isEmpty()) return {};
+    const QFileInfo file(path), directory(folder);
+    const auto resolved = file.exists() && directory.exists();
+    const auto filePath = resolved ? file.canonicalFilePath() : QDir::cleanPath(file.absoluteFilePath());
+    auto folderPath = resolved ? directory.canonicalFilePath() : QDir::cleanPath(directory.absoluteFilePath());
+    if (!folderPath.endsWith(QLatin1Char('/'))) folderPath += QLatin1Char('/');
+#ifdef Q_OS_WIN
+    constexpr auto sensitivity = Qt::CaseInsensitive;
+#else
+    constexpr auto sensitivity = Qt::CaseSensitive;
+#endif
+    if (filePath.size() <= folderPath.size() || !filePath.startsWith(folderPath, sensitivity)) return {};
+    return filePath.mid(folderPath.size());
+}
+
 auto isInsideApplication(const QString& path, const QString& applicationDirectory) -> bool
 {
-    const auto file = QFileInfo(path).absoluteFilePath();
-    const auto inside = [&file](const QString& folder) {
-        return !folder.isEmpty()
-            && file.startsWith(QDir(folder).absolutePath() + QLatin1Char('/'), Qt::CaseInsensitive);
-    };
-    return inside(applicationFolder(applicationDirectory)) || inside(qEnvironmentVariable("APPDIR"));
+    return !pathInsideFolder(path, applicationFolder(applicationDirectory)).isEmpty()
+        || !pathInsideFolder(path, qEnvironmentVariable("APPDIR")).isEmpty();
 }
 
 auto solverLabel(const QString& backendId, const LocatedSolver& located) -> QString

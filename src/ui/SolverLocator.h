@@ -27,6 +27,10 @@ struct LocatedSolver {
     -> LocatedSolver;
 [[nodiscard]] auto bundledSolver(const QString& backendId, const QString& applicationDirectory = {})
     -> QString;
+// The path relative to the folder, when it is inside it (never the folder itself). Paths are
+// made absolute and cleaned, symlinks resolved when both exist, and compared ignoring case
+// only on Windows. Empty when it is not inside, or either is empty.
+[[nodiscard]] auto pathInsideFolder(const QString& path, const QString& folder) -> QString;
 // Inside Workbench's own folder or the mounted AppImage, which move between launches.
 [[nodiscard]] auto isInsideApplication(const QString& path, const QString& applicationDirectory = {})
     -> bool;

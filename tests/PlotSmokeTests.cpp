@@ -317,6 +317,45 @@ auto main(int argc, char* argv[]) -> int
             && !necwb::ui::isInsideInstallation(app + QStringLiteral("-other/examples"), bin)
             && !necwb::ui::isInsideInstallation(app + QStringLiteral("/share/nec-workbench/examples"),
                 app + QStringLiteral("/lib"));
+        // One containment rule for all three: paths cleaned and made absolute, symlinks resolved
+        // when both exist, and case ignored only on Windows. The folder itself is not inside it.
+        const auto tree = app + QStringLiteral("/tree");
+        QDir().mkpath(tree + QStringLiteral("/app/solvers"));
+        makeExecutable(tree + QStringLiteral("/app/solvers/onec"), "#!/bin/sh\n");
+        using necwb::ui::pathInsideFolder;
+        auto containment = pathInsideFolder(tree + QStringLiteral("/app/solvers/onec"), tree + QStringLiteral("/app"))
+                == QStringLiteral("solvers/onec")
+            && pathInsideFolder(tree + QStringLiteral("/app/x/../solvers/onec"), tree + QStringLiteral("/app/"))
+                == QStringLiteral("solvers/onec")
+            && pathInsideFolder(tree + QStringLiteral("/app/../app-other/onec"), tree + QStringLiteral("/app")).isEmpty()
+            && pathInsideFolder(tree + QStringLiteral("/app"), tree + QStringLiteral("/app")).isEmpty()
+            && pathInsideFolder({}, tree).isEmpty() && pathInsideFolder(tree, {}).isEmpty();
+#ifdef Q_OS_WIN
+        containment = containment
+            && pathInsideFolder(tree + QStringLiteral("/APP/solvers/onec"), tree + QStringLiteral("/app"))
+                == QStringLiteral("solvers/onec");
+#else
+        // A sibling that differs only in case is another folder.
+        QDir().mkpath(tree + QStringLiteral("/App/solvers"));
+        makeExecutable(tree + QStringLiteral("/App/solvers/onec"), "#!/bin/sh\n");
+        containment = containment
+            && pathInsideFolder(tree + QStringLiteral("/App/solvers/onec"), tree + QStringLiteral("/app")).isEmpty()
+            && pathInsideFolder(tree + QStringLiteral("/App/gone"), tree + QStringLiteral("/app")).isEmpty()
+            && !necwb::ui::isInsideApplication(tree + QStringLiteral("/App/solvers/onec"), tree + QStringLiteral("/app"))
+            && !necwb::ui::isInsideInstallation(tree + QStringLiteral("/App/solvers/onec"),
+                tree + QStringLiteral("/app/bin"));
+        // The folder reached through a symlink still holds its files, and a symlink inside the
+        // folder that points out of it is not inside.
+        QFile::link(tree + QStringLiteral("/app"), tree + QStringLiteral("/link"));
+        QFile::link(elsewhere.filePath(QStringLiteral("nec2c")), tree + QStringLiteral("/app/solvers/out"));
+        containment = containment
+            && pathInsideFolder(tree + QStringLiteral("/app/solvers/onec"), tree + QStringLiteral("/link"))
+                == QStringLiteral("solvers/onec")
+            && pathInsideFolder(tree + QStringLiteral("/link/solvers/onec"), tree + QStringLiteral("/app"))
+                == QStringLiteral("solvers/onec")
+            && pathInsideFolder(tree + QStringLiteral("/app/solvers/out"), tree + QStringLiteral("/app")).isEmpty()
+            && necwb::ui::isInsideApplication(tree + QStringLiteral("/app/solvers/onec"), tree + QStringLiteral("/link"));
+#endif
         QDir().mkpath(bin + QStringLiteral("/examples"));
         const auto examplesBeside = necwb::ui::exampleFolder(bin) == QDir::cleanPath(bin + QStringLiteral("/examples"));
         // A user's nec2c is asked its version in the background; another program never is.
@@ -379,10 +418,10 @@ auto main(int argc, char* argv[]) -> int
         qputenv("PATH", savedPath);
         if (!nothing || !onPath || !beside || !solversFirst || !chosenFirst || !probed || !notAsked
             || !refusesBundled || !refusesAppImage || !savesInside || !savesChosen || !runRecordsEngine
-            || !sharedExamples || !prefixInstall || !examplesBeside) {
+            || !sharedExamples || !prefixInstall || !containment || !examplesBeside) {
             qWarning() << "solver lookup" << nothing << onPath << beside << solversFirst << chosenFirst
                        << probed << notAsked << refusesBundled << refusesAppImage << savesInside << savesChosen
-                       << runRecordsEngine << sharedExamples << prefixInstall << examplesBeside << versions.version(QStringLiteral("nec2"), userNec2c);
+                       << runRecordsEngine << sharedExamples << prefixInstall << containment << examplesBeside << versions.version(QStringLiteral("nec2"), userNec2c);
             return NECWB_SMOKE_FAILURE("solver lookup and saved paths");
         }
     }

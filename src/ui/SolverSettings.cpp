@@ -22,16 +22,10 @@ auto applicationFolder(const QString& directory) -> QDir
     return QDir(directory.isEmpty() ? QCoreApplication::applicationDirPath() : directory);
 }
 
-auto inside(const QString& file, const QString& folder) -> bool
-{
-    return !folder.isEmpty()
-        && QDir::cleanPath(file).startsWith(QDir::cleanPath(folder) + QLatin1Char('/'), Qt::CaseInsensitive);
-}
-
 // A mounted AppImage: this one ($APPDIR) or any other under /tmp/.mount_*.
 auto inAppImage(const QString& file) -> bool
 {
-    return inside(file, qEnvironmentVariable("APPDIR"))
+    return !pathInsideFolder(file, qEnvironmentVariable("APPDIR")).isEmpty()
         || QDir::cleanPath(file).startsWith(QDir::cleanPath(QDir::tempPath()) + QStringLiteral("/.mount_"))
         || QDir::cleanPath(file).startsWith(QStringLiteral("/tmp/.mount_"));
 }
@@ -84,9 +78,8 @@ auto choosePath(const QString& backendId, const QString& path, const QString& ap
     }
     const auto file = QDir::fromNativeSeparators(QFileInfo(path).absoluteFilePath());
     if (inAppImage(file) || isBundled(file, applicationDirectory)) return false;
-    const auto application = applicationFolder(applicationDirectory);
-    settings.setValue(pathKey(backendId),
-        inside(file, application.absolutePath()) ? application.relativeFilePath(file) : path);
+    const auto relative = pathInsideFolder(file, applicationFolder(applicationDirectory).absolutePath());
+    settings.setValue(pathKey(backendId), relative.isEmpty() ? path : relative);
     return true;
 }
 

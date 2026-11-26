@@ -25,8 +25,7 @@ auto isInsideInstallation(const QString& path, const QString& applicationDirecto
     if (isInsideApplication(path, applicationDirectory)) return true;
     QDir prefix(applicationDirectory.isEmpty() ? QCoreApplication::applicationDirPath() : applicationDirectory);
     if (prefix.dirName() != QStringLiteral("bin") || !prefix.cdUp()) return false;
-    return QFileInfo(path).absoluteFilePath().startsWith(prefix.absolutePath() + QLatin1Char('/'),
-        Qt::CaseInsensitive);
+    return !pathInsideFolder(path, prefix.absolutePath()).isEmpty();
 }
 
 }
