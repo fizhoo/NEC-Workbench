@@ -227,7 +227,10 @@ natively, the AppImage under Xvfb with `xcb`); a missing platform plugin fails i
 solves, finds the shipped examples (inside the package or install prefix) where
 `ui/ExampleLocator` (Open Example…) looks for them (`examples/` beside the executable, else
 `../share/nec-workbench/examples`, else `./examples` in a source tree), solves
-`2m-3-element-yagi.nec` from there, and stops long runs with Stop and with a timeout. CI
+`2m-3-element-yagi.nec` from there, finds the user guide and the two pages it links to where
+Help › User Guide looks (`doc/` beside the executable, else `../share/nec-workbench/doc`;
+CMake installs exactly those three from `docs/`, and Help opens this version's guide on
+GitHub when there is none), and stops long runs with Stop and with a timeout. CI
 also compares the packaged nec2c's output with a reference build's, as text, and with a
 nec2c rebuilt offline from the release source archive (`BUILDING.txt` in it), and the
 Windows build's parsed results with Linux's (`necwb_nec2c_check`).

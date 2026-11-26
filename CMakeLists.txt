@@ -352,6 +352,14 @@ if(NECWB_BUILD_GUI)
         "examples/geometry-gx-symmetry.nec"
         DESTINATION share/nec-workbench/examples
     )
+    # The user guide and the two pages it links to, named so the private notes in docs/ never
+    # ship (ExampleLocator.h, shippedDocuments).
+    install(FILES
+        "docs/user-guide.md"
+        "docs/nec-card-support.md"
+        "docs/nec-validation-reference.md"
+        DESTINATION share/nec-workbench/doc
+    )
 
     if(UNIX AND NOT APPLE)
         install(FILES packaging/nec-workbench.desktop

@@ -202,6 +202,20 @@ auto runPackageCheck() -> int
               .arg(describeImpedance(yagiResult.feedpoints.front())).arg(yagiResult.radiation.size())
         : !problem.isEmpty() ? problem : !examplesShipped ? QStringLiteral("no examples") : yagi.result.detail);
 
+    // The user guide and the pages it links to, where Help › User Guide looks, inside the
+    // package or install prefix.
+    const auto documents = documentFolder();
+    QStringList documentsMissing;
+    for (const auto& name : shippedDocuments())
+        if (!QFileInfo::exists(QDir(documents).filePath(name))) documentsMissing << name;
+    report(!documents.isEmpty() && isInsideInstallation(documents) && documentsMissing.isEmpty(),
+        QStringLiteral("user guide found"), documents.isEmpty() ? QStringLiteral("no doc folder")
+            : documentsMissing.isEmpty()
+            ? QStringLiteral("%1 in %2").arg(shippedDocuments().join(QStringLiteral(", ")),
+                  QDir::toNativeSeparators(documents))
+            : QStringLiteral("%1 missing from %2").arg(documentsMissing.join(QStringLiteral(", ")),
+                  QDir::toNativeSeparators(documents)));
+
     // Stop and the timeout end the process themselves: terminate, then kill.
     const auto stop = solve(located.path, LongDeck, 600, 1500);
     report(stop.result.status == SolverProcessStatus::Canceled && stop.stoppedAfterSeconds >= 0.0

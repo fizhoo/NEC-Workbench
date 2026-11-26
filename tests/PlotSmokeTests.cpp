@@ -367,6 +367,23 @@ auto main(int argc, char* argv[]) -> int
             && pathInsideFolder(tree + QStringLiteral("/app/solvers/out"), tree + QStringLiteral("/app")).isEmpty()
             && necwb::ui::isInsideApplication(tree + QStringLiteral("/app/solvers/onec"), tree + QStringLiteral("/link"));
 #endif
+        // The user guide: ../share/nec-workbench/doc for an install, doc/ beside Workbench first,
+        // and this version's online guide when there is none.
+        const auto writeGuide = [](const QString& folder) {
+            QDir().mkpath(folder);
+            QFile guide(folder + QStringLiteral("/user-guide.md"));
+            guide.open(QIODevice::WriteOnly);
+        };
+        writeGuide(app + QStringLiteral("/share/nec-workbench/doc"));
+        const auto installedGuide = necwb::ui::documentFolder(bin)
+            == QDir::cleanPath(app + QStringLiteral("/share/nec-workbench/doc"));
+        writeGuide(bin + QStringLiteral("/doc"));
+        const auto userGuide = installedGuide
+            && necwb::ui::documentFolder(bin) == QDir::cleanPath(bin + QStringLiteral("/doc"))
+            && necwb::ui::shippedDocuments() == QStringList{QStringLiteral("user-guide.md"),
+                QStringLiteral("nec-card-support.md"), QStringLiteral("nec-validation-reference.md")}
+            && necwb::ui::onlineUserGuide().toString() == QStringLiteral(
+                "https://github.com/fizhoo/NEC-Workbench/blob/v" NECWB_DISPLAY_VERSION "/docs/user-guide.md");
         QDir().mkpath(bin + QStringLiteral("/examples"));
         const auto examplesBeside = necwb::ui::exampleFolder(bin) == QDir::cleanPath(bin + QStringLiteral("/examples"));
         // A user's nec2c is asked its version in the background; another program never is.
@@ -429,10 +446,11 @@ auto main(int argc, char* argv[]) -> int
         qputenv("PATH", savedPath);
         if (!nothing || !onPath || !beside || !solversFirst || !chosenFirst || !probed || !notAsked
             || !refusesBundled || !refusesAppImage || !savesInside || !savesChosen || !runRecordsEngine
-            || !sharedExamples || !prefixInstall || !containment || !examplesBeside || !sidecarForNec2cOnly) {
+            || !sharedExamples || !prefixInstall || !containment || !examplesBeside || !sidecarForNec2cOnly
+            || !userGuide) {
             qWarning() << "solver lookup" << nothing << onPath << beside << solversFirst << chosenFirst
                        << probed << notAsked << refusesBundled << refusesAppImage << savesInside << savesChosen
-                       << runRecordsEngine << sharedExamples << prefixInstall << containment << examplesBeside << sidecarForNec2cOnly << versions.version(QStringLiteral("nec2"), userNec2c);
+                       << runRecordsEngine << sharedExamples << prefixInstall << containment << examplesBeside << sidecarForNec2cOnly << userGuide << versions.version(QStringLiteral("nec2"), userNec2c);
             return NECWB_SMOKE_FAILURE("solver lookup and saved paths");
         }
     }

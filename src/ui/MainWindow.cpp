@@ -1468,21 +1468,13 @@ void MainWindow::showGettingStarted()
 
 void MainWindow::openUserGuide()
 {
-    const QStringList candidates{
-        QDir(QCoreApplication::applicationDirPath()).filePath(
-            QStringLiteral("../docs/user-guide.md")),
-        QDir(QCoreApplication::applicationDirPath()).filePath(
-            QStringLiteral("docs/user-guide.md")),
-        QDir::current().filePath(QStringLiteral("docs/user-guide.md")),
-    };
-    for (const auto& path : candidates) {
-        if (!QFileInfo::exists(path)) continue;
-        if (QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath())))
-            return;
-    }
+    // The installed guide, else this version's online.
+    if (const auto folder = documentFolder(); !folder.isEmpty()
+        && QDesktopServices::openUrl(QUrl::fromLocalFile(QDir(folder).filePath(QStringLiteral("user-guide.md")))))
+        return;
+    if (QDesktopServices::openUrl(onlineUserGuide())) return;
     QMessageBox::information(this, tr("User Guide"),
-        tr("The local user guide could not be opened.\n"
-           "Look for docs/user-guide.md in the NEC Workbench installation or source tree."));
+        tr("The user guide could not be opened. It is at\n%1").arg(onlineUserGuide().toString()));
 }
 
 void MainWindow::showAboutDialog()

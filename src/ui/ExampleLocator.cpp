@@ -20,6 +20,32 @@ auto exampleFolder(const QString& applicationDirectory) -> QString
     return {};
 }
 
+auto shippedDocuments() -> QStringList
+{
+    return {QStringLiteral("user-guide.md"), QStringLiteral("nec-card-support.md"),
+        QStringLiteral("nec-validation-reference.md")};
+}
+
+auto documentFolder(const QString& applicationDirectory) -> QString
+{
+    const QDir application(applicationDirectory.isEmpty()
+        ? QCoreApplication::applicationDirPath() : applicationDirectory);
+    for (const auto& candidate : {application.filePath(QStringLiteral("doc")),
+             application.filePath(QStringLiteral("../share/nec-workbench/doc")),
+             application.filePath(QStringLiteral("../docs")), application.filePath(QStringLiteral("docs")),
+             QDir::current().filePath(QStringLiteral("docs"))}) {
+        if (QFileInfo::exists(QDir(candidate).filePath(QStringLiteral("user-guide.md"))))
+            return QDir::cleanPath(QDir(candidate).absolutePath());
+    }
+    return {};
+}
+
+auto onlineUserGuide() -> QUrl
+{
+    return QUrl(QStringLiteral("https://github.com/fizhoo/NEC-Workbench/blob/v%1/docs/user-guide.md")
+        .arg(QStringLiteral(NECWB_DISPLAY_VERSION)));
+}
+
 auto isInsideInstallation(const QString& path, const QString& applicationDirectory) -> bool
 {
     if (isInsideApplication(path, applicationDirectory)) return true;
