@@ -1460,10 +1460,10 @@ void MainWindow::showGettingStarted()
 {
     QMessageBox::information(this, tr("Getting Started"),
         tr("1. Create or open a NEC model.\n"
-           "2. Edit geometry and electrical model data under Model.\n"
-           "3. Run Check Model and resolve blocking errors.\n"
+           "2. Pick a group in the model tree and edit its wires, sources and loads in the card tables.\n"
+           "3. Run Check Model and resolve the blocking errors listed in the bottom panel.\n"
            "4. Set frequency, ground and requests in the model tree, and the engine beside Run.\n"
-           "5. Run Analysis, then inspect Results."));
+           "5. Run Analysis, then read the results column; the bottom panel keeps the Run log and Runs."));
 }
 
 void MainWindow::openUserGuide()

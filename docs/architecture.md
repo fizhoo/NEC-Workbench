@@ -325,7 +325,7 @@ explicit spherical direction. Every F/B uses one back direction, the same elevat
 at the opposite azimuth, which specified-direction requests sample explicitly and
 tracked cuts contain; missing coverage produces an unavailable value rather than a
 substitute. F/R compares the forward sample with the strongest sampled response in the
-rear half of the requested cut. [Directional Metrics](optimization-math.md#directional-metrics)
+rear half of the requested cut. The user guide's [Radiation](user-guide.md#radiation) section
 defines each case.
 
 ## Optimization
