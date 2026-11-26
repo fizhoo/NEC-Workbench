@@ -14,6 +14,10 @@ class QToolButton;
 
 namespace necwb::ui {
 
+// Pass, Usable, Caution or Questionable, as the view and the run summary show it.
+[[nodiscard]] auto averageGainClassificationName(analysis::AverageGainClassification classification)
+    -> QString;
+
 class AverageGainResultsView final : public QWidget {
 public:
     explicit AverageGainResultsView(QWidget* parent = nullptr);

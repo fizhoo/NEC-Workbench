@@ -217,17 +217,6 @@ auto averageGainEnvironmentId(analysis::AverageGainEnvironment environment) -> Q
         ? QStringLiteral("perfect-ground") : QStringLiteral("free-space");
 }
 
-auto averageGainClassificationName(analysis::AverageGainClassification classification) -> QString
-{
-    switch (classification) {
-    case analysis::AverageGainClassification::Pass: return QObject::tr("Pass");
-    case analysis::AverageGainClassification::Usable: return QObject::tr("Usable");
-    case analysis::AverageGainClassification::Caution: return QObject::tr("Caution");
-    case analysis::AverageGainClassification::Questionable: return QObject::tr("Questionable");
-    }
-    return QObject::tr("Unknown");
-}
-
 auto writeAverageGainMetadata(const QString& directory, double frequencyMHz,
     analysis::AverageGainEnvironment environment,
     const std::optional<analysis::AverageGainAssessment>& assessment = std::nullopt,
