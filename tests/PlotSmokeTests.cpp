@@ -1468,6 +1468,19 @@ auto main(int argc, char* argv[]) -> int
             run.currents.push_back(current(14.2, 1, segment, high[segment - 1]));
             run.currents.push_back(current(14.2, 2, segment, 0.05));
         }
+        // A frequency printed twice with a last-digit difference is one frequency, as it is
+        // for the results column (nearlyEqual), not two.
+        auto nearlySame = run;
+        nearlySame.currents.push_back(current(14.0 * (1.0 + 1.0e-12), 1, 1, 0.25));
+        const auto nearlySameData = necwb::ui::ResultData::make(nearlySame);
+        necwb::ui::CurrentDistributionView nearlySameView;
+        nearlySameView.setResults(nearlySameData, QStringLiteral("nearly-same"));
+        const auto* nearlySameChoice = nearlySameView.findChild<QComboBox*>();
+        const auto currentFrequenciesTolerant = nearlySameData->currentFrequencies() == std::vector{14.0, 14.2}
+            && nearlySameChoice != nullptr && nearlySameChoice->count() == 2;
+        if (!currentFrequenciesTolerant)
+            qWarning() << "current frequencies" << nearlySameData->currentFrequencies().size()
+                       << (nearlySameChoice == nullptr ? -1 : nearlySameChoice->count());
         necwb::ui::ResultsController results(&host);
         results.setColumnChangedCallback([workspace](const necwb::ui::ResultState& state, bool stale) {
             workspace->setResults(state, stale);
@@ -1559,10 +1572,10 @@ auto main(int argc, char* argv[]) -> int
             && !QSettings{}.value(QStringLiteral("geometry/showCurrents")).toBool();
         currentsAction->setChecked(true);
         if (!infoUnder || !planesClear || !clear3D || !frontMain || !fitsAll || !flatLabels
-            || !offWithoutResults || !colouredLow || !followsFrequency || !selectionShows
-            || !stalePlain || !liveShown || !offRemembered) {
+            || !offWithoutResults || !currentFrequenciesTolerant || !colouredLow || !followsFrequency
+            || !selectionShows || !stalePlain || !liveShown || !offRemembered) {
             qWarning() << "geometry extras" << infoUnder << planesClear << clear3D << frontMain
-                       << fitsAll << flatLabels << offWithoutResults << colouredLow
+                       << fitsAll << flatLabels << offWithoutResults << currentFrequenciesTolerant << colouredLow
                        << followsFrequency << selectionShows << stalePlain << liveShown
                        << offRemembered << xyInfo->text();
             return NECWB_SMOKE_FAILURE("geometry info lines, view buttons, labels and currents");

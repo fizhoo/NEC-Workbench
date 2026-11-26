@@ -33,6 +33,11 @@ public:
     {
         return radiationFrequencies_;
     }
+    // The frequencies with segment currents, sorted and distinct by the same tolerance.
+    [[nodiscard]] auto currentFrequencies() const -> const std::vector<double>&
+    {
+        return currentFrequencies_;
+    }
     // In run order; empty when the run has no radiation at that frequency.
     [[nodiscard]] auto radiationAt(double frequencyMHz) const
         -> std::span<const analysis::RadiationSample>;
@@ -50,6 +55,7 @@ private:
 
     analysis::AnalysisResult result_;
     std::vector<double> radiationFrequencies_;
+    std::vector<double> currentFrequencies_;
     std::vector<FrequencyGroup> radiationGroups_;
 };
 

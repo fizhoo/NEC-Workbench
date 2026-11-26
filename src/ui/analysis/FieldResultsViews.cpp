@@ -50,18 +50,6 @@
 namespace necwb::ui {
 namespace {
 
-auto frequencies(const auto& values) -> std::vector<double>
-{
-    std::vector<double> result;
-    for (const auto& value : values) {
-        if (std::ranges::find(result, value.frequencyMHz) == result.end()) {
-            result.push_back(value.frequencyMHz);
-        }
-    }
-    std::ranges::sort(result);
-    return result;
-}
-
 auto selectedFrequency(QComboBox* control) -> double
 {
     return control->currentData().toDouble();
@@ -1449,7 +1437,7 @@ void CurrentDistributionView::setResults(ResultData::Pointer data, const QString
     data_ = data ? std::move(data) : ResultData::empty();
     runContext_ = runDirectory;
     const QSignalBlocker blocker(frequency_);
-    populateFrequencies(frequency_, frequencies(data_->result().currents));
+    populateFrequencies(frequency_, data_->currentFrequencies());
     refresh();
 }
 void CurrentDistributionView::setModel(const model::AntennaModel& model)
