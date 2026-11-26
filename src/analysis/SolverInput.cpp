@@ -18,29 +18,6 @@
 namespace necwb::analysis {
 namespace {
 
-auto splitLines(std::string_view source) -> std::vector<std::string>
-{
-    std::vector<std::string> lines;
-    std::istringstream input{std::string(source)};
-    std::string line;
-    while (std::getline(input, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        lines.push_back(line);
-    }
-    if (!source.empty() && source.back() == '\n') lines.emplace_back();
-    return lines;
-}
-
-auto joinLines(const std::vector<std::string>& lines) -> std::string
-{
-    std::ostringstream output;
-    for (std::size_t index = 0; index < lines.size(); ++index) {
-        if (index != 0) output << '\n';
-        output << lines[index];
-    }
-    return output.str();
-}
-
 // Uses the same ground rule as the Requests editor: the model setup's GN card.
 auto rearHemisphereGrid(const nec::NecDocument& document) -> model::RadiationPatternRequest
 {
@@ -213,7 +190,7 @@ auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
     const auto frequencies = frequencyPlanPoints(radiationFrequencies);
     if (frequencies.empty()) return compatibleSource;
 
-    auto lines = splitLines(compatibleSource);
+    const auto document = nec::NecParser{}.parse(compatibleSource);
     const auto frequencyLine = setup.frequency
         ? setup.frequency->sourceLine : std::size_t{};
     std::vector<std::size_t> patternLines;
@@ -222,10 +199,10 @@ auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
     const auto executionLine = setup.executionRequest
         ? setup.executionRequest->sourceLine : std::size_t{};
     std::vector<std::string> retained;
-    retained.reserve(lines.size());
-    auto insertionIndex = lines.size();
-    for (std::size_t index = 0; index < lines.size(); ++index) {
-        const auto sourceLine = index + 1;
+    retained.reserve(document.cards().size());
+    auto insertionIndex = document.cards().size();
+    for (const auto& card : document.cards()) {
+        const auto sourceLine = card.lineNumber;
         if (frequencyLine != 0 && sourceLine == frequencyLine) {
             continue;
         }
@@ -234,7 +211,7 @@ auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
             insertionIndex = std::min(insertionIndex, retained.size());
             continue;
         }
-        retained.push_back(lines[index]);
+        retained.push_back(card.sourceText);
     }
 
     insertionIndex = std::min(insertionIndex, retained.size());
@@ -255,7 +232,7 @@ auto prepareSolverInput(std::string_view source, const model::ModelSetup& setup,
     retained.insert(retained.begin() + static_cast<std::ptrdiff_t>(insertionIndex),
         requests.begin(), requests.end());
 
-    return joinLines(retained);
+    return writeLines(document, retained);
 }
 
 auto prepareImpedanceInput(std::string_view source) -> std::string

@@ -2994,6 +2994,8 @@ void testOptimizationObjectives()
         const char* name;
         std::function<std::string(std::string_view)> build;
         long frequencies, executions, patterns;
+        // Writes the model's FR sweep again rather than dropping it.
+        bool keepsSweep{false};
     };
     const std::array builders{
         Builder{"explicit-frequency", [&](std::string_view deck) {
@@ -3006,6 +3008,13 @@ void testOptimizationObjectives()
                 necwb::analysis::DirectionalEvaluationMode::StrongestInAzimuthCut, 90.0); }, 2, 2, 2},
         Builder{"maximum-gain", [](std::string_view deck) {
             return necwb::analysis::prepareMaximumGainSearchInput(deck, 14.1, false); }, 1, 1, 1},
+        Builder{"radiation-frequencies", [&](std::string_view deck) {
+            necwb::analysis::FrequencyPlan plan;
+            plan.mode = necwb::analysis::FrequencyPlanMode::Explicit;
+            plan.pointsMHz.assign(studyFrequencies.begin(), studyFrequencies.end());
+            return necwb::analysis::prepareSolverInput(deck,
+                necwb::nec::NecSetupConverter{}.convert(necwb::nec::NecParser{}.parse(deck)), plan); },
+            3, 1, 2, true},
     };
     const std::vector<std::string> authored{"CM rewrite", "CE", "GW 1 3 0 0 0 1 0 0 .001", "GE 0",
         "EX 0 1 2 0 1 0", "FR 0 3 0 0 14 .1", "LD 5 1 0 0 5.8e7", "XQ 0", "RP 0 1 1 1000 90 0 0 0"};
@@ -3040,7 +3049,7 @@ void testOptimizationObjectives()
                         ? output.find("EN") > output.rfind("FR") && output.find("EN") > output.rfind("XQ")
                         : output.rfind("LD") < output.find("FR");
                     expect(endingsKept && kept == others && requestsLast
-                            && output.find("FR 0 3 0 0 14") == std::string::npos
+                            && (output.find("FR 0 3 0 0 14") == std::string::npos) != builder.keepsSweep
                             && frequencies == builder.frequencies && executions == builder.executions
                             && patterns == builder.patterns,
                         builder.name);
