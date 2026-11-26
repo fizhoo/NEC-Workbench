@@ -833,6 +833,44 @@ auto main(int argc, char* argv[]) -> int
                 && mainWindow.property("workspaceDensityId").toString()
                     == QStringLiteral("density-smoke-sentinel");
         }
+        // So does the optimizer, a window of its own that is no dialog.
+        {
+            const auto savedDensity = QSettings{}.value(QStringLiteral("appearance/workspaceDensity"));
+            QAction* spacious = nullptr;
+            QAction* compact = nullptr;
+            for (auto* found : mainWindow.findChildren<QAction*>()) {
+                if (found->text() == QStringLiteral("&Spacious")) spacious = found;
+                if (found->text() == QStringLiteral("&Compact")) compact = found;
+            }
+            const auto* optimizer = optimizerChild<QWidget>(QStringLiteral("optimizationWorkspace"));
+            const auto* window = optimizer == nullptr ? nullptr : optimizer->window();
+            auto optimizerFollows = false;
+            if (spacious != nullptr && compact != nullptr && window != nullptr && window != &mainWindow) {
+                // A layout's own spacing, scaled: 5/6 spacious, 1/3 compact.
+                const QLayout* layout = nullptr;
+                for (const auto* found : window->findChildren<QLayout*>()) {
+                    const auto margins = found->property("workspaceDensityMargins").toList();
+                    if (!margins.isEmpty() && margins.front().toInt() >= 6) { layout = found; break; }
+                }
+                const auto margin = [layout] { return layout == nullptr ? -1 : layout->contentsMargins().left(); };
+                spacious->trigger();
+                application.processEvents();
+                const auto spaciousApplied = window->property("workspaceDensityId").toString()
+                    == QStringLiteral("spacious");
+                const auto spaciousMargin = margin();
+                compact->trigger();
+                application.processEvents();
+                optimizerFollows = spaciousApplied
+                    && window->property("workspaceDensityId").toString() == QStringLiteral("compact")
+                    && margin() >= 0 && spaciousMargin > margin();
+                if (!optimizerFollows)
+                    qWarning() << "optimizer density" << spaciousApplied << spaciousMargin
+                               << window->property("workspaceDensityId") << margin();
+            }
+            dialogDensityIsIncremental = dialogDensityIsIncremental && optimizerFollows;
+            if (savedDensity.isValid()) QSettings{}.setValue(QStringLiteral("appearance/workspaceDensity"), savedDensity);
+            else QSettings{}.remove(QStringLiteral("appearance/workspaceDensity"));
+        }
         // Results live in the main window's right column: no result windows, no Result
         // Windows menu, one overlay control, and View › Results Column collapses the column.
         auto* split = mainWindow.findChild<QSplitter*>(QStringLiteral("workbenchSplit"));
@@ -3022,7 +3060,7 @@ auto main(int argc, char* argv[]) -> int
     if (!undoFollowsFocusChanges)
         return NECWB_SMOKE_FAILURE("undo follows focus between geometry and deck");
     if (!dialogDensityIsIncremental)
-        return NECWB_SMOKE_FAILURE("incremental dialog workspace density");
+        return NECWB_SMOKE_FAILURE("dialogs and the optimizer window follow the workspace density");
     if (!setupWindowNavigation)
         return NECWB_SMOKE_FAILURE("setup window navigation");
     if (!optimizationWindowNavigation)

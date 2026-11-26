@@ -188,43 +188,6 @@ void invokeFocusedEditCommand(const char* command)
 }
 
 
-auto workspaceDensityFromId(const QString& id) -> MainWindow::WorkspaceDensity
-{
-    if (id == QStringLiteral("spacious")) return MainWindow::WorkspaceDensity::Spacious;
-    if (id == QStringLiteral("standard")) return MainWindow::WorkspaceDensity::Standard;
-    return MainWindow::WorkspaceDensity::Compact;
-}
-
-auto workspaceDensityId(MainWindow::WorkspaceDensity density) -> QString
-{
-    switch (density) {
-    case MainWindow::WorkspaceDensity::Compact: return QStringLiteral("compact");
-    case MainWindow::WorkspaceDensity::Standard: return QStringLiteral("standard");
-    case MainWindow::WorkspaceDensity::Spacious: return QStringLiteral("spacious");
-    }
-    return QStringLiteral("compact");
-}
-
-auto workspaceDensityScale(MainWindow::WorkspaceDensity density) -> qreal
-{
-    switch (density) {
-    case MainWindow::WorkspaceDensity::Compact: return 1.0 / 3.0;
-    case MainWindow::WorkspaceDensity::Standard: return 0.5;
-    case MainWindow::WorkspaceDensity::Spacious: return 5.0 / 6.0;
-    }
-    return 1.0 / 3.0;
-}
-
-auto workspaceDensityFontSize(MainWindow::WorkspaceDensity density) -> int
-{
-    switch (density) {
-    case MainWindow::WorkspaceDensity::Compact: return 9;
-    case MainWindow::WorkspaceDensity::Standard: return 10;
-    case MainWindow::WorkspaceDensity::Spacious: return 11;
-    }
-    return 9;
-}
-
 void setRunResultMetadata(AnalysisRunRecord& record, const analysis::AnalysisResult& result,
     qint64 outputBytes)
 {
@@ -315,8 +278,7 @@ MainWindow::MainWindow()
     createWorkspace();
     createMenusAndToolbar();
     qApp->installEventFilter(this);
-    setWorkspaceDensity(workspaceDensityFromId(QSettings{}.value(
-        QStringLiteral("appearance/workspaceDensity"), QStringLiteral("compact")).toString()));
+    setWorkspaceDensity(savedWorkspaceDensity());
 
     connect(statusBar_, &WorkbenchStatusBar::problemsRequested,
         problemsAction_, &QAction::trigger);
@@ -350,12 +312,10 @@ MainWindow::MainWindow()
 auto MainWindow::eventFilter(QObject* watched, QEvent* event) -> bool
 {
     if (event->type() == QEvent::Show) {
-        auto* dialog = qobject_cast<QDialog*>(watched);
-        if (dialog != nullptr && dialog->isWindow()
-            && dialog->property("workspaceDensityId").toString()
-                != workspaceDensityId(workspaceDensity_)) {
-            applyWorkspaceDensity(dialog);
-        }
+        auto* window = qobject_cast<QWidget*>(watched);
+        if (window != this && followsWorkspaceDensity(window)
+            && window->property("workspaceDensityId").toString() != workspaceDensityId(workspaceDensity_))
+            applyWorkspaceDensity(window);
     }
     return QMainWindow::eventFilter(watched, event);
 }
@@ -527,8 +487,7 @@ void MainWindow::createActions()
     compactDensityAction_->setObjectName(QStringLiteral("compactWorkspaceDensityAction"));
     standardDensityAction_->setObjectName(QStringLiteral("standardWorkspaceDensityAction"));
     spaciousDensityAction_->setObjectName(QStringLiteral("spaciousWorkspaceDensityAction"));
-    const auto savedDensity = workspaceDensityFromId(QSettings{}.value(
-        QStringLiteral("appearance/workspaceDensity"), QStringLiteral("compact")).toString());
+    const auto savedDensity = savedWorkspaceDensity();
     switch (savedDensity) {
     case WorkspaceDensity::Compact: compactDensityAction_->setChecked(true); break;
     case WorkspaceDensity::Standard: standardDensityAction_->setChecked(true); break;
@@ -909,6 +868,7 @@ void MainWindow::createOptimizationWorkspace()
     optimizationWorkspace_ = new OptimizationWorkspace;
     optimizationWorkspace_->setObjectName(QStringLiteral("optimizationWorkspace"));
     optimizerWindow_ = new OptimizerWindow(optimizationWorkspace_, this);
+    followWorkspaceDensity(optimizerWindow_);
     preserveControlHeights(optimizerWindow_);
     optimizationWorkspace_->setRunsChangedCallback([this] {
         bottomPanel_->runs()->reload();
@@ -1398,7 +1358,7 @@ void MainWindow::resetWorkspaceLayout()
 void MainWindow::setWorkspaceDensity(WorkspaceDensity density)
 {
     workspaceDensity_ = density;
-    QSettings{}.setValue(QStringLiteral("appearance/workspaceDensity"), workspaceDensityId(density));
+    saveWorkspaceDensity(density);
     applyWorkspaceDensity();
 
     switch (density) {
@@ -1412,8 +1372,7 @@ void MainWindow::applyWorkspaceDensity()
 {
     auto roots = QList<QWidget*>{this};
     for (auto* widget : QApplication::topLevelWidgets()) {
-        if (widget != this && qobject_cast<QDialog*>(widget) != nullptr)
-            roots.push_back(widget);
+        if (widget != this && followsWorkspaceDensity(widget)) roots.push_back(widget);
     }
     for (auto* root : roots) applyWorkspaceDensity(root);
 

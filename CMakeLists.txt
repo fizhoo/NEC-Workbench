@@ -128,6 +128,8 @@ if(NECWB_BUILD_GUI)
         src/ui/WorkbenchLayout.h
         src/ui/WorkbenchStatusBar.cpp
         src/ui/WorkbenchStatusBar.h
+        src/ui/WorkspaceDensity.cpp
+        src/ui/WorkspaceDensity.h
         src/ui/WorkbenchToolBar.cpp
         src/ui/WorkbenchToolBar.h
         src/ui/modeltree/ModelColumn.cpp
