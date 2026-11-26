@@ -5,6 +5,7 @@
 #include "ui/CenterViewHeader.h"
 #include "ui/SettingsCleanup.h"
 #include "ui/ExampleLocator.h"
+#include "ui/FileIo.h"
 #include "ui/SolverLocator.h"
 #include "ui/SolverSettings.h"
 #include "ui/WorkbenchLayout.h"
@@ -186,43 +187,6 @@ void invokeFocusedEditCommand(const char* command)
 }
 
 
-auto workspaceDensityFromId(const QString& id) -> MainWindow::WorkspaceDensity
-{
-    if (id == QStringLiteral("spacious")) return MainWindow::WorkspaceDensity::Spacious;
-    if (id == QStringLiteral("standard")) return MainWindow::WorkspaceDensity::Standard;
-    return MainWindow::WorkspaceDensity::Compact;
-}
-
-auto workspaceDensityId(MainWindow::WorkspaceDensity density) -> QString
-{
-    switch (density) {
-    case MainWindow::WorkspaceDensity::Compact: return QStringLiteral("compact");
-    case MainWindow::WorkspaceDensity::Standard: return QStringLiteral("standard");
-    case MainWindow::WorkspaceDensity::Spacious: return QStringLiteral("spacious");
-    }
-    return QStringLiteral("compact");
-}
-
-auto workspaceDensityScale(MainWindow::WorkspaceDensity density) -> qreal
-{
-    switch (density) {
-    case MainWindow::WorkspaceDensity::Compact: return 1.0 / 3.0;
-    case MainWindow::WorkspaceDensity::Standard: return 0.5;
-    case MainWindow::WorkspaceDensity::Spacious: return 5.0 / 6.0;
-    }
-    return 1.0 / 3.0;
-}
-
-auto workspaceDensityFontSize(MainWindow::WorkspaceDensity density) -> int
-{
-    switch (density) {
-    case MainWindow::WorkspaceDensity::Compact: return 9;
-    case MainWindow::WorkspaceDensity::Standard: return 10;
-    case MainWindow::WorkspaceDensity::Spacious: return 11;
-    }
-    return 9;
-}
-
 void setRunResultMetadata(AnalysisRunRecord& record, const analysis::AnalysisResult& result,
     qint64 outputBytes)
 {
@@ -252,17 +216,6 @@ auto averageGainEnvironmentId(analysis::AverageGainEnvironment environment) -> Q
         ? QStringLiteral("perfect-ground") : QStringLiteral("free-space");
 }
 
-auto averageGainClassificationName(analysis::AverageGainClassification classification) -> QString
-{
-    switch (classification) {
-    case analysis::AverageGainClassification::Pass: return QObject::tr("Pass");
-    case analysis::AverageGainClassification::Usable: return QObject::tr("Usable");
-    case analysis::AverageGainClassification::Caution: return QObject::tr("Caution");
-    case analysis::AverageGainClassification::Questionable: return QObject::tr("Questionable");
-    }
-    return QObject::tr("Unknown");
-}
-
 auto writeAverageGainMetadata(const QString& directory, double frequencyMHz,
     analysis::AverageGainEnvironment environment,
     const std::optional<analysis::AverageGainAssessment>& assessment = std::nullopt,
@@ -281,10 +234,8 @@ auto writeAverageGainMetadata(const QString& directory, double frequencyMHz,
             averageGainClassificationName(assessment->classification));
     }
     if (solidAnglePi) metadata.insert(QStringLiteral("solidAnglePi"), *solidAnglePi);
-    QFile file(QDir(directory).filePath(QStringLiteral("agt.json")));
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
-    const auto contents = QJsonDocument(metadata).toJson(QJsonDocument::Indented);
-    return file.write(contents) == contents.size();
+    return writeFile(QDir(directory).filePath(QStringLiteral("agt.json")),
+        QJsonDocument(metadata).toJson(QJsonDocument::Indented));
 }
 
 void preserveControlHeights(QWidget* root)
@@ -315,8 +266,7 @@ MainWindow::MainWindow()
     createWorkspace();
     createMenusAndToolbar();
     qApp->installEventFilter(this);
-    setWorkspaceDensity(workspaceDensityFromId(QSettings{}.value(
-        QStringLiteral("appearance/workspaceDensity"), QStringLiteral("compact")).toString()));
+    setWorkspaceDensity(savedWorkspaceDensity());
 
     connect(statusBar_, &WorkbenchStatusBar::problemsRequested,
         problemsAction_, &QAction::trigger);
@@ -350,12 +300,10 @@ MainWindow::MainWindow()
 auto MainWindow::eventFilter(QObject* watched, QEvent* event) -> bool
 {
     if (event->type() == QEvent::Show) {
-        auto* dialog = qobject_cast<QDialog*>(watched);
-        if (dialog != nullptr && dialog->isWindow()
-            && dialog->property("workspaceDensityId").toString()
-                != workspaceDensityId(workspaceDensity_)) {
-            applyWorkspaceDensity(dialog);
-        }
+        auto* window = qobject_cast<QWidget*>(watched);
+        if (window != this && followsWorkspaceDensity(window)
+            && window->property("workspaceDensityId").toString() != workspaceDensityId(workspaceDensity_))
+            applyWorkspaceDensity(window);
     }
     return QMainWindow::eventFilter(watched, event);
 }
@@ -527,8 +475,7 @@ void MainWindow::createActions()
     compactDensityAction_->setObjectName(QStringLiteral("compactWorkspaceDensityAction"));
     standardDensityAction_->setObjectName(QStringLiteral("standardWorkspaceDensityAction"));
     spaciousDensityAction_->setObjectName(QStringLiteral("spaciousWorkspaceDensityAction"));
-    const auto savedDensity = workspaceDensityFromId(QSettings{}.value(
-        QStringLiteral("appearance/workspaceDensity"), QStringLiteral("compact")).toString());
+    const auto savedDensity = savedWorkspaceDensity();
     switch (savedDensity) {
     case WorkspaceDensity::Compact: compactDensityAction_->setChecked(true); break;
     case WorkspaceDensity::Standard: standardDensityAction_->setChecked(true); break;
@@ -909,6 +856,7 @@ void MainWindow::createOptimizationWorkspace()
     optimizationWorkspace_ = new OptimizationWorkspace;
     optimizationWorkspace_->setObjectName(QStringLiteral("optimizationWorkspace"));
     optimizerWindow_ = new OptimizerWindow(optimizationWorkspace_, this);
+    followWorkspaceDensity(optimizerWindow_);
     preserveControlHeights(optimizerWindow_);
     optimizationWorkspace_->setRunsChangedCallback([this] {
         bottomPanel_->runs()->reload();
@@ -1398,7 +1346,7 @@ void MainWindow::resetWorkspaceLayout()
 void MainWindow::setWorkspaceDensity(WorkspaceDensity density)
 {
     workspaceDensity_ = density;
-    QSettings{}.setValue(QStringLiteral("appearance/workspaceDensity"), workspaceDensityId(density));
+    saveWorkspaceDensity(density);
     applyWorkspaceDensity();
 
     switch (density) {
@@ -1412,8 +1360,7 @@ void MainWindow::applyWorkspaceDensity()
 {
     auto roots = QList<QWidget*>{this};
     for (auto* widget : QApplication::topLevelWidgets()) {
-        if (widget != this && qobject_cast<QDialog*>(widget) != nullptr)
-            roots.push_back(widget);
+        if (widget != this && followsWorkspaceDensity(widget)) roots.push_back(widget);
     }
     for (auto* root : roots) applyWorkspaceDensity(root);
 
@@ -1439,27 +1386,15 @@ void MainWindow::applyWorkspaceDensity()
         "QTableView::item, QTreeView::item, QListView::item { padding: 1px %2px; }"
         "QStatusBar { min-height: %3px; }"
     ).arg(toolbarHeight).arg(horizontalPadding).arg(controlHeight).arg(tabPadding).arg(tabPadding + 4));
+    // A new style sheet puts back the fonts the widgets had before it, so the sizes go on after.
+    for (auto* root : roots) applyWorkspaceDensityFont(root, workspaceDensity_);
 }
 
 void MainWindow::applyWorkspaceDensity(QWidget* root)
 {
     if (root == nullptr) return;
 
-    const auto baseFontSize = workspaceDensityFontSize(workspaceDensity_);
-    const auto initialBaseFontSize = QApplication::font().pointSize();
-    const auto updateFont = [baseFontSize, initialBaseFontSize](QWidget* widget) {
-        if (!widget->property("workspaceDensityFontDelta").isValid()) {
-            const auto pointSize = widget->font().pointSize();
-            if (pointSize > 0)
-                widget->setProperty("workspaceDensityFontDelta", pointSize - initialBaseFontSize);
-        }
-        const auto delta = widget->property("workspaceDensityFontDelta").toInt();
-        auto font = widget->font();
-        font.setPointSize(std::max(6, baseFontSize + delta));
-        widget->setFont(font);
-    };
-    updateFont(root);
-    for (auto* widget : root->findChildren<QWidget*>()) updateFont(widget);
+    applyWorkspaceDensityFont(root, workspaceDensity_);
 
     const auto scale = workspaceDensityScale(workspaceDensity_);
     for (auto* layout : root->findChildren<QLayout*>()) {
@@ -1512,29 +1447,21 @@ void MainWindow::showGettingStarted()
 {
     QMessageBox::information(this, tr("Getting Started"),
         tr("1. Create or open a NEC model.\n"
-           "2. Edit geometry and electrical model data under Model.\n"
-           "3. Run Check Model and resolve blocking errors.\n"
+           "2. Pick a group in the model tree and edit its wires, sources and loads in the card tables.\n"
+           "3. Run Check Model and resolve the blocking errors listed in the bottom panel.\n"
            "4. Set frequency, ground and requests in the model tree, and the engine beside Run.\n"
-           "5. Run Analysis, then inspect Results."));
+           "5. Run Analysis, then read the results column; the bottom panel keeps the Run log and Runs."));
 }
 
 void MainWindow::openUserGuide()
 {
-    const QStringList candidates{
-        QDir(QCoreApplication::applicationDirPath()).filePath(
-            QStringLiteral("../docs/user-guide.md")),
-        QDir(QCoreApplication::applicationDirPath()).filePath(
-            QStringLiteral("docs/user-guide.md")),
-        QDir::current().filePath(QStringLiteral("docs/user-guide.md")),
-    };
-    for (const auto& path : candidates) {
-        if (!QFileInfo::exists(path)) continue;
-        if (QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath())))
-            return;
-    }
+    // The installed guide, else this version's online.
+    if (const auto folder = documentFolder(); !folder.isEmpty()
+        && QDesktopServices::openUrl(QUrl::fromLocalFile(QDir(folder).filePath(QStringLiteral("user-guide.md")))))
+        return;
+    if (QDesktopServices::openUrl(onlineUserGuide())) return;
     QMessageBox::information(this, tr("User Guide"),
-        tr("The local user guide could not be opened.\n"
-           "Look for docs/user-guide.md in the NEC Workbench installation or source tree."));
+        tr("The user guide could not be opened. It is at\n%1").arg(onlineUserGuide().toString()));
 }
 
 void MainWindow::showAboutDialog()
@@ -1721,12 +1648,12 @@ auto MainWindow::saveFileAs() -> bool
 
 auto MainWindow::writeFile(const QString& path) -> bool
 {
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-        QMessageBox::critical(this, tr("Save Failed"), file.errorString());
+    // A failed save leaves the file, its name here and the modified flag as they were.
+    if (QString problem; !writeWholeFile(path, editor_->toPlainText().toUtf8(), QIODevice::Text, problem)) {
+        QMessageBox::critical(this, tr("Save Failed"),
+            tr("%1 was not saved.\n\n%2").arg(QDir::toNativeSeparators(path), problem));
         return false;
     }
-    file.write(editor_->toPlainText().toUtf8());
     setCurrentFile(path);
     editor_->document()->setModified(false);
     statusBar()->showMessage(tr("Saved %1").arg(QFileInfo(path).fileName()), 3000);
@@ -2955,23 +2882,12 @@ void MainWindow::startAnalysisRun(const std::string& authoredSource,
     const auto inputPath = QDir(currentRunDirectory_).filePath(QStringLiteral("model.nec"));
     const auto sourcePath = QDir(currentRunDirectory_).filePath(QStringLiteral("model.source.nec"));
     currentRunOutputPath_ = QDir(currentRunDirectory_).filePath(QStringLiteral("model.out"));
-    QFile sourceFile(sourcePath);
-    if (!sourceFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QMessageBox::critical(this, tr("Run Failed"), sourceFile.errorString());
+    if (!ui::writeFile(sourcePath, QByteArray::fromStdString(authoredSource))
+        || !ui::writeFile(inputPath, QByteArray::fromStdString(backendSolverInput))) {
+        QMessageBox::critical(this, tr("Run Failed"), tr("Could not write the solver input."));
         currentRunRecord_.reset();
         return;
     }
-    sourceFile.write(QByteArray::fromStdString(authoredSource));
-    sourceFile.close();
-
-    QFile inputFile(inputPath);
-    if (!inputFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QMessageBox::critical(this, tr("Run Failed"), inputFile.errorString());
-        currentRunRecord_.reset();
-        return;
-    }
-    inputFile.write(QByteArray::fromStdString(backendSolverInput));
-    inputFile.close();
 
     analysis::SolverCommand command;
     try {
@@ -3056,28 +2972,17 @@ void MainWindow::startAverageGainTest(bool showView)
         currentRunRecord_.reset();
         return;
     }
-    QFile sourceFile(sourcePath);
-    if (!sourceFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QMessageBox::critical(this, tr("AGT Failed"), sourceFile.errorString());
-        currentRunRecord_.reset();
-        return;
-    }
-    sourceFile.write(QByteArray::fromStdString(source));
-    sourceFile.close();
-
-    QFile inputFile(inputPath);
-    if (!inputFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QMessageBox::critical(this, tr("AGT Failed"), inputFile.errorString());
-        currentRunRecord_.reset();
-        return;
-    }
     const auto averageGainInput = analysis::prepareAverageGainTestInput(
         resolution.generatedDeck, currentAverageGainFrequencyMHz_, currentAverageGainEnvironment_);
-    inputFile.write(QByteArray::fromStdString(analysis::formatSolverInputForBackend(
-        averageGainInput, solverBackendId_.toStdString())));
-    inputFile.close();
-    writeAverageGainMetadata(currentRunDirectory_, currentAverageGainFrequencyMHz_,
-        currentAverageGainEnvironment_);
+    if (!ui::writeFile(sourcePath, QByteArray::fromStdString(source))
+        || !ui::writeFile(inputPath, QByteArray::fromStdString(analysis::formatSolverInputForBackend(
+               averageGainInput, solverBackendId_.toStdString())))
+        || !writeAverageGainMetadata(currentRunDirectory_, currentAverageGainFrequencyMHz_,
+               currentAverageGainEnvironment_)) {
+        QMessageBox::critical(this, tr("AGT Failed"), tr("Could not write the solver input."));
+        currentRunRecord_.reset();
+        return;
+    }
 
     analysis::SolverCommand command;
     try {
@@ -3247,8 +3152,9 @@ void MainWindow::finishAnalysis(SolverProcessResult processResult)
                     ModelTree::StudyState::Complete,
                     tr("%1 @ %2 MHz").arg(formatDecimal(assessment.normalizedGain),
                         formatDecimal(currentAverageGainFrequencyMHz_)));
-                writeAverageGainMetadata(currentRunDirectory_, currentAverageGainFrequencyMHz_,
-                    currentAverageGainEnvironment_, assessment, result.averagingSolidAnglePi);
+                if (!writeAverageGainMetadata(currentRunDirectory_, currentAverageGainFrequencyMHz_,
+                        currentAverageGainEnvironment_, assessment, result.averagingSolidAnglePi))
+                    appendSolverOutput(tr("\nWarning: could not write agt.json to the run folder.\n"));
                 displayedRunDirectory_ = currentRunDirectory_;
                 averageGainView_->header()->setTitle(tr("Average Gain Test · %1").arg(context));
                 const auto expectedSolidAngle = currentAverageGainEnvironment_

@@ -11,7 +11,6 @@ namespace necwb::nec {
 struct DeckGeometryUnitInfo {
     double scaleToMeters{1.0};
     std::optional<model::LengthUnit> standardUnit{model::LengthUnit::Meter};
-    std::size_t scaleCardLine{};
     bool hasScaleCard{};
     bool uniform{true};
 };

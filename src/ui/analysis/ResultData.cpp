@@ -9,6 +9,12 @@ namespace necwb::ui {
 
 ResultData::ResultData(analysis::AnalysisResult result) : result_(std::move(result))
 {
+    for (const auto& current : result_.currents) currentFrequencies_.push_back(current.frequencyMHz);
+    std::ranges::sort(currentFrequencies_);
+    const auto repeats = std::ranges::unique(currentFrequencies_, [](double left, double right) {
+        return nearlyEqual(left, right);
+    });
+    currentFrequencies_.erase(repeats.begin(), repeats.end());
     const auto& radiation = result_.radiation;
     std::vector<std::size_t> order(radiation.size());
     std::iota(order.begin(), order.end(), std::size_t{});

@@ -1,6 +1,7 @@
 #include "analysis/AnalysisResult.h"
 #include "analysis/FrequencyComparison.h"
 #include "ui/DisplayFormat.h"
+#include "ui/FileIo.h"
 #include "ui/MainWindow.h"
 #include "ui/analysis/SweepPlotsView.h"
 #include "ui/ExampleLocator.h"
@@ -64,6 +65,7 @@
 #include <QElapsedTimer>
 #include <QDir>
 #include <QFile>
+#include <QFileDialog>
 #include <QImage>
 #include <QFileInfo>
 #include <QJsonDocument>
@@ -114,6 +116,14 @@
 #include <memory>
 #include <numbers>
 #include <vector>
+
+#ifdef Q_OS_UNIX
+#include <unistd.h>
+#endif
+#ifdef Q_OS_LINUX
+#include <csignal>
+#include <sys/resource.h>
+#endif
 
 namespace {
 
@@ -287,6 +297,17 @@ auto main(int argc, char* argv[]) -> int
             && necwb::ui::solverLabel(QStringLiteral("nec2"), bundled) == QStringLiteral("nec2c (bundled)")
             && necwb::ui::solverDescription(QStringLiteral("nec2"), bundled)
                 .startsWith(QStringLiteral("nec2c 1.3.3 (55be1e0) · bundled · "));
+        // The build metadata describes only the nec2c beside it, as the nec2 engine: not an
+        // onec in the same folder, and not that nec2c asked about as another engine.
+        makeExecutable(app + QStringLiteral("/solvers/onec") + ExecutableSuffix, "#!/bin/sh\n");
+        auto& sidecarVersions = necwb::ui::SolverVersions::instance();
+        const auto sidecarForNec2cOnly = sidecarVersions.version(QStringLiteral("nec2"), bundled.path)
+                == QStringLiteral("nec2c 1.3.3 (55be1e0)")
+            && sidecarVersions.version(QStringLiteral("opennec"), app + QStringLiteral("/solvers/onec") + ExecutableSuffix)
+                == QStringLiteral("version unknown")
+            && sidecarVersions.version(QStringLiteral("nec2"), app + QStringLiteral("/solvers/onec") + ExecutableSuffix)
+                == QStringLiteral("version unknown")
+            && sidecarVersions.version(QStringLiteral("opennec"), bundled.path) == QStringLiteral("version unknown");
         const auto chosen = located(elsewhere.filePath(QStringLiteral("nec2c") + ExecutableSuffix));
         const auto gone = located(QStringLiteral("/gone/nec2c"));
         const auto chosenFirst = chosen.origin == LocatedSolver::Origin::Chosen && !chosen.missing()
@@ -308,6 +329,62 @@ auto main(int argc, char* argv[]) -> int
             && !necwb::ui::isInsideInstallation(app + QStringLiteral("-other/examples"), bin)
             && !necwb::ui::isInsideInstallation(app + QStringLiteral("/share/nec-workbench/examples"),
                 app + QStringLiteral("/lib"));
+        // One containment rule for all three: paths cleaned and made absolute, symlinks resolved
+        // when both exist, and case ignored only on Windows. The folder itself is not inside it.
+        const auto tree = app + QStringLiteral("/tree");
+        QDir().mkpath(tree + QStringLiteral("/app/solvers"));
+        makeExecutable(tree + QStringLiteral("/app/solvers/onec"), "#!/bin/sh\n");
+        using necwb::ui::pathInsideFolder;
+        auto containment = pathInsideFolder(tree + QStringLiteral("/app/solvers/onec"), tree + QStringLiteral("/app"))
+                == QStringLiteral("solvers/onec")
+            && pathInsideFolder(tree + QStringLiteral("/app/x/../solvers/onec"), tree + QStringLiteral("/app/"))
+                == QStringLiteral("solvers/onec")
+            && pathInsideFolder(tree + QStringLiteral("/app/../app-other/onec"), tree + QStringLiteral("/app")).isEmpty()
+            && pathInsideFolder(tree + QStringLiteral("/app"), tree + QStringLiteral("/app")).isEmpty()
+            && pathInsideFolder({}, tree).isEmpty() && pathInsideFolder(tree, {}).isEmpty();
+#ifdef Q_OS_WIN
+        containment = containment
+            && pathInsideFolder(tree + QStringLiteral("/APP/solvers/onec"), tree + QStringLiteral("/app"))
+                == QStringLiteral("solvers/onec");
+#else
+        // A sibling that differs only in case is another folder.
+        QDir().mkpath(tree + QStringLiteral("/App/solvers"));
+        makeExecutable(tree + QStringLiteral("/App/solvers/onec"), "#!/bin/sh\n");
+        containment = containment
+            && pathInsideFolder(tree + QStringLiteral("/App/solvers/onec"), tree + QStringLiteral("/app")).isEmpty()
+            && pathInsideFolder(tree + QStringLiteral("/App/gone"), tree + QStringLiteral("/app")).isEmpty()
+            && !necwb::ui::isInsideApplication(tree + QStringLiteral("/App/solvers/onec"), tree + QStringLiteral("/app"))
+            && !necwb::ui::isInsideInstallation(tree + QStringLiteral("/App/solvers/onec"),
+                tree + QStringLiteral("/app/bin"));
+        // The folder reached through a symlink still holds its files, and a symlink inside the
+        // folder that points out of it is not inside.
+        QFile::link(tree + QStringLiteral("/app"), tree + QStringLiteral("/link"));
+        QFile::link(elsewhere.filePath(QStringLiteral("nec2c")), tree + QStringLiteral("/app/solvers/out"));
+        containment = containment
+            && pathInsideFolder(tree + QStringLiteral("/app/solvers/onec"), tree + QStringLiteral("/link"))
+                == QStringLiteral("solvers/onec")
+            && pathInsideFolder(tree + QStringLiteral("/link/solvers/onec"), tree + QStringLiteral("/app"))
+                == QStringLiteral("solvers/onec")
+            && pathInsideFolder(tree + QStringLiteral("/app/solvers/out"), tree + QStringLiteral("/app")).isEmpty()
+            && necwb::ui::isInsideApplication(tree + QStringLiteral("/app/solvers/onec"), tree + QStringLiteral("/link"));
+#endif
+        // The user guide: ../share/nec-workbench/doc for an install, doc/ beside Workbench first,
+        // and this version's online guide when there is none.
+        const auto writeGuide = [](const QString& folder) {
+            QDir().mkpath(folder);
+            QFile guide(folder + QStringLiteral("/user-guide.md"));
+            guide.open(QIODevice::WriteOnly);
+        };
+        writeGuide(app + QStringLiteral("/share/nec-workbench/doc"));
+        const auto installedGuide = necwb::ui::documentFolder(bin)
+            == QDir::cleanPath(app + QStringLiteral("/share/nec-workbench/doc"));
+        writeGuide(bin + QStringLiteral("/doc"));
+        const auto userGuide = installedGuide
+            && necwb::ui::documentFolder(bin) == QDir::cleanPath(bin + QStringLiteral("/doc"))
+            && necwb::ui::shippedDocuments() == QStringList{QStringLiteral("user-guide.md"),
+                QStringLiteral("nec-card-support.md"), QStringLiteral("nec-validation-reference.md")}
+            && necwb::ui::onlineUserGuide().toString() == QStringLiteral(
+                "https://github.com/fizhoo/NEC-Workbench/blob/v" NECWB_DISPLAY_VERSION "/docs/user-guide.md");
         QDir().mkpath(bin + QStringLiteral("/examples"));
         const auto examplesBeside = necwb::ui::exampleFolder(bin) == QDir::cleanPath(bin + QStringLiteral("/examples"));
         // A user's nec2c is asked its version in the background; another program never is.
@@ -370,10 +447,11 @@ auto main(int argc, char* argv[]) -> int
         qputenv("PATH", savedPath);
         if (!nothing || !onPath || !beside || !solversFirst || !chosenFirst || !probed || !notAsked
             || !refusesBundled || !refusesAppImage || !savesInside || !savesChosen || !runRecordsEngine
-            || !sharedExamples || !prefixInstall || !examplesBeside) {
+            || !sharedExamples || !prefixInstall || !containment || !examplesBeside || !sidecarForNec2cOnly
+            || !userGuide) {
             qWarning() << "solver lookup" << nothing << onPath << beside << solversFirst << chosenFirst
                        << probed << notAsked << refusesBundled << refusesAppImage << savesInside << savesChosen
-                       << runRecordsEngine << sharedExamples << prefixInstall << examplesBeside << versions.version(QStringLiteral("nec2"), userNec2c);
+                       << runRecordsEngine << sharedExamples << prefixInstall << containment << examplesBeside << sidecarForNec2cOnly << userGuide << versions.version(QStringLiteral("nec2"), userNec2c);
             return NECWB_SMOKE_FAILURE("solver lookup and saved paths");
         }
     }
@@ -773,6 +851,54 @@ auto main(int argc, char* argv[]) -> int
             dialogDensityIsIncremental = !probe.property("workspaceDensityId").toString().isEmpty()
                 && mainWindow.property("workspaceDensityId").toString()
                     == QStringLiteral("density-smoke-sentinel");
+        }
+        // So does the optimizer, a window of its own that is no dialog.
+        {
+            const auto savedDensity = QSettings{}.value(QStringLiteral("appearance/workspaceDensity"));
+            QAction* spacious = nullptr;
+            QAction* compact = nullptr;
+            for (auto* found : mainWindow.findChildren<QAction*>()) {
+                if (found->text() == QStringLiteral("&Spacious")) spacious = found;
+                if (found->text() == QStringLiteral("&Compact")) compact = found;
+            }
+            const auto* optimizer = optimizerChild<QWidget>(QStringLiteral("optimizationWorkspace"));
+            const auto* window = optimizer == nullptr ? nullptr : optimizer->window();
+            auto optimizerFollows = false;
+            if (spacious != nullptr && compact != nullptr && window != nullptr && window != &mainWindow) {
+                QDialog openDialog(&mainWindow);
+                openDialog.show();
+                application.processEvents();
+                // A layout's own spacing, scaled: 5/6 spacious, 1/3 compact.
+                const QLayout* layout = nullptr;
+                for (const auto* found : window->findChildren<QLayout*>()) {
+                    const auto margins = found->property("workspaceDensityMargins").toList();
+                    if (!margins.isEmpty() && margins.front().toInt() >= 6) { layout = found; break; }
+                }
+                const auto margin = [layout] { return layout == nullptr ? -1 : layout->contentsMargins().left(); };
+                spacious->trigger();
+                application.processEvents();
+                const auto spaciousApplied = window->property("workspaceDensityId").toString()
+                    == QStringLiteral("spacious");
+                const auto spaciousMargin = margin();
+                // Text size changes at once, not at the next start: 11 pt spacious, 9 pt compact,
+                // in the main window, an open dialog and the optimizer.
+                const auto spaciousFonts = QList{window->font().pointSize(), mainWindow.font().pointSize(),
+                    openDialog.font().pointSize()};
+                compact->trigger();
+                application.processEvents();
+                const auto compactFonts = QList{window->font().pointSize(), mainWindow.font().pointSize(),
+                    openDialog.font().pointSize()};
+                optimizerFollows = spaciousApplied
+                    && window->property("workspaceDensityId").toString() == QStringLiteral("compact")
+                    && margin() >= 0 && spaciousMargin > margin()
+                    && spaciousFonts == QList{11, 11, 11} && compactFonts == QList{9, 9, 9};
+                if (!optimizerFollows)
+                    qWarning() << "optimizer density" << spaciousApplied << spaciousMargin
+                               << window->property("workspaceDensityId") << margin() << spaciousFonts << compactFonts;
+            }
+            dialogDensityIsIncremental = dialogDensityIsIncremental && optimizerFollows;
+            if (savedDensity.isValid()) QSettings{}.setValue(QStringLiteral("appearance/workspaceDensity"), savedDensity);
+            else QSettings{}.remove(QStringLiteral("appearance/workspaceDensity"));
         }
         // Results live in the main window's right column: no result windows, no Result
         // Windows menu, one overlay control, and View › Results Column collapses the column.
@@ -1371,6 +1497,19 @@ auto main(int argc, char* argv[]) -> int
             run.currents.push_back(current(14.2, 1, segment, high[segment - 1]));
             run.currents.push_back(current(14.2, 2, segment, 0.05));
         }
+        // A frequency printed twice with a last-digit difference is one frequency, as it is
+        // for the results column (nearlyEqual), not two.
+        auto nearlySame = run;
+        nearlySame.currents.push_back(current(14.0 * (1.0 + 1.0e-12), 1, 1, 0.25));
+        const auto nearlySameData = necwb::ui::ResultData::make(nearlySame);
+        necwb::ui::CurrentDistributionView nearlySameView;
+        nearlySameView.setResults(nearlySameData, QStringLiteral("nearly-same"));
+        const auto* nearlySameChoice = nearlySameView.findChild<QComboBox*>();
+        const auto currentFrequenciesTolerant = nearlySameData->currentFrequencies() == std::vector{14.0, 14.2}
+            && nearlySameChoice != nullptr && nearlySameChoice->count() == 2;
+        if (!currentFrequenciesTolerant)
+            qWarning() << "current frequencies" << nearlySameData->currentFrequencies().size()
+                       << (nearlySameChoice == nullptr ? -1 : nearlySameChoice->count());
         necwb::ui::ResultsController results(&host);
         results.setColumnChangedCallback([workspace](const necwb::ui::ResultState& state, bool stale) {
             workspace->setResults(state, stale);
@@ -1462,10 +1601,10 @@ auto main(int argc, char* argv[]) -> int
             && !QSettings{}.value(QStringLiteral("geometry/showCurrents")).toBool();
         currentsAction->setChecked(true);
         if (!infoUnder || !planesClear || !clear3D || !frontMain || !fitsAll || !flatLabels
-            || !offWithoutResults || !colouredLow || !followsFrequency || !selectionShows
-            || !stalePlain || !liveShown || !offRemembered) {
+            || !offWithoutResults || !currentFrequenciesTolerant || !colouredLow || !followsFrequency
+            || !selectionShows || !stalePlain || !liveShown || !offRemembered) {
             qWarning() << "geometry extras" << infoUnder << planesClear << clear3D << frontMain
-                       << fitsAll << flatLabels << offWithoutResults << colouredLow
+                       << fitsAll << flatLabels << offWithoutResults << currentFrequenciesTolerant << colouredLow
                        << followsFrequency << selectionShows << stalePlain << liveShown
                        << offRemembered << xyInfo->text();
             return NECWB_SMOKE_FAILURE("geometry info lines, view buttons, labels and currents");
@@ -2007,6 +2146,152 @@ auto main(int argc, char* argv[]) -> int
         else settings.remove(QStringLiteral("variables/live"));
         settings.sync();
     }
+    // A save that fails says so and changes nothing: not the file, its name, the modified flag
+    // or the status line. Save onto a read-only file, Save As into a read-only folder, and Save
+    // with a file size limit below the deck.
+    auto failedSaveKeepsState = false;
+    NECWB_SMOKE_STEP();
+#ifdef Q_OS_UNIX
+    const auto runningAsRoot = ::geteuid() == 0;
+#else
+    const auto runningAsRoot = false;
+#endif
+    if (runningAsRoot) {
+        qInfo() << "SKIP failed save: root can write read-only files";
+        failedSaveKeepsState = true;
+    } else {
+        QSettings settings;
+        const auto savedRecent = settings.value(QStringLiteral("files/recentModels"));
+        QTemporaryDir directory;
+        const auto modelPath = directory.filePath(QStringLiteral("read-only.nec"));
+        const QByteArray original = "GW 1 11 0 -5 0 0 5 0 .001\nGE 0\nEX 0 1 6 0 1 0\nFR 0 1 0 0 14 0\nEN\n";
+        QFile modelFile(modelPath);
+        if (directory.isValid() && modelFile.open(QIODevice::WriteOnly)) {
+            modelFile.write(original);
+            modelFile.close();
+        }
+        settings.setValue(QStringLiteral("files/recentModels"), QStringList{modelPath});
+        settings.sync();
+        necwb::ui::MainWindow mainWindow;
+        mainWindow.resize(1400, 900);
+        mainWindow.show();
+        application.processEvents();
+        if (auto* recent = mainWindow.findChild<QMenu*>(QStringLiteral("recentModelsMenu"))) {
+            for (auto* item : recent->actions())
+                if (item->data().toString() == modelPath) { item->trigger(); break; }
+        }
+        application.processEvents();
+        const auto action = [&mainWindow](const QString& text) -> QAction* {
+            for (auto* found : mainWindow.findChildren<QAction*>())
+                if (found->text() == text) return found;
+            return nullptr;
+        };
+        auto* deck = mainWindow.findChild<QPlainTextEdit*>(QStringLiteral("necSourceEditor"));
+        auto* save = action(QStringLiteral("&Save"));
+        auto* saveAs = action(QStringLiteral("Save &As…"));
+        if (deck != nullptr && save != nullptr && saveAs != nullptr
+            && deck->toPlainText().startsWith(QStringLiteral("GW 1 11"))) {
+            const auto readFile = [](const QString& path) {
+                QFile file(path);
+                return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray{};
+            };
+            const auto unchanged = [&](const QString& step) {
+                const auto kept = readFile(modelPath) == original && deck->document()->isModified()
+                    && mainWindow.windowTitle().startsWith(QStringLiteral("read-only.nec"))
+                    && !mainWindow.statusBar()->currentMessage().startsWith(QStringLiteral("Saved"));
+                if (!kept)
+                    qWarning() << "failed save" << step << readFile(modelPath) << deck->document()->isModified()
+                               << mainWindow.windowTitle() << mainWindow.statusBar()->currentMessage();
+                return kept;
+            };
+            // Answers the Save Failed box, and, for Save As, first the file dialog. Its timers
+            // end with this block, and it gives up after about a second without a dialog.
+            QString reported;
+            QString reason;
+            QObject answering;
+            const std::function<void(const QString&, int)> answerWithin = [&](const QString& target, int tries) {
+                QTimer::singleShot(50, &answering, [&, target, tries] {
+                    if (auto* dialog = qobject_cast<QFileDialog*>(QApplication::activeModalWidget())) {
+                        dialog->selectFile(target);
+                        static_cast<QDialog*>(dialog)->accept();
+                        answerWithin({}, 20);
+                    } else if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                        reported = box->windowTitle();
+                        reason = box->text();
+                        box->accept();
+                    } else if (tries > 0) {
+                        answerWithin(target, tries - 1);
+                    }
+                });
+            };
+            const auto answer = [&](const QString& target) { answerWithin(target, 20); };
+            deck->appendPlainText(QStringLiteral("CM edited"));
+            application.processEvents();
+            QFile::setPermissions(modelPath, QFileDevice::ReadOwner | QFileDevice::ReadUser);
+            answer({});
+            save->trigger();
+            application.processEvents();
+            const auto readOnlyFile = reported == QStringLiteral("Save Failed") && unchanged(QStringLiteral("save"));
+            QFile::setPermissions(modelPath, QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                | QFileDevice::ReadUser | QFileDevice::WriteUser);
+            auto readOnlyFolder = true;
+#ifdef Q_OS_UNIX
+            // Windows has no read-only folders.
+            const auto lockedFolder = directory.filePath(QStringLiteral("locked"));
+            QDir().mkpath(lockedFolder);
+            QFile::setPermissions(lockedFolder, QFileDevice::ReadOwner | QFileDevice::ExeOwner);
+            reported.clear();
+            answer(QDir(lockedFolder).filePath(QStringLiteral("elsewhere.nec")));
+            saveAs->trigger();
+            application.processEvents();
+            // The box says the folder cannot be written to, not "Unknown error".
+            readOnlyFolder = reported == QStringLiteral("Save Failed") && unchanged(QStringLiteral("save as"))
+                && reason.contains(QStringLiteral("The folder %1 cannot be written to.")
+                    .arg(QDir::toNativeSeparators(QFileInfo(lockedFolder).absoluteFilePath())))
+                && !QFileInfo::exists(QDir(lockedFolder).filePath(QStringLiteral("elsewhere.nec")));
+            if (!readOnlyFolder) qWarning() << "read-only folder" << reported << reason;
+            QFile::setPermissions(lockedFolder, QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                | QFileDevice::ExeOwner);
+#endif
+            // A file that opens but cannot take the whole deck (a file size limit below it): the
+            // old save called this saved and cleared the flag.
+            auto partialWrite = true;
+#ifdef Q_OS_LINUX
+            rlimit limit{};
+            if (::getrlimit(RLIMIT_FSIZE, &limit) == 0) {
+                const auto previousSignal = std::signal(SIGXFSZ, SIG_IGN);
+                auto small = limit;
+                small.rlim_cur = 16;
+                reported.clear();
+                answer({});
+                ::setrlimit(RLIMIT_FSIZE, &small);
+                save->trigger();
+                // The run files' checked write fails the same way rather than leaving 16 bytes.
+                const auto runFile = directory.filePath(QStringLiteral("model.nec"));
+                const auto runFileFailed = !necwb::ui::writeFile(runFile, original);
+                ::setrlimit(RLIMIT_FSIZE, &limit);
+                std::signal(SIGXFSZ, previousSignal);
+                application.processEvents();
+                partialWrite = reported == QStringLiteral("Save Failed") && unchanged(QStringLiteral("partial write"))
+                    && runFileFailed && necwb::ui::writeFile(runFile, original) && readFile(runFile) == original;
+                if (!partialWrite) qWarning() << "partial write" << reported << reason << runFileFailed;
+            }
+#endif
+            // Writable again, the same Save succeeds and only then clears the flag.
+            save->trigger();
+            application.processEvents();
+            const auto savedAfter = readFile(modelPath).contains("CM edited") && !deck->document()->isModified()
+                && mainWindow.statusBar()->currentMessage() == QStringLiteral("Saved read-only.nec");
+            failedSaveKeepsState = readOnlyFile && readOnlyFolder && partialWrite && savedAfter;
+            if (!failedSaveKeepsState)
+                qWarning() << "failed save" << readOnlyFile << readOnlyFolder << partialWrite << savedAfter;
+            deck->document()->setModified(false);
+        }
+        settings.setValue(QStringLiteral("files/recentModels"), savedRecent);
+        settings.sync();
+    }
+    if (!failedSaveKeepsState)
+        return NECWB_SMOKE_FAILURE("a failed save keeps the file, its name and the modified flag");
     // Automatic Segmentation in the window: a wire with a symbolic count is skipped and says so,
     // a 25% source goes to the segment its mark gives, Apply writes the deck the preview showed,
     // and one Undo restores the deck.
@@ -2828,7 +3113,7 @@ auto main(int argc, char* argv[]) -> int
     if (!undoFollowsFocusChanges)
         return NECWB_SMOKE_FAILURE("undo follows focus between geometry and deck");
     if (!dialogDensityIsIncremental)
-        return NECWB_SMOKE_FAILURE("incremental dialog workspace density");
+        return NECWB_SMOKE_FAILURE("dialogs and the optimizer window follow the workspace density");
     if (!setupWindowNavigation)
         return NECWB_SMOKE_FAILURE("setup window navigation");
     if (!optimizationWindowNavigation)
@@ -4405,8 +4690,7 @@ auto main(int argc, char* argv[]) -> int
     directionalComparison.setBaseline(directionalBaselineResult,
         QStringLiteral("Starting model"));
     directionalComparison.setBaselineStatus(QStringLiteral("Compatible"), true);
-    directionalComparison.setCandidate(directionalCandidateResult,
-        QStringLiteral("Candidate"), {}, {}, directionalCandidateEvaluation,
+    directionalComparison.setCandidate(directionalCandidateResult, {}, {}, directionalCandidateEvaluation,
         directionalBaselineEvaluation);
     auto* directionalComparisonTabs = directionalComparison.findChild<QTabWidget*>(
         QStringLiteral("optimizationCompareTabs"));

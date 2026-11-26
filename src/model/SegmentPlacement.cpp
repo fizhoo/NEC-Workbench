@@ -41,7 +41,8 @@ auto placeAlongWire(const Wire& wire, double fraction) -> std::optional<AlongWir
     if (!ends) return std::nullopt;
     const auto target = fraction * ends->back();
     const auto tolerance = 1e-9 * ends->back();
-    AlongWirePlacement placement{wire.segments, wire.segments, fraction, 0.0, false};
+    AlongWirePlacement placement{.segment = wire.segments, .segmentCount = wire.segments,
+        .actualFraction = 0.0, .onJoint = false};
     for (auto index = 0; index < wire.segments; ++index) {
         const auto end = (*ends)[static_cast<std::size_t>(index)];
         if (target <= end + tolerance) {

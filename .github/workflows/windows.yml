@@ -85,7 +85,7 @@ jobs:
           }
 
       # Assembled by hand: Workbench and its Qt runtime, which must stay beside it, nec2c in
-      # solvers/, and the installed examples in examples/. Workbench draws with QPainter, so
+      # solvers/, the installed examples in examples/ and the installed user guide pages in doc/. Workbench draws with QPainter, so
       # neither the software OpenGL (opengl32sw.dll, Mesa) nor the Direct3D shader compiler
       # is deployed. The Visual C++ runtime DLLs that Workbench and Qt import come from the
       # build toolset's redistributable folder, app-locally, so a Windows without the
@@ -96,13 +96,14 @@ jobs:
         run: |
           try {
             cmake --install build --config Release --prefix stage
-            New-Item -ItemType Directory -Force package/solvers, package/examples | Out-Null
+            New-Item -ItemType Directory -Force package/solvers, package/examples, package/doc | Out-Null
             Copy-Item build/Release/nec-workbench.exe package/
             Copy-Item LICENSE package/LICENSE.txt
             Copy-Item README.md package/
             Copy-Item nec2c-bin/THIRD_PARTY_LICENSES.txt package/
             Copy-Item nec2c-bin/nec2c.exe, nec2c-bin/nec2c-build.txt package/solvers/
             Copy-Item stage/share/nec-workbench/examples/*.nec package/examples/
+            Copy-Item stage/share/nec-workbench/doc/*.md package/doc/
             windeployqt --release --no-compiler-runtime --no-opengl-sw --no-system-d3d-compiler package/nec-workbench.exe
             # The cl.exe CMake found, whose toolset's redistributable and dumpbin are used.
             $found = Select-String build/CMakeFiles/*/CMakeCXXCompiler.cmake -Pattern '^set\(CMAKE_CXX_COMPILER "(.+)"\)$'
@@ -132,7 +133,8 @@ jobs:
       # settings, no nec2c on the PATH. Workbench must start its main window with the windows
       # platform plugin, and its license notices must name the Qt it runs on; and it must find
       # nec2c.exe in solvers/, read its version, solve, find the examples (exactly the
-      # repository's) and solve one, and stop a run with Stop and with a timeout.
+      # repository's) and solve one, find the user guide and the two pages it links to in
+      # doc/, and stop a run with Stop and with a timeout.
       - name: Check package
         shell: pwsh
         run: |
@@ -150,7 +152,7 @@ jobs:
             throw "DLL import check failed"
           }
           Write-Output ("::notice title=Windows DLL imports::" + ($imports -join "%0A"))
-          foreach ($file in "solvers/nec2c.exe", "solvers/nec2c-build.txt", "README.md", "LICENSE.txt", "THIRD_PARTY_LICENSES.txt") {
+          foreach ($file in "solvers/nec2c.exe", "solvers/nec2c-build.txt", "README.md", "LICENSE.txt", "THIRD_PARTY_LICENSES.txt", "doc/user-guide.md", "doc/nec-card-support.md", "doc/nec-validation-reference.md") {
             if (-not (Test-Path (Join-Path $check $file))) { throw "$file is missing" }
           }
           $tracked = (git -c core.quotePath=off ls-files "examples/*.nec" | ForEach-Object { Split-Path -Leaf $_ } | Sort-Object) -join "|"
@@ -168,6 +170,7 @@ jobs:
             "top level: " + ((Get-ChildItem $check | ForEach-Object { $_.Name + $(if ($_.PSIsContainer) { "/" } else { "" }) }) -join ", ")
             "solvers/: " + ((Get-ChildItem (Join-Path $check "solvers") | ForEach-Object Name) -join ", ")
             "examples/: " + ((Get-ChildItem (Join-Path $check "examples") | ForEach-Object Name) -join ", ")
+            "doc/: " + ((Get-ChildItem (Join-Path $check "doc") | ForEach-Object Name) -join ", ")
           ) -join "%0A"
           Write-Output ("::notice title=Windows ZIP contents::" + $listing)
           # The normal start, until the main window is on screen. A missing platform plugin

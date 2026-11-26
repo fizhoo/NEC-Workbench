@@ -12,6 +12,7 @@
 #include "ui/analysis/SolverProcessRunner.h"
 #include "ui/cards/CardTables.h"
 #include "ui/modeltree/ModelTree.h"
+#include "ui/WorkspaceDensity.h"
 #include "analysis/AnalysisResult.h"
 #include "analysis/AverageGainTest.h"
 #include "analysis/SolverCommand.h"
@@ -68,12 +69,6 @@ class WorkbenchLayout;
 
 class MainWindow final : public QMainWindow {
 public:
-    enum class WorkspaceDensity {
-        Compact,
-        Standard,
-        Spacious
-    };
-
     MainWindow();
     ~MainWindow() override;
     // At launch: opens the newest recent model unless skip is set, the setting is off, or the

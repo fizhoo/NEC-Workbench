@@ -41,3 +41,8 @@ guide and architecture rather than this list.
 - Guided antenna templates and creator
 - Signed installers and longer-lived release packages
 - Plugin boundaries only after model, solver, result, and optimization APIs stabilize
+
+## Known Gaps
+
+- Save writes the editor's text, so a CRLF deck saved on Linux comes back with LF line endings
+- `agt.json` stores the classification as translated display text rather than a stable id

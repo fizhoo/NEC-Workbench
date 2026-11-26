@@ -249,4 +249,20 @@ auto AnalysisRunStore::readRecord(const QString& directory) const -> AnalysisRun
     return record;
 }
 
+auto runContext(const AnalysisRunRecord& record) -> QString
+{
+    const auto modelName = record.sourceFile.isEmpty()
+        ? QObject::tr("Archived model.nec") : QFileInfo(record.sourceFile).fileName();
+    const auto started = record.started.isValid()
+        ? record.started.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : record.id;
+    auto backend = record.backend.isEmpty() ? QObject::tr("Unknown backend") : solverName(record.backend);
+    if (!record.engineVersion.isEmpty()) backend += QStringLiteral(" · ") + record.engineVersion;
+    const auto purpose = record.runType == QStringLiteral("quick-sweep")
+        ? record.summary.isEmpty() ? QObject::tr(" · Quick Sweep")
+                                   : QObject::tr(" · Quick Sweep: %1").arg(record.summary)
+        : QString{};
+    return QObject::tr("Model: %1 · Run: %2%3 · Backend: %4")
+        .arg(modelName, started, purpose, backend);
+}
+
 }

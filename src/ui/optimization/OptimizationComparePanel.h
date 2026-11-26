@@ -26,8 +26,7 @@ public:
     void setBaseline(const analysis::AnalysisResult& result, QString label);
     void clearBaseline();
     void setBaselineStatus(QString status, bool compatible);
-    void setCandidate(const analysis::AnalysisResult& result, QString label,
-        QString breakdown = {}, QString comparisonBreakdown = {},
+    void setCandidate(const analysis::AnalysisResult& result, QString breakdown = {}, QString comparisonBreakdown = {},
         std::optional<analysis::OptimizationObjectiveResult> directionalMetrics = {},
         std::optional<analysis::OptimizationObjectiveResult> baselineDirectionalMetrics = {});
     void clearCandidate();
@@ -47,7 +46,6 @@ private:
     std::optional<analysis::OptimizationObjectiveResult> directionalMetrics_;
     std::optional<analysis::OptimizationObjectiveResult> baselineDirectionalMetrics_;
     QString baselineLabel_;
-    QString candidateLabel_;
     QString candidateBreakdown_;
     QString comparisonBreakdown_;
     QString statusText_;

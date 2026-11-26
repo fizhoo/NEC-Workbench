@@ -138,7 +138,7 @@ void KeyNumberStrip::setSummary(const analysis::ResultSummary& summary,
     swr_->setText(feedpoint ? tr("%1 (Z0 %2)").arg(formatDecimal(feedpoint->swr),
                                  referenceImpedance)
                             : QString::fromUtf8("—"));
-    swr_->setToolTip(tr("SWR against the Z0 %1 reference impedance set in Setup.")
+    swr_->setToolTip(tr("SWR against the Z0 %1 reference impedance, set in the model tree's Z0 row.")
         .arg(referenceImpedance));
 
     const auto selectedGain = summary.selectedGain

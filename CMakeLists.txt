@@ -128,6 +128,8 @@ if(NECWB_BUILD_GUI)
         src/ui/WorkbenchLayout.h
         src/ui/WorkbenchStatusBar.cpp
         src/ui/WorkbenchStatusBar.h
+        src/ui/WorkspaceDensity.cpp
+        src/ui/WorkspaceDensity.h
         src/ui/WorkbenchToolBar.cpp
         src/ui/WorkbenchToolBar.h
         src/ui/modeltree/ModelColumn.cpp
@@ -277,20 +279,13 @@ if(NECWB_BUILD_GUI)
         PREFIX "/icons"
         BASE "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons"
         FILES
-            resources/icons/3d-view.svg
             resources/icons/analysis.svg
             resources/icons/check.svg
-            resources/icons/currents.svg
-            resources/icons/delete.svg
-            resources/icons/edit.svg
-            resources/icons/environment.svg
-            resources/icons/export.svg
             resources/icons/fit.svg
             resources/icons/frequency-sweep.svg
             resources/icons/geometry.svg
             resources/icons/ground.svg
             resources/icons/help.svg
-            resources/icons/import.svg
             resources/icons/loads.svg
             resources/icons/nec-deck.svg
             resources/icons/networks.svg
@@ -298,12 +293,9 @@ if(NECWB_BUILD_GUI)
             resources/icons/open.svg
             resources/icons/optimize.svg
             resources/icons/quick-sweep.svg
-            resources/icons/radiation-pattern.svg
             resources/icons/redo.svg
-            resources/icons/results.svg
             resources/icons/requests.svg
             resources/icons/run.svg
-            resources/icons/runs.svg
             resources/icons/save.svg
             resources/icons/settings.svg
             resources/icons/sources.svg
@@ -359,6 +351,14 @@ if(NECWB_BUILD_GUI)
         "examples/geometry-gr-array.nec"
         "examples/geometry-gx-symmetry.nec"
         DESTINATION share/nec-workbench/examples
+    )
+    # The user guide and the two pages it links to, named so the private notes in docs/ never
+    # ship (ExampleLocator.h, shippedDocuments).
+    install(FILES
+        "docs/user-guide.md"
+        "docs/nec-card-support.md"
+        "docs/nec-validation-reference.md"
+        DESTINATION share/nec-workbench/doc
     )
 
     if(UNIX AND NOT APPLE)

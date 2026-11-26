@@ -105,7 +105,8 @@ jobs:
       # no nec2c on the PATH. The AppImage must start Workbench's main window under Xvfb with
       # the xcb platform plugin, and its license notices must name the Qt it runs on; and
       # Workbench must find the bundled nec2c, read its version, solve, find the examples
-      # (exactly the repository's) and solve one, and stop a run with Stop and a timeout.
+      # (exactly the repository's) and solve one, find the user guide and the two pages it
+      # links to, and stop a run with Stop and a timeout.
       - name: Check package
         env:
           APPIMAGE_EXTRACT_AND_RUN: '1'
@@ -121,6 +122,8 @@ jobs:
           grep -q '^Exec=nec-workbench' squashfs-root/*.desktop
           diff <(git -C "$GITHUB_WORKSPACE" -c core.quotePath=off ls-files 'examples/*.nec' | sed 's|^examples/||' | sort) \
             <(ls squashfs-root/usr/share/nec-workbench/examples | sort)
+          diff <(printf '%s\n' nec-card-support.md nec-validation-reference.md user-guide.md) \
+            <(ls squashfs-root/usr/share/nec-workbench/doc | sort)
           export HOME="$check/home" XDG_CONFIG_HOME="$check/home/.config"
           step="$GITHUB_WORKSPACE/packaging/nec2c/ci-step.sh"
           CI_STEP_NOTICE=1 $step "Linux startup check" \

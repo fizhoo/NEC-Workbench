@@ -14,8 +14,6 @@ class QToolButton;
 namespace necwb::ui {
 
 auto formatByteSize(qint64 bytes) -> QString;
-// One-line identity of a run: model, start time, purpose, and backend.
-auto runContext(const AnalysisRunRecord& record) -> QString;
 
 // Saved analysis and study runs. Rows are read-only; every action on a run is requested from
 // the owner, which keeps the active model untouched unless the user opens a snapshot.

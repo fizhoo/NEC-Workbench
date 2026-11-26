@@ -18,7 +18,9 @@ auto environmentName(analysis::AverageGainEnvironment environment) -> QString
         : QObject::tr("Free space · full sphere · expected AGT 1.0");
 }
 
-auto classificationName(analysis::AverageGainClassification classification) -> QString
+}
+
+auto averageGainClassificationName(analysis::AverageGainClassification classification) -> QString
 {
     switch (classification) {
     case analysis::AverageGainClassification::Pass: return QObject::tr("Pass");
@@ -27,8 +29,6 @@ auto classificationName(analysis::AverageGainClassification classification) -> Q
     case analysis::AverageGainClassification::Questionable: return QObject::tr("Questionable");
     }
     return QObject::tr("Unknown");
-}
-
 }
 
 AverageGainResultsView::AverageGainResultsView(QWidget* parent) : QWidget(parent)
@@ -97,7 +97,7 @@ void AverageGainResultsView::setResult(const analysis::AverageGainAssessment& as
 {
     hasResult_ = true;
     status_->setText(tr("Completed · %1").arg(context));
-    setValue(0, classificationName(assessment.classification));
+    setValue(0, averageGainClassificationName(assessment.classification));
     setValue(1, formatDecimal(assessment.averagePowerGain));
     setValue(2, formatDecimal(assessment.expectedGain));
     setValue(3, formatDecimal(assessment.normalizedGain));

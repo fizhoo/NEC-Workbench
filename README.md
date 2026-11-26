@@ -96,7 +96,7 @@ and `NEC-Workbench-0.1.0-alpha.3-x86_64.AppImage`.
 - **Windows:** extract `NEC-Workbench-<version>-windows-x64.zip` and run `nec-workbench.exe`;
   the Visual C++ runtime it needs is included. Keep
   the extracted files together: the DLLs and folders beside the executable are needed,
-  nec2c is in `solvers/`, and the examples are in `examples/`.
+  nec2c is in `solvers/`, the examples are in `examples/`, and the user guide is in `doc/`.
 - **Linux:** make `NEC-Workbench-<version>-x86_64.AppImage` executable and run it:
 
   ```sh

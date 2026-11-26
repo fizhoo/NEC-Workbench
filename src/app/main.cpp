@@ -1,26 +1,13 @@
 #include "ui/MainWindow.h"
 #include "ui/PackageCheck.h"
+#include "ui/WorkspaceDensity.h"
 
 #include <QApplication>
 #include <QCoreApplication>
 #include <QTimer>
-#include <QSettings>
 
 #include <optional>
 #include <string_view>
-
-namespace {
-
-auto workspaceDensityFontSize() -> int
-{
-    const auto density = QSettings{}.value(QStringLiteral("appearance/workspaceDensity"),
-        QStringLiteral("compact")).toString();
-    if (density == QStringLiteral("spacious")) return 11;
-    if (density == QStringLiteral("standard")) return 10;
-    return 9;
-}
-
-}
 
 auto main(int argc, char* argv[]) -> int
 {
@@ -38,7 +25,7 @@ auto main(int argc, char* argv[]) -> int
     std::optional<necwb::ui::ThrowawaySettings> throwawaySettings;
     if (startupCheck) throwawaySettings.emplace();
     auto applicationFont = application.font();
-    applicationFont.setPointSize(workspaceDensityFontSize());
+    applicationFont.setPointSize(necwb::ui::workspaceDensityFontSize(necwb::ui::savedWorkspaceDensity()));
     application.setFont(applicationFont);
 
     necwb::ui::MainWindow window;

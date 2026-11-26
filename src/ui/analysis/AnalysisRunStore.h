@@ -36,6 +36,9 @@ struct AnalysisRunRecord {
     std::vector<analysis::RadiationCoverage> radiationCoverage;
 };
 
+// One-line identity of a run: model, start time, purpose, and backend.
+[[nodiscard]] auto runContext(const AnalysisRunRecord& record) -> QString;
+
 class AnalysisRunStore final {
 public:
     explicit AnalysisRunStore(QString rootDirectory = {});

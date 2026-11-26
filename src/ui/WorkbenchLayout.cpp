@@ -25,7 +25,6 @@ constexpr auto RightPane = 2;
 
 WorkbenchLayout::WorkbenchLayout(Panes panes, QWidget* parent)
     : QWidget(parent)
-    , start_(panes.start)
     , geometry_(panes.geometry)
     , bottomPanel_(panes.bottomPanel)
 {
@@ -35,7 +34,7 @@ WorkbenchLayout::WorkbenchLayout(Panes panes, QWidget* parent)
     layout->setSpacing(0);
     center_ = new QStackedWidget;
     center_->setObjectName(QStringLiteral("workbenchCenter"));
-    center_->addWidget(start_);
+    center_->addWidget(panes.start);
     center_->addWidget(geometry_);
     for (auto* view : panes.views) center_->addWidget(view);
 
@@ -64,11 +63,6 @@ WorkbenchLayout::WorkbenchLayout(Panes panes, QWidget* parent)
     connect(rightColumnAction_, &QAction::toggled, this,
         [this](bool shown) { setRightColumnShown(shown); });
     connect(split_, &QSplitter::splitterMoved, this, [this] { saveColumnWidths(); });
-}
-
-void WorkbenchLayout::showStart()
-{
-    center_->setCurrentWidget(start_);
 }
 
 void WorkbenchLayout::showGeometry()
