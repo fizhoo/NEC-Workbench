@@ -35,7 +35,10 @@ looks for each engine's executable in this order: the path you chose, the copy t
 came with Workbench (in the `solvers` folder beside it, then beside it), then the
 system PATH. Only a path you type or browse to is saved; a found one is looked up again at
 each start, since a Linux AppImage mounts at a new place each time and a Windows folder
-can move. Clear the path to go back to the bundled nec2c. If a path you chose no longer
+can move. You can put your own engine, such as `Nec2dXS1k5.exe`, in the Windows folder's
+`solvers` folder and browse to it: Workbench remembers it relative to its folder, so it
+still works when you move the folder. The bundled nec2c and paths inside the AppImage are
+never saved. Clear the path to go back to the bundled nec2c. If a path you chose no longer
 exists, Workbench says so in the status bar and under **Problems** rather than switching
 to another engine. The **Run log** starts with the engine, its version and its path,
 and each run records the engine version it was made with. **Help → About** lists the
@@ -666,7 +669,7 @@ impedance plots and the 2D, 3D, and performance views, and a **Choose Overlay…
 The line beneath says whether the overlay is **Compatible**, **Partial**, or has **No
 matching data** for the impedance and pattern data. Manual choices
 may come from another antenna; Workbench only draws genuinely matching frequencies,
-feedpoints, cuts, and sample grids. Use **Clear Overlay** to remove the selection.
+feedpoints, cuts, and sample grids. Use **Clear Historical Overlay** to remove the selection.
 
 ### Currents
 

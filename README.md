@@ -80,27 +80,47 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-## Releases
+## Install
 
-Packaged alpha releases are published on the repository's **Releases** page. The
-current release is `0.1.0-alpha.2`.
+Download the package for your system from the repository's **Releases** page. The
+current release is `0.1.0-alpha.3`. There is nothing else to install: each package
+contains the Qt runtime, `nec2c` 1.3.3 built from the pinned commit in
+`packaging/nec2c`, and the examples. `THIRD_PARTY_LICENSES.txt` in each package covers
+nec2c, Qt (LGPL-3.0, with where to get its source) and every other bundled library. Each
+release also carries the corresponding nec2c source, which rebuilds offline (see
+`BUILDING.txt` in it), and `SHA256SUMS.txt`.
+
+Package names carry the version, such as `NEC-Workbench-0.1.0-alpha.3-windows-x64.zip`
+and `NEC-Workbench-0.1.0-alpha.3-x86_64.AppImage`.
+
+- **Windows:** extract `NEC-Workbench-<version>-windows-x64.zip` and run `nec-workbench.exe`;
+  the Visual C++ runtime it needs is included. Keep
+  the extracted files together: the DLLs and folders beside the executable are needed,
+  nec2c is in `solvers/`, and the examples are in `examples/`.
+- **Linux:** make `NEC-Workbench-<version>-x86_64.AppImage` executable and run it:
+
+  ```sh
+  chmod +x NEC-Workbench-0.1.0-alpha.3-x86_64.AppImage
+  ./NEC-Workbench-0.1.0-alpha.3-x86_64.AppImage
+  ```
+
+  Without FUSE, run it with `--appimage-extract-and-run`.
+
+To use another engine, choose **Configure…** in the engine list beside Run.
 
 ## Build Artifacts
 
-Packaging workflows run for `main`, selected integration branches, pull requests,
-and manual dispatch. Download artifacts from a successful run on the repository's
-**Actions** page:
+Packaging workflows run for `main`, `release/**` and other selected branches, pull
+requests, and manual dispatch. Download artifacts from a successful run on the
+repository's **Actions** page: `NEC-Workbench-Linux-x86_64` and
+`NEC-Workbench-Windows-x64`, each with the package and the nec2c source archive.
 
-- `NEC-Workbench-Linux-x86_64`
-- `NEC-Workbench-Windows-x64`
-
-Download, unpack (Windows ZIP) or make executable (Linux AppImage), and run: there is
-nothing else to install. Each package contains the Qt runtime and `nec2c` 1.3.3,
-built from the pinned commit in `packaging/nec2c` (in `solvers/` beside
-`nec-workbench.exe` in the Windows ZIP), with its license notices in
-`THIRD_PARTY_LICENSES.txt`, and the examples. Each release also carries the
-corresponding nec2c source. To use another engine, choose **Configure…** in the engine
-list beside Run.
+Pushing a `v<version>` tag that matches the CMake version builds both packages from the
+tag, runs their startup and package checks, compares the nec2c inside the Windows package
+with the one inside the Linux package, and publishes the GitHub release with both
+packages, the nec2c source archive and `SHA256SUMS.txt`, using
+`docs/release-notes/<tag>.md` as its notes. Nothing is published if a build, check or
+comparison fails.
 
 ## Design Boundary
 

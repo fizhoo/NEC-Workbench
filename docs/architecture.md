@@ -213,16 +213,54 @@ every start: the path the user chose, else a copy in `solvers/` beside the execu
 `usr/bin`), else the PATH. It reads the bundled version from the metadata and asks other
 nec2c builds with `-v` in the background, cached by path, size and modification time.
 `ui/SolverSettings` is the only writer of the engine settings: it saves the chosen engine
-and only paths the user typed or browsed to, never one inside the application folder or a
-mounted AppImage. A chosen path that has gone is reported, never replaced. Run records
-keep the engine version and path. CI runs the hidden `nec-workbench --package-check`
-(throwaway settings, no window) on each unpacked package: it finds the bundled nec2c,
-reads its version, solves, finds the shipped examples (inside the package or install
-prefix) where `ui/ExampleLocator` (Open Example…) looks for them (`examples/` beside the
-executable, else `../share/nec-workbench/examples`, else `./examples` in a source tree),
-solves `2m-3-element-yagi.nec` from there, and stops long runs with Stop and with a timeout. It also
-compares the packaged nec2c's output with a reference build's, as text, and the Windows
-build's parsed results with Linux's (`necwb_nec2c_check`).
+and only paths the user typed or browsed to, never the bundled nec2c or a path in a mounted
+AppImage (`$APPDIR`, `/tmp/.mount_*`); a path the user picked inside the application folder
+(their own engine in a portable Windows folder's `solvers/`) is saved relative to it and
+made absolute again when read. A chosen path that has gone is reported, never replaced.
+Run records keep the engine version and path.
+
+CI checks each unpacked package with two hidden options, both on throwaway settings.
+`nec-workbench --startup-check` starts the application normally and quits once the main
+window is on screen, printing the platform plugin and the Qt version in use (Windows
+natively, the AppImage under Xvfb with `xcb`); a missing platform plugin fails it.
+`nec-workbench --package-check` (no window) finds the bundled nec2c, reads its version,
+solves, finds the shipped examples (inside the package or install prefix) where
+`ui/ExampleLocator` (Open Example…) looks for them (`examples/` beside the executable, else
+`../share/nec-workbench/examples`, else `./examples` in a source tree), solves
+`2m-3-element-yagi.nec` from there, and stops long runs with Stop and with a timeout. CI
+also compares the packaged nec2c's output with a reference build's, as text, and with a
+nec2c rebuilt offline from the release source archive (`BUILDING.txt` in it), and the
+Windows build's parsed results with Linux's (`necwb_nec2c_check`).
+
+The Windows ZIP carries the Visual C++ runtime DLLs that Workbench and Qt import,
+app-locally beside `nec-workbench.exe`, copied from the redistributable folder of the MSVC
+toolset that built it (`packaging/windows/bundle-msvc-runtime.ps1`), so it runs on a
+Windows without the Visual C++ redistributable. `packaging/windows/check-imports.ps1` reads
+every executable's and DLL's imports in the unpacked ZIP with that toolset's dumpbin and
+fails on any DLL that is neither in the ZIP nor part of Windows; the Visual C++ runtime
+never counts as part of Windows, though the CI machine has it installed.
+
+Each package's `THIRD_PARTY_LICENSES.txt` is the repository's (nec2c, GPL-3.0 text) plus,
+on Windows, the MinGW-w64 runtime notices, plus a section generated from the deployed
+files by `packaging/qt-notices.py`: the Qt version, libraries, plugins and translations,
+the third-party code in those Qt modules from the exact Qt source's `qt_attribution.json`
+files, their license texts (LGPL-3.0 first), the Qt source download, and on Linux every
+other library linuxdeploy bundled with its Ubuntu package and copyright file, and on
+Windows the Visual C++ runtime under the Visual Studio redistribution terms. It fails on
+any file it cannot account for, and CI fails when the notices do not name the Qt version
+the startup check reports.
+
+CMake is the one source of the version: it writes `necwb-version.txt` into the build tree,
+from which the packaging workflows name the packages
+(`NEC-Workbench-<version>-x86_64.AppImage`, `NEC-Workbench-<version>-windows-x64.zip`), and
+the Windows executable's version resource (`packaging/nec-workbench.rc.in`). A pushed
+`v<version>` tag runs `release.yml`: it calls both packaging workflows, then `nec2c.yml`
+with `packaged: true` to compare the nec2c taken out of the two packages, and only when
+all pass publishes the release with the packages, the nec2c source archive, a
+`SHA256SUMS.txt` of those files and `docs/release-notes/<tag>.md`, through
+`packaging/publish-release.sh` (a draft first; a re-run resumes a draft for the tag when
+its files match, and never changes a published release). Runs for a tag never overlap. A
+`-dryrun` tag or a manual run lists the files instead.
 
 Solver execution is asynchronous and supports live output, cancellation, and a
 timeout. Every run receives a unique durable directory containing source,

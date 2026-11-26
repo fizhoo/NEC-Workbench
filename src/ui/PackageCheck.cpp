@@ -12,6 +12,9 @@
 #include "ui/analysis/SolverProcessRunner.h"
 
 #include <QDir>
+#include <QGuiApplication>
+#include <QWidget>
+#include <QWindow>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
@@ -112,13 +115,44 @@ auto solve(const QString& executable, const QByteArray& deck, int timeoutSeconds
 
 }
 
+ThrowawaySettings::ThrowawaySettings()
+{
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, folder_.path());
+    QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope, folder_.path());
+}
+
+void watchStartup(QWidget& window)
+{
+    auto* timer = new QTimer(&window);
+    auto* waited = new QElapsedTimer;
+    waited->start();
+    QObject::connect(timer, &QTimer::timeout, &window, [&window, timer, waited] {
+        QTextStream out(stdout);
+        const auto* handle = window.windowHandle();
+        const auto shown = window.isVisible() && handle != nullptr && handle->isExposed();
+        if (shown) {
+            out << "PASS main window shown: platform plugin " << QGuiApplication::platformName()
+                << ", Qt " << qVersion() << ", " << QCoreApplication::applicationName() << ' '
+                << QCoreApplication::applicationVersion() << ", " << window.width() << "×"
+                << window.height() << " after " << waited->elapsed() << " ms\n";
+        } else if (waited->elapsed() < 30000) {
+            return;
+        } else {
+            out << "FAIL main window not shown after 30 s on platform plugin "
+                << QGuiApplication::platformName() << '\n';
+        }
+        out.flush();
+        timer->stop();
+        delete waited;
+        QCoreApplication::exit(shown ? 0 : 1);
+    });
+    timer->start(50);
+}
+
 auto runPackageCheck() -> int
 {
-    // Never the user's settings: a fresh, throwaway store, as on a first start.
-    QTemporaryDir settings;
-    QSettings::setDefaultFormat(QSettings::IniFormat);
-    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());
-    QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope, settings.path());
+    const ThrowawaySettings settings;
 
     QTextStream out(stdout);
     auto failures = 0;

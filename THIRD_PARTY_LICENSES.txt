@@ -2,7 +2,10 @@ THIRD-PARTY SOFTWARE DISTRIBUTED WITH NEC WORKBENCH
 ===================================================
 
 NEC Workbench itself is licensed under the GNU General Public License version 3 or later
-(see LICENSE). The packages also contain the following separate program.
+(see LICENSE). The packages also contain the following separate program, nec2c. Each
+package adds, after the GNU General Public License text below, a section on the Qt
+libraries and any other libraries it contains, generated from the package itself when it
+is built (packaging/qt-notices.py).
 
 
 nec2c
@@ -23,7 +26,7 @@ nec2c states its license in two places, which this notice quotes as they stand w
 deciding between them.
 
 The repository's COPYING file is the GNU General Public License version 3, reproduced in
-full at the end of this file.
+full below.
 
 Its README says, under "7. License:":
 

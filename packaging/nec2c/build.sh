@@ -2,7 +2,9 @@
 # Builds the bundled nec2c from the pinned commit (commit, version) with a plain compiler run.
 # Usage: build.sh <output-directory> <source-directory>
 # The source directory receives the pinned checkout and is kept for the reference build and
-# the source archive. CC picks the compiler (gcc by default); a Windows build must use the
+# the source archive. A git checkout there is moved to the pinned commit; an exported source
+# tree (the nec2c folder of the release source archive) is built as it is, offline; only an
+# empty or missing directory is cloned. CC picks the compiler (gcc by default); a Windows build must use the
 # MinGW-w64 gcc (x86_64-w64-mingw32), never MSYS gcc, and links statically.
 # Writes nec2c (or nec2c.exe) and nec2c-build.txt, the build metadata Workbench shows.
 set -euo pipefail
@@ -12,10 +14,12 @@ source=$2
 commit=$(tr -d '[:space:]' < "$here/commit")
 version=$(tr -d '[:space:]' < "$here/version")
 cc=${CC:-gcc}
-if [ ! -d "$source/.git" ]; then
+if [ -d "$source/.git" ]; then
+    git -C "$source" -c advice.detachedHead=false checkout --quiet "$commit"
+elif [ ! -f "$source/main.c" ]; then
     git clone --quiet https://github.com/KJ7LNW/nec2c "$source"
+    git -C "$source" -c advice.detachedHead=false checkout --quiet "$commit"
 fi
-git -C "$source" -c advice.detachedHead=false checkout --quiet "$commit"
 
 # No -ffast-math or -march: the bundled build must compute what any plain build computes.
 flags=(-O2 -w)

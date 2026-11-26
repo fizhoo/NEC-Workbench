@@ -1,27 +1,115 @@
-name: Release Sources
+name: Release
 
-# Each release carries the corresponding source of the nec2c it bundles: the pinned commit
-# with the build scripts, Windows compat headers and settings in packaging/nec2c.
+# A pushed v* tag builds the Linux AppImage and the Windows ZIP from that tag with the
+# packaging workflows, which also run the startup and package checks; compares the results
+# of the nec2c inside the two packages (nec2c.yml); and publishes a GitHub release with both
+# packages, the nec2c source archive and SHA256SUMS.txt, using docs/release-notes/<tag>.md
+# as its body. Nothing is published unless every build, check and comparison passes.
+# Publishing is safe to re-run (packaging/publish-release.sh): it resumes a draft for the
+# tag and never changes a published release.
+#
+# A dry run does everything except create the release, and lists what it would attach:
+# run this workflow by hand, or push a throwaway tag v<version>-dryrun.<n>.
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ['v*']
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+# One release run per tag at a time, never cancelled half way.
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  nec2c-source:
-    name: Attach nec2c source
+  prepare:
+    name: Check tag and notes
     runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      dry-run: ${{ steps.release.outputs.dry-run }}
     steps:
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.release.tag_name }}
-      - name: Pack and attach
-        env:
-          GH_TOKEN: ${{ github.token }}
+
+      # The tag must name the CMake version, and that release must have its notes.
+      - name: Check tag and notes
+        id: release
         run: |
-          packaging/nec2c/build.sh nec2c-bin nec2c-src
-          archive=$(packaging/nec2c/source-archive.sh dist nec2c-src)
-          gh release upload "${{ github.event.release.tag_name }}" "$archive" --clobber
+          cmake -S . -B version -DNECWB_BUILD_GUI=OFF -DNECWB_BUILD_TESTS=OFF > /dev/null
+          version=$(cat version/necwb-version.txt)
+          tag="$GITHUB_REF_NAME"
+          dry_run=false
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then tag="v$version"; dry_run=true; fi
+          case "$tag" in *-dryrun*) tag="${tag%%-dryrun*}"; dry_run=true ;; esac
+          if [ "$tag" != "v$version" ]; then
+            echo "::error title=Release::tag $tag does not match the CMake version $version"; exit 1
+          fi
+          if [ ! -s "docs/release-notes/$tag.md" ]; then
+            echo "::error title=Release::docs/release-notes/$tag.md is missing"; exit 1
+          fi
+          { echo "tag=$tag"; echo "version=$version"; echo "dry-run=$dry_run"; } >> "$GITHUB_OUTPUT"
+
+  linux:
+    name: Linux package
+    needs: prepare
+    uses: ./.github/workflows/linux-appimage.yml
+
+  windows:
+    name: Windows package
+    needs: prepare
+    uses: ./.github/workflows/windows.yml
+
+  # The Windows nec2c against the Linux one, both taken from the packages above.
+  nec2c:
+    name: nec2c in the packages
+    needs: [linux, windows]
+    uses: ./.github/workflows/nec2c.yml
+    with:
+      packaged: true
+
+  publish:
+    name: ${{ needs.prepare.outputs.dry-run == 'true' && 'Dry run' || 'Publish' }}
+    needs: [prepare, linux, windows, nec2c]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      DRY_RUN: ${{ needs.prepare.outputs.dry-run }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v6
+        with:
+          path: artifacts
+
+      - name: Collect release files
+        run: |
+          mkdir release
+          cp "artifacts/NEC-Workbench-Linux-x86_64/NEC-Workbench-$VERSION-x86_64.AppImage" release/
+          cp "artifacts/NEC-Workbench-Windows-x64/NEC-Workbench-$VERSION-windows-x64.zip" release/
+          sources=(artifacts/NEC-Workbench-Linux-x86_64/dist/nec2c-*-source.tar.gz)
+          test "${#sources[@]}" -eq 1 && test -f "${sources[0]}"
+          cp "${sources[0]}" release/
+          test "$(ls release | wc -l)" -eq 3
+          (cd release && sha256sum -- * > ../SHA256SUMS.txt) && mv SHA256SUMS.txt release/
+          # The notes' first heading is the release title; the rest is its body.
+          notes="docs/release-notes/$TAG.md"
+          head -n 1 "$notes" | sed 's/^# *//' > title.txt
+          tail -n +2 "$notes" > body.md
+          test -s title.txt
+          listing=$(cd release && ls -l --time-style=+ | awk 'NR > 1 { printf "%s (%.1f MB, %d bytes)%%0A", $NF, $5 / 1048576, $5 }')
+          echo "SHA256SUMS.txt:"; cat release/SHA256SUMS.txt
+          echo "::notice title=Release $TAG ($([ "$DRY_RUN" = true ] && echo dry run || echo publishing))::Title: $(cat title.txt)%0ABody: $notes ($(wc -l < body.md) lines)%0A$listing$(sed -e 's/^/SHA256 /' release/SHA256SUMS.txt | sed -e ':a;N;$!ba;s/\n/%0A/g')"
+
+      # Created as a draft, filled, then published, so a failed upload never leaves a
+      # published release without its files; a re-run resumes the draft.
+      - name: Publish release
+        if: needs.prepare.outputs.dry-run != 'true'
+        run: packaging/publish-release.sh "$TAG" title.txt body.md release

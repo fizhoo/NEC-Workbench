@@ -5,6 +5,8 @@ on:
     branches: [main, 'release/**', feature/baseline-reference, feature/compact-workspace, feature/compact-control-panel]
   pull_request:
   workflow_dispatch:
+  # The release workflow builds and checks the package from its tag.
+  workflow_call:
 
 permissions:
   contents: read
@@ -22,13 +24,24 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes ninja-build libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 autoconf automake
+          sudo apt-get install --yes ninja-build libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 autoconf automake xvfb
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.*'
           cache: true
+
+      # The exact Qt source, for the attributions and license texts of the deployed Qt.
+      - name: Qt version
+        run: echo "QT_VERSION=$("$QT_ROOT_DIR/bin/qmake" -query QT_VERSION)" >> "$GITHUB_ENV"
+      - name: Cache Qt source
+        uses: actions/cache@v4
+        with:
+          path: qt-src
+          key: qt-src-${{ env.QT_VERSION }}-qtbase-qtsvg
+      - name: Download Qt source
+        run: packaging/qt-sources.sh "$QT_VERSION" qt-src qtbase qtsvg
 
       - name: Build bundled nec2c
         run: |
@@ -41,6 +54,7 @@ jobs:
           -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DNECWB_BUILD_TESTS=ON
+          && echo "PACKAGE=NEC-Workbench-$(cat build/necwb-version.txt)-x86_64.AppImage" >> "$GITHUB_ENV"
 
       - name: Build
         run: cmake --build build --parallel
@@ -68,16 +82,30 @@ jobs:
             --executable AppDir/usr/bin/nec2c \
             --desktop-file packaging/nec-workbench.desktop \
             --icon-file packaging/nec-workbench.svg \
-            --plugin qt \
-            --output appimage
+            --plugin qt
+          # The Qt and other library notices, from what linuxdeploy put in the AppDir.
+          icu=()
+          if icuuc=$(ls AppDir/usr/lib/libicuuc.so.* 2> /dev/null | head -n 1); then
+            major=${icuuc##*libicuuc.so.}; major=${major%%.*}
+            curl -sSfL -o icu-LICENSE "https://raw.githubusercontent.com/unicode-org/icu/release-$major-1/icu4c/LICENSE"
+            icu=(--icu-license icu-LICENSE)
+          fi
+          CI_STEP_NOTICE=1 packaging/nec2c/ci-step.sh "Linux license notices" python3 -I packaging/qt-notices.py \
+            --platform linux --deployed AppDir/usr --qt-version "$QT_VERSION" \
+            --qt-source "qt-src/qtbase-everywhere-src-$QT_VERSION.tar.xz" \
+            --qt-source "qt-src/qtsvg-everywhere-src-$QT_VERSION.tar.xz" \
+            --qt-lib-dir "$QT_ROOT_DIR/lib" "${icu[@]}" \
+            --append AppDir/usr/share/licenses/nec-workbench/THIRD_PARTY_LICENSES.txt
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage
           appimage=$(find . -maxdepth 1 -name '*.AppImage' ! -name 'linuxdeploy*.AppImage' -print -quit)
           test -n "$appimage"
-          mv "$appimage" NEC-Workbench-Linux-x86_64.AppImage
+          mv "$appimage" "$PACKAGE"
 
       # The package as a user gets it: a fresh folder whose path has a space, fresh settings,
-      # no nec2c on the PATH. The AppImage must start Workbench, which must find the bundled
-      # nec2c, read its version, solve, find the examples (exactly the repository's) and
-      # solve one, and stop a run with Stop and with a timeout.
+      # no nec2c on the PATH. The AppImage must start Workbench's main window under Xvfb with
+      # the xcb platform plugin, and its license notices must name the Qt it runs on; and
+      # Workbench must find the bundled nec2c, read its version, solve, find the examples
+      # (exactly the repository's) and solve one, and stop a run with Stop and a timeout.
       - name: Check package
         env:
           APPIMAGE_EXTRACT_AND_RUN: '1'
@@ -85,16 +113,26 @@ jobs:
           if command -v nec2c; then echo "nec2c is on the PATH; the check needs a clean runner"; exit 1; fi
           check="$RUNNER_TEMP/package check"
           mkdir -p "$check/home"
-          cp NEC-Workbench-Linux-x86_64.AppImage "$check/"
+          cp "$PACKAGE" "$check/"
           cd "$check"
-          ./NEC-Workbench-Linux-x86_64.AppImage --appimage-extract > /dev/null
+          "./$PACKAGE" --appimage-extract > /dev/null
           test -x squashfs-root/usr/bin/nec2c
           test -f squashfs-root/usr/bin/nec2c-build.txt
           grep -q '^Exec=nec-workbench' squashfs-root/*.desktop
           diff <(git -C "$GITHUB_WORKSPACE" -c core.quotePath=off ls-files 'examples/*.nec' | sed 's|^examples/||' | sort) \
             <(ls squashfs-root/usr/share/nec-workbench/examples | sort)
-          HOME="$check/home" XDG_CONFIG_HOME="$check/home/.config" CI_STEP_NOTICE=1 "$GITHUB_WORKSPACE/packaging/nec2c/ci-step.sh" \
-            "Linux package check" ./NEC-Workbench-Linux-x86_64.AppImage --package-check
+          export HOME="$check/home" XDG_CONFIG_HOME="$check/home/.config"
+          step="$GITHUB_WORKSPACE/packaging/nec2c/ci-step.sh"
+          CI_STEP_NOTICE=1 $step "Linux startup check" \
+            xvfb-run -a env QT_QPA_PLATFORM=xcb "./$PACKAGE" --startup-check > startup.txt
+          cat startup.txt
+          grep -q '^PASS main window shown: platform plugin xcb, Qt ' startup.txt
+          qt=$(sed -n 's/^PASS .*, Qt \([0-9.]*\),.*/\1/p' startup.txt)
+          licenses=squashfs-root/usr/share/licenses/nec-workbench/THIRD_PARTY_LICENSES.txt
+          if ! grep -qx "Qt $qt" "$licenses"; then
+            echo "::error title=Linux license notices::$licenses does not name Qt $qt, the Qt the package runs on"; exit 1
+          fi
+          CI_STEP_NOTICE=1 $step "Linux package check" "./$PACKAGE" --package-check
           test ! -e "$check/home/.config/NEC Workbench"
 
       # The packaged nec2c against a second build of the same commit with upstream's own
@@ -110,12 +148,30 @@ jobs:
       - name: Pack nec2c source
         run: packaging/nec2c/source-archive.sh dist nec2c-src
 
+      # The source archive alone must rebuild nec2c with no network, and the rebuilt nec2c
+      # must give the packaged one's results, as text.
+      - name: Rebuild nec2c offline from the source archive
+        run: |
+          rebuild="$RUNNER_TEMP/offline rebuild"
+          mkdir -p "$rebuild"
+          tar -xzf dist/nec2c-*-source.tar.gz -C "$rebuild"
+          cd "$rebuild"/nec2c-*-source
+          test -s BUILDING.txt
+          unshare --map-root-user --net bash -c \
+            'if curl -sI --max-time 5 https://github.com > /dev/null 2>&1; then echo "network reachable"; exit 1; fi
+             packaging/nec2c/build.sh out nec2c'
+          cd "$GITHUB_WORKSPACE"
+          step=packaging/nec2c/ci-step.sh
+          $step "rebuilt run" packaging/nec2c/run-decks.sh "$rebuild"/nec2c-*-source/out/nec2c decks out-rebuilt
+          CI_STEP_NOTICE=1 $step "Offline source rebuild vs packaged" \
+            build/necwb_nec2c_check compare --strict decks out-packaged out-rebuilt
+
       - name: Upload Linux package
         uses: actions/upload-artifact@v6
         with:
           name: NEC-Workbench-Linux-x86_64
           path: |
-            NEC-Workbench-Linux-x86_64.AppImage
+            ${{ env.PACKAGE }}
             dist/nec2c-*-source.tar.gz
           if-no-files-found: error
           retention-days: 14

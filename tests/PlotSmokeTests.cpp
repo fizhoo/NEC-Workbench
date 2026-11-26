@@ -327,15 +327,31 @@ auto main(int argc, char* argv[]) -> int
         const auto notAsked = versions.version(QStringLiteral("nec2"),
             elsewhere.filePath(QStringLiteral("other") + ExecutableSuffix))
             == QStringLiteral("version unknown");
-        // Saving: a path inside Workbench's own folder or the mounted AppImage is refused.
+        // Saving: the bundled nec2c and a path in a mounted AppImage are refused; the user's
+        // own engine inside Workbench's folder is saved relative to it, so it follows the
+        // folder when the folder moves.
         QSettings settings;
         const auto savedChoice = settings.value(QStringLiteral("analysis/executables/nec2"));
-        const auto refusesOwnFolder = !necwb::ui::solverSettings::choosePath(QStringLiteral("nec2"),
-            QCoreApplication::applicationDirPath() + QStringLiteral("/nec2c"));
-        qputenv("APPDIR", QFile::encodeName(app));
+        const auto savedDxs = settings.value(QStringLiteral("analysis/executables/nec2dxs"));
+        const auto refusesBundled = !necwb::ui::solverSettings::choosePath(QStringLiteral("nec2"),
+            app + QStringLiteral("/solvers/nec2c") + ExecutableSuffix, app);
+        QTemporaryDir mount;
+        qputenv("APPDIR", QFile::encodeName(mount.path()));
         const auto refusesAppImage = !necwb::ui::solverSettings::choosePath(QStringLiteral("nec2"),
-            app + QStringLiteral("/usr/bin/nec2c"));
+                mount.path() + QStringLiteral("/usr/bin/nec2c"), app)
+            && !necwb::ui::solverSettings::choosePath(QStringLiteral("nec2"),
+                QDir::tempPath() + QStringLiteral("/.mount_NEC-Wo1a2b3c/usr/bin/nec2c"), app);
         qunsetenv("APPDIR");
+        makeExecutable(app + QStringLiteral("/solvers/Nec2dXS1k5.exe"), "#!/bin/sh\n");
+        const auto moved = elsewhere.filePath(QStringLiteral("moved folder"));
+        const auto savesInside = necwb::ui::solverSettings::choosePath(QStringLiteral("nec2dxs"),
+                app + QStringLiteral("/solvers/Nec2dXS1k5.exe"), app)
+            && settings.value(QStringLiteral("analysis/executables/nec2dxs")).toString()
+                == QStringLiteral("solvers/Nec2dXS1k5.exe")
+            && necwb::ui::solverSettings::chosenPaths(moved).value(QStringLiteral("nec2dxs"))
+                == QDir::toNativeSeparators(moved + QStringLiteral("/solvers/Nec2dXS1k5.exe"));
+        if (savedDxs.isValid()) settings.setValue(QStringLiteral("analysis/executables/nec2dxs"), savedDxs);
+        else settings.remove(QStringLiteral("analysis/executables/nec2dxs"));
         const auto savesChosen = necwb::ui::solverSettings::choosePath(QStringLiteral("nec2"), userNec2c)
             && necwb::ui::solverSettings::chosenPaths().value(QStringLiteral("nec2")) == userNec2c
             && necwb::ui::solverSettings::choosePath(QStringLiteral("nec2"), {})
@@ -353,10 +369,10 @@ auto main(int argc, char* argv[]) -> int
             && necwb::ui::runContext(record).endsWith(QStringLiteral("Backend: nec2c · nec2c 1.3.3 (55be1e0)"));
         qputenv("PATH", savedPath);
         if (!nothing || !onPath || !beside || !solversFirst || !chosenFirst || !probed || !notAsked
-            || !refusesOwnFolder || !refusesAppImage || !savesChosen || !runRecordsEngine
+            || !refusesBundled || !refusesAppImage || !savesInside || !savesChosen || !runRecordsEngine
             || !sharedExamples || !prefixInstall || !examplesBeside) {
             qWarning() << "solver lookup" << nothing << onPath << beside << solversFirst << chosenFirst
-                       << probed << notAsked << refusesOwnFolder << refusesAppImage << savesChosen
+                       << probed << notAsked << refusesBundled << refusesAppImage << savesInside << savesChosen
                        << runRecordsEngine << sharedExamples << prefixInstall << examplesBeside << versions.version(QStringLiteral("nec2"), userNec2c);
             return NECWB_SMOKE_FAILURE("solver lookup and saved paths");
         }
