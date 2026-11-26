@@ -1386,27 +1386,15 @@ void MainWindow::applyWorkspaceDensity()
         "QTableView::item, QTreeView::item, QListView::item { padding: 1px %2px; }"
         "QStatusBar { min-height: %3px; }"
     ).arg(toolbarHeight).arg(horizontalPadding).arg(controlHeight).arg(tabPadding).arg(tabPadding + 4));
+    // A new style sheet puts back the fonts the widgets had before it, so the sizes go on after.
+    for (auto* root : roots) applyWorkspaceDensityFont(root, workspaceDensity_);
 }
 
 void MainWindow::applyWorkspaceDensity(QWidget* root)
 {
     if (root == nullptr) return;
 
-    const auto baseFontSize = workspaceDensityFontSize(workspaceDensity_);
-    const auto initialBaseFontSize = QApplication::font().pointSize();
-    const auto updateFont = [baseFontSize, initialBaseFontSize](QWidget* widget) {
-        if (!widget->property("workspaceDensityFontDelta").isValid()) {
-            const auto pointSize = widget->font().pointSize();
-            if (pointSize > 0)
-                widget->setProperty("workspaceDensityFontDelta", pointSize - initialBaseFontSize);
-        }
-        const auto delta = widget->property("workspaceDensityFontDelta").toInt();
-        auto font = widget->font();
-        font.setPointSize(std::max(6, baseFontSize + delta));
-        widget->setFont(font);
-    };
-    updateFont(root);
-    for (auto* widget : root->findChildren<QWidget*>()) updateFont(widget);
+    applyWorkspaceDensityFont(root, workspaceDensity_);
 
     const auto scale = workspaceDensityScale(workspaceDensity_);
     for (auto* layout : root->findChildren<QLayout*>()) {

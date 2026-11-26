@@ -23,6 +23,10 @@ enum class WorkspaceDensity {
 [[nodiscard]] auto savedWorkspaceDensity() -> WorkspaceDensity;
 void saveWorkspaceDensity(WorkspaceDensity density);
 
+// Sets the density's font size on the window and everything in it, each widget keeping the
+// offset from the base size it had the first time.
+void applyWorkspaceDensityFont(QWidget* root, WorkspaceDensity density);
+
 // A top-level window without a dialog's type (the optimizer) that follows the density like
 // the main window's dialogs do.
 void followWorkspaceDensity(QWidget* window);

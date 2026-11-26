@@ -1,14 +1,18 @@
 #include "ui/WorkspaceDensity.h"
 
+#include <QApplication>
 #include <QDialog>
 #include <QSettings>
 #include <QWidget>
+
+#include <algorithm>
 
 namespace necwb::ui {
 namespace {
 
 const auto DensityKey = QStringLiteral("appearance/workspaceDensity");
 constexpr auto FollowsProperty = "followsWorkspaceDensity";
+constexpr auto FontDeltaProperty = "workspaceDensityFontDelta";
 
 }
 
@@ -57,6 +61,23 @@ auto savedWorkspaceDensity() -> WorkspaceDensity
 void saveWorkspaceDensity(WorkspaceDensity density)
 {
     QSettings{}.setValue(DensityKey, workspaceDensityId(density));
+}
+
+void applyWorkspaceDensityFont(QWidget* root, WorkspaceDensity density)
+{
+    const auto baseFontSize = workspaceDensityFontSize(density);
+    const auto initialBaseFontSize = QApplication::font().pointSize();
+    const auto updateFont = [baseFontSize, initialBaseFontSize](QWidget* widget) {
+        if (!widget->property(FontDeltaProperty).isValid()) {
+            const auto pointSize = widget->font().pointSize();
+            if (pointSize > 0) widget->setProperty(FontDeltaProperty, pointSize - initialBaseFontSize);
+        }
+        auto font = widget->font();
+        font.setPointSize(std::max(6, baseFontSize + widget->property(FontDeltaProperty).toInt()));
+        widget->setFont(font);
+    };
+    updateFont(root);
+    for (auto* widget : root->findChildren<QWidget*>()) updateFont(widget);
 }
 
 void followWorkspaceDensity(QWidget* window)

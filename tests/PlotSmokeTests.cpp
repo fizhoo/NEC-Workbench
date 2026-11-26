@@ -865,6 +865,9 @@ auto main(int argc, char* argv[]) -> int
             const auto* window = optimizer == nullptr ? nullptr : optimizer->window();
             auto optimizerFollows = false;
             if (spacious != nullptr && compact != nullptr && window != nullptr && window != &mainWindow) {
+                QDialog openDialog(&mainWindow);
+                openDialog.show();
+                application.processEvents();
                 // A layout's own spacing, scaled: 5/6 spacious, 1/3 compact.
                 const QLayout* layout = nullptr;
                 for (const auto* found : window->findChildren<QLayout*>()) {
@@ -877,14 +880,21 @@ auto main(int argc, char* argv[]) -> int
                 const auto spaciousApplied = window->property("workspaceDensityId").toString()
                     == QStringLiteral("spacious");
                 const auto spaciousMargin = margin();
+                // Text size changes at once, not at the next start: 11 pt spacious, 9 pt compact,
+                // in the main window, an open dialog and the optimizer.
+                const auto spaciousFonts = QList{window->font().pointSize(), mainWindow.font().pointSize(),
+                    openDialog.font().pointSize()};
                 compact->trigger();
                 application.processEvents();
+                const auto compactFonts = QList{window->font().pointSize(), mainWindow.font().pointSize(),
+                    openDialog.font().pointSize()};
                 optimizerFollows = spaciousApplied
                     && window->property("workspaceDensityId").toString() == QStringLiteral("compact")
-                    && margin() >= 0 && spaciousMargin > margin();
+                    && margin() >= 0 && spaciousMargin > margin()
+                    && spaciousFonts == QList{11, 11, 11} && compactFonts == QList{9, 9, 9};
                 if (!optimizerFollows)
                     qWarning() << "optimizer density" << spaciousApplied << spaciousMargin
-                               << window->property("workspaceDensityId") << margin();
+                               << window->property("workspaceDensityId") << margin() << spaciousFonts << compactFonts;
             }
             dialogDensityIsIncremental = dialogDensityIsIncremental && optimizerFollows;
             if (savedDensity.isValid()) QSettings{}.setValue(QStringLiteral("appearance/workspaceDensity"), savedDensity);
