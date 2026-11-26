@@ -1,6 +1,7 @@
 #include "analysis/AnalysisResult.h"
 #include "analysis/FrequencyComparison.h"
 #include "ui/DisplayFormat.h"
+#include "ui/FileIo.h"
 #include "ui/MainWindow.h"
 #include "ui/analysis/SweepPlotsView.h"
 #include "ui/ExampleLocator.h"
@@ -2196,6 +2197,7 @@ auto main(int argc, char* argv[]) -> int
             // Answers the Save Failed box, and, for Save As, first the file dialog. Its timers
             // end with this block, and it gives up after about a second without a dialog.
             QString reported;
+            QString reason;
             QObject answering;
             const std::function<void(const QString&, int)> answerWithin = [&](const QString& target, int tries) {
                 QTimer::singleShot(50, &answering, [&, target, tries] {
@@ -2205,6 +2207,7 @@ auto main(int argc, char* argv[]) -> int
                         answerWithin({}, 20);
                     } else if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
                         reported = box->windowTitle();
+                        reason = box->text();
                         box->accept();
                     } else if (tries > 0) {
                         answerWithin(target, tries - 1);
@@ -2231,8 +2234,12 @@ auto main(int argc, char* argv[]) -> int
             answer(QDir(lockedFolder).filePath(QStringLiteral("elsewhere.nec")));
             saveAs->trigger();
             application.processEvents();
+            // The box says the folder cannot be written to, not "Unknown error".
             readOnlyFolder = reported == QStringLiteral("Save Failed") && unchanged(QStringLiteral("save as"))
+                && reason.contains(QStringLiteral("The folder %1 cannot be written to.")
+                    .arg(QDir::toNativeSeparators(QFileInfo(lockedFolder).absoluteFilePath())))
                 && !QFileInfo::exists(QDir(lockedFolder).filePath(QStringLiteral("elsewhere.nec")));
+            if (!readOnlyFolder) qWarning() << "read-only folder" << reported << reason;
             QFile::setPermissions(lockedFolder, QFileDevice::ReadOwner | QFileDevice::WriteOwner
                 | QFileDevice::ExeOwner);
 #endif
@@ -2249,10 +2256,15 @@ auto main(int argc, char* argv[]) -> int
                 answer({});
                 ::setrlimit(RLIMIT_FSIZE, &small);
                 save->trigger();
+                // The run files' checked write fails the same way rather than leaving 16 bytes.
+                const auto runFile = directory.filePath(QStringLiteral("model.nec"));
+                const auto runFileFailed = !necwb::ui::writeFile(runFile, original);
                 ::setrlimit(RLIMIT_FSIZE, &limit);
                 std::signal(SIGXFSZ, previousSignal);
                 application.processEvents();
-                partialWrite = reported == QStringLiteral("Save Failed") && unchanged(QStringLiteral("partial write"));
+                partialWrite = reported == QStringLiteral("Save Failed") && unchanged(QStringLiteral("partial write"))
+                    && runFileFailed && necwb::ui::writeFile(runFile, original) && readFile(runFile) == original;
+                if (!partialWrite) qWarning() << "partial write" << reported << reason << runFileFailed;
             }
 #endif
             // Writable again, the same Save succeeds and only then clears the flag.
@@ -2268,6 +2280,8 @@ auto main(int argc, char* argv[]) -> int
         settings.setValue(QStringLiteral("files/recentModels"), savedRecent);
         settings.sync();
     }
+    if (!failedSaveKeepsState)
+        return NECWB_SMOKE_FAILURE("a failed save keeps the file, its name and the modified flag");
     // Automatic Segmentation in the window: a wire with a symbolic count is skipped and says so,
     // a 25% source goes to the segment its mark gives, Apply writes the deck the preview showed,
     // and one Undo restores the deck.
@@ -2342,9 +2356,7 @@ auto main(int argc, char* argv[]) -> int
             application.processEvents();
             const auto undone = deck->toPlainText().toUtf8() == original;
             segmentationPreviewApplied = previewMatchesApply && previewShown && undone;
-            if (!failedSaveKeepsState)
-        return NECWB_SMOKE_FAILURE("a failed save keeps the file, its name and the modified flag");
-    if (!segmentationPreviewApplied)
+            if (!segmentationPreviewApplied)
                 qWarning() << "automatic segmentation" << previewMatchesApply << previewShown << undone
                            << sourceRow << skippedRow << summary << applied;
         } else {

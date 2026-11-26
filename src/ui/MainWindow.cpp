@@ -86,7 +86,6 @@
 #include <QDoubleSpinBox>
 #include <QEvent>
 #include <QFile>
-#include <QSaveFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -1661,13 +1660,10 @@ auto MainWindow::saveFileAs() -> bool
 
 auto MainWindow::writeFile(const QString& path) -> bool
 {
-    // Written beside the file and renamed over it only when complete, so a failed save
-    // leaves the file, its name here and the modified flag as they were.
-    QSaveFile file(path);
-    const auto contents = editor_->toPlainText().toUtf8();
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text) || file.write(contents) != contents.size()
-        || !file.commit()) {
-        QMessageBox::critical(this, tr("Save Failed"), file.errorString());
+    // A failed save leaves the file, its name here and the modified flag as they were.
+    if (QString problem; !writeWholeFile(path, editor_->toPlainText().toUtf8(), QIODevice::Text, problem)) {
+        QMessageBox::critical(this, tr("Save Failed"),
+            tr("%1 was not saved.\n\n%2").arg(QDir::toNativeSeparators(path), problem));
         return false;
     }
     setCurrentFile(path);
