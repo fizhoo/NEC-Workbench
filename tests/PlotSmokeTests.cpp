@@ -4650,8 +4650,7 @@ auto main(int argc, char* argv[]) -> int
     directionalComparison.setBaseline(directionalBaselineResult,
         QStringLiteral("Starting model"));
     directionalComparison.setBaselineStatus(QStringLiteral("Compatible"), true);
-    directionalComparison.setCandidate(directionalCandidateResult,
-        QStringLiteral("Candidate"), {}, {}, directionalCandidateEvaluation,
+    directionalComparison.setCandidate(directionalCandidateResult, {}, {}, directionalCandidateEvaluation,
         directionalBaselineEvaluation);
     auto* directionalComparisonTabs = directionalComparison.findChild<QTabWidget*>(
         QStringLiteral("optimizationCompareTabs"));

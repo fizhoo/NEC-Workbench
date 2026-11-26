@@ -94,12 +94,11 @@ void OptimizationComparePanel::setBaselineStatus(QString status, bool compatible
 }
 
 void OptimizationComparePanel::setCandidate(const analysis::AnalysisResult& result,
-    QString label, QString breakdown, QString comparisonBreakdown,
+    QString breakdown, QString comparisonBreakdown,
     std::optional<analysis::OptimizationObjectiveResult> directionalMetrics,
     std::optional<analysis::OptimizationObjectiveResult> baselineDirectionalMetrics)
 {
     candidate_ = ResultData::make(result);
-    candidateLabel_ = std::move(label);
     candidateBreakdown_ = std::move(breakdown);
     comparisonBreakdown_ = std::move(comparisonBreakdown);
     directionalMetrics_ = std::move(directionalMetrics);
@@ -110,7 +109,6 @@ void OptimizationComparePanel::setCandidate(const analysis::AnalysisResult& resu
 void OptimizationComparePanel::clearCandidate()
 {
     candidate_.reset();
-    candidateLabel_.clear();
     candidateBreakdown_.clear();
     comparisonBreakdown_.clear();
     directionalMetrics_.reset();

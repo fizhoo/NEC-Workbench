@@ -680,8 +680,7 @@ void OptimizationWorkspace::updateComparisonCandidate()
     } else if (!candidate.failureDetail.isEmpty()) {
         breakdown += tr("\nObjective unavailable: %1").arg(candidate.failureDetail);
     }
-    comparePanel_->setCandidate(result,
-        candidateIdentity, breakdown, comparisonBreakdown,
+    comparePanel_->setCandidate(result, breakdown, comparisonBreakdown,
         candidate.evaluation ? candidate.evaluation : candidate.availableMeasurements,
         baselineEvaluation);
 }

@@ -11,7 +11,6 @@ namespace necwb::model {
 struct AlongWirePlacement {
     int segment{};
     int segmentCount{};
-    double requestedFraction{};
     // The middle of the chosen segment, as a fraction of the wire's length from End 1.
     double actualFraction{};
     // The requested point is the joint between `segment` and `segment + 1`; the segment

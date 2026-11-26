@@ -31,7 +31,6 @@ public:
 
     explicit WorkbenchLayout(Panes panes, QWidget* parent = nullptr);
 
-    void showStart();
     void showGeometry();
     // One of the views; each keeps its state while another is shown.
     void showView(QWidget* view);
@@ -56,7 +55,6 @@ private:
 
     QSplitter* split_{};
     QStackedWidget* center_{};
-    QWidget* start_{};
     QWidget* geometry_{};
     BottomPanel* bottomPanel_{};
     QAction* rightColumnAction_{};

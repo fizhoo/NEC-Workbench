@@ -59,7 +59,6 @@ auto inspectDeckGeometryUnits(const NecDocument& document) noexcept -> DeckGeome
     for (const auto& card : document.cards()) {
         if (card.kind == NecCardKind::GeometryScale) {
             result.hasScaleCard = true;
-            result.scaleCardLine = card.lineNumber;
         }
         if (card.kind != NecCardKind::GeometryWire) continue;
         const auto scale = geometryScaleForLine(document, card.lineNumber);
